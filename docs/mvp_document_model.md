@@ -1,7 +1,11 @@
 # HOPI MVP Document Model
 
 Status: forward document and authority reference
-Last updated: 2026-07-23
+Last updated: 2026-07-24
+
+> [Project Owner And Attention](./mvp_project_owner.md) owns the minimal Project Attention document
+> and immutable original Goal statement. Legacy Goal-local and Workspace Attention fields remain
+> readable only for migration until this document is consolidated.
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
@@ -363,15 +367,16 @@ removes `scratch/`; terminal scratch left by a process crash is removed during r
 On restart, a manifest still marked `running` becomes `interrupted`; Coordinator never reattaches its
 child. The former `<projectId>/<goalId>/<workId>/<runId>` layout remains read-only compatible during
 migration, but all new writes use the flat layout. Older Run directories without these files remain
-readable as legacy Attempts but may have no message stream or raw transcript. Work front matter
-`attempts` remains the authoritative count of published unsuccessful outcomes in the current
-recovery episode; it is not the number of runtime Attempt records.
+readable as legacy Attempts but may have no message stream or raw transcript. Runtime Attempt
+records are the only invocation and recovery count.
 
-Operational recovery uses these existing Attempt records without making them canonical Work
-semantics. For one Work, the current operational episode is the consecutive newest finished Attempts
-with `application: operational_failure` after its latest resolved Work-target Attention. The third
-failure ensures one ordinary open Work-target Attention. No operational counter is stored in Work,
-Attention IDs, or UI projection, and no new Attention field or kind is introduced.
+Semantic and operational recovery use these existing Attempt records without making them canonical
+Work semantics. A failed Attempt records the settled Work assignment fingerprint: the canonical Work
+content excluding append-only `evidenceRefs`. While that fingerprint still matches the current Work
+assignment, Reconciler pauses automatic redispatch and Reflection may ask Assistant to judge the next
+action. Adding execution history alone therefore cannot make the same assignment runnable again.
+Coordinator does not derive Attention, an operational episode, or a retry counter from failure
+history.
 
 `project.yml` owns the stable Project ID, primary Repo ID, portable Repo membership and
 `projectPath` values, and the current secondary release commits. Canonical absolute local filesystem
@@ -504,7 +509,6 @@ notBefore: null
 dependsOn: [W-11]
 contractRevision: 4
 evidenceRefs: []
-attempts: 0
 assistantDispatch: home:H-1/event:EV-42
 ---
 ```
@@ -600,10 +604,11 @@ possible and its racing result still fails the semantic publication guard.
 
 A material Goal revision is the global authority boundary. Existing nonterminal Engineering Work
 keeps the revision it was planned against and therefore becomes ineligible without changing its
-stage, branch, or history. Planner must either bring each retained Work to the current revision,
-reset it to `generate` when its implementation is invalidated, or cancel it. Planner success cannot
-leave stale nonterminal Engineering Work. A completed or cancelled Planning Work is historical and
-never reopened.
+stage, branch, or history. Planner may bring a retained Work to the current revision, reset it to
+`generate`, cancel it, or leave it visibly stale while another route proceeds. Coordinator does not
+reject an otherwise valid plan merely because stale Work remains; readiness keeps that Work
+ineligible and later model judgment may resolve it. A completed or cancelled Planning Work is
+historical and never reopened.
 
 If another trigger arrives during Planner execution, the same Planning Work is updated. The old
 Run may preserve artifacts but fails its semantic guard.
@@ -625,15 +630,16 @@ before the next pass and preserves the Work delta. If accepted Planning instead 
 that delta, Planner assigns a new Work identity rather than asking Assistant to rebuild or reset the
 existing branch.
 
-Cancelling Work with nonterminal dependents first cancels those dependents transitively, then
-cancels the selected Work. If that cascade is not clearly intended, cancellation is not published
-and HOPI creates targeted Attention. Planner may later create replacement Work, but it never
-rewrites the historical edges. Nonterminal Work may not depend on cancelled Work.
-After the durable cancellation, Coordinator interrupts every affected live Run. Repeating the same
-cancellation is idempotent. Cancellation changes only an execution route: it neither changes the
-Goal contract nor requests Planning. If the Goal still requires the cancelled outcome, later
-Planning may legitimately create a different Work identity. Removing that outcome from scope is a
-material Goal revision instead.
+Directly cancelling Work with nonterminal dependents first cancels those current dependents, then
+cancels the selected Work. Planner may instead atomically rewire nonterminal `dependsOn` edges and
+cancel only Work made obsolete by the accepted plan. The Planner publication may update that Work's
+contract and explanation at the same boundary; the resulting cancelled document is its immutable
+terminal snapshot. Both paths must leave an acyclic current DAG, and nonterminal Work may not depend
+on cancelled Work. After durable cancellation, Coordinator interrupts every affected live Run.
+Repeating the same direct cancellation is idempotent. Cancellation changes only an execution route: it
+neither changes the Goal contract nor requests Planning. If the Goal still requires the cancelled
+outcome, later Planning may legitimately create a different Work identity. Removing that outcome
+from scope is a material Goal revision instead.
 
 #### Time and revision
 
@@ -656,31 +662,23 @@ process stops after its supporting write but before its Work gate, and remains p
 
 #### Recovery history
 
-Work retains one repair-history counter:
+Durable Attempt records are the sole source for invocation count, responsibility, result,
+application, timing, model, diagnostics, and interruption history. Work does not duplicate an
+`attempts` counter or retry budget. Legacy Work documents containing `attempts` remain readable, but
+the compatibility field has no semantics and disappears when that nonterminal Work is republished.
+The ordered `evidenceRefs` retains consumed canonical Evidence for model repair context.
 
-```yaml
-attempts: 2
-```
-
-`attempts` counts published reviewed implementation-repair outcomes in the current recovery episode:
-Reviewer `reject` and deterministic pre-C1 integration rejection. It is history, not a dispatch
-budget. `attention` publishes no owning-Work outcome and does not increment attempts. A
-responsibility `fail` appends its Evidence and creates Work-target Attention so speaking Assistant
-can decide whether Planning, retry, cancellation, or operator input is needed. The ordered
-`evidenceRefs` retains consumed Evidence, from which models derive repair context.
-
-Ordinary pass success never clears recovery. The counter clears only when a material contract
-revision invalidates the episode, Planning publishes a materially changed plan, or Assistant invokes
-the explicit retry control. Retry is audited by the durable Assistant turn, exact Work effect, and
-settled Work Attention; it does not create Goal Input.
+Reviewer `reject` and deterministic pre-C1 integration rejection return Engineering Work from
+`review` to `generate`; the corresponding Attempt and Evidence already record why. Explicit retry
+does not rewrite history. It is audited by the durable Assistant turn and reserved Run; it does not
+create Goal Input or settle Attention.
 
 A timed Assistant-selected retry uses Work `notBefore`. Conditions the current responsibility cannot
-resolve create targeted Attention. A process crash before the Work gate may leave Evidence without
-incrementing `attempts`. Runtime failure creates one strategy-free Work Attention rather than a
-hidden retry episode. An Attention-producing outcome intentionally leaves Work unchanged and starts
-a new Run only after Attention resolves. HOPI never reconstructs either old transition. Restart, a
-new Run, pass success, or a task branch commit never resets a published count. Terminal Work remains
-in `work/`.
+resolve may be returned explicitly as targeted Attention. A process crash before the Work gate may
+leave unconsumed Evidence. Runtime failure remains Attempt history and does not
+create Attention or a hidden retry episode. An Attention-producing outcome intentionally leaves Work
+unchanged and starts a new Run only after Attention resolves. HOPI never reconstructs either old
+transition. Terminal Work remains in `work/`.
 
 ### `attention/<attentionId>.md`
 
@@ -696,17 +694,16 @@ createdAt: 2026-07-10T09:00:00Z
 resolvedAt: null
 notifiedAt: null
 operatorRequest: null
-retryRunId: null
 ---
 ```
 
 `target` is exactly one canonical event, project, Goal, or Work reference. Legacy targetless
 completion Attention remains readable but no new Run creates it.
-An open targeted Attention projects as **Waiting for Assistant** while `operatorRequest` and
-`retryRunId` are null, has no ownership badge while its one requested invocation is pending,
-and projects as **Needs you** only while `operatorRequest` contains the exact
+An open targeted Attention projects as **Waiting for Assistant** while `operatorRequest` is null
+and as **Needs you** only while `operatorRequest` contains the exact
 `home:<homeId>/event:<eventId>` public Assistant request awaiting a reply. `notifiedAt` is independent
-delivery history and may be non-null in either projection.
+delivery history and may be non-null in either projection. The parser accepts and drops an obsolete
+`retryRunId` key from legacy documents; it has no current domain or projection semantics.
 
 Attention is open exactly when `resolvedAt` is null; there is no duplicate `status` field.
 

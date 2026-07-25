@@ -86,10 +86,7 @@ const assistantRunner: AssistantModelRunner = {
       })
       return assistantResult(ASSISTANT_REPLY, mode)
     }
-    return assistantResult(
-      mode === 'reflection' ? 'No handoff required.' : 'Project is blocked.',
-      mode,
-    )
+    return assistantResult('Project is blocked.', mode)
   },
 }
 
@@ -300,7 +297,6 @@ async function stageEngineeringWork(input: RoleRunInput) {
         dependsOn: [],
         contractRevision: planning.attributes.contractRevision,
         evidenceRefs: [],
-        attempts: 0,
       },
       body: '## Acceptance Criteria\n\n- The Generator result reaches task checkpointing.\n',
     }),

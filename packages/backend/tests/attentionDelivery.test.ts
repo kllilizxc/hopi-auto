@@ -27,7 +27,7 @@ afterEach(async () => {
 describe('Assistant reply delivery', () => {
   test('mirrors only a handled public speaking reply instead of raw Attention', async () => {
     const fixture = await setup()
-    const event = await fixture.workspace.receiveReflectionEvent({
+    const event = await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-speaking',
       content: 'Internal board assessment.',
     })
@@ -36,8 +36,11 @@ describe('Assistant reply delivery', () => {
         id: 'A-event',
         target: `home:${fixture.homeId}/event:EV-speaking`,
         createdAt: '2026-07-11T00:00:00Z',
+        updatedAt: '2026-07-11T00:00:00Z',
         resolvedAt: null,
+        refs: [`home:${fixture.homeId}/event:EV-speaking`],
         notifiedAt: null,
+        operatorRequest: null,
       },
       body: 'Internal Attention body.\n',
     })
@@ -77,7 +80,7 @@ describe('Assistant reply delivery', () => {
   })
 
   test('retries the same Home/event key when webhook acknowledgement publication is lost', async () => {
-    const fixture = await setupHandledReflection()
+    const fixture = await setupHandledInternal()
     let loseAcknowledgement = true
     const workspace: AssistantWorkspaceStore = {
       ...fixture.workspace,
@@ -100,7 +103,7 @@ describe('Assistant reply delivery', () => {
   })
 
   test('backs off transport failures without blocking reconciliation ticks', async () => {
-    const fixture = await setupHandledReflection()
+    const fixture = await setupHandledInternal()
     let currentTime = Date.parse('2026-07-11T00:00:00Z')
     let sends = 0
     const worker = createAssistantReplyDeliveryWorker(
@@ -147,9 +150,9 @@ describe('Assistant reply delivery', () => {
   })
 })
 
-async function setupHandledReflection() {
+async function setupHandledInternal() {
   const fixture = await setup()
-  const event = await fixture.workspace.receiveReflectionEvent({
+  const event = await fixture.workspace.receiveSystemEvent({
     eventId: 'EV-speaking',
     content: 'Internal assessment.',
   })

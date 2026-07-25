@@ -1,7 +1,6 @@
 import {
   goalAttentionReference,
   normalizeInboxAttentionReferences,
-  workspaceAttentionReference,
 } from '../domain/attentionReference'
 import { inboxEventReference } from '../domain/inboxEventReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -33,26 +32,6 @@ export async function migrateLegacyAttentionOwnership(input: {
   }
 
   let migrated = 0
-  for (const attention of workspace.attentions.values()) {
-    if (
-      attention.attributes.resolvedAt !== null ||
-      attention.attributes.notifiedAt === null ||
-      attention.attributes.operatorRequest !== undefined
-    ) {
-      continue
-    }
-    const request = requestEvents.get(
-      workspaceAttentionReference(workspace.homeId, attention.attributes.id),
-    )
-    if (!request) continue
-    await input.workspace.markAttentionNotified(
-      attention.attributes.id,
-      new Date(attention.attributes.notifiedAt),
-      request,
-    )
-    migrated += 1
-  }
-
   for (const [projectId, project] of input.projects) {
     let goalIds: string[]
     try {

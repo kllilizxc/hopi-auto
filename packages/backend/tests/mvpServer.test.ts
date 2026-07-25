@@ -11,7 +11,6 @@ import {
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
-import { inboxEventReference } from '../src/domain/inboxEventReference'
 import {
   createServer,
   deriveAssistantFeedActivity,
@@ -20,10 +19,7 @@ import {
   presentAttempt,
 } from '../src/mvpServer'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
-import {
-  acknowledgeGoalAttention,
-  clearGoalAttentionOperatorRequest,
-} from '../src/runtime/attentionDelivery'
+import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
 import { createGoalController } from '../src/runtime/goalController'
 import { HostDirectoryPickerError } from '../src/runtime/hostDirectoryPicker'
 import { type RunAttemptSummary, createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -154,7 +150,6 @@ describe('MVP server', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: [],
-              attempts: 0,
             },
             body: 'Work.\n',
           },
@@ -199,6 +194,7 @@ describe('MVP server', () => {
       workId: 'W-1',
       runId: 'R-1',
       responsibility: 'reviewer',
+      workHash: null,
       execution: null,
       startedAt: '2026-07-11T00:00:00Z',
       endedAt: '2026-07-11T00:05:00Z',
@@ -240,43 +236,61 @@ describe('MVP server', () => {
   })
 
   test('serves the React product frontend at root and Goal routes', async () => {
-    const server = createServer({
-      rootDir: join(temporaryRoot, 'home'),
+    const reservation = Bun.serve({
       port: 0,
-      startCoordinator: false,
+      fetch: () => new Response('reserved'),
     })
-    activeServers.add(server)
-    const base = `http://127.0.0.1:${server.port}`
+    const port = reservation.port
+    reservation.stop(true)
+    const child = Bun.spawn([process.execPath, 'run', 'src/mvpServer.ts'], {
+      cwd: join(import.meta.dir, '..'),
+      env: {
+        ...process.env,
+        HOPI_HOME: join(temporaryRoot, 'home'),
+        PORT: String(port),
+      },
+      stdout: 'ignore',
+      stderr: 'inherit',
+    })
+    const base = `http://127.0.0.1:${port}`
 
-    const routes = ['/', '/projects', '/projects/P-1/board/G-1', '/projects/P-1/docs/G-1']
-    let rootHtml = ''
-    for (const path of routes) {
-      const response = await fetch(`${base}${path}`)
-      const html = await response.text()
+    try {
+      await waitForHttp(`${base}/api/state`, child)
+      const routes = ['/', '/projects', '/projects/P-1/board/G-1', '/projects/P-1/docs/G-1']
+      let rootHtml = ''
+      for (const path of routes) {
+        const response = await fetch(`${base}${path}`)
+        const html = await response.text()
 
-      expect(response.status).toBe(200)
-      expect(response.headers.get('content-type')).toContain('text/html')
-      expect(html).toContain('id="root"')
-      expect(html).toContain('HOPI')
-      if (path === '/') rootHtml = html
-    }
-
-    const assetPaths = [...rootHtml.matchAll(/(?:src|href)="([^"#]+)"/g)].map(
-      (match) => match[1] as string,
-    )
-    expect(assetPaths.length).toBeGreaterThan(0)
-    for (const path of assetPaths) {
-      const response = await fetch(new URL(path, base))
-      const asset = await response.text()
-      expect(response.status).toBe(200)
-      expect(response.headers.get('content-type')).not.toContain('application/json')
-      if (response.headers.get('content-type')?.includes('text/css')) {
-        expect(asset).not.toContain('@apply')
-        expect(asset).not.toContain('@theme')
-        expect(asset).toContain('.button--primary')
+        if (response.status !== 200) {
+          throw new Error(`${path} returned ${response.status}: ${html}`)
+        }
+        expect(response.headers.get('content-type')).toContain('text/html')
+        expect(html).toContain('id="root"')
+        expect(html).toContain('HOPI')
+        if (path === '/') rootHtml = html
       }
+
+      const assetPaths = [...rootHtml.matchAll(/(?:src|href)="([^"#]+)"/g)].map(
+        (match) => match[1] as string,
+      )
+      expect(assetPaths.length).toBeGreaterThan(0)
+      for (const path of assetPaths) {
+        const response = await fetch(new URL(path, base))
+        const asset = await response.text()
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-type')).not.toContain('application/json')
+        if (response.headers.get('content-type')?.includes('text/css')) {
+          expect(asset).not.toContain('@apply')
+          expect(asset).not.toContain('@theme')
+          expect(asset).toContain('.button--primary')
+        }
+      }
+    } finally {
+      child.kill('SIGTERM')
+      await child.exited
     }
-  })
+  }, 30_000)
 
   test('keeps host directory selection retryable after a chooser failure', async () => {
     let attempts = 0
@@ -385,12 +399,6 @@ describe('MVP server', () => {
     const toolStatuses: number[] = []
     const assistantRunner: AssistantModelRunner = {
       async run(input) {
-        if (input.toolMode === 'reflection') {
-          return {
-            reply: '',
-            session: { transport: 'codex', sessionId: 'reflection-noop' },
-          }
-        }
         const conflict = await fetch(input.toolUrl, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -471,12 +479,6 @@ describe('MVP server', () => {
     let speakingRuns = 0
     const assistantRunner: AssistantModelRunner = {
       async run(input) {
-        if (input.toolMode === 'reflection') {
-          return {
-            reply: '',
-            session: { transport: 'codex', sessionId: 'reflection-project-change' },
-          }
-        }
         speakingRuns += 1
         const projectResponse = await fetch(input.toolUrl, {
           method: 'POST',
@@ -727,8 +729,10 @@ describe('MVP server', () => {
       session: { status: 'starting' },
     })
     const failed = await waitForPreviewSession(base, 'P-scoped', 'failed')
-    expect(failed.repair).toMatchObject({ reason: 'missing' })
-    expect(failed.repair?.prompt).toContain('/apps/web/scripts/hopi/preview')
+    expect(failed).toMatchObject({
+      failureReason: 'missing',
+      error: expect.stringContaining('/apps/web/scripts/hopi/preview'),
+    })
   })
 
   test('admits slow Preview preparation without holding the HTTP request open', async () => {
@@ -774,7 +778,7 @@ describe('MVP server', () => {
 
     expect(preview).toMatchObject({
       kind: 'starting',
-      session: { status: 'starting', repair: null },
+      session: { status: 'starting', failureReason: null },
     })
     expect(await waitForPreviewSession(base, 'P-slow', 'running')).toMatchObject({
       surfaces: [
@@ -784,7 +788,7 @@ describe('MVP server', () => {
           url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/),
         },
       ],
-      repair: null,
+      failureReason: null,
     })
   })
 
@@ -865,9 +869,15 @@ describe('MVP server', () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
     const before = await checkoutSnapshot(repoRoot)
+    const publisher = new PublicationCoordinator()
+    const attemptStore = createRunAttemptStore(homeRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
     const server = createServer({
       rootDir: homeRoot,
       port: 0,
+      publisher,
+      attempts: attemptStore,
       startCoordinator: false,
     })
     activeServers.add(server)
@@ -1020,7 +1030,7 @@ describe('MVP server', () => {
     const linkedStore = createGoalPackageStore(
       linkedRepo.integrationRoot,
       'P-1',
-      new PublicationCoordinator(),
+      publisher,
       linkedRepo.projectPath,
     )
     await linkedStore.publishGoal('G-1', {
@@ -1094,9 +1104,6 @@ describe('MVP server', () => {
     expect(await request(base, '/api/state?view=shell')).toMatchObject({ attentions: [] })
     const removedAttentionEndpoint = await fetch(`${base}/api/assistant/attentions?projectId=P-1`)
     expect(removedAttentionEndpoint.status).toBe(404)
-    const attemptStore = createRunAttemptStore(homeRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
-    })
     const attempt = await attemptStore.start({
       projectId: 'P-1',
       goalId: 'G-1',
@@ -1294,85 +1301,62 @@ describe('MVP server', () => {
       session: { status: 'starting' },
     })
     const failedPreview = await waitForPreviewSession(base, 'P-1', 'failed')
-    expect(failedPreview.repair).toMatchObject({ reason: 'missing' })
-    const repair = await request(base, '/api/preview/repair', {
-      method: 'POST',
-      body: {
-        context: { projectId: 'P-1' },
-      },
+    expect(failedPreview).toMatchObject({
+      failureReason: 'missing',
+      error: expect.stringContaining('scripts/hopi/preview'),
     })
-    const repairFeed = await request(base, '/api/assistant/feed?projectId=P-1')
-    const repairEntries = repairFeed.items as Array<{
-      event?: {
-        id: string
-        status: string
-        body: string
-        context: { projectId: string; goalId: string } | null
-      }
-    }>
-    expect(repairEntries.find((entry) => entry.event?.id === repair.eventId)).toMatchObject({
-      event: {
+    const previewWorkspace = await createAssistantWorkspaceStore(
+      homeRoot,
+      publisher,
+    ).readWorkspace()
+    expect(
+      [...previewWorkspace.events.values()].find(
+        (event) =>
+          event.attributes.source === 'system' && event.body.includes('Project Preview failed.'),
+      ),
+    ).toMatchObject({
+      attributes: {
         status: 'pending',
-        body: failedPreview.repair?.prompt,
         context: { projectId: 'P-1' },
       },
     })
     expect(await checkoutSnapshot(repoRoot)).toEqual(before)
   })
 
-  test('projects open operator requests through the same scoped Feed snapshot', async () => {
+  test('projects unresolved NeedsYou replies through the scoped Feed snapshot', async () => {
     const homeRoot = join(temporaryRoot, 'assistant-request-feed-home')
     const repoRoot = await createRepo(join(temporaryRoot, 'assistant-request-feed-repo'))
     const publisher = new PublicationCoordinator()
-    const linked = await createAssistantHomeStore(homeRoot, publisher).linkProject({
+    await createAssistantHomeStore(homeRoot, publisher).linkProject({
       projectId: 'P-1',
       repoPath: repoRoot,
     })
-    const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attentionReference = 'project:P-1/goal:G-1/attention:A-choice'
-    await store.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: store.paths.attentionDocument('G-1', 'A-choice'),
-        expectedHash: null,
-        content: renderAttentionDocument({
-          attributes: {
-            id: 'A-choice',
-            target: 'project:P-1/goal:G-1/work:plan-initial',
-            createdAt: '2026-07-16T08:00:00.000Z',
-            resolvedAt: null,
-            notifiedAt: null,
-          },
-          body: 'Choose the release window.',
-        }),
-      },
-    })
     const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
-    const event = await workspace.receiveReflectionEvent({
+    const timestamp = '2026-07-16T08:00:00.000Z'
+    await workspace.createAttention({
+      attributes: {
+        id: 'A-choice',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        resolvedAt: null,
+        refs: ['project:P-1'],
+        target: 'project:P-1',
+        notifiedAt: null,
+        operatorRequest: null,
+      },
+      body: 'Choose the release window.\n',
+    })
+    const event = await workspace.receiveSystemEvent({
       eventId: 'EV-choice',
       content: 'The release window needs an operator decision.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [attentionReference],
-      },
+      context: { projectId: 'P-1' },
     })
     await workspace.handleEvent(event.attributes.id, {
-      reply: 'Choose today or tomorrow.',
-      disposition: 'operator-requested',
+      reply: '<NeedsYou attentionId="A-choice">Choose today or tomorrow.</NeedsYou>',
+      disposition: 'notified',
       expose: true,
       handledAt: new Date('2026-07-16T08:01:00.000Z'),
     })
-    const workspaceState = await workspace.readWorkspace()
-    const operatorRequest = inboxEventReference(workspaceState.homeId, event.attributes.id)
-    await acknowledgeGoalAttention(
-      store,
-      'G-1',
-      'A-choice',
-      new Date('2026-07-16T08:01:01.000Z'),
-      operatorRequest,
-    )
 
     const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
     activeServers.add(server)
@@ -1383,11 +1367,9 @@ describe('MVP server', () => {
         eventId: 'EV-choice',
         attentions: [
           expect.objectContaining({
-            scope: 'goal',
+            scope: 'workspace',
             projectId: 'P-1',
-            goalId: 'G-1',
             id: 'A-choice',
-            operatorRequest,
           }),
         ],
       },
@@ -1396,23 +1378,19 @@ describe('MVP server', () => {
 
     const changes = await request(
       base,
-      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(
-        String(feed.syncCursor),
-      )}`,
+      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(String(feed.syncCursor))}`,
     )
     expect(changes.requests).toEqual(feed.requests)
 
-    await clearGoalAttentionOperatorRequest(store, 'G-1', 'A-choice', operatorRequest)
-    const afterReturnToAssistant = await request(
+    await workspace.resolveAttention('A-choice', 'Tomorrow was selected.')
+    const resolved = await request(
       base,
-      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(
-        String(changes.syncCursor),
-      )}`,
+      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(String(changes.syncCursor))}`,
     )
-    expect(afterReturnToAssistant.requests).toEqual([])
+    expect(resolved.requests).toEqual([])
   })
 
-  test('keeps Project Attention explicit after rebind and exposes it on the Board contract', async () => {
+  test('keeps Project Attention independent from Repo recovery and Work readiness', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
     const publisher = new PublicationCoordinator()
@@ -1441,29 +1419,8 @@ describe('MVP server', () => {
     activeServers.add(server)
     const base = `http://127.0.0.1:${server.port}`
 
-    const blockedPreview = await fetch(`${base}/api/projects/P-1/preview/start`, { method: 'POST' })
-    expect(blockedPreview.status).toBe(409)
     expect(await request(base, '/api/state')).toMatchObject({
       projects: [{ projectId: 'P-1', openAttentionCount: 1 }],
-    })
-    const blockedGoal = await request(base, '/api/projects/P-1/goals/G-1')
-    expect(blockedGoal).toMatchObject({
-      projectAttention: {
-        scope: 'workspace',
-        projectId: 'P-1',
-        target: 'project:P-1',
-        createdAt: expect.any(String),
-        body: expect.stringContaining('The Repo path moved.'),
-      },
-      works: [
-        {
-          blockedBy: 'Project',
-          projection: {
-            primaryBadge: 'waiting',
-            failedPredicates: ['project_ineligible'],
-          },
-        },
-      ],
     })
 
     const state = await request(base, '/api/projects/P-1/rebind', {
@@ -1481,12 +1438,17 @@ describe('MVP server', () => {
     expect(state).toMatchObject({
       projects: [{ projectId: 'P-1', openAttentionCount: 1 }],
     })
-    expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
+    const goal = await request(base, '/api/projects/P-1/goals/G-1')
+    expect(goal).toMatchObject({
       projectAttention: { target: 'project:P-1', resolvedAt: null },
+      works: [{ projection: { failedPredicates: [] } }],
     })
+    expect((goal as { works: Array<{ blockedBy?: string }> }).works[0]?.blockedBy).not.toBe(
+      'Project',
+    )
   })
 
-  test('creates reconciliation Attention when Rebind replaces a Repo with nonterminal Work', async () => {
+  test('records a factual system event when Rebind replaces a Repo with nonterminal Work', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const originalRepo = await createRepo(join(temporaryRoot, 'original'))
     const replacementRepo = await createRepo(join(temporaryRoot, 'replacement'))
@@ -1516,22 +1478,35 @@ describe('MVP server', () => {
         {
           projectId: 'P-1',
           repoPath: await realpath(replacementRepo),
-          openAttentionCount: 1,
+          openAttentionCount: 0,
         },
       ],
-      attentions: [
-        {
-          target: 'project:P-1',
-          resolvedAt: null,
-          body: expect.stringContaining('Repo binding changed'),
-        },
-      ],
+      attentions: [],
+    })
+    const workspace = await createAssistantWorkspaceStore(
+      homeRoot,
+      new PublicationCoordinator(),
+    ).readWorkspace()
+    expect(
+      [...workspace.events.values()].find(
+        (event) =>
+          event.attributes.source === 'system' && event.body.includes('Repo bindings changed'),
+      ),
+    ).toMatchObject({
+      attributes: {
+        status: 'pending',
+        context: { projectId: 'P-1' },
+      },
     })
     expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
-      projectAttention: {
-        target: 'project:P-1',
-        body: expect.stringContaining('nonterminal Work'),
-      },
+      projectAttention: null,
+      works: [
+        {
+          projection: {
+            failedPredicates: [],
+          },
+        },
+      ],
     })
   })
 
@@ -1728,7 +1703,6 @@ describe('MVP server', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: [],
-              attempts: 0,
             },
             body: 'Write the report.\n',
           }),
@@ -1911,6 +1885,7 @@ describe('MVP server', () => {
     const server = createServer({
       rootDir: homeRoot,
       port: 0,
+      publisher,
       startCoordinator: false,
     })
     activeServers.add(server)
@@ -2071,7 +2046,12 @@ describe('MVP server', () => {
       disposition: 'answered',
       handledAt: new Date('2026-07-16T08:00:01.000Z'),
     })
-    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    const server = createServer({
+      rootDir: homeRoot,
+      port: 0,
+      publisher,
+      startCoordinator: false,
+    })
     activeServers.add(server)
     const base = `http://127.0.0.1:${server.port}`
     const initial = await request(base, '/api/assistant/feed?projectId=P-1')
@@ -2129,6 +2109,7 @@ describe('MVP server', () => {
     const server = createServer({
       rootDir: homeRoot,
       port: 0,
+      publisher,
       startCoordinator: false,
     })
     activeServers.add(server)
@@ -2157,13 +2138,13 @@ describe('MVP server', () => {
     })
   })
 
-  test('hides internal Reflection turns and projects only explicitly exposed updates', async () => {
+  test('hides internal system turns and exposes deterministic wake diagnostics', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const publisher = new PublicationCoordinator()
     const home = createAssistantHomeStore(homeRoot, publisher)
     await home.initialize()
     const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
-    await workspace.receiveReflectionEvent({
+    await workspace.receiveSystemEvent({
       eventId: 'EV-hidden',
       content: 'No operator action is useful.',
     })
@@ -2171,7 +2152,7 @@ describe('MVP server', () => {
       reply: 'Remain silent.',
       disposition: 'internal-noop',
     })
-    await workspace.receiveReflectionEvent({
+    await workspace.receiveSystemEvent({
       eventId: 'EV-public',
       content: 'A decision is required.',
     })
@@ -2180,21 +2161,15 @@ describe('MVP server', () => {
       reply: 'Please choose the release strategy.',
       disposition: 'notified',
     })
-    const reflectionRoot = join(
-      homeRoot,
-      '.hopi',
-      'runtime',
-      'assistant',
-      'reflections',
-      'RF-debug',
-    )
-    await mkdir(reflectionRoot, { recursive: true })
+    const wakeRoot = join(homeRoot, '.hopi', 'runtime', 'assistant', 'wakes', 'runs', 'WK-debug')
+    await mkdir(wakeRoot, { recursive: true })
     await Bun.write(
-      join(reflectionRoot, 'reflection.json'),
+      join(wakeRoot, 'reflection.json'),
       JSON.stringify({
         version: 1,
-        reflectionId: 'RF-debug',
+        reflectionId: 'WK-debug',
         stateDigest: 'd'.repeat(64),
+        scope: { kind: 'home' },
         status: 'completed',
         startedAt: '2026-07-11T00:00:00.000Z',
         endedAt: '2026-07-11T00:00:01.000Z',
@@ -2203,7 +2178,7 @@ describe('MVP server', () => {
       }),
     )
     await Bun.write(
-      join(reflectionRoot, 'events.jsonl'),
+      join(wakeRoot, 'events.jsonl'),
       `${JSON.stringify({
         eventId: 'RE-1',
         createdAt: '2026-07-11T00:00:00.500Z',
@@ -2230,7 +2205,7 @@ describe('MVP server', () => {
           kind: 'event',
           event: {
             id: 'EV-public',
-            source: 'reflection',
+            source: 'system',
             visibility: 'public',
             reply: 'Please choose the release strategy.',
           },
@@ -2240,11 +2215,11 @@ describe('MVP server', () => {
     expect(await request(base, '/api/debug/reflections')).toMatchObject({
       items: [
         {
-          manifest: { reflectionId: 'RF-debug', handoffEventId: 'EV-public' },
+          manifest: { reflectionId: 'WK-debug', handoffEventId: 'EV-public' },
         },
       ],
     })
-    expect(await request(base, '/api/debug/reflections/RF-debug/events')).toMatchObject({
+    expect(await request(base, '/api/debug/reflections/WK-debug/events')).toMatchObject({
       items: [{ summary: 'A decision is required.' }],
     })
   })
@@ -2290,6 +2265,21 @@ async function createCompletedGoal(
   await createGoalController(store, {
     verifyCompletion: () => true,
   }).completeGoal(goalId, attentionId)
+}
+
+async function waitForHttp(url: string, child: ReturnType<typeof Bun.spawn>, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(`Frontend test server exited with code ${child.exitCode}`)
+    }
+    try {
+      const response = await fetch(url)
+      if (response.ok) return
+    } catch {}
+    await Bun.sleep(25)
+  }
+  throw new Error(`Frontend test server did not become ready: ${url}`)
 }
 
 async function request(

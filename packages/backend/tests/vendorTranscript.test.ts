@@ -955,4 +955,65 @@ describe('normalizeProcessOutputLine', () => {
 
     expect(entries).toEqual([])
   })
+
+  test('does not duplicate structured Codex command output mirrored on stderr', () => {
+    const normalizer = createProcessTranscriptNormalizer()
+    const completed = normalizer.normalize({
+      format: 'codex_jsonl',
+      stream: 'stdout',
+      role: 'generator',
+      line: JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item-1',
+          type: 'command_execution',
+          command: 'bun test',
+          aggregated_output: 'first failure\nsecond failure\nfirst failure\n',
+          exit_code: 1,
+          status: 'failed',
+        },
+      }),
+    })
+
+    expect(completed).toHaveLength(1)
+    expect(
+      normalizer.normalize({
+        format: 'codex_jsonl',
+        stream: 'stderr',
+        role: 'generator',
+        line: 'first failure',
+      }),
+    ).toEqual([])
+    expect(
+      normalizer.normalize({
+        format: 'codex_jsonl',
+        stream: 'stderr',
+        role: 'generator',
+        line: 'second failure',
+      }),
+    ).toEqual([])
+    expect(
+      normalizer.normalize({
+        format: 'codex_jsonl',
+        stream: 'stderr',
+        role: 'generator',
+        line: 'first failure',
+      }),
+    ).toEqual([])
+    expect(
+      normalizer.normalize({
+        format: 'codex_jsonl',
+        stream: 'stderr',
+        role: 'generator',
+        line: 'provider connection failed',
+      }),
+    ).toEqual([
+      {
+        kind: 'transcript',
+        transport: 'codex',
+        entryKind: 'error',
+        summary: 'provider connection failed',
+      },
+    ])
+  })
 })

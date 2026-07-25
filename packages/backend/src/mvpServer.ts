@@ -15,7 +15,11 @@ import {
 import { AssistantToolRequestError } from './assistant/assistantToolRequestError'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
-import type { InboxEventDocument } from './domain/assistantWorkspaceDocuments'
+import {
+  type InboxEventDocument,
+  isInternalInboxSource,
+  workspaceAttentionProjectId,
+} from './domain/assistantWorkspaceDocuments'
 import {
   goalAttentionReference,
   normalizeInboxAttentionReferences,
@@ -25,7 +29,7 @@ import {
 import { workAttentionTarget } from './domain/attentionTarget'
 import type { WorkDocument } from './domain/canonicalDocuments'
 import { type GoalPackage, GoalPackageNotFoundError } from './domain/goalPackage'
-import { inboxEventReferenceSchema, parseInboxEventReference } from './domain/inboxEventReference'
+import { inboxEventReferenceSchema } from './domain/inboxEventReference'
 import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
@@ -36,6 +40,7 @@ import { type WorkProjection, deriveGoalWorkProjections } from './domain/workPro
 import { CursorPageError, type CursorPageRequest, paginateItems } from './presentation/cursorPage'
 import indexPage from './product.html'
 import { acquireCoordinatorInstanceLock } from './publication/instanceLock'
+import type { PublicationCoordinator } from './publication/publisher'
 import {
   defaultAssistantHomeRoot,
   migrateRepositoryAssistantHome,
@@ -66,7 +71,7 @@ import {
   withPreparedProjectRepositories,
 } from './runtime/projectDirectory'
 import type { RunAttemptDiagnostics } from './runtime/runAttemptDiagnostics'
-import type { RunAttemptSummary } from './runtime/runAttemptStore'
+import type { RunAttemptStore, RunAttemptSummary } from './runtime/runAttemptStore'
 import { type RunCostEntry, summarizeRunCosts } from './runtime/runCostProjection'
 import { AssistantHomeStoreError } from './storage/assistantHomeStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
@@ -75,9 +80,10 @@ import { createProjectAgentAccessStore } from './storage/projectAgentAccessStore
 export interface ServerOptions {
   rootDir?: string
   port?: number
+  publisher?: PublicationCoordinator
+  attempts?: RunAttemptStore
   roleRunner?: RoleRunner
   assistantRunner?: AssistantModelRunner
-  reflectionRunner?: AssistantModelRunner
   attentionTransport?: AttentionTransport
   startCoordinator?: boolean
   directoryPicker?: () => Promise<string | null>
@@ -176,17 +182,6 @@ const inboxSchema = z
       .optional(),
   })
   .strict()
-const previewRepairSchema = z
-  .object({
-    context: z
-      .object({
-        projectId: stableIdSchema,
-        goalId: stableIdSchema.optional(),
-      })
-      .strict(),
-  })
-  .strict()
-
 export function createServer(options: ServerOptions = {}): MvpServer {
   assertSupportedPlatform(process.platform)
   const homeRoot = options.rootDir ?? process.cwd()
@@ -197,9 +192,10 @@ export function createServer(options: ServerOptions = {}): MvpServer {
   const projectAgentAccess = createProjectAgentAccessStore(homeRoot)
   const runtimeOptions: CreateMvpRuntimeOptions = {
     homeRoot,
+    publisher: options.publisher,
+    attempts: options.attempts,
     roleRunner: options.roleRunner,
     assistantRunner: options.assistantRunner,
-    reflectionRunner: options.reflectionRunner,
     attentionTransport:
       options.attentionTransport ??
       (process.env.HOPI_ATTENTION_WEBHOOK_URL
@@ -783,16 +779,6 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         const previewRoute = matchPreviewRoute(parts)
         if (previewRoute && request.method === 'POST' && previewRoute.action === 'start') {
           const project = requireProject(runtime.projects, previewRoute.projectId)
-          const workspace = await runtime.workspace.readWorkspace()
-          if (
-            [...workspace.attentions.values()].some(
-              (attention) =>
-                attention.attributes.target === `project:${project.projectId}` &&
-                attention.attributes.resolvedAt === null,
-            )
-          ) {
-            throw new ApiError(409, 'Preview is blocked until Project Attention is resolved')
-          }
           const repoRoots = project.repos.map((repo) => ({
             repoId: repo.repoId,
             path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
@@ -826,23 +812,6 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json({
             session: runtime.preview.inspect(previewRoute.projectId),
           })
-        }
-        if (request.method === 'POST' && url.pathname === '/api/preview/repair') {
-          const body = await parseBody(request, previewRepairSchema)
-          const project = requireProject(runtime.projects, body.context.projectId)
-          if (body.context.goalId && !(await project.store.readGoal(body.context.goalId))) {
-            throw new ApiError(404, `Goal not found: ${body.context.goalId}`)
-          }
-          const repair = runtime.preview.inspect(body.context.projectId)?.repair
-          if (!repair) {
-            throw new ApiError(409, 'Project Preview has no current repair request')
-          }
-          const event = await receiveUserEvent(runtime, {
-            content: repair.prompt,
-            context: body.context,
-          })
-          runtime.coordinator.wake()
-          return json({ eventId: event.attributes.id }, 202)
         }
         return json({ error: 'Not found' }, 404)
       } catch (error) {
@@ -902,7 +871,7 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
   const includeAttentions = options.includeAttentions ?? true
   const [home, workspace, agentRoleSettingEntries, attemptSnapshot] = await Promise.all([
     runtime.home.readHome(),
-    runtime.workspace.readWorkspace(),
+    runtime.workspace.readWorkspaceForControl(),
     Promise.all(
       CONFIGURABLE_AGENT_ROLES.map(
         async (role) => [role, await runtime.readAgentRoleCodingDefaults(role)] as const,
@@ -918,9 +887,9 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
   const projects = []
   const goalAttentions = []
   for (const project of runtime.projects.values()) {
-    const projectAttention = [...workspace.attentions.values()].find(
+    const projectAttentions = [...workspace.attentions.values()].filter(
       (attention) =>
-        attention.attributes.target === `project:${project.projectId}` &&
+        workspaceAttentionProjectId(attention) === project.projectId &&
         attention.attributes.resolvedAt === null,
     )
     const goals = []
@@ -930,25 +899,21 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       goalPackage: GoalPackage
     }> = []
     try {
-      for (const goalId of await project.store.listGoalIds()) {
-        readableGoalPackages.push({
-          goalId,
-          goalPackage: await project.store.readPackage(goalId),
-        })
+      for (const [goalId, goalPackage] of await project.store.readReconciliationSnapshot()) {
+        readableGoalPackages.push({ goalId, goalPackage })
       }
-    } catch (error) {
-      if (!projectAttention) throw error
-    }
+    } catch {}
     for (const { goalId, goalPackage } of readableGoalPackages) {
-      const projectAttentionOpen = Boolean(projectAttention)
       const liveWorkIds = new Set(
         runningAttempts
           .filter((attempt) => attempt.projectId === project.projectId && attempt.goalId === goalId)
           .map((attempt) => attempt.workId),
       )
       const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
-        projectEligible: !projectAttentionOpen,
+        projectEligible: true,
         liveRunWorkIds: liveWorkIds,
+        settledFailureWorkIds:
+          (await project.reconciler.settledFailureWorkIds?.(goalId, goalPackage)) ?? new Set(),
         passCapacity: { planner: true, generator: true, reviewer: true },
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
@@ -984,7 +949,7 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       projectPath: project.projectPath,
       guidance: await readProjectGuidance(project.sourceRoot),
       preview: runtime.preview.inspect(project.projectId),
-      openAttentionCount: goalOpenAttentionCount + (projectAttention ? 1 : 0),
+      openAttentionCount: goalOpenAttentionCount + projectAttentions.length,
       goals,
     })
   }
@@ -1112,7 +1077,7 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
   )
   const internalSpeakingEvents = workspaceEvents.filter(
     (event) =>
-      event.attributes.source === 'reflection' &&
+      isInternalInboxSource(event.attributes.source) &&
       event.attributes.visibility === 'internal' &&
       event.attributes.status === 'pending' &&
       assistantEventBelongsToScope(event, scope),
@@ -1154,7 +1119,8 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       left.attributes.receivedAt.localeCompare(right.attributes.receivedAt) ||
       left.attributes.id.localeCompare(right.attributes.id),
   )) {
-    if (event.attributes.source !== 'reflection' || event.attributes.status !== 'handled') continue
+    if (!isInternalInboxSource(event.attributes.source) || event.attributes.status !== 'handled')
+      continue
     const reference = event.attributes.context
       ? normalizeInboxAttentionReferences(event.attributes.context).find(
           (candidate) =>
@@ -1241,22 +1207,53 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
   }
 }
 
+interface ScopedAssistantAttentionBase {
+  id: string
+  target: string | null
+  createdAt: string
+  resolvedAt: string | null
+  notifiedAt: string | null
+  operatorRequest: string | null
+  body: string
+}
+
+type ScopedAssistantAttention =
+  | (ScopedAssistantAttentionBase & {
+      scope: 'workspace'
+      projectId?: string
+    })
+  | (ScopedAssistantAttentionBase & {
+      scope: 'goal'
+      projectId: string
+      goalId: string
+    })
+
 async function readScopedAssistantAttentions(
   runtime: MvpRuntime,
   scope: AssistantConversationScope,
   workspace: Awaited<ReturnType<MvpRuntime['workspace']['readWorkspace']>>,
-) {
+): Promise<ScopedAssistantAttention[]> {
   if (scope.kind === 'home') {
-    return [...workspace.attentions.values()].map((attention) => ({
+    return [...workspace.attentions.values()]
+      .filter((attention) => workspaceAttentionProjectId(attention) === null)
+      .map((attention) => ({
+        scope: 'workspace' as const,
+        ...attention.attributes,
+        operatorRequest: attention.attributes.operatorRequest ?? null,
+        body: attention.body,
+      }))
+  }
+
+  const project = requireProject(runtime.projects, scope.projectId)
+  const attentions: ScopedAssistantAttention[] = [...workspace.attentions.values()]
+    .filter((attention) => workspaceAttentionProjectId(attention) === scope.projectId)
+    .map((attention) => ({
       scope: 'workspace' as const,
+      projectId: scope.projectId,
       ...attention.attributes,
       operatorRequest: attention.attributes.operatorRequest ?? null,
       body: attention.body,
     }))
-  }
-
-  const project = requireProject(runtime.projects, scope.projectId)
-  const attentions = []
   for (const goalId of await project.store.listGoalIds()) {
     try {
       attentions.push(
@@ -1266,18 +1263,46 @@ async function readScopedAssistantAttentions(
           await project.store.readPackage(goalId),
         ).map((attention) => ({ scope: 'goal' as const, ...attention })),
       )
-    } catch {
-      // Project recovery remains visible through Workspace Attention when a Goal package is unreadable.
-    }
+    } catch {}
   }
   return attentions
 }
 
 function projectAssistantOpenRequests(
-  homeId: string,
+  _homeId: string,
   events: ReadonlyMap<string, InboxEventDocument>,
   attentions: Awaited<ReturnType<typeof readScopedAssistantAttentions>>,
 ) {
+  const openById = new Map<string, (typeof attentions)[number] | null>()
+  for (const attention of attentions) {
+    if (attention.resolvedAt !== null) continue
+    openById.set(attention.id, openById.has(attention.id) ? null : attention)
+  }
+  const latestByAttention = new Map<
+    string,
+    { eventId: string; occurredAt: string; attention: (typeof attentions)[number] }
+  >()
+  for (const event of [...events.values()].toSorted((left, right) =>
+    left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
+  )) {
+    if (
+      event.attributes.status !== 'handled' ||
+      event.attributes.visibility !== 'public' ||
+      !event.attributes.reply
+    ) {
+      continue
+    }
+    for (const attentionId of needsYouAttentionIds(event.attributes.reply)) {
+      const attention = openById.get(attentionId)
+      if (!attention) continue
+      latestByAttention.set(attentionId, {
+        eventId: event.attributes.id,
+        occurredAt: event.attributes.receivedAt,
+        attention,
+      })
+    }
+  }
+
   const grouped = new Map<
     string,
     {
@@ -1286,33 +1311,18 @@ function projectAssistantOpenRequests(
       attentions: (typeof attentions)[number][]
     }
   >()
-  for (const attention of attentions) {
-    if (attention.resolvedAt !== null || !attention.operatorRequest) continue
-    const request = parseInboxEventReference(attention.operatorRequest)
-    if (!request || request.homeId !== homeId) continue
-    const event = events.get(request.eventId)
-    if (
-      !event ||
-      event.attributes.visibility !== 'public' ||
-      !event.attributes.context ||
-      !normalizeInboxAttentionReferences(event.attributes.context).includes(
-        attention.scope === 'goal'
-          ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
-          : workspaceAttentionReference(homeId, attention.id),
-      )
-    ) {
-      continue
-    }
-    const existing = grouped.get(request.eventId)
-    if (existing) existing.attentions.push(attention)
+  for (const entry of latestByAttention.values()) {
+    const existing = grouped.get(entry.eventId)
+    if (existing) existing.attentions.push(entry.attention)
     else {
-      grouped.set(request.eventId, {
-        eventId: request.eventId,
-        occurredAt: event.attributes.receivedAt,
-        attentions: [attention],
+      grouped.set(entry.eventId, {
+        eventId: entry.eventId,
+        occurredAt: entry.occurredAt,
+        attentions: [entry.attention],
       })
     }
   }
+
   return [...grouped.values()]
     .sort(
       (left, right) =>
@@ -1323,6 +1333,16 @@ function projectAssistantOpenRequests(
       eventId,
       attentions: groupedAttentions,
     }))
+}
+
+function needsYouAttentionIds(reply: string) {
+  const ids = new Set<string>()
+  const pattern = /<NeedsYou\s+attentionId=(?:"([^"]+)"|'([^']+)')\s*>[\s\S]*?<\/NeedsYou>/giu
+  for (const match of reply.matchAll(pattern)) {
+    const attentionId = match[1] ?? match[2]
+    if (attentionId && stableIdSchema.safeParse(attentionId).success) ids.add(attentionId)
+  }
+  return [...ids]
 }
 
 type AssistantFeedRuntimeStatus = 'queued' | 'running' | 'interrupted' | 'completed' | 'failed'
@@ -1501,11 +1521,6 @@ async function receiveUserEvent(
   input: Parameters<MvpRuntime['workspace']['receiveEvent']>[0],
 ) {
   const event = await runtime.workspace.receiveEvent(input)
-  try {
-    await runtime.assistantTools.acceptUserAttentionReply(event.attributes.id)
-  } catch (error) {
-    console.error('[assistant attention reply acknowledgement error]', error)
-  }
   runtime.coordinator.interruptInternalAssistant()
   return event
 }
@@ -1550,7 +1565,8 @@ async function presentGoal(
   view: 'full' | 'board' | 'docs' = 'full',
 ) {
   const project = requireProject(runtime.projects, projectId)
-  const goalPackage = await project.store.readPackage(goalId)
+  const goalPackage = (await project.store.readReconciliationSnapshot()).get(goalId)
+  if (!goalPackage) throw new ApiError(404, `Goal not found: ${goalId}`)
   if (view === 'docs') {
     const designSnapshot = await runtime.publisher.snapshotTree(
       project.store.paths.publicationRoot,
@@ -1589,13 +1605,14 @@ async function presentGoal(
   )
   const projectAttention = [...workspace.attentions.values()].find(
     (attention) =>
-      attention.attributes.target === `project:${projectId}` &&
+      workspaceAttentionProjectId(attention) === projectId &&
       attention.attributes.resolvedAt === null,
   )
-  const projectAttentionOpen = Boolean(projectAttention)
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
-    projectEligible: !projectAttentionOpen,
+    projectEligible: true,
     liveRunWorkIds: liveWorkIds,
+    settledFailureWorkIds:
+      (await project.reconciler.settledFailureWorkIds?.(goalId, goalPackage)) ?? new Set(),
     passCapacity: { planner: true, generator: true, reviewer: true },
   })
   const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
@@ -1657,7 +1674,9 @@ async function presentGoal(
 
 async function presentGoalExecutionCost(runtime: MvpRuntime, projectId: string, goalId: string) {
   const project = requireProject(runtime.projects, projectId)
-  await project.store.readPackage(goalId)
+  if (!(await project.store.readReconciliationSnapshot()).has(goalId)) {
+    throw new ApiError(404, `Goal not found: ${goalId}`)
+  }
   const attemptsByWork = await runtime.attempts.listGoal(projectId, goalId)
   const entries: RunCostEntry[] = []
   for (const [workId, attempts] of attemptsByWork) {

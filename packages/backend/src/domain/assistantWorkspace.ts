@@ -10,14 +10,11 @@ import {
   type InboxEventDocument,
   type WorkspaceAttentionDocument,
   inboxSourceDigest,
+  isInternalInboxSource,
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
 } from './assistantWorkspaceDocuments'
-import {
-  normalizeInboxAttentionReferences,
-  parseAttentionReference,
-  workspaceAttentionReference,
-} from './attentionReference'
+import { parseAttentionReference } from './attentionReference'
 import { parseInboxEventReference } from './inboxEventReference'
 import { DEFAULT_PRIMARY_REPO_ID, type ProjectLink } from './project'
 import {
@@ -296,7 +293,7 @@ export async function validateAssistantWorkspaceTransition(
     }
     if (
       (event.attributes.source === 'user' && event.attributes.visibility !== 'public') ||
-      (event.attributes.source === 'reflection' && event.attributes.visibility !== 'internal')
+      (isInternalInboxSource(event.attributes.source) && event.attributes.visibility !== 'internal')
     ) {
       throw invalid(`New Inbox event has invalid source visibility: ${eventId}`)
     }
@@ -329,7 +326,7 @@ function validateEventTransition(previous: InboxEventDocument, next: InboxEventD
   }
   if (before.visibility !== after.visibility) {
     if (
-      before.source !== 'reflection' ||
+      !isInternalInboxSource(before.source) ||
       before.status !== 'pending' ||
       before.visibility !== 'internal' ||
       after.visibility !== 'public'
@@ -368,33 +365,11 @@ function validateAttentionTransition(
 ) {
   const before = previous.attributes
   const after = next.attributes
-  if (
-    before.id !== after.id ||
-    before.target !== after.target ||
-    before.createdAt !== after.createdAt
-  ) {
-    throw invalid(`Workspace Attention identity or target changed: ${before.id}`)
+  if (before.id !== after.id || before.createdAt !== after.createdAt) {
+    throw invalid(`Workspace Attention identity changed: ${before.id}`)
   }
-  if (before.resolvedAt !== null && before.resolvedAt !== after.resolvedAt) {
-    throw invalid(`Workspace Attention resolution changed: ${before.id}`)
-  }
-  if (before.notifiedAt !== null && before.notifiedAt !== after.notifiedAt) {
-    throw invalid(`Workspace Attention notification changed: ${before.id}`)
-  }
-  const beforeOperatorRequest = before.operatorRequest ?? null
-  const afterOperatorRequest = after.operatorRequest ?? null
-  if (before.resolvedAt !== null && beforeOperatorRequest !== afterOperatorRequest) {
-    throw invalid(`Resolved Workspace Attention ownership changed: ${before.id}`)
-  }
-  if (
-    beforeOperatorRequest !== null &&
-    afterOperatorRequest !== null &&
-    beforeOperatorRequest !== afterOperatorRequest
-  ) {
-    throw invalid(`Workspace Attention operator request changed without a reply: ${before.id}`)
-  }
-  if (!next.body.startsWith(previous.body)) {
-    throw invalid(`Workspace Attention body was rewritten: ${before.id}`)
+  if (before.resolvedAt !== null && JSON.stringify(previous) !== JSON.stringify(next)) {
+    throw invalid(`Resolved Workspace Attention changed: ${before.id}`)
   }
 }
 
@@ -439,51 +414,16 @@ function validateReferences(
       }
     }
   }
-  const openProjectTargets = new Set<string>()
   for (const attention of attentions.values()) {
-    const { target, resolvedAt } = attention.attributes
-    const operatorRequest = attention.attributes.operatorRequest ?? null
-    if (operatorRequest) {
-      const parsedRequest = parseInboxEventReference(operatorRequest)
-      const requestEvent = parsedRequest ? events.get(parsedRequest.eventId) : null
-      const attentionReference = workspaceAttentionReference(homeId, attention.attributes.id)
-      if (
-        !parsedRequest ||
-        parsedRequest.homeId !== homeId ||
-        !requestEvent ||
-        requestEvent.attributes.source !== 'reflection' ||
-        requestEvent.attributes.visibility !== 'public' ||
-        requestEvent.attributes.status !== 'handled' ||
-        !requestEvent.attributes.context ||
-        !normalizeInboxAttentionReferences(requestEvent.attributes.context).includes(
-          attentionReference,
-        )
-      ) {
+    for (const reference of attention.attributes.refs) {
+      if (!reference.startsWith('project:')) continue
+      const projectId = reference.slice('project:'.length)
+      if (!projectId.includes('/') && !projectIds.has(projectId)) {
         throw invalid(
-          `Workspace Attention ${attention.attributes.id} has an invalid operator request`,
+          `Workspace Attention ${attention.attributes.id} references an unlinked Project`,
         )
       }
     }
-    const eventPrefix = `home:${homeId}/event:`
-    const projectPrefix = 'project:'
-    if (target.startsWith(eventPrefix)) {
-      if (!events.has(target.slice(eventPrefix.length))) {
-        throw invalid(`Workspace Attention ${attention.attributes.id} targets a missing event`)
-      }
-      continue
-    }
-    if (target.startsWith(projectPrefix)) {
-      const projectId = target.slice(projectPrefix.length)
-      if (!projectIds.has(projectId)) {
-        throw invalid(`Workspace Attention ${attention.attributes.id} targets an unlinked Project`)
-      }
-      if (resolvedAt === null && openProjectTargets.has(projectId)) {
-        throw invalid(`More than one open Workspace Attention targets Project ${projectId}`)
-      }
-      if (resolvedAt === null) openProjectTargets.add(projectId)
-      continue
-    }
-    throw invalid(`Workspace Attention ${attention.attributes.id} has an invalid target`)
   }
 }
 

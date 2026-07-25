@@ -59,6 +59,8 @@ docs/*
 !docs/mvp_execution.md
 !docs/mvp_multi_repo.md
 !docs/mvp_publish_protocol.md
+!docs/mvp_project_owner.md
+!docs/mvp_project_runtime.md
 !docs/mvp_state_machine.md
 !docs/multi_vendor_agent_support.md
 !docs/e2e_harness.md

@@ -2,11 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
-import { renderAttentionDocument } from '../src/domain/canonicalDocuments'
+import type { WorkspaceAttentionDocument } from '../src/domain/assistantWorkspaceDocuments'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { type MvpRuntime, createMvpRuntime } from '../src/runtime/mvpRuntime'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
-import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-attention-e2e')
 
@@ -19,486 +18,131 @@ afterEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
 })
 
-describe('Reflection to operator Attention E2E', () => {
-  test('keeps speaking and Reflection runners on their configured boundaries', async () => {
-    const repoRoot = join(temporaryRoot, 'runner-boundary-repo')
-    await initializeGitRepo(repoRoot)
-    const homeRoot = join(temporaryRoot, 'runner-boundary-home')
-    const mainModes: Array<string | undefined> = []
-    const reflectionModes: Array<string | undefined> = []
-    const mainRunner: AssistantModelRunner = {
-      async run(input) {
-        mainModes.push(input.toolMode)
-        return { reply: 'Speaking reply.', session: codexSession('main-boundary') }
-      },
-    }
-    const reflectionRunner: AssistantModelRunner = {
-      async run(input) {
-        reflectionModes.push(input.toolMode)
-        return { reply: 'No handoff.', session: codexSession('reflection-boundary') }
-      },
-    }
-    const home = createAssistantHomeStore(homeRoot, new PublicationCoordinator())
-    await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
-    const runtime = await createMvpRuntime({
-      homeRoot,
-      assistantRunner: mainRunner,
-      reflectionRunner,
-      start: false,
-    })
-    await runtime.workspace.receiveEvent({ eventId: 'EV-user', content: 'Report status.' })
-
-    await runtime.assistant.process('EV-user')
-    await runtime.workspace.createAttention({
-      attributes: {
-        id: 'A-runner-boundary',
-        target: 'project:P-1',
-        createdAt: '2026-07-14T00:00:00Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: 'Inspect this state change.\n',
-    })
-    expect(await runtime.reflection.observe({ settled: false })).toBe('started')
-    await runtime.reflection.waitForIdle()
-
-    expect(mainModes).toEqual(['main'])
-    expect(reflectionModes).toEqual(['reflection'])
-  })
-
-  test('projects Needs you only after an explicit handoff reply is durable', async () => {
-    const repoRoot = join(temporaryRoot, 'repo')
-    await initializeGitRepo(repoRoot)
-    const homeRoot = join(temporaryRoot, 'home')
-    const publisher = new PublicationCoordinator()
-    const home = createAssistantHomeStore(homeRoot, publisher)
-    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
-    const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
-    await goalStore.createGoal({ goalId: 'G-1', title: 'Release', objective: 'Ship safely.' })
-    await goalStore.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: goalStore.paths.attentionDocument('G-1', 'A-window'),
-        expectedHash: null,
-        content: renderAttentionDocument({
-          attributes: {
-            id: 'A-window',
-            target: 'project:P-1/goal:G-1',
-            createdAt: '2026-07-13T00:00:00Z',
-            resolvedAt: null,
-            notifiedAt: null,
-          },
-          body: '## Needs you\n\nChoose today or tomorrow.\n',
-        }),
-      },
-    })
-
-    const runtimeRef: { current: MvpRuntime | null } = { current: null }
+describe('Project Assistant wake and Attention E2E', () => {
+  test('uses one persistent Project session for user speech and internal supervision', async () => {
+    const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
     const runner: AssistantModelRunner = {
       async run(input) {
-        if (input.toolMode === 'reflection') {
-          if (!runtimeRef.current) throw new Error('Runtime is not ready')
-          await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_handoff_to_main', {
-            brief: 'The release-window Attention requires a speaking turn.',
-            context: {
-              projectId: 'P-1',
-              goalId: 'G-1',
-              attentionRefs: ['project:P-1/goal:G-1/attention:A-window'],
-            },
-          })
-          return { reply: 'No handoff.', session: codexSession('reflection-e2e') }
-        }
-        if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_request_user', {
-          attentionRefs: ['project:P-1/goal:G-1/attention:A-window'],
-        })
+        calls.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
         return {
-          reply: 'Choose the release window: today or tomorrow?',
-          session: codexSession('assistant-e2e'),
+          reply:
+            input.toolMode === 'internal'
+              ? '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>'
+              : 'I will supervise this Project.',
+          session: codexSession('project-session'),
         }
       },
     }
-    const runtime = await createMvpRuntime({ homeRoot, assistantRunner: runner, start: false })
-    runtimeRef.current = runtime
+    const runtime = await setupRuntime(runner)
 
-    expect(await runtime.reflection.observe({ settled: false })).toBe('started')
-    await runtime.reflection.waitForIdle()
-    const handoff = [...(await runtime.workspace.readWorkspace()).events.values()][0]
-    expect(handoff?.attributes).toMatchObject({
-      source: 'reflection',
-      visibility: 'internal',
-      status: 'pending',
-      context: {
+    try {
+      await runtime.workspace.receiveEvent({
+        eventId: 'EV-user',
+        content: 'Track this Project.',
+        context: { projectId: 'P-1' },
+      })
+      await runtime.assistant.process('EV-user')
+      await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
+
+      expect(await runtime.reflection.observe({ settled: false })).toBe('started')
+      await runtime.reflection.waitForIdle()
+      const wakeEvent = [...(await runtime.workspace.readWorkspace()).events.values()].find(
+        (event) => event.attributes.source === 'system',
+      )
+      if (!wakeEvent) throw new Error('Expected one Project wake event')
+      await runtime.assistant.process(wakeEvent.attributes.id)
+
+      expect(calls).toEqual([
+        { mode: 'main', sessionId: null },
+        { mode: 'internal', sessionId: 'project-session' },
+      ])
+      expect(
+        (await runtime.workspace.readEvent(wakeEvent.attributes.id))?.attributes,
+      ).toMatchObject({
+        visibility: 'public',
+        status: 'handled',
+        reply: '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>',
+      })
+    } finally {
+      await runtime.coordinator.stop()
+      await runtime.preview.stopAll()
+    }
+  })
+
+  test('keeps user replies and Attention resolution as separate Assistant judgments', async () => {
+    const runtime = await setupRuntime({
+      async run() {
+        return { reply: 'I recorded your answer.', session: codexSession('project-session') }
+      },
+    })
+
+    try {
+      await runtime.workspace.createAttention(attention('A-choice', 'Choose A or B.'))
+      const homeId = (await runtime.workspace.readWorkspace()).homeId
+      await runtime.workspace.receiveEvent({
+        eventId: 'EV-answer',
+        content: 'Choose B.',
+        context: {
+          projectId: 'P-1',
+          attentionRefs: [`home:${homeId}/attention:A-choice`],
+        },
+      })
+      await runtime.assistant.process('EV-answer')
+      expect(
+        (await runtime.workspace.readWorkspace()).attentions.get('A-choice')?.attributes.resolvedAt,
+      ).toBeNull()
+
+      await runtime.workspace.receiveEvent({
+        eventId: 'EV-settle',
+        content: 'Apply the recorded choice.',
+        context: { projectId: 'P-1' },
+      })
+      await runtime.assistantTools.executeForEvent('EV-settle', 'hopi_manage_attention', {
         projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-window'],
-      },
-    })
-
-    await runtime.assistant.process(handoff?.attributes.id ?? 'missing-event')
-
-    expect(
-      (await runtime.workspace.readEvent(handoff?.attributes.id ?? 'missing-event'))?.attributes,
-    ).toMatchObject({
-      visibility: 'public',
-      status: 'handled',
-      reply: 'Choose the release window: today or tomorrow?',
-    })
-    expect(
-      (await runtime.projects.get('P-1')?.store.readPackage('G-1'))?.attentions.get('A-window')
-        ?.attributes,
-    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
-
-    const state = await runtime.assistantState.read({ projectId: 'P-1', goalId: 'G-1' })
-    const project = state.projects[0] as {
-      goals: Array<{ works: Array<{ projection: { primaryBadge: string | null } }> }>
+        change: {
+          kind: 'resolve',
+          attentionId: 'A-choice',
+          resolution: 'Choice B was applied.',
+        },
+      })
+      expect(
+        (await runtime.workspace.readWorkspace()).attentions.get('A-choice')?.attributes.resolvedAt,
+      ).not.toBeNull()
+    } finally {
+      await runtime.coordinator.stop()
+      await runtime.preview.stopAll()
     }
-    expect(project.goals[0]?.works[0]?.projection.primaryBadge).toBe('Needs you')
-    expect(await git(repoRoot, ['status', '--porcelain'])).toBe('')
   })
-
-  test('uses the same explicit handoff and acknowledgement path for Workspace Attention', async () => {
-    const repoRoot = join(temporaryRoot, 'workspace-repo')
-    await initializeGitRepo(repoRoot)
-    const homeRoot = join(temporaryRoot, 'workspace-home')
-    const publisher = new PublicationCoordinator()
-    const home = createAssistantHomeStore(homeRoot, publisher)
-    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
-    const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
-    await goalStore.createGoal({ goalId: 'G-1', title: 'Release', objective: 'Ship safely.' })
-
-    const runtimeRef: { current: MvpRuntime | null } = { current: null }
-    const runner: AssistantModelRunner = {
-      async run(input) {
-        if (input.toolMode === 'reflection') {
-          if (!runtimeRef.current) throw new Error('Runtime is not ready')
-          const workspace = await runtimeRef.current.workspace.readWorkspace()
-          await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_handoff_to_main', {
-            brief: 'The Project binding Attention requires a speaking turn.',
-            context: { attentionRefs: [`home:${workspace.homeId}/attention:A-project`] },
-          })
-          return { reply: 'No handoff.', session: codexSession('workspace-reflection-e2e') }
-        }
-        if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_request_user', {
-          attentionRefs: attentionReferences(input.prompt),
-        })
-        return {
-          reply: 'The Project checkout needs to be rebound before work can continue.',
-          session: codexSession('workspace-assistant-e2e'),
-        }
-      },
-    }
-    const runtime = await createMvpRuntime({ homeRoot, assistantRunner: runner, start: false })
-    runtimeRef.current = runtime
-    await runtime.workspace.createAttention({
-      attributes: {
-        id: 'A-project',
-        target: 'project:P-1',
-        createdAt: '2026-07-13T00:00:00Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: 'The managed Project binding is invalid.\n',
-    })
-
-    expect(await runtime.reflection.observe({ settled: false })).toBe('started')
-    await runtime.reflection.waitForIdle()
-    const workspace = await runtime.workspace.readWorkspace()
-    const handoff = [...workspace.events.values()][0]
-    expect(handoff?.attributes.context).toMatchObject({
-      attentionRefs: [`home:${workspace.homeId}/attention:A-project`],
-    })
-
-    await runtime.assistant.process(handoff?.attributes.id ?? 'missing-event')
-
-    expect(
-      (await runtime.workspace.readWorkspace()).attentions.get('A-project')?.attributes,
-    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
-    const state = await runtime.assistantState.read({ projectId: 'P-1', goalId: 'G-1' })
-    const project = state.projects[0] as {
-      available: boolean
-      goals: Array<{
-        works: Array<{
-          projection: { primaryBadge: string | null; failedPredicates: string[] }
-        }>
-      }>
-    }
-    expect(project.available).toBe(false)
-    expect(project.goals[0]?.works[0]?.projection).toMatchObject({
-      primaryBadge: 'waiting',
-      failedPredicates: ['project_ineligible'],
-    })
-    expect(await git(repoRoot, ['status', '--porcelain'])).toBe('')
-  })
-
-  for (const scenario of [
-    {
-      name: 'in the same Goal',
-      slug: 'same-goal',
-      oldProjectId: 'P-target',
-      oldGoalId: 'G-target',
-      targetProjectId: 'P-target',
-      targetGoalId: 'G-target',
-      restart: false,
-    },
-    {
-      name: 'from another Goal',
-      slug: 'another-goal',
-      oldProjectId: 'P-target',
-      oldGoalId: 'G-old',
-      targetProjectId: 'P-target',
-      targetGoalId: 'G-target',
-      restart: false,
-    },
-    {
-      name: 'from another Project',
-      slug: 'another-project',
-      oldProjectId: 'P-old',
-      oldGoalId: 'G-old',
-      targetProjectId: 'P-target',
-      targetGoalId: 'G-target',
-      restart: false,
-    },
-    {
-      name: 'after restart',
-      slug: 'restart',
-      oldProjectId: 'P-target',
-      oldGoalId: 'G-target',
-      targetProjectId: 'P-target',
-      targetGoalId: 'G-target',
-      restart: true,
-    },
-  ] as const) {
-    test(`notifies a new Goal Attention when an older handoff is blocked ${scenario.name}`, async () => {
-      await verifyPoisonedHistoryIsolation(scenario)
-    })
-  }
 })
 
-async function verifyPoisonedHistoryIsolation(scenario: {
-  slug: string
-  oldProjectId: string
-  oldGoalId: string
-  targetProjectId: string
-  targetGoalId: string
-  restart: boolean
-}) {
-  const root = join(temporaryRoot, scenario.slug)
-  const homeRoot = join(root, 'home')
-  const publisher = new PublicationCoordinator()
-  const home = createAssistantHomeStore(homeRoot, publisher)
-  const goals = new Map<string, Set<string>>()
-  for (const [projectId, goalId] of [
-    [scenario.oldProjectId, scenario.oldGoalId],
-    [scenario.targetProjectId, scenario.targetGoalId],
-  ] as const) {
-    const projectGoals = goals.get(projectId) ?? new Set<string>()
-    projectGoals.add(goalId)
-    goals.set(projectId, projectGoals)
-  }
-
-  const stores = new Map<string, ReturnType<typeof createGoalPackageStore>>()
-  for (const [projectId, projectGoals] of goals) {
-    const repoRoot = join(root, `repo-${projectId}`)
-    await initializeGitRepo(repoRoot)
-    const linked = await home.linkProject({ projectId, repoPath: repoRoot })
-    const store = createGoalPackageStore(linked.integrationRoot, projectId, publisher)
-    stores.set(projectId, store)
-    for (const goalId of projectGoals) {
-      await store.createGoal({ goalId, title: goalId, objective: 'Exercise Attention delivery.' })
-    }
-  }
-
-  const targetAttentionId = 'A-new-blocker'
-  const targetStore = stores.get(scenario.targetProjectId)
-  if (!targetStore) throw new Error('Target project store was not created')
-  await targetStore.publishGoal(scenario.targetGoalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path: targetStore.paths.attentionDocument(scenario.targetGoalId, targetAttentionId),
-      expectedHash: null,
-      content: renderAttentionDocument({
-        attributes: {
-          id: targetAttentionId,
-          target: `project:${scenario.targetProjectId}/goal:${scenario.targetGoalId}`,
-          createdAt: '2026-07-16T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Needs you\n\nPrepare the external runtime.\n',
-      }),
-    },
+async function setupRuntime(assistantRunner: AssistantModelRunner): Promise<MvpRuntime> {
+  const repoRoot = join(temporaryRoot, 'repo')
+  const homeRoot = join(temporaryRoot, 'home')
+  await initializeGitRepo(repoRoot)
+  const home = createAssistantHomeStore(homeRoot, new PublicationCoordinator())
+  await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+  return createMvpRuntime({
+    homeRoot,
+    assistantRunner,
+    start: false,
   })
-
-  const runtimeRef: { current: MvpRuntime | null } = { current: null }
-  let oldEventAttentionId = ''
-  let internalTurns = 0
-  let reflectionRuns = 0
-  const publicMessage = `Prepare the external runtime for ${scenario.targetProjectId}/${scenario.targetGoalId}.`
-  const runner: AssistantModelRunner = {
-    async run(input) {
-      if (input.toolMode === 'reflection') {
-        reflectionRuns += 1
-        if (!runtimeRef.current) throw new Error('Runtime is not ready')
-        if (input.prompt.includes(targetAttentionId)) {
-          await runtimeRef.current.assistantTools.execute(input.toolToken, 'hopi_handoff_to_main', {
-            brief: 'The current Goal Attention requires a speaking turn.',
-            context: {
-              projectId: scenario.targetProjectId,
-              goalId: scenario.targetGoalId,
-              attentionRefs: [
-                `project:${scenario.targetProjectId}/goal:${scenario.targetGoalId}/attention:${targetAttentionId}`,
-              ],
-            },
-          })
-        }
-        return {
-          reply: 'Reflection assessed the current state.',
-          session: codexSession(`reflection-${scenario.slug}-${reflectionRuns}`),
-        }
-      }
-      if (input.toolMode !== 'internal') {
-        throw new Error(`Unexpected speaking mode in poisoned-history fixture: ${input.toolMode}`)
-      }
-      const runtime = runtimeRef.current
-      if (!runtime) throw new Error('Runtime is not ready')
-      internalTurns += 1
-      if (internalTurns === 1) {
-        await runtime.assistantTools.execute(input.toolToken, 'hopi_request_user', {
-          attentionRefs: attentionReferences(input.prompt),
-        })
-      }
-      return {
-        reply: internalTurns === 1 ? publicMessage : '',
-        session: codexSession(`internal-${scenario.slug}-${internalTurns}`),
-      }
-    },
-  }
-
-  let runtime = await createMvpRuntime({ homeRoot, assistantRunner: runner, start: false })
-  runtimeRef.current = runtime
-  if (
-    scenario.oldProjectId !== scenario.targetProjectId ||
-    scenario.oldGoalId !== scenario.targetGoalId
-  ) {
-    await runtime.projects.get(scenario.oldProjectId)?.controller.pauseGoal(scenario.oldGoalId)
-  }
-  const oldEvent = await runtime.workspace.receiveReflectionEvent({
-    eventId: 'EV-old-blocked-handoff',
-    content: 'Revalidate an older state change.',
-    context: { projectId: scenario.oldProjectId, goalId: scenario.oldGoalId },
-  })
-  oldEventAttentionId = (
-    await runtime.attentions.ensureEventAttention(
-      oldEvent.attributes.id,
-      'The older speaking handoff failed.',
-    )
-  ).attributes.id
-
-  if (scenario.restart) {
-    await runtime.coordinator.stop()
-    runtime = await createMvpRuntime({ homeRoot, assistantRunner: runner, start: false })
-    runtimeRef.current = runtime
-  }
-
-  let converged = false
-  let oldAttentionResolved = false
-  let lastDiagnostic: unknown = null
-  for (let step = 0; step < 20; step += 1) {
-    await runtime.coordinator.reconcileOnce()
-    await runtime.coordinator.waitForIdle()
-    const [workspace, target] = await Promise.all([
-      runtime.workspace.readWorkspace(),
-      runtime.projects.get(scenario.targetProjectId)?.store.readPackage(scenario.targetGoalId),
-    ])
-    const targetAttention = target?.attentions.get(targetAttentionId)
-    const oldAttention = workspace.attentions.get(oldEventAttentionId)
-    const pending = [...workspace.events.values()].filter(
-      (event) => event.attributes.status === 'pending',
-    )
-    lastDiagnostic = {
-      step,
-      targetAttention: targetAttention?.attributes,
-      oldAttention: oldAttention?.attributes,
-      pending: pending.map((event) => ({
-        id: event.attributes.id,
-        source: event.attributes.source,
-        visibility: event.attributes.visibility,
-      })),
-      internalTurns,
-      reflectionRuns,
-    }
-    if (
-      targetAttention?.attributes.notifiedAt &&
-      oldAttention?.attributes.resolvedAt === null &&
-      !oldAttentionResolved
-    ) {
-      await runtime.workspace.resolveAttention(
-        oldEventAttentionId,
-        'The later Goal Attention was delivered; revalidate the older event once.',
-      )
-      oldAttentionResolved = true
-      continue
-    }
-    if (
-      targetAttention?.attributes.notifiedAt &&
-      oldAttention?.attributes.resolvedAt &&
-      pending.length === 0 &&
-      !runtime.reflection.isActive()
-    ) {
-      converged = true
-      break
-    }
-  }
-
-  if (!converged) {
-    throw new Error(`Poisoned-history fixture did not converge: ${JSON.stringify(lastDiagnostic)}`)
-  }
-  const [workspace, target] = await Promise.all([
-    runtime.workspace.readWorkspace(),
-    runtime.projects.get(scenario.targetProjectId)?.store.readPackage(scenario.targetGoalId),
-  ])
-  const targetAttention = target?.attentions.get(targetAttentionId)
-  expect(targetAttention?.attributes).toMatchObject({
-    resolvedAt: null,
-    notifiedAt: expect.any(String),
-  })
-  expect(workspace.attentions.get(oldEventAttentionId)?.attributes.resolvedAt).toEqual(
-    expect.any(String),
-  )
-  expect(workspace.attentions.size).toBe(1)
-  expect(workspace.events.get(oldEvent.attributes.id)?.attributes.status).toBe('handled')
-  const publicReflectionEvents = [...workspace.events.values()].filter(
-    (event) => event.attributes.source === 'reflection' && event.attributes.visibility === 'public',
-  )
-  expect(publicReflectionEvents).toHaveLength(1)
-  expect(publicReflectionEvents[0]?.attributes).toMatchObject({
-    reply: publicMessage,
-    context: {
-      projectId: scenario.targetProjectId,
-      goalId: scenario.targetGoalId,
-      attentionRefs: [
-        `project:${scenario.targetProjectId}/goal:${scenario.targetGoalId}/attention:${targetAttentionId}`,
-      ],
-    },
-  })
-  expect(
-    [...workspace.events.values()].filter((event) => event.attributes.status === 'pending'),
-  ).toEqual([])
-  expect(internalTurns).toBeGreaterThanOrEqual(2)
-  expect(reflectionRuns).toBeGreaterThanOrEqual(1)
-  await runtime.coordinator.stop()
 }
 
-function attentionReferences(prompt: string) {
-  return [
-    ...new Set(
-      prompt.match(
-        /(?:project:[A-Za-z0-9._-]+\/goal:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+|home:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+)/g,
-      ) ?? [],
-    ),
-  ]
+function attention(id: string, body: string): WorkspaceAttentionDocument {
+  const timestamp = '2026-07-25T00:00:00.000Z'
+  return {
+    attributes: {
+      id,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      resolvedAt: null,
+      refs: ['project:P-1'],
+      target: 'project:P-1',
+      notifiedAt: null,
+      operatorRequest: null,
+    },
+    body: `${body}\n`,
+  }
 }
 
 async function initializeGitRepo(repoRoot: string) {
@@ -519,7 +163,6 @@ async function git(cwd: string, args: string[]) {
     child.exited,
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
-  return stdout.trim()
 }
 
 function codexSession(sessionId: string) {

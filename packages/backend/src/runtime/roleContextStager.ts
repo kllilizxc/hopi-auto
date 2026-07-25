@@ -22,10 +22,9 @@ import {
   browserEnvironmentRoot,
   browserHarnessAdapterCommand,
   browserTargetManifest,
+  hasManagedBrowserConfiguration,
   resolveBrowserHarnessBackendCommand,
-  resolveManagedBrowserCommand,
 } from './browserEnvironment'
-import type { FormalReleasePreviewContext } from './previewManager'
 import { parsePortableArtifactReference } from './runArtifacts'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
 import { type SourceMergePreflightResult, inspectSourceMerge } from './sourceMergePreflight'
@@ -45,7 +44,6 @@ export interface PrepareRoleContextInput {
   repoRoots?: readonly RoleRepoRoot[]
   apiOrigin?: string
   runtimeScratchDir?: string
-  formalReleasePreview?: FormalReleasePreviewContext
   previousAttempt?: {
     runId: string
     responsibility: Responsibility
@@ -84,8 +82,6 @@ export interface RoleContextBundle extends TransportContextBundle {
   operatorPreferenceFile?: string
   repoRoots: readonly RoleRepoRoot[]
   reposFile: string
-  formalReleasePreview?: FormalReleasePreviewContext
-  formalReleasePreviewFile?: string
 }
 
 export interface RoleContextStager {
@@ -125,15 +121,12 @@ export function createRoleContextStager(
       const contextFile = join(runRoot, 'context.md')
       const promptFile = join(runRoot, 'prompt.md')
       const reposFile = join(runRoot, 'repos.json')
-      const formalReleasePreviewFile = input.formalReleasePreview
-        ? join(contextRoot, 'formal-release-preview.json')
-        : undefined
       const proposalCapabilitiesFile = join(contextRoot, 'proposal-capabilities.json')
       const resultSchemaFile = join(contextRoot, 'result-schema.json')
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
       const browserHarnessBackendCommand = resolveBrowserHarnessBackendCommand()
       const browserHarnessCommand =
-        browserHarnessBackendCommand && resolveManagedBrowserCommand()
+        browserHarnessBackendCommand && hasManagedBrowserConfiguration()
           ? browserHarnessAdapterCommand()
           : undefined
       const browserTargetsFile = browserHarnessCommand
@@ -172,7 +165,6 @@ export function createRoleContextStager(
           ]),
         ),
       )
-      validateFormalReleasePreview(input.formalReleasePreview, repoReleaseHeads)
       const goalPath = paths.goalDocument(input.goalId)
       const workPath = paths.workDocument(input.goalId, input.workId)
       const goalFile = requiredSnapshotFile(snapshot.files, goalPath)
@@ -193,8 +185,28 @@ export function createRoleContextStager(
       }
 
       const referencedImages = collectReferencedImages(parsedWork.body, paths, input.goalId)
-      for (const imagePath of referencedImages) requiredSnapshotFile(snapshot.files, imagePath)
-      const guardFiles = selectGuardFiles(input, snapshot.files, paths, parsedWork)
+      const availableReferencedImages = new Set(
+        [...referencedImages].filter((imagePath) => {
+          const file = snapshot.files.find((candidate) => candidate.path === imagePath)
+          return Boolean(file?.content && file.hash)
+        }),
+      )
+      const unavailableReferencedImages = [...referencedImages]
+        .filter((imagePath) => !availableReferencedImages.has(imagePath))
+        .map((imagePath) => ({
+          reference: imagePath,
+          evidence: [workPath],
+          reason: 'The referenced Goal asset is unavailable in current authority.',
+        }))
+      const guardFiles = Object.freeze({
+        ...selectGuardFiles(input, snapshot.files, paths, parsedWork),
+        ...Object.fromEntries(
+          [...referencedImages].map((imagePath) => [
+            imagePath,
+            snapshot.files.find((file) => file.path === imagePath)?.hash ?? null,
+          ]),
+        ),
+      })
       const guardPrefixes =
         input.responsibility === 'planner'
           ? [paths.goalRoot(input.goalId)]
@@ -213,11 +225,17 @@ export function createRoleContextStager(
         input.goalId,
       )
       const evidenceArtifacts = await projectEvidenceArtifacts(
-        resolvedEvidenceArtifacts,
+        resolvedEvidenceArtifacts.available,
         contextRoot,
       )
+      const unavailableMaterial = [
+        ...resolvedEvidenceArtifacts.unavailable,
+        ...unavailableReferencedImages,
+      ]
       const artifactManifestFile =
-        evidenceArtifacts.length > 0 ? join(contextRoot, 'evidence-artifacts.json') : undefined
+        evidenceArtifacts.length > 0 || unavailableMaterial.length > 0
+          ? join(contextRoot, 'evidence-artifacts.json')
+          : undefined
       const repairView =
         input.responsibility === 'generator'
           ? {
@@ -231,6 +249,7 @@ export function createRoleContextStager(
         parsedWork,
         authorityFiles,
         evidenceArtifacts,
+        unavailableMaterial,
         repairView,
       )
       const operatorPreference =
@@ -250,18 +269,13 @@ export function createRoleContextStager(
         await Bun.write(operatorPreferenceFile, operatorPreference.content)
       }
       if (artifactManifestFile) {
+        const unavailable =
+          unavailableMaterial.length > 0 ? { unavailable: unavailableMaterial } : {}
         await Bun.write(
           artifactManifestFile,
-          `${JSON.stringify({ version: 1, artifacts: evidenceArtifacts }, null, 2)}\n`,
+          `${JSON.stringify({ version: 1, artifacts: evidenceArtifacts, ...unavailable }, null, 2)}\n`,
         )
         await chmod(artifactManifestFile, 0o444)
-      }
-      if (formalReleasePreviewFile && input.formalReleasePreview) {
-        await Bun.write(
-          formalReleasePreviewFile,
-          `${JSON.stringify(input.formalReleasePreview, null, 2)}\n`,
-        )
-        await chmod(formalReleasePreviewFile, 0o444)
       }
       await Bun.write(
         proposalCapabilitiesFile,
@@ -272,7 +286,7 @@ export function createRoleContextStager(
         `${JSON.stringify(resultSchema(input.responsibility), null, 2)}\n`,
       )
       await Promise.all([chmod(proposalCapabilitiesFile, 0o444), chmod(resultSchemaFile, 0o444)])
-      const imageFiles = [...referencedImages].map((imagePath) =>
+      const imageFiles = [...availableReferencedImages].map((imagePath) =>
         join(authorityRoot, ...imagePath.split('/')),
       )
 
@@ -314,14 +328,12 @@ export function createRoleContextStager(
           evidencePaths,
           artifactManifestFile,
           bootstrapSourceRoot,
-          imagePaths: [...referencedImages],
+          imagePaths: [...availableReferencedImages],
           primaryRepoId,
           repoRoots,
           reposFile,
           projectPath: paths.projectPath,
           apiOrigin,
-          formalReleasePreview: input.formalReleasePreview,
-          formalReleasePreviewFile,
           operatorPreference: operatorPreferenceFile
             ? { path: operatorPreferenceFile, digest: operatorPreference?.digest ?? '' }
             : undefined,
@@ -348,7 +360,6 @@ export function createRoleContextStager(
             repoRoots,
             reposFile,
             apiOrigin,
-            formalReleasePreviewFile,
             operatorPreferenceFile,
             browserTargetsFile,
             hasImages: imageFiles.length > 0,
@@ -386,8 +397,6 @@ export function createRoleContextStager(
         operatorPreferenceFile,
         repoRoots,
         reposFile,
-        formalReleasePreview: input.formalReleasePreview,
-        formalReleasePreviewFile,
         apiOrigin,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
@@ -446,23 +455,6 @@ function normalizeRepoRoots(repoRoots: readonly RoleRepoRoot[], primaryRepoId: s
     throw new RoleContextStagingError(`Responsibility workspace primary must be ${primaryRepoId}`)
   }
   return normalized
-}
-
-function validateFormalReleasePreview(
-  preview: FormalReleasePreviewContext | undefined,
-  repoReleaseHeads: Readonly<Record<string, string>>,
-) {
-  if (!preview || preview.kind === 'not_configured') return
-  const previewHeads = preview.session.releaseHeads
-  const expectedEntries = Object.entries(repoReleaseHeads)
-  if (
-    Object.keys(previewHeads).length !== expectedEntries.length ||
-    expectedEntries.some(([repoId, commit]) => previewHeads[repoId] !== commit)
-  ) {
-    throw new RoleContextStagingError(
-      'Formal release Preview does not match the current Project release heads',
-    )
-  }
 }
 
 function requiredPrimaryRepoRoot(repoRoots: readonly RoleRepoRoot[], primaryRepoId: string) {
@@ -541,12 +533,27 @@ async function resolveEvidenceArtifacts(
 ) {
   const evidenceRoot = `${paths.evidenceRoot(goalId)}/`
   const artifacts = new Map<string, { reference: string; path: string; evidence: Set<string> }>()
+  const unavailable = new Map<
+    string,
+    { reference: string; evidence: Set<string>; reason: string }
+  >()
   for (const file of files) {
     if (!file.content || !file.path.startsWith(evidenceRoot)) continue
     const evidence = parseEvidenceDocument(decode(file.content))
     for (const reference of evidence.attributes.artifacts) {
       const parsed = parsePortableArtifactReference(reference)
-      if (!parsed?.runId) continue
+      if (!parsed?.runId) {
+        const current = unavailable.get(reference)
+        if (current) current.evidence.add(file.path)
+        else {
+          unavailable.set(reference, {
+            reference,
+            evidence: new Set([file.path]),
+            reason: 'The reference is not a retained Run artifact.',
+          })
+        }
+        continue
+      }
       const path = join(
         runStoragePath(homeRoot, parsed.runId),
         'artifacts',
@@ -554,9 +561,16 @@ async function resolveEvidenceArtifacts(
       )
       const metadata = await stat(path).catch(() => null)
       if (!metadata?.isFile()) {
-        throw new RoleContextStagingError(
-          `Canonical Evidence ${file.path} references missing Run artifact ${reference}`,
-        )
+        const current = unavailable.get(reference)
+        if (current) current.evidence.add(file.path)
+        else {
+          unavailable.set(reference, {
+            reference,
+            evidence: new Set([file.path]),
+            reason: 'The retained Run artifact is unavailable on this machine.',
+          })
+        }
+        continue
       }
       const existing = artifacts.get(reference)
       if (existing) {
@@ -566,9 +580,14 @@ async function resolveEvidenceArtifacts(
       }
     }
   }
-  return [...artifacts.values()]
-    .map((artifact) => ({ ...artifact, evidence: [...artifact.evidence].sort() }))
-    .sort((left, right) => left.reference.localeCompare(right.reference))
+  return {
+    available: [...artifacts.values()]
+      .map((artifact) => ({ ...artifact, evidence: [...artifact.evidence].sort() }))
+      .sort((left, right) => left.reference.localeCompare(right.reference)),
+    unavailable: [...unavailable.values()]
+      .map((artifact) => ({ ...artifact, evidence: [...artifact.evidence].sort() }))
+      .sort((left, right) => left.reference.localeCompare(right.reference)),
+  }
 }
 
 interface ProjectedEvidenceArtifact {
@@ -578,7 +597,7 @@ interface ProjectedEvidenceArtifact {
 }
 
 async function projectEvidenceArtifacts(
-  artifacts: Awaited<ReturnType<typeof resolveEvidenceArtifacts>>,
+  artifacts: Awaited<ReturnType<typeof resolveEvidenceArtifacts>>['available'],
   contextRoot: string,
 ): Promise<ProjectedEvidenceArtifact[]> {
   if (artifacts.length === 0) return []
@@ -842,6 +861,7 @@ interface RunAssignment {
     body: string
     artifacts: Array<{ reference: string; path: string }>
   } | null
+  unavailableArtifacts: Array<{ reference: string; evidence: string[]; reason: string }>
   repairView: {
     candidate: CandidateInspection
   } | null
@@ -855,6 +875,7 @@ function createRunAssignment(
   work: ReturnType<typeof parseWorkDocument>,
   authorityFiles: readonly PublicationSnapshotFile[],
   evidenceArtifacts: readonly ProjectedEvidenceArtifact[],
+  unavailableArtifacts: RunAssignment['unavailableArtifacts'],
   repairView: RunAssignment['repairView'],
 ): RunAssignment {
   const byPath = new Map(authorityFiles.map((file) => [file.path, file]))
@@ -920,6 +941,7 @@ function createRunAssignment(
     },
     acceptedInputs,
     latestEvidence,
+    unavailableArtifacts,
     repairView,
     previousAttempt: input.previousAttempt ?? null,
   }
@@ -963,7 +985,6 @@ function proposalCapabilities(
           dependsOn: ['stable-id'],
           contractRevision: 'current Goal contractRevision',
           evidenceRefs: [],
-          attempts: 0,
           kind: 'engineering',
           stage: 'generate',
         },
@@ -1108,8 +1129,6 @@ function renderContextManifest(
     reposFile: string
     projectPath: string
     apiOrigin?: string
-    formalReleasePreview?: FormalReleasePreviewContext
-    formalReleasePreviewFile?: string
     operatorPreference?: { path: string; digest: string }
   },
 ) {
@@ -1142,9 +1161,6 @@ function renderContextManifest(
         ]
       : []),
     ...(context.apiOrigin ? [`- HOPI public API origin: ${context.apiOrigin}`] : []),
-    ...(context.formalReleasePreviewFile
-      ? [`- Formal release Preview snapshot: ${context.formalReleasePreviewFile}`]
-      : []),
     ...context.repoRoots.map((repo) =>
       [
         `- Repo ${repo.repoId}${repo.primary ? ' (primary)' : ''}: ${repo.path}`,
@@ -1154,7 +1170,6 @@ function renderContextManifest(
     ...(context.bootstrapSourceRoot
       ? [`- Read-only bootstrap source snapshot: ${context.bootstrapSourceRoot}`]
       : []),
-    ...formalReleasePreviewContextLines(context.formalReleasePreview),
     '',
     '## Authority Files',
     '',
@@ -1170,30 +1185,6 @@ function renderContextManifest(
     'The proposal root is an initially empty sparse overlay. Copy in only a document you intend to add or replace; an absent authority path means unchanged, never deleted.',
     '',
   ].join('\n')
-}
-
-function formalReleasePreviewContextLines(preview: FormalReleasePreviewContext | undefined) {
-  if (!preview) return []
-  if (preview.kind === 'not_configured') {
-    return ['', '## Formal Release Preview', '', '- Project Preview capability: not configured']
-  }
-  return [
-    '',
-    '## Formal Release Preview',
-    '',
-    `- Session: ${preview.session.sessionId}`,
-    `- Status: ${preview.session.status}`,
-    `- Log: ${preview.session.logPath}`,
-    ...Object.entries(preview.session.releaseHeads).map(
-      ([repoId, commit]) => `- Release ${repoId}: ${commit}`,
-    ),
-    ...(preview.session.surfaces.length > 0
-      ? preview.session.surfaces.map(
-          (surface) => `- Surface ${surface.id} (${surface.label}): ${surface.url}`,
-        )
-      : ['- Surfaces: none']),
-    ...(preview.session.error ? [`- Error: ${preview.session.error}`] : []),
-  ]
 }
 
 function renderResponsibilityPrompt(
@@ -1215,7 +1206,6 @@ function renderResponsibilityPrompt(
     repoRoots: readonly RoleRepoRoot[]
     reposFile: string
     apiOrigin?: string
-    formalReleasePreviewFile?: string
     operatorPreferenceFile?: string
     browserTargetsFile?: string
     hasImages: boolean
@@ -1240,9 +1230,6 @@ function renderResponsibilityPrompt(
     'Run scratch: $HOPI_RUN_SCRATCH',
     'Shared cache: $HOPI_CACHE_DIR',
     ...(paths.artifactManifestFile ? ['Evidence artifacts: $HOPI_EVIDENCE_ARTIFACTS_FILE'] : []),
-    ...(paths.formalReleasePreviewFile
-      ? ['Formal release Preview: $HOPI_FORMAL_RELEASE_PREVIEW_FILE']
-      : []),
     `Project guidance: ${paths.agentsPath}`,
     `Primary Repo: ${paths.primaryRepoId}`,
     'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
@@ -1257,7 +1244,7 @@ function renderResponsibilityPrompt(
     'Authority and evidence are immutable. Proposal is a sparse overlay: an absent path is unchanged; deletion is unsupported.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
     '$HOPI_REPOS_FILE is the complete Project source-root map. Source outside those roots and another Work runtime is outside this assignment.',
-    'A started command remains active until it exits or is cancelled. Give a potentially long command sufficient wait time; if it returns a live session, wait on that same session. Delayed output must not trigger an equivalent concurrent command.',
+    'Shell tools commonly default to a 60-second observation timeout. Set the tool timeout above the expected command duration or wait on its returned live session; never restart equivalent work merely because observation timed out.',
     ...(paths.hasImages
       ? ['Attached images are Goal assets with their authority-defined purpose.']
       : []),
@@ -1301,7 +1288,11 @@ function assignmentSection(id: string, content: readonly string[]) {
 function renderCurrentAssignment(responsibility: Responsibility, assignment: RunAssignment) {
   const expandedAcceptedInputs = assignment.acceptedInputs.filter(
     (input) =>
-      !assignment.goal.body.includes(`## Accepted Inbox Instruction ${input.sourceEventId}`),
+      !assignment.goal.body.includes(`## Accepted Inbox Instruction ${input.sourceEventId}`) &&
+      !(
+        assignment.work.body.includes(input.path) &&
+        assignment.work.body.includes(input.body.trim())
+      ),
   )
   const primary =
     responsibility === 'planner'
@@ -1309,7 +1300,7 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
           '## Primary Task',
           '',
           `### Goal Contract: ${assignment.goal.title}`,
-          `Source: ${assignment.goal.path}`,
+          `Source: $HOPI_AUTHORITY_ROOT/${assignment.goal.path}`,
           `Contract revision: ${assignment.goal.contractRevision}`,
           '',
           '<goal-contract>',
@@ -1317,7 +1308,7 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
           '</goal-contract>',
           '',
           `### Planning Work: ${assignment.work.title}`,
-          `Source: ${assignment.work.path}`,
+          `Source: $HOPI_AUTHORITY_ROOT/${assignment.work.path}`,
           `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
           '',
           '<planning-work>',
@@ -1330,7 +1321,9 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
                 '',
                 ...expandedAcceptedInputs.flatMap((input, index) => [
                   `#### Input ${index + 1}`,
-                  ...(assignment.work.body.includes(input.path) ? [] : [`Source: ${input.path}`]),
+                  ...(assignment.work.body.includes(input.path)
+                    ? []
+                    : [`Source: $HOPI_AUTHORITY_ROOT/${input.path}`]),
                   '<accepted-input>',
                   input.body.trim(),
                   '</accepted-input>',
@@ -1343,7 +1336,7 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
           '## Primary Task',
           '',
           `### Engineering Work: ${assignment.work.title}`,
-          `Source: ${assignment.work.path}`,
+          `Source: $HOPI_AUTHORITY_ROOT/${assignment.work.path}`,
           `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
           '',
           '<engineering-work>',
@@ -1358,7 +1351,7 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
           '## Supporting Authority',
           '',
           `Goal: ${assignment.goal.title}`,
-          `Goal source: ${assignment.goal.path}`,
+          `Goal source: $HOPI_AUTHORITY_ROOT/${assignment.goal.path}`,
           `Goal contract revision: ${assignment.goal.contractRevision}`,
         ]),
     ...(assignment.latestEvidence
@@ -1366,7 +1359,7 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
           ...(responsibility === 'planner' ? ['## Supporting Authority', ''] : []),
           '',
           '### Latest Owning Work Evidence (Historical Run Result)',
-          `Source: ${assignment.latestEvidence.path}`,
+          `Source: $HOPI_AUTHORITY_ROOT/${assignment.latestEvidence.path}`,
           'This records the producing Run; current candidate and release state are reported separately below.',
           '',
           '<latest-evidence>',
@@ -1383,6 +1376,18 @@ function renderCurrentAssignment(responsibility: Responsibility, assignment: Run
                 ),
               ]
             : []),
+        ]
+      : []),
+    ...(assignment.unavailableArtifacts.length > 0
+      ? [
+          '',
+          '### Unavailable Referenced Material',
+          '',
+          'These are supporting-material diagnostics, not a Coordinator verdict. Decide whether they matter for the current responsibility.',
+          ...assignment.unavailableArtifacts.map(
+            (artifact) =>
+              `- ${artifact.reference} (from ${artifact.evidence.join(', ')}): ${artifact.reason}`,
+          ),
         ]
       : []),
     ...renderRepairView(assignment.repairView),
@@ -1446,7 +1451,6 @@ function plannerPrompt(paths: {
   agentsPath: string
   attentionRoot: string
   apiOrigin?: string
-  formalReleasePreviewFile?: string
   operatorPreferenceFile?: string
 }) {
   return [
@@ -1457,14 +1461,9 @@ function plannerPrompt(paths: {
     ...(paths.operatorPreferenceFile
       ? ['Operator preferences are defaults below current Input and Project/Goal authority.']
       : []),
-    ...(paths.formalReleasePreviewFile
-      ? [
-          'Goal completion evidence comes from the supplied formal release Preview at its listed release heads.',
-        ]
-      : []),
     'Reviewer success is terminal for the complete Engineering Work; plan separate Work for independent outcomes, and use targeted Attention rather than success while required action or proof remains.',
     'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
-    'Existing nonterminal Work keeps every dependsOn edge; rewrites may add dependencies but never remove one, including when another edge transitively covers it.',
+    'The proposal owns the current nonterminal dependsOn graph and may atomically add, remove, or redirect edges. Leave one valid acyclic graph; terminal Work is immutable.',
     ...(paths.bootstrapSourceRoot
       ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),

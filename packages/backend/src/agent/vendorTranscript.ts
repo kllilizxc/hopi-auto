@@ -57,9 +57,11 @@ export function createProcessTranscriptNormalizer(
   initialState?: unknown,
 ): ProcessTranscriptNormalizer {
   const claudeTasks = new ClaudeTaskPlanTracker(initialState)
+  const codexCommandStderr = new CodexCommandStderrMirrorTracker()
   const toolHealth = new ToolExecutionHealthTracker()
   return {
     normalize: (options) => {
+      if (codexCommandStderr.suppress(options)) return []
       const events = normalizeProcessOutputLineWithState(options, claudeTasks)
       toolHealth.observe(events)
       return events
@@ -68,6 +70,56 @@ export function createProcessTranscriptNormalizer(
     stateRevision: () => claudeTasks.stateRevision(),
     unresolvedInfrastructureFailure: () => toolHealth.unresolvedFailure(),
     completedExecution: () => toolHealth.completedExecution(),
+  }
+}
+
+class CodexCommandStderrMirrorTracker {
+  private mirroredLines = new Map<string, number>()
+
+  suppress(options: NormalizeProcessOutputLineOptions): boolean {
+    if (options.format !== 'codex_jsonl') return false
+
+    if (options.stream === 'stderr') {
+      const remaining = this.mirroredLines.get(options.line) ?? 0
+      if (remaining === 0) return false
+      if (remaining === 1) {
+        this.mirroredLines.delete(options.line)
+      } else {
+        this.mirroredLines.set(options.line, remaining - 1)
+      }
+      return true
+    }
+
+    const parsed = objectValue(parseJson(options.line))
+    const eventType =
+      stringValue(parsed?.type) ??
+      stringValue(parsed?.method) ??
+      stringValue(objectValue(parsed?.params)?.type)
+    const item = objectValue(parsed?.item) ?? objectValue(objectValue(parsed?.params)?.item)
+    if (
+      stringValue(item?.type) === 'command_execution' &&
+      normalizeEventType(eventType) === 'item.completed'
+    ) {
+      this.replace(stringValue(item?.aggregated_output) ?? '')
+    } else if (
+      stringValue(item?.type) === 'command_execution' &&
+      normalizeEventType(eventType) === 'item.started'
+    ) {
+      this.mirroredLines.clear()
+    }
+    return false
+  }
+
+  private replace(output: string) {
+    this.mirroredLines.clear()
+    let retainedCharacters = 0
+    let retainedLines = 0
+    for (const line of output.split(/\r?\n/)) {
+      if (retainedLines >= 5_000 || retainedCharacters + line.length > 1_000_000) break
+      this.mirroredLines.set(line, (this.mirroredLines.get(line) ?? 0) + 1)
+      retainedCharacters += line.length
+      retainedLines += 1
+    }
   }
 }
 

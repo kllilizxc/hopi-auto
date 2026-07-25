@@ -39,6 +39,11 @@ const attemptManifestSchema = z
     workId: stableIdSchema,
     runId: stableIdSchema,
     responsibility: z.enum(RESPONSIBILITIES),
+    workHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable()
+      .default(null),
     execution: roleExecutionIdentitySchema.nullable().default(null),
     startedAt: z.string().datetime(),
     endedAt: z.string().datetime().nullable(),
@@ -134,11 +139,13 @@ export interface StartRunAttemptInput {
   runId: string
   responsibility: Responsibility
   runRoot: string
+  workHash?: string | null
 }
 
 export interface FinishRunAttemptInput {
   outcome: Pick<RoleRunResult, 'result' | 'summary' | 'exitCode'>
   application: string
+  workHash?: string | null
 }
 
 export interface RunAttemptRecorder {
@@ -156,6 +163,7 @@ export interface RunAttemptSnapshot {
 
 export interface RunAttemptStore {
   start(input: StartRunAttemptInput): Promise<RunAttemptRecorder>
+  generation(): number
   snapshot(): Promise<RunAttemptSnapshot>
   list(projectId: string, goalId: string, workId: string): Promise<RunAttemptSummary[]>
   listGoal(projectId: string, goalId: string): Promise<Map<string, RunAttemptSummary[]>>
@@ -186,6 +194,25 @@ export interface RunAttemptStore {
   interruptRunningAttempts(): Promise<number>
 }
 
+interface SharedAttemptIndex {
+  generation: number
+  tail: Promise<void>
+}
+
+const sharedAttemptIndexes = new Map<string, SharedAttemptIndex>()
+
+function sharedAttemptIndex(attemptsRoot: string) {
+  const root = resolve(attemptsRoot)
+  const existing = sharedAttemptIndexes.get(root)
+  if (existing) return existing
+  const created: SharedAttemptIndex = {
+    generation: 0,
+    tail: Promise.resolve(),
+  }
+  sharedAttemptIndexes.set(root, created)
+  return created
+}
+
 export function createRunAttemptStore(
   homeRoot: string,
   options: { now?: () => Date } = {},
@@ -193,6 +220,27 @@ export function createRunAttemptStore(
   const attemptsRoot = runStorageRoot(homeRoot)
   const now = options.now ?? (() => new Date())
   const finishedDiagnostics = new Map<string, RunAttemptDiagnostics>()
+  const index = sharedAttemptIndex(attemptsRoot)
+  const generationBase = index.generation
+
+  const withIndexLock = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = index.tail.then(operation, operation)
+    index.tail = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  const readIndexedSnapshot = () =>
+    withIndexLock(async () => {
+      return createAttemptSnapshot(await readAllAttemptSummaries(attemptsRoot))
+    })
+
+  const recordIndexedAttempt = (_attempt: RunAttemptSummary) =>
+    withIndexLock(async () => {
+      index.generation += 1
+    })
 
   return {
     async start(input) {
@@ -209,6 +257,7 @@ export function createRunAttemptStore(
         workId: input.workId,
         runId: input.runId,
         responsibility: input.responsibility,
+        workHash: input.workHash ?? null,
         execution: null,
         startedAt: now().toISOString(),
         endedAt: null,
@@ -223,6 +272,7 @@ export function createRunAttemptStore(
       await mkdir(expectedRoot, { recursive: true })
       await writeManifest(manifestPath, manifest)
       await Bun.write(eventsPath, '')
+      await recordIndexedAttempt(manifest)
 
       let closed = false
       let writeTail: Promise<void> = Promise.resolve()
@@ -241,6 +291,8 @@ export function createRunAttemptStore(
         closed = true
         await writeTail
         await writeManifest(manifestPath, next)
+        manifest = next
+        await recordIndexedAttempt(next)
       }
 
       await enqueue({
@@ -256,8 +308,9 @@ export function createRunAttemptStore(
           if (closed) return
           manifest = { ...manifest, execution }
           await writeManifest(manifestPath, manifest)
+          await recordIndexedAttempt(manifest)
         },
-        async finish({ outcome, application }) {
+        async finish({ outcome, application, workHash }) {
           const endedAt = now().toISOString()
           await close(
             {
@@ -268,6 +321,7 @@ export function createRunAttemptStore(
               summary: outcome.summary,
               exitCode: outcome.exitCode,
               application,
+              workHash: workHash ?? manifest.workHash,
             },
             {
               kind: 'message',
@@ -297,19 +351,23 @@ export function createRunAttemptStore(
       }
     },
 
+    generation() {
+      return index.generation - generationBase
+    },
+
     async snapshot() {
-      return createAttemptSnapshot(await readAllAttemptSummaries(attemptsRoot))
+      return readIndexedSnapshot()
     },
 
     async list(projectId, goalId, workId) {
       assertIds(projectId, goalId, workId)
-      const snapshot = createAttemptSnapshot(await readAllAttemptSummaries(attemptsRoot))
+      const snapshot = await readIndexedSnapshot()
       return [...snapshot.list(projectId, goalId, workId)]
     },
 
     async listGoal(projectId, goalId) {
       assertScopeIds(projectId, goalId)
-      const snapshot = createAttemptSnapshot(await readAllAttemptSummaries(attemptsRoot))
+      const snapshot = await readIndexedSnapshot()
       return new Map(
         [...snapshot.listGoal(projectId, goalId)].map(([workId, attempts]) => [
           workId,
@@ -363,52 +421,57 @@ export function createRunAttemptStore(
       return diagnostics
     },
 
-    async interruptRunningAttempts() {
-      await mkdir(attemptsRoot, { recursive: true })
-      let count = 0
-      const manifestPaths = new Set<string>()
-      for (const pattern of ['*/attempt.json', '*/*/*/*/attempt.json']) {
-        for await (const relativePath of new Bun.Glob(pattern).scan({
-          cwd: attemptsRoot,
-          onlyFiles: true,
-        })) {
-          manifestPaths.add(join(attemptsRoot, relativePath))
+    interruptRunningAttempts() {
+      return withIndexLock(async () => {
+        await mkdir(attemptsRoot, { recursive: true })
+        let count = 0
+        const manifestPaths = new Set<string>()
+        for (const pattern of ['*/attempt.json', '*/*/*/*/attempt.json']) {
+          for await (const relativePath of new Bun.Glob(pattern).scan({
+            cwd: attemptsRoot,
+            onlyFiles: true,
+          })) {
+            manifestPaths.add(join(attemptsRoot, relativePath))
+          }
         }
-      }
-      for (const path of manifestPaths) {
-        const manifest = await readStoredManifest(path).catch(() => null)
-        if (!manifest || manifest.status !== 'running') continue
-        const endedAt = now().toISOString()
-        const summary = 'Coordinator stopped before recording an Attempt outcome.'
-        const eventsPath = join(resolve(path, '..'), 'events.jsonl')
-        await repairDurableJsonLineTail(eventsPath)
-          .then(() =>
-            appendFile(
-              eventsPath,
-              `${JSON.stringify(
-                storeEvent(
-                  {
-                    kind: 'message',
-                    level: 'error',
-                    role: 'coordinator',
-                    content: summary,
-                  },
-                  new Date(endedAt),
-                ),
-              )}\n`,
-            ),
-          )
-          .catch(() => undefined)
-        await writeManifest(path, {
-          ...manifest,
-          endedAt,
-          status: 'interrupted',
-          summary,
-        })
-        await cleanupRunScratch(join(resolve(path, '..'), 'scratch')).catch(() => undefined)
-        count += 1
-      }
-      return count
+        for (const path of manifestPaths) {
+          const manifest = await readStoredManifest(path).catch(() => null)
+          if (!manifest || manifest.status !== 'running') continue
+          const endedAt = now().toISOString()
+          const summary = 'Coordinator stopped before recording an Attempt outcome.'
+          const eventsPath = join(resolve(path, '..'), 'events.jsonl')
+          await repairDurableJsonLineTail(eventsPath)
+            .then(() =>
+              appendFile(
+                eventsPath,
+                `${JSON.stringify(
+                  storeEvent(
+                    {
+                      kind: 'message',
+                      level: 'error',
+                      role: 'coordinator',
+                      content: summary,
+                    },
+                    new Date(endedAt),
+                  ),
+                )}\n`,
+              ),
+            )
+            .catch(() => undefined)
+          await writeManifest(path, {
+            ...manifest,
+            endedAt,
+            status: 'interrupted',
+            summary,
+          })
+          await cleanupRunScratch(join(resolve(path, '..'), 'scratch')).catch(() => undefined)
+          count += 1
+        }
+        if (count > 0) {
+          index.generation += 1
+        }
+        return count
+      })
     },
   }
 }
@@ -596,6 +659,7 @@ async function readLegacySummaryWithFallback(
     version: 1,
     ...parsedIdentity.data,
     responsibility,
+    workHash: null,
     execution: null,
     startedAt: contextStats.mtime.toISOString(),
     endedAt: resultStats?.mtime.toISOString() ?? contextStats.mtime.toISOString(),

@@ -216,8 +216,7 @@ function createAssistant(): AssistantModelRunner & { materialRevisionRequests: n
         if (!response.ok) throw new Error(`Could not request material planning: ${response.status}`)
       }
       return {
-        reply:
-          input.toolMode === 'reflection' ? '' : 'The revised contract is now being delivered.',
+        reply: input.toolMode === 'internal' ? '' : 'The revised contract is now being delivered.',
         session: { transport: 'codex', sessionId: `design-revision-${input.toolMode ?? 'main'}` },
       }
     },
@@ -332,7 +331,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
-          attempts: 0,
         },
         body: `## Acceptance Criteria\n\n- Feature exports revision ${planning.attributes.contractRevision}.\n`,
       }),

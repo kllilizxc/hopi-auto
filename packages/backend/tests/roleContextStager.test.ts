@@ -110,8 +110,8 @@ describe('RoleContextStager', () => {
       'cannot predict the checkpoint commit Coordinator creates after the Run',
     )
     expect(prompt).toContain('Coordinator Evidence owns that commit identity')
-    expect(prompt).toContain('keeps every dependsOn edge')
-    expect(prompt).toContain('rewrites may add dependencies but never remove one')
+    expect(prompt).toContain('owns the current nonterminal dependsOn graph')
+    expect(prompt).toContain('may atomically add, remove, or redirect edges')
     expect(prompt).toContain('Browser harness, when installed')
     expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
     const browserHarnessBackend = resolveBrowserHarnessBackendCommand()
@@ -172,68 +172,6 @@ describe('RoleContextStager', () => {
     const prompt = await Bun.file(bundle.promptFile).text()
     expect(prompt).toContain('Project guidance: AGENTS.md')
     expect(prompt).not.toContain('$HOPI_BOOTSTRAP_SOURCE_ROOT')
-  })
-
-  test('stages the formal release Preview as immutable Planner completion context', async () => {
-    const fixture = await createFixture(true)
-    const stager = createRoleContextStager(fixture.homeRoot, fixture.publisher)
-    const baseline = await stager.prepare({
-      projectRoot: fixture.projectRoot,
-      projectId: 'project-1',
-      goalId: 'goal-1',
-      workId: 'plan-initial',
-      runId: 'run-preview-baseline',
-      responsibility: 'planner',
-    })
-    const bundle = await stager.prepare({
-      projectRoot: fixture.projectRoot,
-      projectId: 'project-1',
-      goalId: 'goal-1',
-      workId: 'plan-initial',
-      runId: 'run-formal-preview',
-      responsibility: 'planner',
-      formalReleasePreview: {
-        kind: 'session',
-        session: {
-          sessionId: 'preview-release-1',
-          projectId: 'project-1',
-          releaseHeads: { primary: baseline.releaseHead },
-          status: 'running',
-          surfaces: [
-            { id: 'sender', label: 'Sender', url: 'http://127.0.0.1:4311/sender' },
-            { id: 'receiver', label: 'Receiver', url: 'http://127.0.0.1:4312/receiver' },
-          ],
-          logPath: '/tmp/preview-release-1.log',
-          startedAt: '2026-07-23T00:00:00.000Z',
-          endedAt: null,
-          error: null,
-          stoppedReason: null,
-          repair: null,
-        },
-      },
-    })
-
-    expect(bundle.formalReleasePreviewFile).toBeDefined()
-    expect(await Bun.file(bundle.formalReleasePreviewFile ?? '').json()).toMatchObject({
-      kind: 'session',
-      session: {
-        sessionId: 'preview-release-1',
-        releaseHeads: { primary: baseline.releaseHead },
-        status: 'running',
-      },
-    })
-    expect((await stat(bundle.formalReleasePreviewFile ?? '')).mode & 0o222).toBe(0)
-    expect(await Bun.file(bundle.contextFile).text()).toContain(
-      'Surface receiver (Receiver): http://127.0.0.1:4312/receiver',
-    )
-    const prompt = await Bun.file(bundle.promptFile).text()
-    expect(prompt).toContain('Formal release Preview: $HOPI_FORMAL_RELEASE_PREVIEW_FILE')
-    expect(prompt).toContain(
-      'Goal completion evidence comes from the supplied formal release Preview at its listed release heads',
-    )
-    expect(prompt).not.toContain('HTTP reachability')
-    expect(prompt).not.toContain('generic healthy Preview')
-    expect(bundle.repoReleaseHeads).toEqual({ primary: baseline.releaseHead })
   })
 
   test('stages Home preferences only for Planner without adding them to semantic guards', async () => {
@@ -371,13 +309,12 @@ describe('RoleContextStager', () => {
     const planning = parseWorkDocument(planningSource)
     const inputPath = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-current')
     planning.attributes.contractRevision = 2
-    planning.body = `${planning.body.trimEnd()}\n\n## Accepted Inputs\n\n- ${inputPath}\n`
+    planning.body = `${planning.body.trimEnd()}\n\n## Accepted Inputs\n\n- ${inputPath}\n\n## Contract change\n\nUse the local Codex CLI.\n`
 
     const goalPath = fixture.store.paths.goalDocument('goal-1')
     const goalSource = await Bun.file(fixture.store.paths.absolute(goalPath)).text()
     const goal = parseGoalDocument(goalSource)
     goal.attributes.contractRevision = 2
-    goal.body = `${goal.body.trimEnd()}\n\n## Accepted Inbox Instruction EV-current\n\nUse the local Codex CLI.\n`
 
     await fixture.store.publishGoal('goal-1', {
       supportingWrites: [
@@ -566,6 +503,12 @@ describe('RoleContextStager', () => {
       'External effects require explicit Work or operator authority',
     )
     expect(generatorPrompt).toContain('### Engineering Work: Engineering Work')
+    expect(generatorPrompt).toContain(
+      `Source: $HOPI_AUTHORITY_ROOT/${fixture.store.paths.workDocument('goal-1', 'W-1')}`,
+    )
+    expect(generatorPrompt).toContain(
+      `Goal source: $HOPI_AUTHORITY_ROOT/${fixture.store.paths.goalDocument('goal-1')}`,
+    )
     expect(generatorPrompt).not.toContain('### Goal Contract')
     expect(generatorPrompt).not.toContain('Exercise role context staging.')
     expect(generatorPrompt).not.toContain(generator.goalHash)
@@ -585,9 +528,9 @@ describe('RoleContextStager', () => {
       expect(prompt).not.toContain('Retry only')
       expect(prompt).not.toContain('choose the available browser client')
       expect(prompt).not.toContain('Do not enter a vendor plan-approval mode')
-      expect(prompt).toContain('Give a potentially long command sufficient wait time')
-      expect(prompt).toContain('wait on that same session')
-      expect(prompt).toContain('must not trigger an equivalent concurrent command')
+      expect(prompt).toContain('60-second observation timeout')
+      expect(prompt).toContain('wait on its returned live session')
+      expect(prompt).toContain('never restart equivalent work')
       expect(prompt.length).toBeLessThan(5_000)
     }
     expect(await Bun.file(generator.proposalCapabilitiesFile).json()).toMatchObject({
@@ -685,6 +628,60 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('- primary:src/index.ts')
     expect(prompt).not.toContain('Previous Generator Attempt')
     expect(prompt).not.toContain('Observed execution commands')
+  })
+
+  test('lets the Agent judge Evidence with unavailable artifact references', async () => {
+    const fixture = await createFixture(true)
+    const missingReference = 'artifact:R-mixed/missing-proof.txt'
+    const availableReference = 'artifact:R-mixed/002-proof.txt'
+    const availablePath = join(
+      runStoragePath(fixture.homeRoot, 'R-mixed'),
+      'artifacts',
+      '002-proof.txt',
+    )
+    await mkdir(dirname(availablePath), { recursive: true })
+    await Bun.write(availablePath, 'available proof\n')
+    await publishEngineeringWork(
+      fixture,
+      '## Acceptance Criteria\n\n- Judge the available evidence.\n',
+      [missingReference, availableReference],
+    )
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-mixed-evidence',
+      responsibility: 'generator',
+    })
+    const projectedPath = join(bundle.contextRoot, 'evidence-artifacts', '001-002-proof.txt')
+    const prompt = await Bun.file(bundle.promptFile).text()
+
+    expect(await Bun.file(projectedPath).text()).toBe('available proof\n')
+    expect(prompt).toContain(`- ${availableReference} -> ${projectedPath}`)
+    expect(prompt).toContain('### Unavailable Referenced Material')
+    expect(prompt).toContain(
+      `${missingReference} (from ${fixture.store.paths.evidenceDocument('goal-1', 'E-latest')})`,
+    )
+    expect(prompt).toContain('Decide whether they matter for the current responsibility.')
+    expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
+      version: 1,
+      artifacts: [
+        {
+          reference: availableReference,
+          path: projectedPath,
+          evidence: [fixture.store.paths.evidenceDocument('goal-1', 'E-latest')],
+        },
+      ],
+      unavailable: [
+        {
+          reference: missingReference,
+          evidence: [fixture.store.paths.evidenceDocument('goal-1', 'E-latest')],
+          reason: 'The retained Run artifact is unavailable on this machine.',
+        },
+      ],
+    })
   })
 
   test('stages transitive dependency Evidence and resolves its Run artifacts', async () => {
@@ -794,7 +791,6 @@ describe('RoleContextStager', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: ['E-explicit', 'E-obsolete', 'E-candidate', 'E-base'],
-              attempts: 0,
             },
             body: 'Provide the base behavior and retain the specifically cited `E-explicit` proof.\n',
           }),
@@ -812,7 +808,6 @@ describe('RoleContextStager', () => {
               dependsOn: ['W-base'],
               contractRevision: 1,
               evidenceRefs: ['E-middle'],
-              attempts: 0,
             },
             body: 'Build on the base behavior.\n',
           }),
@@ -830,7 +825,6 @@ describe('RoleContextStager', () => {
               dependsOn: ['W-middle'],
               contractRevision: 1,
               evidenceRefs: [],
-              attempts: 0,
             },
             body: 'Use the accepted predecessor result.\n',
           }),
@@ -970,6 +964,42 @@ describe('RoleContextStager', () => {
       'Attached images are Goal assets with their authority-defined purpose',
     )
   })
+
+  test('reports a missing referenced Goal image without blocking the Agent', async () => {
+    const fixture = await createFixture(true)
+    const missingPath = fixture.store.paths.asset('goal-1', 'd'.repeat(64), 'missing-layout.png')
+    await publishEngineeringWork(
+      fixture,
+      `## Acceptance Criteria\n\n- Recreate the panel hierarchy.\n\n## Reference Images\n\n- \`${missingPath}\` - Match the compact layout.\n`,
+    )
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-missing-image',
+      responsibility: 'generator',
+    })
+    const prompt = await Bun.file(bundle.promptFile).text()
+
+    expect(bundle.imageFiles).toEqual([])
+    expect(bundle.guardFiles[missingPath]).toBeNull()
+    expect(prompt).toContain('### Unavailable Referenced Material')
+    expect(prompt).toContain(missingPath)
+    expect(prompt).toContain('The referenced Goal asset is unavailable in current authority.')
+    expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
+      version: 1,
+      artifacts: [],
+      unavailable: [
+        {
+          reference: missingPath,
+          evidence: [fixture.store.paths.workDocument('goal-1', 'W-1')],
+          reason: 'The referenced Goal asset is unavailable in current authority.',
+        },
+      ],
+    })
+  })
 })
 
 async function createFixture(withAgents: boolean, withPrepare = false) {
@@ -1048,7 +1078,6 @@ async function publishEngineeringWork(
             dependsOn: [],
             contractRevision: 1,
             evidenceRefs: ['E-latest'],
-            attempts: 0,
           },
           body,
         }),

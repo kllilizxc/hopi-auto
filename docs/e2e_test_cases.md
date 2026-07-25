@@ -69,6 +69,13 @@ the persistent managed browser and never attach to or reload the operator-browse
 nonstandard managed Chrome/Chromium executable may be selected with
 `HOPI_BROWSER_CHROME_COMMAND=/absolute/path/to/browser`.
 
+When the browser is intentionally hosted outside the backend environment, supply the isolated
+loopback DevTools endpoint instead:
+
+```sh
+HOPI_BROWSER_MANAGED_CDP_URL=http://127.0.0.1:9223 bun run test:browser
+```
+
 Do not replace a missing browser with HTTP requests and still claim browser coverage. On WSL, use an
 isolated automation Chrome rather than the operator's everyday Chrome profile.
 
@@ -688,41 +695,44 @@ provider TLS outage. The retained 2026-07-17 artifact additionally proves that a
 follow-up leaves the blocker open before a later natural-language decision settles it; its final Run
 status records only the subsequently corrected stale delivery-checkout oracle.
 
-### HOPI-E2E-014: Operational Failure, Bounded Recovery, And Retry
+### HOPI-E2E-014: Operational Failure, Assistant Judgment, And Retry
 
-| Field   | Value                                                                                                                        |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Risk    | A broken command or environment consumes Work attempts, loops forever, or leaves only an unreadable log.                     |
-| Reality | Production Coordinator, Attempt store, UI, and process boundary with a deterministic failing executable.                     |
-| Fixture | Engineering command fails operationally three consecutive times, then becomes repairable without changing the Work contract. |
-| Cost    | Zero provider calls in the main contract scenario.                                                                           |
+| Field   | Value                                                                                                   |
+| ------- | ------------------------------------------------------------------------------------------------------- |
+| Risk    | A broken command advances Work, loops forever, invents a blocker, or leaves only an unreadable log. |
+| Reality | Production Coordinator, Reflection, speaking Assistant, Attempt store, UI, and a real process boundary. |
+| Fixture | One responsibility command fails operationally, then becomes repairable without changing the Work contract. |
+| Cost    | Zero provider calls in the deterministic contract scenario.                                      |
 
 Actions:
 
 1. Dispatch Engineering into an executable that exits before producing a semantic role result.
-2. Observe bounded backoff and restart Coordinator between failures.
-3. Reach operational exhaustion and inspect Work projection and Assistant notification.
-4. Repair the external condition and request one Work retry through the public Assistant/tool boundary.
-5. Let the same Work begin a fresh episode and complete.
+2. Observe one retained failure, restart Coordinator, and confirm unchanged Work is not redispatched.
+3. Let Reflection inspect the failed Attempt and hand the concrete recovery decision to speaking Assistant.
+4. Observe one direct operator-facing question without a synthetic Attention.
+5. Repair the external condition, reply naturally, and let Assistant request one Work retry.
+6. Let the same Work complete.
 
 Pass conditions:
 
-- Operational failures remain diagnostics and do not consume semantic Work attempts.
-- Failure count reconstructs from retained Attempt logs after restart.
-- The fixed ceiling creates or reuses one ordinary Work-target Attention.
-- Kanban shows a direct blocker rather than an infinite spinner or invented failure stage.
+- Operational failures remain durable Attempt diagnostics and do not advance Work.
+- The settled Work hash reconstructs the pause from retained Attempt logs after restart.
+- Coordinator creates no Attention, retry threshold, or failure-kind recovery policy.
+- Kanban shows ordinary `waiting` rather than an infinite spinner or invented failure stage.
 - Raw stdout/stderr is present for every failed process.
-- One explicit Attention resolution plus Work retry records the Input and affects only its exact blocker.
-- The resolved blocker starts one new episode; success clears the projection without deleting history.
+- Reflection and speaking Assistant make the recovery judgment from current state.
+- One natural user reply plus explicit Work retry affects only the failed Work.
+- Success clears the failed-Attempt projection without deleting history.
+- Final Planner success completes the Goal directly; recovery and completion create no Attention.
 
 Primary invariants: `INV-01`, `INV-04`, `INV-10`, `INV-14`.
 
 Current implementation: `packages/backend/tests/browser/operationalRecovery.browser.ts`
-(`bun run e2e:browser:014`) uses a real failing child process, restarts the production Server between
-failures, retains raw stdout/stderr, renders and answers the blocker through the browser, and completes
-the same Planning Work in a fresh episode through deterministic Planner, Generator, Reviewer, and C1.
-The Assistant fixture calls `hopi_resolve_attention` and then `hopi_control_work: retry`; the test
-asserts that the original Work Attention resolves before the same Work starts a fresh episode.
+(`bun run e2e:browser:014`) uses a real failing child process, restarts the production Server, retains
+raw stdout/stderr, renders the settled failure and Assistant question through the browser, and
+completes the same Planning Work through deterministic Planner, Generator, Reviewer, and C1. The
+Assistant fixture calls only `hopi_control_work: retry`; the test asserts that no synthetic Attention
+or automatic redispatch appears before that explicit decision.
 
 ### HOPI-E2E-015: Pause And Resume During An Active Run
 

@@ -1,16 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { createAssistantReflection } from '../src/assistant/assistantReflection'
-import type { AssistantStateReader, AssistantStateSnapshot } from '../src/assistant/assistantState'
-import { createAssistantTools } from '../src/assistant/assistantTools'
-import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
+import { createAssistantWake } from '../src/assistant/assistantReflection'
+import type { AssistantStateSnapshot } from '../src/assistant/assistantState'
 import { PublicationCoordinator } from '../src/publication/publisher'
-import { createPreviewManager } from '../src/runtime/previewManager'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
 
-const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-reflection')
+const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-wake')
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
@@ -21,822 +18,172 @@ afterEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
 })
 
-describe('Assistant Reflection', () => {
-  test('establishes a baseline and hands useful state changes to the speaking thread', async () => {
-    let digest = 'a'.repeat(64)
-    const seen: Array<{ mode: string | undefined; sessionId: string | null }> = []
-    const fixture = await setup(
-      () => ({ digest }),
-      (tools) => ({
-        async run(input, observer) {
-          seen.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
-          await observer?.onEvent?.({
-            kind: 'transcript',
-            transport: 'codex',
-            entryKind: 'assistant',
-            summary: 'Inspecting the latest state change.',
-          })
-          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
-            brief: 'Work W-1 finished with a failure that needs main-thread assessment.',
-          })
-          return { reply: 'Reflection complete.', session: codexSession('disposable-thread') }
-        },
-      }),
-    )
+describe('Assistant wake trigger', () => {
+  test('records a state edge for the same Project Assistant without running another model', async () => {
+    const fixture = await setup(['P-1'])
 
-    expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
-    expect(seen).toHaveLength(0)
-    digest = 'b'.repeat(64)
-    expect(await fixture.reflection.observe({ settled: true })).toBe('started')
-    await fixture.reflection.waitForIdle()
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '2'.repeat(64) } }))
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
 
     const events = [...(await fixture.workspace.readWorkspace()).events.values()]
     expect(events).toHaveLength(1)
     expect(events[0]?.attributes).toMatchObject({
-      source: 'reflection',
+      source: 'system',
       visibility: 'internal',
       status: 'pending',
+      context: { projectId: 'P-1' },
     })
-    expect(seen).toEqual([{ mode: 'reflection', sessionId: null }])
-    expect(await fixture.reflection.listRuns()).toMatchObject([
+    expect(events[0]?.body).toContain('Current Project state and every unresolved Attention')
+    expect(events[0]?.body).not.toContain('"projects"')
+    expect(await fixture.wake.listRuns()).toMatchObject([
       {
-        manifest: { status: 'completed', stateDigest: 'b'.repeat(64) },
-        events: [{ entryKind: 'assistant', summary: 'Inspecting the latest state change.' }],
+        manifest: {
+          status: 'completed',
+          scope: { kind: 'project', projectId: 'P-1' },
+        },
       },
     ])
-    expect(await fixture.reflection.observe({ settled: true })).toBe('unchanged')
   })
 
-  test('assesses simultaneous Project changes independently without consuming either handoff', async () => {
-    let state: TestState = {
-      digest: 'a'.repeat(64),
-      homeDigest: '0'.repeat(64),
-      projectDigests: { 'P-1': '1'.repeat(64), 'P-2': '2'.repeat(64) },
-      projects: [projectState('P-1', 'active'), projectState('P-2', 'active')],
-    }
-    const prompts: string[] = []
-    const fixture = await setup(
-      () => state,
-      (tools) => ({
-        async run(input) {
-          prompts.push(input.prompt)
-          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
-            brief: 'This Project reached a speaking boundary.',
-          })
-          if (prompts.length === 1) {
-            state = {
-              ...state,
-              digest: 'c'.repeat(64),
-              projectDigests: {
-                ...state.projectDigests,
-                'P-2': '5'.repeat(64),
-              },
-            }
-          }
-          return {
-            reply: 'Handoff prepared.',
-            session: codexSession(`reflection-project-${prompts.length}`),
-          }
-        },
+  test('routes simultaneous changes independently by Project', async () => {
+    const fixture = await setup(['P-1', 'P-2'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    fixture.setSnapshot(
+      snapshot(['P-1', 'P-2'], {
+        projectDigests: { 'P-1': '3'.repeat(64), 'P-2': '4'.repeat(64) },
       }),
-      { linkProjectIds: ['P-1', 'P-2'] },
     )
 
-    expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
-    state = {
-      digest: 'b'.repeat(64),
-      homeDigest: '0'.repeat(64),
-      projectDigests: { 'P-1': '3'.repeat(64), 'P-2': '4'.repeat(64) },
-      projects: [projectState('P-1', 'done'), projectState('P-2', 'done')],
-    }
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
 
-    expect(await fixture.reflection.observe({ settled: true })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    expect(await fixture.reflection.observe({ settled: true })).toBe('started')
-    await fixture.reflection.waitForIdle()
-
-    expect(await fixture.reflection.listRuns()).toMatchObject([
-      { manifest: { status: 'completed' } },
-      { manifest: { status: 'completed' } },
-    ])
-    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
-    expect(events.map((event) => event.attributes.context?.projectId).sort()).toEqual([
-      'P-1',
-      'P-2',
-    ])
-    expect(prompts).toHaveLength(2)
-    expect(prompts[0]).toContain('Conversation scope: Project P-1')
-    expect(prompts[0]).toContain('Changed Goal P-1/G-1')
-    expect(prompts[0]).not.toContain('P-2/G-1')
-    expect(prompts[1]).toContain('Conversation scope: Project P-2')
-    expect(prompts[1]).toContain('Changed Goal P-2/G-1')
-    expect(prompts[1]).not.toContain('P-1/G-1')
-    expect((await fixture.reflection.listRuns()).map((run) => run.manifest.scope)).toEqual([
-      { kind: 'project', projectId: 'P-2' },
-      { kind: 'project', projectId: 'P-1' },
-    ])
+    const projectIds = [...(await fixture.workspace.readWorkspace()).events.values()]
+      .map((event) => event.attributes.context?.projectId)
+      .sort()
+    expect(projectIds).toEqual(['P-1', 'P-2'])
   })
 
-  test('prompts from a semantic delta without feeding internal Reflection history back', async () => {
-    let state: TestState = {
-      digest: 'a'.repeat(64),
-      homeDigest: '0'.repeat(64),
-      projectDigests: { 'P-1': 'a'.repeat(64) },
-      projects: [projectState('P-1', 'active')],
-    }
-    let prompt = ''
-    const fixture = await setup(
-      () => state,
-      () => ({
-        async run(input) {
-          prompt = input.prompt
-          return { reply: 'No handoff.', session: codexSession('reflection-delta') }
-        },
-      }),
-      { linkProject: true },
-    )
-    await fixture.workspace.receiveEvent({ eventId: 'EV-user', content: 'Keep public context.' })
-    await fixture.workspace.handleEvent('EV-user', {
-      reply: 'Public reply.',
-      disposition: 'answered',
-    })
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-internal',
-      content: 'INTERNAL-BRIEF-MUST-NOT-RECUR',
-    })
-    await fixture.workspace.handleEvent('EV-internal', {
-      reply: 'Hidden internal outcome.',
-      disposition: 'answered',
-    })
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-delivered',
-      content: 'DELIVERED-BRIEF-MUST-NOT-RECUR',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-delivered'],
-      },
-    })
-    await fixture.workspace.exposeEvent('EV-delivered')
-    await fixture.workspace.handleEvent('EV-delivered', {
-      reply: 'The operator already received this completion update.',
-      disposition: 'notified',
-    })
-
-    expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
-    state = {
-      digest: 'b'.repeat(64),
-      homeDigest: '0'.repeat(64),
-      projectDigests: { 'P-1': 'b'.repeat(64) },
-      workspaceAttentions: [
-        {
-          id: 'A-1',
-          target: 'project:P-1',
-          resolvedAt: null,
-          notifiedAt: null,
-          body: 'Coordinator needs safe repair.',
-          inspectionPath: '/diagnostics/workspace-attention.md',
-        },
-      ],
-      projects: [
-        {
-          projectId: 'P-1',
-          available: false,
-          goals: [
-            {
-              goal: {
-                attributes: {
-                  id: 'G-1',
-                  title: 'Compact delta',
-                  lifecycle: 'active',
-                  contractRevision: 1,
-                },
-              },
-              works: [
-                {
-                  attributes: {
-                    id: 'W-1',
-                    title: 'Verify compaction',
-                    kind: 'engineering',
-                    stage: 'review',
-                    notBefore: null,
-                    dependsOn: [],
-                    contractRevision: 1,
-                    attempts: 1,
-                    evidenceRefs: ['E-1', 'E-2'],
-                  },
-                  projection: { column: 'Review', ready: true, responsibility: 'reviewer' },
-                  candidateIntegration: [
-                    { repoId: 'primary', kind: 'observed', result: { kind: 'ready' } },
-                  ],
-                  runtime: {
-                    activeResponsibility: null,
-                    latestAttempt: {
-                      runId: 'R-1',
-                      responsibility: 'generator',
-                      status: 'finished',
-                      result: 'success',
-                      summary: 'Candidate implementation completed.',
-                    },
-                    paths: { transcript: 'SECRET-RUNTIME-PATH' },
-                    stale: false,
-                  },
-                },
-              ],
-              attentions: [],
-            },
-          ],
-          design: 'UNRELATED-DESIGN-BODY'.repeat(10_000),
-        },
-      ],
-    }
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-
-    expect(prompt).toContain('## Trigger')
-    expect(prompt).toContain('Assistant-owned workspace Attention A-1')
-    expect(prompt).toContain('targeting project:P-1')
-    expect(prompt).toContain('## Changed Facts Since Last Assessment')
-    expect(prompt).toContain('Owned outcome: decide whether the changed state warrants')
-    expect(prompt).toContain('currentCandidateIntegration is the current C1 merge preflight')
-    expect(prompt).toContain('creationRationale and latestAttempt are historical records')
-    expect(prompt).toContain('No handoff produces no speaking turn')
-    expect(prompt).not.toContain('Operator action means')
-    expect(prompt).not.toContain('Use the trigger to choose')
-    expect(prompt).not.toContain('copy each selected reference')
-    expect(prompt).not.toContain('User: Keep public context.')
-    expect(prompt).not.toContain('## Recent Public Conversation')
-    expect(prompt).toContain('## Recent Public Assistant Update Receipts')
-    expect(prompt).toContain('"eventId":"EV-delivered"')
-    expect(prompt).toContain('project:P-1/goal:G-1/attention:A-delivered')
-    expect(prompt).toContain('The operator already received this completion update.')
-    expect(prompt).not.toContain('## Relevant Current State')
-    expect(prompt).not.toContain('INTERNAL-BRIEF-MUST-NOT-RECUR')
-    expect(prompt).not.toContain('DELIVERED-BRIEF-MUST-NOT-RECUR')
-    expect(prompt).not.toContain('UNRELATED-DESIGN-BODY')
-    expect(prompt).toContain('"evidenceCount":2')
-    expect(prompt).toContain('"latestEvidenceRef":"E-2"')
-    expect(prompt).toContain('Candidate implementation completed.')
-    expect(prompt).toContain('"currentCandidateIntegration"')
-    expect(prompt).toContain('"kind":"ready"')
-    expect(prompt).not.toContain('"evidenceRefs"')
-    expect(prompt).toContain('SECRET-RUNTIME-PATH')
-    expect(prompt).toContain('/diagnostics/workspace-attention.md')
-    expect(prompt.length).toBeLessThan(6_000)
-  })
-
-  test('includes public update receipts when an immediate signal is assessed after startup', async () => {
-    let prompt = ''
-    const fixture = await setup(
-      () => ({
-        digest: 'a'.repeat(64),
-        homeDigest: '0'.repeat(64),
-        projectDigests: { 'P-1': 'a'.repeat(64) },
+  test('an unresolved Project Attention wakes once and stays durable without polling', async () => {
+    const fixture = await setup(['P-1'])
+    fixture.setSnapshot(
+      snapshot(['P-1'], {
         workspaceAttentions: [
           {
+            reference: 'home:H-1/attention:A-1',
             id: 'A-1',
-            target: 'project:P-1',
+            createdAt: '2026-07-25T00:00:00.000Z',
+            updatedAt: '2026-07-25T00:00:00.000Z',
             resolvedAt: null,
-            notifiedAt: null,
-          },
-        ],
-        projects: [projectState('P-1', 'active')],
-      }),
-      () => ({
-        async run(input) {
-          prompt = input.prompt
-          return { reply: 'No handoff.', session: codexSession('reflection-restart-receipt') }
-        },
-      }),
-      { linkProject: true },
-    )
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-before-restart',
-      content: 'Private completion brief.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-1'],
-      },
-    })
-    await fixture.workspace.exposeEvent('EV-before-restart')
-    await fixture.workspace.handleEvent('EV-before-restart', {
-      reply: 'Completion was already published before restart.',
-      disposition: 'notified',
-    })
-
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-
-    expect(prompt).toContain('No previous assessed snapshot is available')
-    expect(prompt).toContain('"eventId":"EV-before-restart"')
-    expect(prompt).toContain('project:P-1/goal:G-1/attention:A-1')
-    expect(prompt).toContain('Completion was already published before restart.')
-    expect(prompt).not.toContain('Private completion brief.')
-  })
-
-  test('does not interrupt for a newer state and discards the stale handoff before rerunning', async () => {
-    let digest = 'a'.repeat(64)
-    let calls = 0
-    let releaseFirst: (() => void) | undefined
-    const fixture = await setup(
-      () => ({ digest }),
-      (tools) => ({
-        async run(input) {
-          calls += 1
-          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
-            brief: `Assessment ${calls}.`,
-          })
-          if (calls === 1) {
-            await new Promise<void>((resolve) => {
-              releaseFirst = resolve
-            })
-          }
-          return { reply: 'Handoff prepared.', session: codexSession(`reflection-${calls}`) }
-        },
-      }),
-    )
-
-    expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
-    digest = 'c'.repeat(64)
-    expect(await fixture.reflection.observe({ settled: true })).toBe('started')
-    digest = 'd'.repeat(64)
-    expect(await fixture.reflection.observe({ settled: true })).toBe('running')
-    while (!releaseFirst) await Bun.sleep(1)
-    releaseFirst?.()
-    await fixture.reflection.waitForIdle()
-    expect(fixture.reflection.isActive()).toBe(false)
-    expect([...(await fixture.workspace.readWorkspace()).events.values()]).toHaveLength(0)
-
-    expect(await fixture.reflection.observe({ settled: true })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    expect(calls).toBe(2)
-    expect([...(await fixture.workspace.readWorkspace()).events.values()]).toHaveLength(1)
-  })
-
-  test('defers ordinary changes without assessing them, then runs the same digest when settled', async () => {
-    let digest = 'a'.repeat(64)
-    let calls = 0
-    const fixture = await setup(
-      () => ({ digest }),
-      () => ({
-        async run() {
-          calls += 1
-          return { reply: 'No handoff.', session: codexSession(`reflection-${calls}`) }
-        },
-      }),
-    )
-
-    expect(await fixture.reflection.observe({ settled: true })).toBe('baseline')
-    digest = 'b'.repeat(64)
-    expect(await fixture.reflection.observe({ settled: false })).toBe('deferred')
-    expect(calls).toBe(0)
-
-    expect(await fixture.reflection.observe({ settled: true })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    expect(calls).toBe(1)
-    expect(await fixture.reflection.observe({ settled: true })).toBe('unchanged')
-  })
-
-  test('keeps transport backoff across semantic changes and probes at the capped interval', async () => {
-    let clock = 0
-    let digest = 'f'.repeat(64)
-    let calls = 0
-    const fixture = await setup(
-      () => ({
-        digest,
-        workspaceAttentions: [{ id: 'A-workspace', resolvedAt: null, notifiedAt: null }],
-      }),
-      () => ({
-        async run() {
-          calls += 1
-          if (calls <= 3) throw new Error('temporary model failure')
-          return { reply: 'Recovered.', session: codexSession(`reflection-${calls}`) }
-        },
-      }),
-      {
-        now: () => new Date(clock),
-        failureRetryBaseMs: 100,
-        failureRetryMaxMs: 1_000,
-        failuresBeforeMaxBackoff: 3,
-      },
-    )
-
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    digest = 'e'.repeat(64)
-    clock = 99
-    expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
-    clock = 100
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    digest = 'd'.repeat(64)
-    clock = 299
-    expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
-    clock = 300
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    digest = 'c'.repeat(64)
-    clock = 1_299
-    expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
-    expect(calls).toBe(3)
-
-    clock = 1_300
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    expect(calls).toBe(4)
-    expect(await fixture.reflection.observe({ settled: false })).toBe('unchanged')
-  })
-
-  test('forces Reflection state reads to use the compact Evidence view', async () => {
-    const digest = 'f'.repeat(64)
-    const fixture = await setup(
-      () => ({
-        digest,
-        workspaceAttentions: [{ id: 'A-workspace', resolvedAt: null, notifiedAt: null }],
-      }),
-      (tools) => ({
-        async run(input) {
-          await tools.execute(input.toolToken, 'hopi_read_state', {
-            projectId: 'P-1',
-            goalId: 'G-1',
-            includeEvidence: true,
-          })
-          return { reply: 'No handoff.', session: codexSession('reflection-compact-state') }
-        },
-      }),
-    )
-
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    expect(fixture.stateReads).toContainEqual({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      includeEvidence: false,
-    })
-  })
-
-  test('uses one immediate Goal signal as the default Reflection read context', async () => {
-    const fixture = await setup(
-      () => ({
-        digest: 'f'.repeat(64),
-        projects: [
-          {
-            projectId: 'P-1',
-            available: true,
-            goals: [
-              {
-                goal: { attributes: { id: 'G-1' } },
-                attentions: [{ attributes: { id: 'A-1', resolvedAt: null, notifiedAt: null } }],
-                works: [],
-              },
-            ],
+            refs: ['project:P-1'],
+            body: 'Inspect the repeated failure.',
+            inspectionPath: '/tmp/A-1.md',
           },
         ],
       }),
-      (tools) => ({
-        async run(input) {
-          await tools.execute(input.toolToken, 'hopi_read_state', { goalId: 'G-1' })
-          return { reply: 'No handoff.', session: codexSession('reflection-goal-context') }
-        },
-      }),
     )
 
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    expect(fixture.stateReads).toContainEqual({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      includeEvidence: false,
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+    expect(await fixture.wake.observe({ settled: false })).toBe('unchanged')
+
+    const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
+    if (!event) throw new Error('Expected wake event')
+    await fixture.workspace.handleEvent(event.attributes.id, {
+      reply: 'No public update.',
+      disposition: 'silent',
     })
+    expect(await fixture.wake.observe({ settled: false })).toBe('unchanged')
+    expect((await fixture.wake.listRuns()).length).toBe(1)
   })
 
-  test('bounds a consecutive handoff chain while its predecessors remain unhandled', async () => {
-    let digest = 'a'.repeat(64)
-    const exhausted: Array<{ eventId: string; message: string }> = []
-    const fixture = await setup(
-      () => ({
-        digest,
-        workspaceAttentions: [{ id: 'A-workspace', resolvedAt: null, notifiedAt: null }],
-      }),
-      (tools) => ({
-        async run(input) {
-          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
-            brief: `Assessment for ${digest.slice(0, 1)}.`,
-          })
-          return { reply: 'Handoff prepared.', session: codexSession(`reflection-${digest[0]}`) }
-        },
-      }),
-      {
-        maxConsecutiveHandoffs: 3,
-        onLoopExhausted: async (eventId, message) => {
-          exhausted.push({ eventId, message })
-        },
-      },
-    )
+  test('defers an ordinary unsettled change but preserves it for the settled edge', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '5'.repeat(64) } }))
 
-    for (const marker of ['a', 'b', 'c']) {
-      digest = marker.repeat(64)
-      expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-      await fixture.reflection.waitForIdle()
-    }
-
-    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
-    expect(events).toHaveLength(3)
-    expect(exhausted).toHaveLength(1)
-    expect(events.map((event) => event.attributes.id)).toContain(exhausted[0]?.eventId ?? '')
-    expect(exhausted[0]?.message).toBe(
-      'Background Reflection handed off 3 consecutive state changes without converging.',
-    )
-  })
-
-  test('treats each handled speaking handoff as convergence for loop detection', async () => {
-    let digest = 'a'.repeat(64)
-    const exhausted: string[] = []
-    const fixture = await setup(
-      () => ({
-        digest,
-        workspaceAttentions: [{ id: 'A-workspace', resolvedAt: null, notifiedAt: null }],
-      }),
-      (tools) => ({
-        async run(input) {
-          await tools.execute(input.toolToken, 'hopi_handoff_to_main', {
-            brief: `Assessment for ${digest.slice(0, 1)}.`,
-          })
-          return { reply: 'Handoff prepared.', session: codexSession(`reflection-${digest[0]}`) }
-        },
-      }),
-      {
-        maxConsecutiveHandoffs: 3,
-        onLoopExhausted: async (eventId) => {
-          exhausted.push(eventId)
-        },
-      },
-    )
-
-    for (const marker of ['a', 'b', 'c', 'd']) {
-      digest = marker.repeat(64)
-      expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-      await fixture.reflection.waitForIdle()
-      const event = [...(await fixture.workspace.readWorkspace()).events.values()].find(
-        (candidate) => candidate.attributes.status === 'pending',
-      )
-      expect(event).toBeDefined()
-      await fixture.workspace.handleEvent(event?.attributes.id ?? 'missing-event', {
-        reply: 'Speaking Assistant revalidated the current state.',
-        disposition: 'answered',
-      })
-    }
-
-    expect(exhausted).toEqual([])
-  })
-
-  test('does not synthesize a handoff when the model omits it', async () => {
-    const fixture = await setup(
-      () => ({
-        digest: 'a'.repeat(64),
-        projects: [
-          {
-            projectId: 'P-1',
-            available: true,
-            goals: [
-              {
-                goal: { attributes: { id: 'G-1' } },
-                attentions: [
-                  { attributes: { id: 'A-1', resolvedAt: null, notifiedAt: null } },
-                  { attributes: { id: 'A-2', resolvedAt: null, notifiedAt: null } },
-                ],
-                works: [],
-              },
-            ],
-          },
-        ],
-      }),
-      () => ({
-        async run() {
-          return { reply: 'No handoff.', session: codexSession('reflection-no-handoff') }
-        },
-      }),
-      { linkProject: true },
-    )
-
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-
-    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
-    expect(events).toHaveLength(0)
-  })
-
-  test('starts unsettled snapshots only for immediate signals, including after startup', async () => {
-    let state: TestState = { digest: 'a'.repeat(64) }
-    let calls = 0
-    const fixture = await setup(
-      () => state,
-      () => ({
-        async run() {
-          calls += 1
-          return { reply: 'Assessed.', session: codexSession(`reflection-${calls}`) }
-        },
-      }),
-    )
-
-    state = {
-      digest: 'b'.repeat(64),
-      workspaceAttentions: [{ resolvedAt: null, notifiedAt: null }],
-    }
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-
-    state = {
-      digest: 'c'.repeat(64),
-      projects: [
-        {
-          available: true,
-          goals: [
-            {
-              attentions: [{ attributes: { resolvedAt: null, notifiedAt: null } }],
-              works: [],
-            },
-          ],
-        },
-      ],
-    }
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-
-    state = {
-      digest: 'd'.repeat(64),
-      projects: [{ available: false, goals: [] }],
-    }
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-
-    state = {
-      digest: 'e'.repeat(64),
-      projects: [
-        {
-          available: true,
-          goals: [{ attentions: [], works: [{ runtime: { stale: true } }] }],
-        },
-      ],
-    }
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    expect(calls).toBe(4)
-
-    state = {
-      digest: 'f'.repeat(64),
-      workspaceAttentions: [{ resolvedAt: null, notifiedAt: '2026-07-11T00:00:00.000Z' }],
-    }
-    expect(await fixture.reflection.observe({ settled: false })).toBe('started')
-    await fixture.reflection.waitForIdle()
-    expect(calls).toBe(5)
-
-    state = {
-      digest: '1'.repeat(64),
-      workspaceAttentions: [
-        {
-          resolvedAt: null,
-          notifiedAt: '2026-07-11T00:00:00.000Z',
-          operatorRequest: 'home:H-1/event:EV-request',
-        },
-      ],
-    }
-    expect(await fixture.reflection.observe({ settled: false })).toBe('deferred')
-    expect(calls).toBe(5)
+    expect(await fixture.wake.observe({ settled: false })).toBe('deferred')
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
+    expect((await fixture.wake.listRuns()).length).toBe(1)
   })
 })
 
-interface TestState {
-  digest: string
-  homeDigest?: string
-  projectDigests?: Record<string, string>
-  workspaceAttentions?: unknown[]
-  projects?: unknown[]
-}
-
-async function setup(
-  readState: () => TestState,
-  buildRunner: (tools: ReturnType<typeof createAssistantTools>) => AssistantModelRunner,
-  reflectionOptions: {
-    now?: () => Date
-    failureRetryBaseMs?: number
-    failureRetryMaxMs?: number
-    failuresBeforeMaxBackoff?: number
-    maxConsecutiveHandoffs?: number
-    onLoopExhausted?(eventId: string, message: string): Promise<void> | void
-    linkProject?: boolean
-    linkProjectIds?: string[]
-  } = {},
-) {
+async function setup(projectIds: string[]) {
+  const homeRoot = join(temporaryRoot, 'home')
   const publisher = new PublicationCoordinator()
-  const home = createAssistantHomeStore(temporaryRoot, publisher)
-  await home.initialize()
-  const linkedProjectIds =
-    reflectionOptions.linkProjectIds ?? (reflectionOptions.linkProject ? ['P-1'] : [])
-  for (const projectId of linkedProjectIds) {
-    const repoRoot = join(temporaryRoot, `repo-${projectId}`)
-    await mkdir(repoRoot, { recursive: true })
-    await git(repoRoot, ['init', '-b', 'main'])
-    await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
-    await git(repoRoot, ['config', 'user.name', 'HOPI Test'])
-    await Bun.write(join(repoRoot, 'README.md'), '# Repo\n')
-    await git(repoRoot, ['add', '.'])
-    await git(repoRoot, ['commit', '-m', 'initial'])
+  const home = createAssistantHomeStore(homeRoot, publisher)
+  for (const projectId of projectIds) {
+    const repoRoot = join(temporaryRoot, projectId)
+    await initializeGitRepo(repoRoot)
     await home.linkProject({ projectId, repoPath: repoRoot })
   }
-  const workspace = createAssistantWorkspaceStore(temporaryRoot, publisher)
-  const stateReads: Array<{ projectId?: string; goalId?: string; includeEvidence?: boolean }> = []
-  const state: AssistantStateReader = {
-    async read(input = {}) {
-      stateReads.push(input)
-      const current = readState()
-      const projectDigests = Object.fromEntries(
-        (current.projects ?? []).flatMap((project) => {
-          if (
-            typeof project !== 'object' ||
-            project === null ||
-            !('projectId' in project) ||
-            typeof project.projectId !== 'string'
-          ) {
-            return []
-          }
-          return [
-            [project.projectId, current.projectDigests?.[project.projectId] ?? current.digest],
-          ]
-        }),
-      )
-      return {
-        observedAt: '2026-07-11T00:00:00.000Z',
-        stateDigest: current.digest,
-        conversationDigests: {
-          home: current.homeDigest ?? current.digest,
-          projects: projectDigests,
-        },
-        activeRuns: [],
-        workspaceAttentions: current.workspaceAttentions ?? [],
-        projects: current.projects ?? [],
-      } satisfies AssistantStateSnapshot
+  const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+  let current = snapshot(projectIds)
+  const state = {
+    read: async () => current,
+    readForReflection: async () => current,
+  }
+  const wake = createAssistantWake({ homeRoot, workspace, state })
+  return {
+    wake,
+    workspace,
+    setSnapshot(next: AssistantStateSnapshot) {
+      current = next
     },
   }
-  const tools = createAssistantTools({
-    home,
-    workspace,
-    projects: new Map(),
-    publisher,
-    preview: createPreviewManager(temporaryRoot),
-    state,
-  })
-  const reflection = createAssistantReflection({
-    homeRoot: temporaryRoot,
-    workspace,
-    state,
-    tools,
-    runner: buildRunner(tools),
-    resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
-    minObserveIntervalMs: 0,
-    ...(reflectionOptions.now ? { now: reflectionOptions.now } : {}),
-    ...(reflectionOptions.failureRetryBaseMs !== undefined
-      ? { failureRetryBaseMs: reflectionOptions.failureRetryBaseMs }
-      : {}),
-    ...(reflectionOptions.failureRetryMaxMs !== undefined
-      ? { failureRetryMaxMs: reflectionOptions.failureRetryMaxMs }
-      : {}),
-    ...(reflectionOptions.failuresBeforeMaxBackoff !== undefined
-      ? { failuresBeforeMaxBackoff: reflectionOptions.failuresBeforeMaxBackoff }
-      : {}),
-    ...(reflectionOptions.maxConsecutiveHandoffs !== undefined
-      ? { maxConsecutiveHandoffs: reflectionOptions.maxConsecutiveHandoffs }
-      : {}),
-    ...(reflectionOptions.onLoopExhausted
-      ? { onLoopExhausted: reflectionOptions.onLoopExhausted }
-      : {}),
-  })
-  return { workspace, tools, reflection, stateReads }
+}
+
+function snapshot(
+  projectIds: string[],
+  overrides: {
+    projectDigests?: Record<string, string>
+    workspaceAttentions?: unknown[]
+  } = {},
+): AssistantStateSnapshot {
+  const projectDigests = Object.fromEntries(
+    projectIds.map((projectId, index) => [
+      projectId,
+      overrides.projectDigests?.[projectId] ?? String(index + 1).repeat(64),
+    ]),
+  )
+  return {
+    observedAt: '2026-07-25T00:00:00.000Z',
+    stateDigest: 'f'.repeat(64),
+    conversationDigests: {
+      home: '0'.repeat(64),
+      projects: projectDigests,
+    },
+    activeRuns: [],
+    workspaceAttentions: overrides.workspaceAttentions ?? [],
+    projects: projectIds.map((projectId) => ({
+      projectId,
+      available: true,
+      releaseHead: 'release',
+      goals: [],
+    })),
+  }
+}
+
+async function initializeGitRepo(repoRoot: string) {
+  await mkdir(repoRoot, { recursive: true })
+  await git(repoRoot, ['init', '-b', 'main'])
+  await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
+  await git(repoRoot, ['config', 'user.name', 'HOPI Test'])
+  await Bun.write(join(repoRoot, 'README.md'), '# Project\n')
+  await git(repoRoot, ['add', '.'])
+  await git(repoRoot, ['commit', '-m', 'initial'])
 }
 
 async function git(cwd: string, args: string[]) {
   const child = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
-  const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited])
-  if (exitCode !== 0) throw new Error(stderr)
-}
-
-function codexSession(sessionId: string) {
-  return { transport: 'codex' as const, sessionId }
-}
-
-function projectState(projectId: string, lifecycle: 'active' | 'done') {
-  return {
-    projectId,
-    available: true,
-    releaseHead: null,
-    goals: [
-      {
-        goal: { attributes: { id: 'G-1', title: 'Project Goal', lifecycle } },
-        latestPlanningOutcome: null,
-        works: [],
-        attentions: [],
-      },
-    ],
-  }
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) throw new Error(stderr || stdout)
 }

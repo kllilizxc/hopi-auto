@@ -50,10 +50,10 @@ describe('HOPI MCP server', () => {
         'hopi_control_work',
         'hopi_create_goal',
         'hopi_create_work',
+        'hopi_manage_attention',
         'hopi_manage_project',
         'hopi_read_conversation',
         'hopi_read_state',
-        'hopi_resolve_attention',
         'hopi_write_design',
         'hopi_write_preferences',
       ].sort(),
@@ -62,7 +62,7 @@ describe('HOPI MCP server', () => {
       'Create a Project',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
-      'may share one Git Repo',
+      'recovery validation',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
@@ -109,11 +109,11 @@ describe('HOPI MCP server', () => {
       'Goal lifecycle or priority',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
-      'interrupts their Runs',
+      'change dependencies',
     )
     expect(
-      tools.tools.find((tool) => tool.name === 'hopi_resolve_attention')?.description,
-    ).toContain('remove its scheduling gate')
+      tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.description,
+    ).toContain('does not gate Work or Preview')
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema,
     ).toMatchObject({
@@ -144,14 +144,14 @@ describe('HOPI MCP server', () => {
       properties: { action: expect.any(Object) },
     })
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
-      'does not pass this Inbox turn',
+      'same responsibility lineage',
     )
     expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)
     expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])
   })
 
-  test('exposes request staging but not Project settings to an internal speaking turn', async () => {
+  test('exposes the same Project tools to an internal wake', async () => {
     const api = Bun.serve({
       port: 0,
       fetch: () => Response.json({ summary: 'Ready.', changed: false, value: {} }),
@@ -181,55 +181,15 @@ describe('HOPI MCP server', () => {
         'hopi_control_work',
         'hopi_create_goal',
         'hopi_create_work',
+        'hopi_manage_attention',
+        'hopi_manage_project',
         'hopi_read_conversation',
         'hopi_read_state',
-        'hopi_request_user',
-        'hopi_resolve_attention',
         'hopi_write_design',
+        'hopi_write_preferences',
       ].sort(),
     )
-    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
-      'final response',
-    )
-    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
-      'this call sends no text',
-    )
-    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
-      'keep their targets unscheduled',
-    )
-    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.description).toContain(
-      'Assistant-owned',
-    )
-    expect(tools.find((tool) => tool.name === 'hopi_request_user')?.inputSchema).toMatchObject({
-      required: ['attentionRefs'],
-      properties: { attentionRefs: { type: 'array' } },
-    })
-  })
-
-  test('limits Reflection to state read and one handoff tool', async () => {
-    const api = Bun.serve({
-      port: 0,
-      fetch: () => Response.json({ summary: 'Read state.', changed: false, value: {} }),
-    })
-    servers.add(api)
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [join(import.meta.dir, '../src/assistant/hopiMcpServer.ts')],
-      env: {
-        ...process.env,
-        HOPI_TOOL_URL: `http://127.0.0.1:${api.port}/api/internal/assistant-tool`,
-        HOPI_TOOL_TOKEN: 'reflection-token',
-        HOPI_TOOL_MODE: 'reflection',
-      },
-      stderr: 'pipe',
-    })
-    transports.add(transport)
-    const client = new Client({ name: 'hopi-reflection-test', version: '1.0.0' })
-    await client.connect(transport)
-
-    expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual([
-      'hopi_handoff_to_main',
-      'hopi_read_state',
-    ])
+    expect(tools.find((tool) => tool.name === 'hopi_manage_attention')).toBeDefined()
+    expect(tools.find((tool) => tool.name === 'hopi_request_user')).toBeUndefined()
   })
 })

@@ -14,11 +14,9 @@ import {
   Settings2,
   Square,
   Star,
-  Wrench,
   X,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useShell } from '../components/Layout'
 import {
   AppAlert,
   AppButton,
@@ -52,7 +50,6 @@ import {
   readShellState,
   readProjectAgentAccess,
   rebindProjectRepo,
-  requestPreviewRepair,
   selectProjectDirectory,
   startPreview,
   stopPreview,
@@ -481,7 +478,6 @@ function AgentSettingsPanel({
 
 function ProjectCard({ project }: { project: ProjectSummary }) {
   const queryClient = useQueryClient()
-  const { openAssistant } = useShell()
   const projectName = projectDisplayName(project)
   const [showRepoManager, setShowRepoManager] = useState(false)
   const [editingRepoId, setEditingRepoId] = useState<string | null>(null)
@@ -535,17 +531,6 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
   })
-  const previewRepairMutation = useMutation({
-    mutationFn: () =>
-      requestPreviewRepair({
-        projectId: project.projectId,
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
-      openAssistant()
-    },
-  })
-
   useEffect(() => {
     let active = true
     void readProjectAgentAccess(project.projectId)
@@ -657,18 +642,6 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
                 <CirclePlay />
               )}
               Start
-            </AppButton>
-          )}
-          {project.preview?.repair && project.preview.status === 'failed' && (
-            <AppButton
-              className="text-button"
-              type="button"
-              variant="ghost"
-              onClick={() => previewRepairMutation.mutate()}
-              disabled={previewRepairMutation.isPending}
-            >
-              {previewRepairMutation.isPending ? <AppSpinner size="sm" /> : <Wrench />}
-              Ask Assistant
             </AppButton>
           )}
         </AppButtonGroup>
@@ -811,14 +784,12 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         rebindRepoMutation.error ||
         previewStartMutation.error ||
         previewStopMutation.error ||
-        previewRepairMutation.error ||
         agentAccessError) && (
         <AppAlert className="inline-error">
           {linkRepoMutation.error?.message ??
             rebindRepoMutation.error?.message ??
             previewStartMutation.error?.message ??
             previewStopMutation.error?.message ??
-            previewRepairMutation.error?.message ??
             agentAccessError}
         </AppAlert>
       )}

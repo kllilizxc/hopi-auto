@@ -204,7 +204,7 @@ describe('PreviewManager', () => {
 
     const invalid = await invalidManager.start({ projectId: 'P-invalid', projectRoot: invalidRoot })
 
-    expect(invalid).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    expect(invalid).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
     expect(invalidManager.inspect('P-invalid')).toMatchObject({
       status: 'failed',
       surfaces: [],
@@ -242,16 +242,16 @@ describe('PreviewManager', () => {
       projectRoot: unreachableRoot,
     })
 
-    expect(unreachable).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    expect(unreachable).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
     expect(unreachableManager.inspect('P-unreachable')).toMatchObject({
       status: 'failed',
       surfaces: [],
       error: expect.stringContaining('surface receiver (收件端)'),
-      repair: { reason: 'startup_failed' },
+      failureReason: 'startup_failed',
     })
   })
 
-  test('prepares every integrated Repo before launching the primary Preview adapter', async () => {
+  test('runs one Project preparation adapter with the complete Repo manifest', async () => {
     const projectRoot = join(temporaryRoot, 'web')
     const apiRoot = join(temporaryRoot, 'api')
     const orderFile = join(temporaryRoot, 'prepare-order.txt')
@@ -274,7 +274,7 @@ describe('PreviewManager', () => {
       adapter,
       [
         '#!/usr/bin/env bun',
-        `if (await Bun.file(${JSON.stringify(orderFile)}).text() !== "web\\napi\\n") process.exit(2)`,
+        `if (await Bun.file(${JSON.stringify(orderFile)}).text() !== "web\\n") process.exit(2)`,
         'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
@@ -301,12 +301,17 @@ describe('PreviewManager', () => {
     })
 
     expect(result).toMatchObject({ kind: 'started', session: { status: 'running' } })
-    expect(await Bun.file(orderFile).text()).toBe('web\napi\n')
+    expect(await Bun.file(orderFile).text()).toBe('web\n')
     await manager.stop('P-1')
   })
 
-  test('returns an ordinary Assistant repair prompt when the adapter is missing', async () => {
-    const manager = createTestPreviewManager()
+  test('persists and emits a factual Project event when the adapter is missing', async () => {
+    const events: unknown[] = []
+    const manager = createTestPreviewManager({
+      onEvent: (event) => {
+        events.push(event)
+      },
+    })
     const projectRoot = join(temporaryRoot, 'integration')
     await mkdir(projectRoot, { recursive: true })
     await initializeGit(projectRoot)
@@ -316,19 +321,24 @@ describe('PreviewManager', () => {
       projectRoot,
     })
 
-    expect(result).toMatchObject({ kind: 'repair_required', reason: 'missing' })
-    if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
-    expect(result.prompt).toContain('Repair the current Project Preview capability.')
-    expect(result.prompt).toContain('Observed failure: missing')
-    expect(result.prompt).toContain('scripts/hopi/preview')
+    expect(result).toMatchObject({ kind: 'failed', reason: 'missing' })
+    if (result.kind !== 'failed') throw new Error('Expected failed Preview')
     expect(manager.inspect('P-1')).toMatchObject({
       status: 'failed',
-      repair: { reason: 'missing', prompt: result.prompt },
+      failureReason: 'missing',
     })
-    expect(result.prompt).not.toContain('reviewed contract')
-    expect(result.prompt).not.toContain('browser evidence')
-    expect(result.prompt).not.toContain('scripts/hopi/prepare')
-    expect(result.prompt).not.toContain('Planning')
+    expect(events).toEqual([
+      expect.objectContaining({
+        projectId: 'P-1',
+        status: 'failed',
+        reason: 'missing',
+      }),
+    ])
+    expect(await Bun.file(result.session.manifestPath).json()).toMatchObject({
+      sessionId: result.session.sessionId,
+      status: 'failed',
+      failureReason: 'missing',
+    })
   })
 
   test('shares one preparation and adapter launch across concurrent Start calls', async () => {
@@ -390,7 +400,7 @@ describe('PreviewManager', () => {
     const [firstResult, secondResult] = await Promise.all([first, second])
 
     expect(firstResult).toMatchObject({ kind: 'started', session: { status: 'stopped' } })
-    expect(secondResult).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    expect(secondResult).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
     expect(controlled.calls).toBe(2)
     expect(await Bun.file(launchLog).text()).toBe('started\n')
   })
@@ -409,31 +419,21 @@ describe('PreviewManager', () => {
           exitCode: 0,
           logs: '',
           logPath: join(input.runtimeDir, 'prepare.log'),
-          repos: [
-            {
-              repoId: 'primary',
-              repoRoot: input.projectRoot,
-              kind: 'ready',
-              adapterPath: join(input.projectRoot, 'scripts', 'hopi', 'prepare'),
-              exitCode: 0,
-              logs: '',
-              logPath: join(input.runtimeDir, 'prepare.log'),
-            },
-          ],
+          reposFile: join(input.runtimeDir, 'repos.json'),
         }
       },
     }
     const manager = createTestPreviewManager({ preparer })
 
     const failed = await manager.start({ projectId: 'P-1', projectRoot })
-    expect(failed).toMatchObject({ kind: 'repair_required', reason: 'preparation_failed' })
+    expect(failed).toMatchObject({ kind: 'failed', reason: 'preparation_failed' })
     expect(manager.inspect('P-1')).toMatchObject({
       status: 'failed',
       error: 'Unexpected Preview preparation failure: package manager crashed',
     })
 
     const retried = await manager.start({ projectId: 'P-1', projectRoot })
-    expect(retried).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
+    expect(retried).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
     expect(calls).toBe(2)
   })
 
@@ -460,7 +460,7 @@ describe('PreviewManager', () => {
     expect(await Bun.file(launchLog).exists()).toBe(false)
   })
 
-  test('runs Repo preparation before Preview and returns its logs on failure', async () => {
+  test('runs Project preparation before Preview and returns its logs on failure', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
     await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
@@ -472,13 +472,12 @@ describe('PreviewManager', () => {
 
     const result = await manager.start({ projectId: 'P-1', projectRoot })
 
-    expect(result).toMatchObject({ kind: 'repair_required', reason: 'preparation_failed' })
-    if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
+    expect(result).toMatchObject({ kind: 'failed', reason: 'preparation_failed' })
+    if (result.kind !== 'failed') throw new Error('Expected failed Preview')
     expect(result.logs).toContain('lockfile is stale')
-    expect(result.prompt).toContain('scripts/hopi/prepare')
     expect(manager.inspect('P-1')).toMatchObject({
       status: 'failed',
-      repair: { reason: 'preparation_failed', logs: expect.stringContaining('lockfile is stale') },
+      failureReason: 'preparation_failed',
     })
   })
 
@@ -494,13 +493,9 @@ describe('PreviewManager', () => {
 
     const result = await manager.start({ projectId: 'P-1', projectRoot })
 
-    expect(result).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
-    if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
+    expect(result).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
+    if (result.kind !== 'failed') throw new Error('Expected failed Preview')
     expect(result.logs).toContain('missing database')
-    expect(result.prompt).toContain('Observed failure: startup_failed')
-    expect(result.prompt).toContain('Diagnostics:')
-    expect(result.prompt).toContain('missing database')
-    expect(result.prompt).not.toContain('Planning')
   })
 
   test('bounds returned startup logs while preserving the complete Preview transcript', async () => {
@@ -523,8 +518,8 @@ describe('PreviewManager', () => {
 
     const result = await manager.start({ projectId: 'P-1', projectRoot })
 
-    expect(result).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
-    if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
+    expect(result).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
+    if (result.kind !== 'failed') throw new Error('Expected failed Preview')
     expect(result.logs).not.toContain('preview-000')
     expect(result.logs).toContain('preview-249')
     const previewRoot = join(temporaryRoot, 'home', '.hopi', 'runtime', 'preview')
@@ -681,8 +676,8 @@ describe('PreviewManager', () => {
         projectRoot,
         releaseHeads: { primary: 'release-1' },
       })
-      expect(result).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
-      if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
+      expect(result).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
+      if (result.kind !== 'failed') throw new Error('Expected failed Preview')
       expect(result.logs).toContain('GET returned HTTP 404')
       expect(manager.inspect('P-1')).toMatchObject({
         status: 'failed',
@@ -757,13 +752,85 @@ describe('PreviewManager', () => {
 
     const result = await manager.start({ projectId: 'P-1', projectRoot })
 
-    expect(result).toMatchObject({ kind: 'repair_required', reason: 'startup_failed' })
-    if (result.kind !== 'repair_required') throw new Error('Expected repair prompt')
+    expect(result).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
+    if (result.kind !== 'failed') throw new Error('Expected failed Preview')
     expect(result.logs).toContain('still preparing')
     expect(manager.inspect('P-1')).toMatchObject({
       status: 'failed',
       error: 'Preview adapter did not become ready within 2000ms',
     })
+  })
+
+  test('stops and records a Preview process left active by an earlier runtime', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const sessionRoot = join(homeRoot, '.hopi', 'runtime', 'preview', 'P-1', 'preview-old')
+    const manifestPath = join(sessionRoot, 'session.json')
+    const logPath = join(sessionRoot, 'preview.log')
+    await mkdir(sessionRoot, { recursive: true })
+    await Bun.write(logPath, 'old preview\n')
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        '-e',
+        'process.on("SIGTERM", () => process.exit(0)); await new Promise(() => {})',
+      ],
+      { stdout: 'ignore', stderr: 'ignore', detached: true },
+    )
+    await Bun.sleep(20)
+    await Bun.write(
+      manifestPath,
+      `${JSON.stringify(
+        {
+          sessionId: 'preview-old',
+          projectId: 'P-1',
+          releaseHeads: { primary: 'release-1' },
+          status: 'running',
+          surfaces: [{ id: 'app', label: 'App', url: 'http://127.0.0.1:4321' }],
+          logPath,
+          manifestPath,
+          startedAt: '2026-07-11T00:00:00.000Z',
+          endedAt: null,
+          processId: child.pid,
+          preparation: null,
+          error: null,
+          stoppedReason: null,
+          failureReason: null,
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    const events: Array<{ reason: string; message: string }> = []
+    const manager = createPreviewManager(homeRoot, {
+      now: () => new Date('2026-07-11T00:01:00Z'),
+      onEvent(event) {
+        events.push({ reason: event.reason, message: event.message })
+      },
+    })
+
+    try {
+      await manager.recover()
+      expect(await child.exited).toBe(0)
+      expect(manager.inspect('P-1')).toMatchObject({
+        status: 'stopped',
+        processId: null,
+        surfaces: [],
+        stoppedReason: 'runtime_restarted',
+        endedAt: '2026-07-11T00:01:00.000Z',
+      })
+      expect(events).toEqual([
+        {
+          reason: 'runtime_restarted',
+          message: 'Preview stopped because the HOPI runtime restarted.',
+        },
+      ])
+      expect(await Bun.file(manifestPath).json()).toMatchObject({
+        status: 'stopped',
+        stoppedReason: 'runtime_restarted',
+      })
+    } finally {
+      child.kill()
+    }
   })
 })
 
@@ -825,17 +892,7 @@ function createControlledPreparer() {
         exitCode: 0,
         logs: '',
         logPath: join(input.runtimeDir, 'prepare.log'),
-        repos: [
-          {
-            repoId: 'primary',
-            repoRoot: input.projectRoot,
-            kind: 'ready',
-            adapterPath: join(input.projectRoot, 'scripts', 'hopi', 'prepare'),
-            exitCode: 0,
-            logs: '',
-            logPath: join(input.runtimeDir, 'prepare.log'),
-          },
-        ],
+        reposFile: join(input.runtimeDir, 'repos.json'),
       }
     },
   }

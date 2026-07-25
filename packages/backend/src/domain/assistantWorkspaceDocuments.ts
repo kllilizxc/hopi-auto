@@ -9,7 +9,7 @@ import {
 import { STABLE_ID_SOURCE, stableIdSchema } from './stableId'
 
 export const INBOX_STATUSES = ['pending', 'handled'] as const
-export const INBOX_SOURCES = ['user', 'reflection'] as const
+export const INBOX_SOURCES = ['user', 'system', 'reflection'] as const
 export const INBOX_VISIBILITIES = ['public', 'internal'] as const
 export const ROUTE_MODES = ['existing', 'create'] as const
 
@@ -121,24 +121,25 @@ export const inboxEventAttributesSchema = z
   })
 
 export const workspaceAttentionAttributesSchema = z
-  .object({
-    id: stableIdSchema,
-    target: z.string().min(1),
-    createdAt: timestampSchema,
-    resolvedAt: timestampSchema.nullable(),
-    notifiedAt: timestampSchema.nullable(),
-    operatorRequest: inboxEventReferenceSchema.nullable().optional(),
-  })
-  .strict()
-  .superRefine((attention, context) => {
-    if (attention.resolvedAt !== null && attention.operatorRequest) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['operatorRequest'],
-        message: 'Resolved Workspace Attention cannot wait for operator input',
+  .preprocess(
+    normalizeWorkspaceAttention,
+    z
+      .object({
+        id: stableIdSchema,
+        createdAt: timestampSchema,
+        updatedAt: timestampSchema,
+        resolvedAt: timestampSchema.nullable(),
+        refs: z.array(z.string().trim().min(1)),
       })
-    }
-  })
+      .strict(),
+  )
+  .transform((attention) => ({
+    ...attention,
+    // These are read-only migration fields for old runtime consumers. Canonical files omit them.
+    target: legacyWorkspaceAttentionTarget(attention.refs),
+    notifiedAt: null as string | null,
+    operatorRequest: null as string | null,
+  }))
 
 export type InboxRouteClaim = z.infer<typeof inboxRouteClaimSchema>
 export type InboxContext = z.infer<typeof inboxContextSchema>
@@ -146,6 +147,10 @@ export type InboxEventAttributes = z.infer<typeof inboxEventAttributesSchema>
 export type WorkspaceAttentionAttributes = z.infer<typeof workspaceAttentionAttributesSchema>
 export type InboxEventDocument = MarkdownDocument<InboxEventAttributes>
 export type WorkspaceAttentionDocument = MarkdownDocument<WorkspaceAttentionAttributes>
+
+export function isInternalInboxSource(source: InboxEventAttributes['source']) {
+  return source === 'system' || source === 'reflection'
+}
 
 export function parseInboxEventDocument(source: string) {
   return parseMarkdownDocument(source, inboxEventAttributesSchema, 'Inbox event')
@@ -156,7 +161,31 @@ export function parseWorkspaceAttentionDocument(source: string) {
 }
 
 export const renderInboxEventDocument = renderMarkdownDocument<InboxEventAttributes>
-export const renderWorkspaceAttentionDocument = renderMarkdownDocument<WorkspaceAttentionAttributes>
+export function renderWorkspaceAttentionDocument(
+  document: MarkdownDocument<WorkspaceAttentionAttributes>,
+) {
+  const {
+    target: _target,
+    notifiedAt: _notifiedAt,
+    operatorRequest: _operatorRequest,
+    ...current
+  } = document.attributes
+  return renderMarkdownDocument({
+    attributes: current,
+    body: document.body,
+  })
+}
+
+export function workspaceAttentionProjectId(
+  attention: Pick<WorkspaceAttentionDocument, 'attributes'>,
+) {
+  for (const reference of attention.attributes.refs) {
+    if (!reference.startsWith('project:')) continue
+    const projectId = reference.slice('project:'.length)
+    if (projectId && !projectId.includes('/')) return projectId
+  }
+  return null
+}
 
 export async function inboxSourceDigest(content: string, attachments: readonly string[]) {
   const normalized = content.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
@@ -165,4 +194,28 @@ export async function inboxSourceDigest(content: string, attachments: readonly s
   )
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', payload))
   return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+function normalizeWorkspaceAttention(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const attributes = value as Record<string, unknown>
+  const createdAt = attributes.createdAt
+  const target = typeof attributes.target === 'string' ? attributes.target : null
+  const refs = Array.isArray(attributes.refs)
+    ? attributes.refs.filter((reference): reference is string => typeof reference === 'string')
+    : []
+  return {
+    id: attributes.id,
+    createdAt,
+    updatedAt: attributes.updatedAt ?? createdAt,
+    resolvedAt: attributes.resolvedAt,
+    refs: [...new Set([...(target ? [target] : []), ...refs])],
+  }
+}
+
+function legacyWorkspaceAttentionTarget(refs: readonly string[]) {
+  return (
+    refs.find((reference) => reference.startsWith('project:') || reference.includes('/event:')) ??
+    ''
+  )
 }

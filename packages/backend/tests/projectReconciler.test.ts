@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type {
@@ -9,12 +9,9 @@ import type {
   RoleRunner,
 } from '../src/agent/RoleRunner'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
-import { projectReleaseRef } from '../src/domain/project'
-import { resolveProjectPath } from '../src/domain/projectPath'
-import { PublicationCoordinator } from '../src/publication/publisher'
+import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
-import { runStoragePath } from '../src/runtime/runPaths'
 import {
   type StableWorktreeManager,
   StableWorktreeSyncError,
@@ -119,29 +116,6 @@ describe('ProjectReconciler', () => {
     })
   })
 
-  test('completes a Preview-capable Project only from the current formal release session', async () => {
-    const fixture = await createFixture({ formalReleasePreview: true })
-
-    for (let cycle = 0; cycle < 5; cycle += 1) {
-      await fixture.reconciler.reconcileGoal('goal-1')
-    }
-    const goalPackage = await fixture.store.readPackage('goal-1')
-    const completionEvidence = [...goalPackage.evidence.values()].find(
-      (evidence) =>
-        evidence.body.includes('## Formal Release Preview') &&
-        evidence.body.includes('preview-formal-2'),
-    )
-
-    expect(goalPackage.goal.attributes.lifecycle).toBe('done')
-    expect(completionEvidence?.body).toContain(
-      `Release primary: ${await git(fixture.projectRoot, ['rev-parse', projectReleaseRef('project-1')])}`,
-    )
-    expect(completionEvidence?.body).toContain(
-      'Surface default (Preview): http://127.0.0.1:4311/app',
-    )
-    expect(completionEvidence?.attributes.artifacts).toHaveLength(1)
-  })
-
   test('runs one Engineering Work across two Repos and publishes one primary C1', async () => {
     const releases: Array<{ projectId: string; commit: string }> = []
     const fixture = await createFixture({
@@ -236,11 +210,11 @@ describe('ProjectReconciler', () => {
         .map((run) => ({ path: run.path, markerFound: run.markerFound })),
     ).toEqual([
       {
-        path: expect.stringContaining('/generator/revision-1/workspace'),
+        path: expect.stringContaining('/generator/assignment-'),
         markerFound: false,
       },
       {
-        path: expect.stringContaining('/generator/revision-1/workspace'),
+        path: expect.stringContaining('/generator/assignment-'),
         markerFound: true,
       },
     ])
@@ -250,11 +224,11 @@ describe('ProjectReconciler', () => {
         .map((run) => ({ path: run.path, markerFound: run.markerFound })),
     ).toEqual([
       {
-        path: expect.stringContaining('/reviewer/revision-1/workspace'),
+        path: expect.stringContaining('/reviewer/assignment-'),
         markerFound: false,
       },
       {
-        path: expect.stringContaining('/reviewer/revision-1/workspace'),
+        path: expect.stringContaining('/reviewer/assignment-'),
         markerFound: true,
       },
     ])
@@ -293,29 +267,59 @@ describe('ProjectReconciler', () => {
     expect(repairPrompt?.runPrompt).not.toContain('Observed execution commands')
   })
 
-  test('turns Planner semantic failure into one ordinary Work Attention', async () => {
+  test('settles Planner semantic failure without inventing Attention or redispatching', async () => {
     const fixture = await createFixture({ plannerResult: 'fail' })
 
     const result = await fixture.reconciler.reconcileGoal('goal-1')
     const goalPackage = await fixture.store.readPackage('goal-1')
     const planning = goalPackage.works.get('plan-initial')
-    const attentions = [...goalPackage.attentions.values()].filter(
-      (attention) =>
-        attention.attributes.target === 'project:project-1/goal:goal-1/work:plan-initial',
-    )
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'plan-initial')
 
     expect(result).toMatchObject({
       kind: 'pass_finished',
       result: 'fail',
       application: 'published',
     })
-    expect(planning?.attributes).toMatchObject({ stage: 'plan', attempts: 0 })
-    expect(attentions).toHaveLength(1)
-    expect(attentions[0]?.attributes).toMatchObject({ resolvedAt: null, notifiedAt: null })
-    expect(attentions[0]?.body).toContain('planner could not complete Work plan-initial')
+    expect(planning?.attributes).toMatchObject({ stage: 'plan' })
+    expect(goalPackage.attentions.size).toBe(0)
+    expect(attempts[0]).toMatchObject({
+      status: 'finished',
+      result: 'fail',
+      application: 'published',
+    })
+    expect(typeof attempts[0]?.workHash).toBe('string')
+
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
+    })
+    expect(fixture.runner.responsibilities).toEqual(['planner'])
+  })
+
+  test('settles an unmaterialized attention label without inventing Attention or redispatching', async () => {
+    const fixture = await createFixture({ generatorResult: 'attention' })
 
     await fixture.reconciler.reconcileGoal('goal-1')
-    expect(fixture.runner.responsibilities).toEqual(['planner'])
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      result: 'attention',
+      application: 'published',
+    })
+    expect(goalPackage.attentions.size).toBe(0)
+    expect(attempts[0]).toMatchObject({
+      status: 'finished',
+      result: 'attention',
+      application: 'published',
+    })
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
+    })
+    expect(fixture.runner.responsibilities).toEqual(['planner', 'generator'])
   })
 
   test('keeps a Git subdirectory Project inside its selected source scope', async () => {
@@ -492,7 +496,7 @@ describe('ProjectReconciler', () => {
     expect(secondAttempt?.status).toBe('interrupted')
   })
 
-  test('checkpoints partial Generator source and returns semantic failure to Work Attention', async () => {
+  test('checkpoints partial Generator source and settles semantic failure as Attempt history', async () => {
     let taskWorktreePath = ''
     const fixture = await createFixture({
       generatorResult: 'fail',
@@ -510,21 +514,28 @@ describe('ProjectReconciler', () => {
       (candidate) =>
         candidate.attributes.kind === 'planning' && candidate.attributes.stage === 'plan',
     )
-    const recoveryAttention = [...goalPackage.attentions.values()].find(
-      (attention) => attention.attributes.resolvedAt === null,
-    )
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
 
     expect(result).toMatchObject({
       kind: 'pass_finished',
       result: 'fail',
       application: 'published',
     })
-    expect(work?.attributes).toMatchObject({ stage: 'generate', attempts: 0 })
+    expect(work?.attributes).toMatchObject({ stage: 'generate' })
     expect(recoveryPlanning).toBeUndefined()
-    expect(recoveryAttention?.attributes.target).toBe('project:project-1/goal:goal-1/work:W-1')
-    expect(recoveryAttention?.body).toContain('generator could not complete Work W-1')
+    expect(goalPackage.attentions.size).toBe(0)
+    expect(attempts[0]).toMatchObject({
+      status: 'finished',
+      result: 'fail',
+      application: 'published',
+    })
+    expect(typeof attempts[0]?.workHash).toBe('string')
     expect(await git(taskWorktreePath, ['status', '--porcelain'])).toBe('')
     expect(await git(taskWorktreePath, ['log', '-1', '--format=%s'])).toContain('hopi: checkpoint')
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
+    })
   })
 
   test('checkpoints partial Generator source before completing an interruption', async () => {
@@ -572,12 +583,11 @@ describe('ProjectReconciler', () => {
     )
     expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 0,
       evidenceRefs: [],
     })
   })
 
-  test('contains Coordinator checkpoint infrastructure failure in Work Attention', async () => {
+  test('contains Coordinator checkpoint infrastructure failure in Attempt history', async () => {
     const blocked: string[] = []
     const fixture = await createFixture({
       checkpointTask: async () => {
@@ -593,17 +603,24 @@ describe('ProjectReconciler', () => {
     const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
 
-    expect(result).toMatchObject({ kind: 'attention_ensured' })
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      application: 'operational_failure',
+    })
     expect(blocked).toEqual([])
     expect(work?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 0,
       evidenceRefs: [],
     })
     expect(attempts.at(-1)).toMatchObject({
       status: 'finished',
       result: 'fail',
       application: 'operational_failure',
+    })
+    expect(typeof attempts.at(-1)?.workHash).toBe('string')
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
   })
 
@@ -649,7 +666,41 @@ describe('ProjectReconciler', () => {
     )
   })
 
-  test('contains a task branch synchronization conflict in Work Attention before dispatch', async () => {
+  test('attaches a failed Project preparation to the Run without blocking responsibility passes', async () => {
+    const fixture = await createFixture({
+      prepareScript: [
+        '#!/usr/bin/env bun',
+        'const manifest = await Bun.file(process.env.HOPI_REPOS_FILE).json()',
+        'console.log(`repos=${manifest.repoOrder.join(",")}`)',
+        'process.exit(7)',
+        '',
+      ].join('\n'),
+    })
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await fixture.reconciler.reconcileGoal('goal-1')
+    }
+
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+    expect(fixture.runner.responsibilities).toEqual(['planner', 'generator', 'reviewer'])
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+      'done',
+    )
+    for (const attempt of attempts) {
+      const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', attempt.runId)
+      expect(await Bun.file(join(runRoot, 'project-prepare', 'result.json')).json()).toMatchObject({
+        kind: 'failed',
+        exitCode: 7,
+      })
+      expect(await Bun.file(join(runRoot, 'project-prepare', 'prepare.log')).text()).toContain(
+        'repos=primary',
+      )
+      expect(await Bun.file(join(runRoot, 'prompt.md')).text()).toContain('## Project Preparation')
+      expect(await Bun.file(join(runRoot, 'prompt.md')).text()).toContain('- Status: failed')
+    }
+  })
+
+  test('settles a task branch synchronization conflict as an operational Attempt', async () => {
     const syncFailure = async () => {
       throw new StableWorktreeSyncError('task delta conflicts with the current release')
     }
@@ -663,164 +714,103 @@ describe('ProjectReconciler', () => {
     await fixture.reconciler.reconcileGoal('goal-1')
     const result = await fixture.reconciler.reconcileGoal('goal-1')
     const goalPackage = await fixture.store.readPackage('goal-1')
-    const planning = [...goalPackage.works.values()].find(
-      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-    )
-    const attention = [...goalPackage.attentions.values()].find(
-      (candidate) => candidate.attributes.resolvedAt === null,
-    )
-
-    expect(result).toMatchObject({
-      kind: 'attention_ensured',
-      attentionId: attention?.attributes.id,
-    })
-    expect(fixture.runner.responsibilities).toEqual(['planner'])
-    expect(planning).toBeUndefined()
-    expect(attention?.attributes.target).toBe('project:project-1/goal:goal-1/work:W-1')
-    expect(attention?.body).toContain('task delta conflicts with the current release')
-    expect(attention?.body).not.toContain('request Planning only if')
-    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
-      stage: 'generate',
-      attempts: 0,
-      evidenceRefs: [],
-    })
-
-    if (!attention) throw new Error('Expected synchronization Attention')
-    const controller = createGoalController(fixture.store, {
-      now: () => new Date('2026-07-11T00:01:00Z'),
-      verifyCompletion: () => false,
-    })
-    await controller.retryWork('goal-1', 'W-1', null, {
-      resolution: 'Request one new invocation.',
-    })
-    const retryResult = await fixture.reconciler.reconcileGoal('goal-1')
-    const afterRetry = await fixture.store.readPackage('goal-1')
-    const current = afterRetry.attentions.get(attention.attributes.id)
-
-    expect(retryResult).toEqual({
-      kind: 'attention_ensured',
-      attentionId: attention.attributes.id,
-    })
-    expect(afterRetry.attentions.size).toBe(1)
-    expect(current?.attributes).toMatchObject({
-      resolvedAt: null,
-      retryRunId: null,
-    })
-    expect(current?.body).toContain('## Retry result')
-    expect(current?.body).toContain('task delta conflicts with the current release')
-  })
-
-  test('keeps a semantic retry failure on the original Attention', async () => {
-    const fixture = await createFixture({ directInitialWork: true, generatorResult: 'fail' })
-    const controller = createGoalController(fixture.store, {
-      now: () => new Date('2026-07-11T00:01:00Z'),
-      verifyCompletion: () => false,
-    })
-    const attention = await controller.ensureOperationalFailureAttention(
-      'goal-1',
-      'W-1',
-      3,
-      'provider unavailable',
-    )
-    await controller.retryWork('goal-1', 'W-1', null, {
-      resolution: 'Request one new invocation.',
-    })
-
-    const result = await fixture.reconciler.reconcileGoal('goal-1')
-    const goalPackage = await fixture.store.readPackage('goal-1')
-    const current = goalPackage.attentions.get(attention.attributes.id)
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
 
     expect(result).toMatchObject({
       kind: 'pass_finished',
       result: 'fail',
-      application: 'published',
+      application: 'operational_failure',
     })
-    expect(goalPackage.attentions.size).toBe(1)
-    expect(current?.attributes).toMatchObject({
-      resolvedAt: null,
-      retryRunId: null,
+    expect(fixture.runner.responsibilities).toEqual(['planner'])
+    expect(goalPackage.attentions.size).toBe(0)
+    expect(attempts).toHaveLength(1)
+    expect(attempts[0]).toMatchObject({
+      status: 'finished',
+      result: 'fail',
+      application: 'operational_failure',
+      summary: expect.stringContaining('task delta conflicts with the current release'),
+      workHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
-    expect(current?.body).toContain('## Retry result')
-    expect(current?.body).toContain('generator completed its fixed responsibility')
-  })
-
-  test('resolves the original Attention after a successful retry invocation', async () => {
-    const fixture = await createFixture({ directInitialWork: true })
-    const controller = createGoalController(fixture.store, {
-      now: () => new Date('2026-07-11T00:01:00Z'),
-      verifyCompletion: () => false,
-    })
-    const attention = await controller.ensureOperationalFailureAttention(
-      'goal-1',
-      'W-1',
-      3,
-      'provider unavailable',
-    )
-    await controller.retryWork('goal-1', 'W-1', null, {
-      resolution: 'Request one new invocation.',
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      evidenceRefs: [],
     })
 
-    const result = await fixture.reconciler.reconcileGoal('goal-1')
-    const goalPackage = await fixture.store.readPackage('goal-1')
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
+    })
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toBe('run-3')
+    const retryResult = await fixture.reconciler.reconcileGoal('goal-1')
 
-    expect(result).toMatchObject({
+    expect(retryResult).toMatchObject({
       kind: 'pass_finished',
-      result: 'success',
+      result: 'fail',
+      application: 'operational_failure',
+    })
+    expect(await fixture.attempts.list('project-1', 'goal-1', 'W-1')).toHaveLength(2)
+  })
+
+  test('explicit retry reserves one Run without inventing or mutating Attention', async () => {
+    const fixture = await createFixture({ directInitialWork: true, generatorResult: 'fail' })
+    const first = await fixture.reconciler.reconcileGoal('goal-1')
+    expect(first).toMatchObject({
+      kind: 'pass_finished',
+      result: 'fail',
       application: 'published',
     })
-    expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('review')
-    expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: expect.any(String),
-      retryRunId: null,
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
+    })
+
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toBe('run-2')
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toBe('run-2')
+    const retried = await fixture.reconciler.reconcileGoal('goal-1')
+    expect(retried).toMatchObject({
+      kind: 'pass_finished',
+      result: 'fail',
+      application: 'published',
+    })
+    expect((await fixture.store.readPackage('goal-1')).attentions.size).toBe(0)
+    expect(fixture.runner.responsibilities).toEqual(['generator', 'generator'])
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
   })
 
-  test('recovers an interrupted bound retry after Coordinator restart', async () => {
-    const fixture = await createFixture({ directInitialWork: true })
-    const controller = createGoalController(fixture.store, {
-      now: () => new Date('2026-07-11T00:01:00Z'),
-      verifyCompletion: () => false,
+  test('resumes the same responsibility Session after a Project Owner Work message', async () => {
+    const fixture = await createFixture({
+      directInitialWork: true,
+      generatorOperationalFailure: true,
     })
-    const attention = await controller.ensureOperationalFailureAttention(
-      'goal-1',
-      'W-1',
-      3,
-      'provider unavailable',
-    )
-    await controller.retryWork('goal-1', 'W-1', null, {
-      resolution: 'Request one new invocation.',
+    const first = await fixture.reconciler.reconcileGoal('goal-1')
+    const controller = createGoalController(fixture.store, { verifyCompletion: () => false })
+    await controller.appendWorkMessage('goal-1', 'W-1', {
+      sourceEventId: 'EV-guidance',
+      content: 'Use the verified API command from the current design.',
     })
-    const retryRunId = (await fixture.store.readPackage('goal-1')).attentions.get(
-      attention.attributes.id,
-    )?.attributes.retryRunId
-    if (!retryRunId) throw new Error('Expected reserved retry Run')
-    const runRoot = runStoragePath(fixture.homeRoot, retryRunId)
-    await mkdir(runRoot, { recursive: true })
-    const attempt = await fixture.attempts.start({
-      projectId: 'project-1',
-      goalId: 'goal-1',
-      workId: 'W-1',
-      runId: retryRunId,
-      responsibility: 'generator',
-      runRoot,
-    })
-    await attempt.interrupt(new Error('Coordinator restarted'))
+    await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')
+    const second = await fixture.reconciler.reconcileGoal('goal-1')
 
-    const result = await fixture.reconciler.reconcileGoal('goal-1')
-    const current = (await fixture.store.readPackage('goal-1')).attentions.get(
-      attention.attributes.id,
-    )
-
-    expect(result).toMatchObject({ kind: 'wait', decision: { reasons: ['attention'] } })
-    expect(fixture.runner.responsibilities).toEqual([])
-    expect(current?.attributes).toMatchObject({
-      resolvedAt: null,
-      retryRunId: null,
-    })
-    expect(current?.body).toContain('Coordinator restarted')
+    expect(first).toMatchObject({ kind: 'pass_finished', application: 'operational_failure' })
+    expect(second).toMatchObject({ kind: 'pass_finished', application: 'operational_failure' })
+    expect(fixture.runner.sessionsByRun).toEqual([
+      { responsibility: 'generator', sessionId: null },
+      { responsibility: 'generator', sessionId: 'session-W-1-generator' },
+    ])
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+    expect(attempts).toHaveLength(2)
+    expect(attempts[0]?.workHash).toBe(attempts[1]?.workHash)
+    expect(
+      await Bun.file(
+        join(fixture.homeRoot, '.hopi', 'runtime', 'runs', attempts[0]?.runId ?? '', 'prompt.md'),
+      ).text(),
+    ).toContain('Use the verified API command from the current design.')
   })
 
-  test('keeps runtime process failure out of Work attempts and exposes it immediately', async () => {
+  test('keeps runtime process failure out of Work fields and exposes it through Attempt history', async () => {
     const fixture = await createFixture({ generatorOperationalFailure: true })
 
     await fixture.reconciler.reconcileGoal('goal-1')
@@ -829,22 +819,31 @@ describe('ProjectReconciler', () => {
     const goalPackage = await fixture.store.readPackage('goal-1')
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
 
-    expect(failed).toMatchObject({ kind: 'attention_ensured' })
+    expect(failed).toMatchObject({
+      kind: 'pass_finished',
+      application: 'operational_failure',
+    })
     expect(blocked).toMatchObject({
       kind: 'wait',
-      decision: { reasons: ['attention'] },
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 0,
       evidenceRefs: [],
     })
-    expect(attempts[0]).toMatchObject({ application: 'operational_failure' })
+    expect(attempts[0]).toMatchObject({
+      application: 'operational_failure',
+    })
+    expect(typeof attempts[0]?.workHash).toBe('string')
+    expect(goalPackage.attentions.size).toBe(0)
   })
 
-  test('reconstructs a runtime failure Attention from Attempt logs after restart', async () => {
+  test('reconstructs a settled runtime failure gate from Attempt logs after restart', async () => {
     const fixture = await createFixture()
     await fixture.reconciler.reconcileGoal('goal-1')
+    const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
+    if (!work) throw new Error('Expected Engineering Work')
+    const workHash = await hashBytes(new TextEncoder().encode(renderWorkDocument(work)))
     for (let index = 1; index <= 3; index += 1) {
       const runId = `persisted-${index}`
       const recorder = await fixture.attempts.start({
@@ -854,6 +853,7 @@ describe('ProjectReconciler', () => {
         runId,
         responsibility: 'generator',
         runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', runId),
+        workHash,
       })
       await recorder.finish({
         outcome: {
@@ -866,21 +866,17 @@ describe('ProjectReconciler', () => {
     }
 
     const restarted = fixture.createReconciler()
-    const exhausted = await restarted.reconcileGoal('goal-1')
+    const settled = await restarted.reconcileGoal('goal-1')
     const goalPackage = await fixture.store.readPackage('goal-1')
-    const attention = [...goalPackage.attentions.values()].find(
-      (candidate) => candidate.attributes.target === 'project:project-1/goal:goal-1/work:W-1',
-    )
 
-    expect(exhausted).toMatchObject({ kind: 'attention_ensured' })
-    expect(attention?.attributes.id).toStartWith('A-')
-    expect(attention?.attributes.id).not.toContain('operational')
-    expect(attention?.body).toContain('Observed consecutive runtime failures: 3')
-    expect(attention?.body).toContain('Runtime launch failed 3.')
-    expect(goalPackage.works.get('W-1')?.attributes.attempts).toBe(0)
+    expect(settled).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
+    })
+    expect(goalPackage.attentions.size).toBe(0)
     expect(await restarted.reconcileGoal('goal-1')).toMatchObject({
       kind: 'wait',
-      decision: { reasons: expect.arrayContaining(['attention']) },
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
   })
 
@@ -892,19 +888,11 @@ describe('ProjectReconciler', () => {
     for (let cycle = 0; cycle < 3; cycle += 1) {
       await fixture.reconciler.reconcileGoal('goal-1')
     }
-    const attention = [...(await fixture.store.readPackage('goal-1')).attentions.values()].find(
-      (candidate) =>
-        candidate.attributes.target === 'project:project-1/goal:goal-1/work:W-1' &&
-        candidate.attributes.resolvedAt === null,
-    )
-    if (!attention) throw new Error('Expected Reviewer runtime Attention')
-    const controller = createGoalController(fixture.store, {
-      now: () => new Date('2026-07-11T00:01:00Z'),
-      verifyCompletion: () => false,
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
-    await controller.retryWork('goal-1', 'W-1', null, {
-      resolution: 'Request another Reviewer invocation.',
-    })
+    await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')
     await fixture.reconciler.reconcileGoal('goal-1')
     const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
     const worktree = join(
@@ -923,7 +911,7 @@ describe('ProjectReconciler', () => {
       'reviewer',
       'reviewer',
     ])
-    expect(work?.attributes).toMatchObject({ stage: 'done', attempts: 0 })
+    expect(work?.attributes).toMatchObject({ stage: 'done' })
     expect(await Bun.file(join(worktree, 'test-results', 'output.txt')).exists()).toBe(false)
   })
 })
@@ -951,7 +939,7 @@ class DeliveryScriptRunner implements RoleRunner {
 
   constructor(
     private readonly options: {
-      generatorResult: 'success' | 'fail'
+      generatorResult: 'success' | 'attention' | 'fail'
       generatorOperationalFailure: boolean
       reviewerOperationalWriteOnce: boolean
       reviewerRejectOnce: boolean
@@ -1014,18 +1002,6 @@ class DeliveryScriptRunner implements RoleRunner {
     if (input.responsibility === 'planner') {
       if (this.options.plannerWaitForAbort) await waitForAbort(input.signal)
       else if (this.options.plannerResult === 'success') await this.plan(input)
-      if (input.context.formalReleasePreview?.kind === 'session') {
-        const proof = join(input.context.artifactOutputDir, 'formal-release-proof.json')
-        await mkdir(dirname(proof), { recursive: true })
-        await Bun.write(
-          proof,
-          `${JSON.stringify({
-            sessionId: input.context.formalReleasePreview.session.sessionId,
-            surfaces: input.context.formalReleasePreview.session.surfaces,
-          })}\n`,
-        )
-        artifacts.push(proof)
-      }
     }
     if (input.responsibility === 'generator') {
       await observer?.onEvent?.({
@@ -1138,7 +1114,6 @@ class DeliveryScriptRunner implements RoleRunner {
             dependsOn: [],
             contractRevision: planning.attributes.contractRevision,
             evidenceRefs: [],
-            attempts: 0,
           },
           body: '## Acceptance Criteria\n\n- feature equals 2.\n',
         }),
@@ -1150,7 +1125,7 @@ class DeliveryScriptRunner implements RoleRunner {
 
 async function createFixture(
   options: {
-    generatorResult?: 'success' | 'fail'
+    generatorResult?: 'success' | 'attention' | 'fail'
     changedRepoIds?: readonly string[]
     generatorOperationalFailure?: boolean
     generatorWaitForAbort?: boolean
@@ -1165,7 +1140,7 @@ async function createFixture(
     onProjectBlocked?: Parameters<typeof createProjectReconciler>[0]['onProjectBlocked']
     onReleaseUpdated?: Parameters<typeof createProjectReconciler>[0]['onReleaseUpdated']
     directInitialWork?: boolean
-    formalReleasePreview?: boolean
+    prepareScript?: string
   } = {},
 ) {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-project-reconciler-'))
@@ -1176,6 +1151,12 @@ async function createFixture(
     : repoRoot
   await mkdir(join(projectSourceRoot, 'src'), { recursive: true })
   await Bun.write(join(projectSourceRoot, 'src', 'feature.ts'), 'export const feature = 1\n')
+  if (options.prepareScript) {
+    const preparePath = join(projectSourceRoot, 'scripts', 'hopi', 'prepare')
+    await mkdir(dirname(preparePath), { recursive: true })
+    await Bun.write(preparePath, options.prepareScript)
+    await chmod(preparePath, 0o755)
+  }
   await git(repoRoot, ['init', '-b', 'main'])
   await git(repoRoot, ['config', 'core.autocrlf', 'false'])
   await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
@@ -1249,7 +1230,6 @@ async function createFixture(
     plannerResult: options.plannerResult ?? 'success',
   })
   let runSequence = 0
-  let previewSequence = 0
   const now = () => new Date('2026-07-11T00:00:00Z')
   const attempts = createRunAttemptStore(homeRoot, { now })
   const createReconciler = () =>
@@ -1267,34 +1247,6 @@ async function createFixture(
       checkpointTask: options.checkpointTask,
       onProjectBlocked: options.onProjectBlocked,
       onReleaseUpdated: options.onReleaseUpdated,
-      prepareFormalReleasePreview: options.formalReleasePreview
-        ? async () => ({
-            kind: 'session' as const,
-            session: {
-              sessionId: `preview-formal-${++previewSequence}`,
-              projectId: 'project-1',
-              releaseHeads: Object.fromEntries(
-                await Promise.all(
-                  linked.repos.map(async (repo) => [
-                    repo.repoId,
-                    await git(resolveProjectPath(repo.integrationRoot, repo.projectPath), [
-                      'rev-parse',
-                      projectReleaseRef('project-1'),
-                    ]),
-                  ]),
-                ),
-              ),
-              status: 'running' as const,
-              surfaces: [{ id: 'default', label: 'Preview', url: 'http://127.0.0.1:4311/app' }],
-              logPath: '/tmp/formal-preview.log',
-              startedAt: '2026-07-11T00:00:00.000Z',
-              endedAt: null,
-              error: null,
-              stoppedReason: null,
-              repair: null,
-            },
-          })
-        : undefined,
       now,
       createRunId: () => `run-${++runSequence}`,
     })

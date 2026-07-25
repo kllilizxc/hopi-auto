@@ -87,6 +87,10 @@ export function resolveManagedBrowserCommand() {
   return undefined
 }
 
+export function hasManagedBrowserConfiguration() {
+  return Boolean(process.env.HOPI_BROWSER_MANAGED_CDP_URL?.trim() || resolveManagedBrowserCommand())
+}
+
 export function browserTargetManifest(): BrowserTargetManifest {
   return {
     version: 1,
@@ -118,9 +122,17 @@ export function browserAdapterEnvironment(homeRoot: string, backendCommand: stri
 
 export async function ensureManagedBrowser(
   homeRoot: string,
-  options: { timeoutMs?: number; browserCommand?: string } = {},
+  options: { timeoutMs?: number; browserCommand?: string; endpointUrl?: string } = {},
 ): Promise<ManagedBrowserEndpoint> {
   const profileRoot = managedBrowserProfileRoot(homeRoot)
+  const suppliedEndpoint = options.endpointUrl ?? process.env.HOPI_BROWSER_MANAGED_CDP_URL?.trim()
+  if (suppliedEndpoint) {
+    const endpoint = await readDevToolsEndpoint(suppliedEndpoint, profileRoot)
+    if (!endpoint) {
+      throw new Error(`Configured managed browser endpoint is unavailable: ${suppliedEndpoint}`)
+    }
+    return endpoint
+  }
   const managedRoot = dirname(profileRoot)
   const runtimeRoot = browserHarnessRuntimeRoot(homeRoot)
   const launchLock = join(runtimeRoot, 'managed-launch.lock')
@@ -268,8 +280,29 @@ async function readManagedBrowserEndpoint(
   const browserPath = lines[1]?.trim()
   if (!browserPath?.startsWith('/devtools/browser/')) return null
   const httpUrl = `http://127.0.0.1:${port}`
+  return readDevToolsEndpoint(httpUrl, profileRoot, browserPath)
+}
+
+async function readDevToolsEndpoint(
+  rawHttpUrl: string,
+  profileRoot: string,
+  expectedBrowserPath?: string,
+): Promise<ManagedBrowserEndpoint | null> {
   try {
-    const response = await fetch(`${httpUrl}/json/version`, {
+    const httpUrl = new URL(rawHttpUrl)
+    if (
+      httpUrl.protocol !== 'http:' ||
+      httpUrl.username ||
+      httpUrl.password ||
+      !['127.0.0.1', 'localhost', '[::1]'].includes(httpUrl.hostname) ||
+      httpUrl.pathname !== '/' ||
+      httpUrl.search ||
+      httpUrl.hash
+    ) {
+      return null
+    }
+    const endpoint = httpUrl.href.replace(/\/$/, '')
+    const response = await fetch(`${endpoint}/json/version`, {
       signal: AbortSignal.timeout(1_000),
     })
     if (!response.ok) return null
@@ -279,13 +312,14 @@ async function readManagedBrowserEndpoint(
     if (
       webSocketUrl.protocol !== 'ws:' ||
       !['127.0.0.1', 'localhost', '[::1]'].includes(webSocketUrl.hostname) ||
-      Number(webSocketUrl.port) !== port ||
-      `${webSocketUrl.pathname}${webSocketUrl.search}` !== browserPath
+      Number(webSocketUrl.port) !== Number(httpUrl.port) ||
+      (expectedBrowserPath !== undefined &&
+        `${webSocketUrl.pathname}${webSocketUrl.search}` !== expectedBrowserPath)
     ) {
       return null
     }
     return {
-      httpUrl,
+      httpUrl: endpoint,
       webSocketUrl: webSocketUrl.href,
       profileRoot,
     }

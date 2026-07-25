@@ -13,52 +13,59 @@ afterEach(async () => {
 })
 
 describe('ResponsibilitySessionStore', () => {
-  test('retains one workspace and vendor session within a Work revision', async () => {
+  test('retains one workspace and vendor session within a Work assignment', async () => {
     const root = await temporaryRoot()
     const store = createResponsibilitySessionStore(root)
     const generator = key('W-1', 'generator')
     const reviewer = key('W-1', 'reviewer')
+    const assignment = scope(1, 'a')
 
-    const first = await store.open(generator, 1)
+    const first = await store.open(generator, assignment)
     expect(first.session).toBeNull()
     await Bun.write(join(first.workspaceDir, 'partial-proof.json'), '{"ok":true}\n')
-    await store.write(generator, 1, {
+    await store.write(generator, assignment, {
       transport: 'codex',
       sessionId: 'thread-generator',
     })
-    await store.write(reviewer, 1, {
+    await store.write(reviewer, assignment, {
       transport: 'claude',
       sessionId: 'thread-reviewer',
     })
 
-    const resumed = await store.open(generator, 1)
+    const resumed = await store.open(generator, assignment)
     expect(resumed).toMatchObject({
       contractRevision: 1,
+      assignmentHash: 'a'.repeat(64),
       session: { transport: 'codex', sessionId: 'thread-generator' },
       workspaceDir: first.workspaceDir,
     })
     expect(await Bun.file(join(resumed.workspaceDir, 'partial-proof.json')).text()).toBe(
       '{"ok":true}\n',
     )
-    expect((await store.open(reviewer, 1)).session).toEqual({
+    expect((await store.open(reviewer, assignment)).session).toEqual({
       transport: 'claude',
       sessionId: 'thread-reviewer',
     })
 
-    await store.invalidateVendor(generator, 1)
-    expect((await store.open(generator, 1)).session).toBeNull()
+    await store.invalidateVendor(generator, assignment)
+    expect((await store.open(generator, assignment)).session).toBeNull()
     expect(await Bun.file(join(first.workspaceDir, 'partial-proof.json')).exists()).toBe(true)
   })
 
-  test('starts a fresh conversation and workspace for a material revision', async () => {
+  test('starts a fresh conversation and workspace for a changed assignment fingerprint', async () => {
     const root = await temporaryRoot()
     const store = createResponsibilitySessionStore(root)
     const generator = key('W-1', 'generator')
-    const revisionOne = await store.open(generator, 1)
+    const firstScope = scope(1, 'a')
+    const secondScope = scope(1, 'b')
+    const revisionOne = await store.open(generator, firstScope)
     await Bun.write(join(revisionOne.workspaceDir, 'old-diagnostic.txt'), 'retained')
-    await store.write(generator, 1, { transport: 'codex', sessionId: 'revision-one' })
+    await store.write(generator, firstScope, {
+      transport: 'codex',
+      sessionId: 'revision-one',
+    })
 
-    const revisionTwo = await store.open(generator, 2)
+    const revisionTwo = await store.open(generator, secondScope)
     expect(revisionTwo.session).toBeNull()
     expect(revisionTwo.workspaceDir).not.toBe(revisionOne.workspaceDir)
     expect(await Bun.file(join(revisionTwo.workspaceDir, 'old-diagnostic.txt')).exists()).toBe(
@@ -73,7 +80,7 @@ describe('ResponsibilitySessionStore', () => {
     expect(await Bun.file(revisionTwo.workspaceDir).exists()).toBe(false)
   })
 
-  test('migrates a legacy session and repairs malformed metadata without deleting files', async () => {
+  test('discards an unbound legacy session and repairs malformed metadata without deleting files', async () => {
     const root = await temporaryRoot()
     const legacyPath = join(
       root,
@@ -92,20 +99,22 @@ describe('ResponsibilitySessionStore', () => {
     )
     const store = createResponsibilitySessionStore(root)
     const generator = key('W-1', 'generator')
-    const migrated = await store.open(generator, 3)
+    const assignment = scope(3, 'c')
+    const migrated = await store.open(generator, assignment)
 
-    expect(migrated.session).toEqual({ transport: 'codex', sessionId: 'legacy-thread' })
+    expect(migrated.session).toBeNull()
     expect(await Bun.file(legacyPath).exists()).toBe(false)
     const manifestPath = join(dirname(migrated.workspaceDir), 'session.json')
     await Bun.write(join(migrated.workspaceDir, 'retained.txt'), 'keep')
     await Bun.write(manifestPath, '{not-json')
 
-    const repaired = await store.open(generator, 3)
+    const repaired = await store.open(generator, assignment)
     expect(repaired.session).toBeNull()
     expect(await Bun.file(join(repaired.workspaceDir, 'retained.txt')).text()).toBe('keep')
     expect(await Bun.file(manifestPath).json()).toEqual({
-      version: 2,
+      version: 3,
       contractRevision: 3,
+      assignmentHash: 'c'.repeat(64),
       session: null,
     })
   })
@@ -113,6 +122,10 @@ describe('ResponsibilitySessionStore', () => {
 
 function key(workId: string, responsibility: 'generator' | 'reviewer') {
   return { projectId: 'P-1', goalId: 'G-1', workId, responsibility } as const
+}
+
+function scope(contractRevision: number, character: string) {
+  return { contractRevision, assignmentHash: character.repeat(64) }
 }
 
 async function temporaryRoot() {

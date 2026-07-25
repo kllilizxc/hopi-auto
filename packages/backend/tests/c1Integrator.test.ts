@@ -263,7 +263,6 @@ async function createFixture() {
             dependsOn: [],
             contractRevision: 1,
             evidenceRefs: [],
-            attempts: 0,
           },
           body: '## Acceptance Criteria\n\n- feature equals 2.\n',
         }),

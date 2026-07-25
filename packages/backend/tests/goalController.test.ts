@@ -57,93 +57,6 @@ describe('GoalController', () => {
     ).toHaveLength(1)
   })
 
-  test('resolves a pending retry only after its invocation succeeds', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await controller.ensureOperationalFailureAttention(
-      'G-1',
-      'plan-initial',
-      3,
-      'provider unavailable',
-    )
-
-    await controller.retryWork('G-1', 'plan-initial', null, {
-      resolution: 'Request one new invocation.',
-    })
-    const pending = (await store.readPackage('G-1')).attentions.get(attention.attributes.id)
-    expect(pending?.attributes).toMatchObject({
-      resolvedAt: null,
-      retryRunId: expect.any(String),
-    })
-
-    expect(
-      await controller.finishWorkRetry('G-1', 'plan-initial', {
-        status: 'succeeded',
-        diagnostic: 'Planner invocation completed.',
-      }),
-    ).toEqual([attention.attributes.id])
-    const resolved = (await store.readPackage('G-1')).attentions.get(attention.attributes.id)
-    expect(resolved?.attributes).toMatchObject({
-      resolvedAt: expect.any(String),
-      retryRunId: null,
-    })
-    expect(resolved?.body).toContain('Planner invocation completed.')
-  })
-
-  test('reuses one ordinary Work Attention for observed runtime failure', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-
-    const first = await controller.ensureOperationalFailureAttention(
-      'G-1',
-      'plan-initial',
-      3,
-      'The configured runtime command exited before producing output.',
-    )
-    const reused = await controller.ensureOperationalFailureAttention(
-      'G-1',
-      'plan-initial',
-      4,
-      'A later failure should not create duplicate Attention.',
-    )
-
-    expect(reused.attributes.id).toBe(first.attributes.id)
-    expect(first.attributes.id).toStartWith('A-')
-    expect(first.attributes.id).not.toContain('operational')
-    expect(first.body).toContain('Observed consecutive runtime failures: 3')
-    expect(first.body).toContain('configured runtime command exited')
-  })
-
-  test('uses one ordinary Work Attention for a responsibility semantic failure', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-
-    const first = await controller.ensureResponsibilityFailureAttention(
-      'G-1',
-      'plan-initial',
-      'planner',
-      'The proposal did not satisfy its document contract.',
-    )
-    const reused = await controller.ensureResponsibilityFailureAttention(
-      'G-1',
-      'plan-initial',
-      'planner',
-      'A duplicate wake-up must not create duplicate Attention.',
-    )
-    const planning = (await store.readPackage('G-1')).works.get('plan-initial')
-
-    expect(reused.attributes.id).toBe(first.attributes.id)
-    expect(first.attributes).toMatchObject({
-      target: 'project:P-1/goal:G-1/work:plan-initial',
-      resolvedAt: null,
-      notifiedAt: null,
-    })
-    expect(first.attributes.id).toStartWith('failure-plan-initial-')
-    expect(first.body).toContain('planner could not complete Work plan-initial')
-    expect(first.body).toContain('proposal did not satisfy its document contract')
-    expect(planning?.attributes.attempts).toBe(0)
-  })
-
   test('installs current Planning and leaves prior Engineering authority stale', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -151,7 +64,6 @@ describe('GoalController', () => {
     await publishEngineering(store, 'G-1', {
       id: 'W-1',
       stage: 'review',
-      attempts: 2,
       dependsOn: [],
     })
 
@@ -162,17 +74,18 @@ describe('GoalController', () => {
     const goalPackage = await store.readPackage('G-1')
 
     expect(revised.attributes.contractRevision).toBe(2)
-    expect(revised.body).toContain('## Accepted Goal Change EV-revise')
+    expect(revised.body).toBe('## Objective\n\nShip it.\n')
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'review',
-      attempts: 2,
       contractRevision: 1,
     })
-    expect(
-      [...goalPackage.works.values()].find(
-        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-      )?.attributes.contractRevision,
-    ).toBe(2)
+    const currentPlanning = [...goalPackage.works.values()].find(
+      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+    )
+    expect(currentPlanning?.attributes.contractRevision).toBe(2)
+    expect(currentPlanning?.body).toContain(
+      'Add a measurable latency criterion before implementation continues.',
+    )
 
     const repeated = await controller.applyMaterialInstruction('G-1', {
       eventId: 'EV-revise',
@@ -215,13 +128,11 @@ describe('GoalController', () => {
     await publishEngineering(store, 'G-1', {
       id: 'W-1',
       stage: 'generate',
-      attempts: 0,
       dependsOn: [],
     })
     await publishEngineering(store, 'G-1', {
       id: 'W-2',
       stage: 'generate',
-      attempts: 0,
       dependsOn: ['W-1'],
     })
 
@@ -246,13 +157,11 @@ describe('GoalController', () => {
     await publishEngineering(store, 'G-1', {
       id: 'W-1',
       stage: 'generate',
-      attempts: 0,
       dependsOn: [],
     })
     await publishEngineering(store, 'G-1', {
       id: 'W-2',
       stage: 'generate',
-      attempts: 0,
       dependsOn: ['W-1'],
     })
 
@@ -270,6 +179,48 @@ describe('GoalController', () => {
     ).toHaveLength(0)
   })
 
+  test('changes nonterminal dependencies and rejects a cyclic graph', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await markPlanningDone(store, 'G-1', 'plan-initial')
+    await publishEngineering(store, 'G-1', {
+      id: 'W-1',
+      stage: 'generate',
+      dependsOn: [],
+    })
+    await publishEngineering(store, 'G-1', {
+      id: 'W-2',
+      stage: 'generate',
+      dependsOn: [],
+    })
+
+    await expect(controller.setWorkDependencies('G-1', 'W-2', ['W-1'])).resolves.toMatchObject({
+      attributes: { dependsOn: ['W-1'] },
+    })
+    await expect(controller.setWorkDependencies('G-1', 'W-1', ['W-2'])).rejects.toThrow(
+      'Engineering Work dependency cycle includes W-1',
+    )
+
+    const goalPackage = await store.readPackage('G-1')
+    expect(goalPackage.works.get('W-1')?.attributes.dependsOn).toEqual([])
+    expect(goalPackage.works.get('W-2')?.attributes.dependsOn).toEqual(['W-1'])
+  })
+
+  test('appends a source-traced message to nonterminal Work', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+
+    const updated = await controller.appendWorkMessage('G-1', 'plan-initial', {
+      sourceEventId: 'EV-guidance',
+      content: 'Check the current API response before changing the contract.',
+    })
+
+    expect(updated.body).toContain('## HOPI Project Owner Messages')
+    expect(updated.body).toContain('### 2026-07-11T00:00:00.000Z')
+    expect(updated.body).toContain('Source event: EV-guidance')
+    expect(updated.body).toContain('Check the current API response before changing the contract.')
+  })
+
   test('repeats an already durable Work cancellation without creating Planning', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -277,7 +228,6 @@ describe('GoalController', () => {
     await publishEngineering(store, 'G-1', {
       id: 'W-1',
       stage: 'generate',
-      attempts: 0,
       dependsOn: [],
     })
     const path = store.paths.workDocument('G-1', 'W-1')
@@ -377,7 +327,6 @@ async function publishEngineering(
   input: {
     id: string
     stage: 'generate' | 'review'
-    attempts: number
     dependsOn: string[]
   },
 ) {
@@ -396,7 +345,6 @@ async function publishEngineering(
           dependsOn: input.dependsOn,
           contractRevision: 1,
           evidenceRefs: [],
-          attempts: input.attempts,
         },
         body: `Implement ${input.id}.\n`,
       }),

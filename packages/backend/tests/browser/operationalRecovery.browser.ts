@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import {
   ConfiguredRoleRunner,
   type RoleRunInput,
@@ -8,11 +8,7 @@ import {
   type RoleRunner,
 } from '../../src/agent/RoleRunner'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import { runStoragePath } from '../../src/runtime/runPaths'
 import {
@@ -37,6 +33,7 @@ const PROJECT_ID = 'P-operational-recovery'
 const GOAL_ID = 'G-operational-recovery'
 const WORK_ID = 'W-operational-recovery'
 const USER_REPLY = '外部执行条件已经修复，请继续当前任务。'
+const RECOVERY_QUESTION = '当前任务的执行环境失败了。请修复外部执行条件后告诉我继续。'
 const ASSISTANT_REPLY = '修复信息已记录，任务已恢复执行。'
 const COMPLETION_REPLY = '任务已完成，外部执行失败已恢复。'
 const testRun = await startTestRun(SCENARIO, 'browser')
@@ -55,7 +52,6 @@ const processRunner = new ConfiguredRoleRunner({
     cmd: ['bun', failureExecutable],
   }),
 })
-let attentionToResolve: string | null = null
 let server: MvpServer | null = null
 let serverCleanup: ReturnType<typeof ownTestRunServer> | null = null
 let restartCount = 0
@@ -83,56 +79,21 @@ const assistantRunner: AssistantModelRunner = {
   async run(input, observer) {
     const mode = input.toolMode ?? 'main'
     assistantRuns.push({ eventId: input.eventId, mode, action: 'reply' })
-    let attentionRefs = attentionReferences(input.prompt)
-    if (mode === 'reflection') {
-      const state = await callAssistantTool(input, observer, 'hopi_read_state', {
-        projectId: PROJECT_ID,
-        goalId: GOAL_ID,
-      })
-      const attentions = goalAttentions(state)
-      const blocker = attentions.find(
-        (attention) =>
-          attention.attributes.target !== null && attention.attributes.operatorRequest === null,
-      )
-      const completion = attentions.find((attention) => attention.attributes.target === null)
-      if (!blocker && !completion) return assistantResult('', mode)
-      const selected = blocker ?? completion
-      assert.ok(selected)
-      attentionRefs = [selected.reference]
-      await callAssistantTool(input, observer, 'hopi_handoff_to_main', {
-        brief: blocker
-          ? 'Operational recovery is exhausted and needs an operator-facing decision.'
-          : 'The recovered delivery completed and needs one operator-facing summary.',
-        context: { projectId: PROJECT_ID, goalId: GOAL_ID, attentionRefs },
-      })
-      return assistantResult('', mode)
-    }
     if (mode === 'internal') {
       if (input.prompt.includes('recovered delivery completed')) {
         return assistantResult(COMPLETION_REPLY, mode)
       }
-      const message = (await Bun.file(repairFlag).exists())
-        ? COMPLETION_REPLY
-        : '当前任务连续运行失败，需要你修复外部执行条件后告诉我继续。'
-      await callAssistantTool(input, observer, 'hopi_request_user', {
-        attentionRefs,
-      })
+      const message = (await Bun.file(repairFlag).exists()) ? COMPLETION_REPLY : RECOVERY_QUESTION
       return assistantResult(message, mode)
     }
-    if (mode === 'main' && attentionToResolve && input.prompt.includes(USER_REPLY)) {
-      const attentionId = attentionToResolve
-      await callAssistantTool(input, observer, 'hopi_resolve_attention', {
-        attentionRef: `project:${PROJECT_ID}/goal:${GOAL_ID}/attention:${attentionId}`,
-        resolution: USER_REPLY,
-      })
+    if (mode === 'main' && input.prompt.includes(USER_REPLY)) {
       await callAssistantTool(input, observer, 'hopi_control_work', {
         projectId: PROJECT_ID,
         goalId: GOAL_ID,
         workId: 'plan-initial',
         action: { kind: 'retry' },
       })
-      attentionToResolve = null
-      assistantRuns.push({ eventId: input.eventId, mode, action: `retried:${attentionId}` })
+      assistantRuns.push({ eventId: input.eventId, mode, action: 'retried:plan-initial' })
       return assistantResult(ASSISTANT_REPLY, mode)
     }
     return assistantResult('没有需要执行的操作。', mode)
@@ -161,59 +122,63 @@ try {
     },
   })
 
-  for (const expectedFailures of [1, 2]) {
-    await waitForOperationalFailures(expectedFailures)
-    await restartServer()
-  }
+  await waitForOperationalFailures(1)
+  await restartServer()
 
   blocked = await waitForValue(
     () => requestJson<GoalView>(context.baseUrl, goalPath()),
     (value) =>
-      operationalAttention(value)?.notifiedAt !== null &&
       value.works.some(
-        (work) => work.id === 'plan-initial' && work.projection.primaryBadge === 'Needs you',
-      ),
-    { timeoutMs: 60_000, description: 'operational exhaustion and Needs you projection' },
+        (work) =>
+          work.id === 'plan-initial' &&
+          work.projection.primaryBadge === 'waiting' &&
+          work.projection.failedPredicates.includes('failed_attempt'),
+      ) && value.attentions.every((attention) => attention.target === null),
+    { timeoutMs: 60_000, description: 'settled operational failure without synthetic Attention' },
   )
   const failedRuns = roleRuns.filter((run) => run.applicationKind === 'operational')
-  assert.equal(failedRuns.length, 3, 'The Coordinator must stop after three operational failures')
-  assert.equal(restartCount, 2, 'The failure episode must cross two Coordinator restarts')
   assert.equal(
-    blocked.works.find((work) => work.id === 'plan-initial')?.attempts,
-    0,
-    'Operational failures must not consume semantic Work attempts',
-  )
-  const blocker = operationalAttention(blocked)
-  assert.ok(blocker, 'Operational exhaustion must create one Work-target Attention')
-  assert.match(blocker.body, /3 consecutive operational failures/)
-  assert.equal(
-    blocked.attentions.filter(
-      (attention) => attention.target === workTarget('plan-initial') && !attention.resolvedAt,
-    ).length,
+    failedRuns.length,
     1,
+    'The Coordinator must stop after the first operational failure',
+  )
+  assert.equal(restartCount, 1, 'The settled failure must survive one Coordinator restart')
+  assert.equal(
+    blocked.attentions.filter((attention) => attention.target !== null).length,
+    0,
+    'Coordinator must not synthesize Attention from a failed process',
   )
   const rawFailures = await readFailureEvidence(failedRuns)
   const blockedBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
     evidencePrefix: 'blocked',
   })
+  const boardPath = `/projects/${PROJECT_ID}/board/${GOAL_ID}`
+  const recoveryQuestionBrowser = await captureAssistantReply(context, RECOVERY_QUESTION, {
+    pagePath: boardPath,
+    evidencePrefix: 'recovery-question',
+  })
 
-  attentionToResolve = blocker.id
   await Bun.write(repairFlag, 'repaired\n')
-  await recordAction(context, 'external_condition_repaired', { attentionId: blocker.id })
+  await recordAction(context, 'external_condition_repaired', {})
   const assistantBrowser = await sendAssistantMessage(context, USER_REPLY, {
     evidencePrefix: 'repair',
-    pagePath: `/projects/${PROJECT_ID}/board/${GOAL_ID}`,
+    pagePath: boardPath,
   })
   settled = await waitForValue(
     () => requestJson<GoalView>(context.baseUrl, goalPath()),
     (value) =>
       value.goal.lifecycle === 'done' &&
-      value.works.some((work) => work.id === WORK_ID && work.stage === 'done') &&
-      Boolean(value.attentions.find((attention) => attention.id === blocker.id)?.resolvedAt),
-    { timeoutMs: 90_000, description: 'fresh operational episode and completed delivery' },
+      value.works.some((work) => work.id === WORK_ID && work.stage === 'done'),
+    { timeoutMs: 90_000, description: 'explicit retry and completed delivery' },
   )
-  const assistantReplyBrowser = await captureAssistantReply(context, ASSISTANT_REPLY)
-  const completionBrowser = await captureCompletionUpdate(context, COMPLETION_REPLY)
+  const assistantReplyBrowser = await captureAssistantReply(context, ASSISTANT_REPLY, {
+    pagePath: boardPath,
+    evidencePrefix: 'retry-ack',
+  })
+  const completionBrowser = await captureCompletionUpdate(context, COMPLETION_REPLY, {
+    pagePath: boardPath,
+    evidencePrefix: 'completion',
+  })
   const recoveredBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
     evidencePrefix: 'recovered',
   })
@@ -221,7 +186,7 @@ try {
   assert.equal(
     planningAttempts.attempts.filter((attempt) => attempt.application === 'operational_failure')
       .length,
-    3,
+    1,
   )
   assert.ok(
     planningAttempts.attempts.some(
@@ -230,20 +195,13 @@ try {
     'The same planning Work must publish successfully in the fresh episode',
   )
   assert.equal(
-    settled.attentions.filter((attention) => attention.target === workTarget('plan-initial'))
-      .length,
-    1,
-    'Recovery must retain and resolve the original blocker rather than replacing history',
-  )
-  assert.equal(
-    settled.attentions.filter((attention) => attention.target !== null && !attention.resolvedAt)
-      .length,
+    settled.attentions.length,
     0,
-    'Successful recovery must clear every targeted blocker',
+    'Successful recovery and completion must not fabricate Attention',
   )
   assert.ok(
-    assistantRuns.some((run) => run.action === `retried:${blocker.id}`),
-    'One explicit resolution and Work retry must recover the exact blocker',
+    assistantRuns.some((run) => run.action === 'retried:plan-initial'),
+    'One explicit Work retry must recover the exact failed Work',
   )
   const checkoutAfter = await assertAcceptedRelease(repoRoot, PROJECT_ID, checkoutBefore)
 
@@ -258,11 +216,11 @@ try {
     checkoutBefore,
     checkoutAfter,
     rawFailures,
-    blocker,
     settled,
     planningAttempts,
     browser: {
       blockedBrowser,
+      recoveryQuestionBrowser,
       assistantBrowser,
       assistantReplyBrowser,
       completionBrowser,
@@ -352,14 +310,6 @@ function goalPath() {
   return `/api/projects/${PROJECT_ID}/goals/${GOAL_ID}`
 }
 
-function workTarget(workId: string) {
-  return `project:${PROJECT_ID}/goal:${GOAL_ID}/work:${workId}`
-}
-
-function operationalAttention(goal: GoalView) {
-  return goal.attentions.find((attention) => attention.target === workTarget('plan-initial'))
-}
-
 async function readFailureEvidence(runs: RoleRunRecord[]) {
   return Promise.all(
     runs.map(async (run) => {
@@ -395,12 +345,7 @@ async function readFailureEvidence(runs: RoleRunRecord[]) {
 async function callAssistantTool(
   input: Parameters<AssistantModelRunner['run']>[0],
   observer: Parameters<AssistantModelRunner['run']>[1],
-  name:
-    | 'hopi_read_state'
-    | 'hopi_request_user'
-    | 'hopi_resolve_attention'
-    | 'hopi_control_work'
-    | 'hopi_handoff_to_main',
+  name: 'hopi_read_state' | 'hopi_control_work' | 'hopi_handoff_to_main',
   args: Record<string, unknown>,
 ) {
   await observer?.onEvent?.({
@@ -425,36 +370,6 @@ async function callAssistantTool(
   })
   if (!response.ok) throw new Error(`${name} failed with ${response.status}: ${body}`)
   return JSON.parse(body) as unknown
-}
-
-function attentionReferences(source: string) {
-  return [
-    ...new Set(
-      source.match(
-        /(?:project:[A-Za-z0-9._-]+\/goal:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+|home:[A-Za-z0-9._-]+\/attention:[A-Za-z0-9._-]+)/g,
-      ) ?? [],
-    ),
-  ]
-}
-
-function goalAttentions(value: unknown) {
-  const result = value as {
-    value?: {
-      projects?: Array<{
-        goals?: Array<{
-          attentions?: Array<{
-            reference: string
-            attributes: { target: string | null; operatorRequest: string | null }
-          }>
-        }>
-      }>
-    }
-  }
-  return (
-    result.value?.projects?.flatMap(
-      (project) => project.goals?.flatMap((goal) => goal.attentions ?? []) ?? [],
-    ) ?? []
-  )
 }
 
 function assistantResult(reply: string, mode: string) {
@@ -517,25 +432,8 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
-          attempts: 0,
         },
         body: '## Acceptance Criteria\n\n- Recovered source is delivered through C1.\n',
-      }),
-    )
-  } else if (engineering.attributes.stage === 'done') {
-    const attentionPath = join(goalRoot, 'attention', `A-complete-${input.runId}.md`)
-    await mkdir(dirname(attentionPath), { recursive: true })
-    await Bun.write(
-      attentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: `A-complete-${input.runId}`,
-          target: null,
-          createdAt: new Date().toISOString(),
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nOperational recovery completed successfully.\n',
       }),
     )
   }
@@ -590,8 +488,7 @@ interface GoalView {
   works: Array<{
     id: string
     stage: string
-    attempts: number
-    projection: { primaryBadge: string | null }
+    projection: { primaryBadge: string | null; failedPredicates: string[] }
   }>
   attentions: Array<{
     id: string

@@ -4,12 +4,6 @@ import { type AssistantToolName, assistantMcpToolSchemas } from './assistantTool
 
 const toolUrl = requiredEnv('HOPI_TOOL_URL')
 const token = requiredEnv('HOPI_TOOL_TOKEN')
-const mode =
-  process.env.HOPI_TOOL_MODE === 'reflection'
-    ? 'reflection'
-    : process.env.HOPI_TOOL_MODE === 'internal'
-      ? 'internal'
-      : 'main'
 const server = new McpServer({ name: 'hopi', version: '1.0.0' })
 
 server.registerTool(
@@ -23,132 +17,105 @@ server.registerTool(
   (args) => callTool('hopi_read_state', args),
 )
 
-if (mode !== 'reflection') {
-  server.registerTool(
-    'hopi_read_conversation',
-    {
-      description:
-        'Read a bounded page of durable public Assistant exchanges from Home or one Project without changing its provider session.',
-      inputSchema: assistantMcpToolSchemas.hopi_read_conversation,
-      annotations: { readOnlyHint: true, idempotentHint: true },
-    },
-    (args) => callTool('hopi_read_conversation', args),
-  )
-}
+server.registerTool(
+  'hopi_read_conversation',
+  {
+    description:
+      'Read a bounded page of durable public Assistant exchanges from Home or one Project without changing its provider session.',
+    inputSchema: assistantMcpToolSchemas.hopi_read_conversation,
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  },
+  (args) => callTool('hopi_read_conversation', args),
+)
 
-if (mode === 'main') {
-  server.registerTool(
-    'hopi_manage_project',
-    {
-      description:
-        'Create a Project, add a Repo binding, or rebind moved Repos. Repo bindings are Project-local and may share one Git Repo; selected checkouts locate Git and remain unmodified.',
-      inputSchema: assistantMcpToolSchemas.hopi_manage_project,
-    },
-    (args) => callTool('hopi_manage_project', args),
-  )
+server.registerTool(
+  'hopi_manage_project',
+  {
+    description:
+      'Create a Project, change its Repo bindings, or rerun deterministic recovery validation. Repo bindings are Project-local and selected checkouts remain unmodified.',
+    inputSchema: assistantMcpToolSchemas.hopi_manage_project,
+  },
+  (args) => callTool('hopi_manage_project', args),
+)
 
-  server.registerTool(
-    'hopi_write_preferences',
-    {
-      description:
-        'Replace the complete cross-Project preference Markdown when expectedDigest matches current state.',
-      inputSchema: assistantMcpToolSchemas.hopi_write_preferences,
-    },
-    (args) => callTool('hopi_write_preferences', args),
-  )
-}
+server.registerTool(
+  'hopi_write_preferences',
+  {
+    description:
+      'Replace the complete cross-Project preference Markdown when expectedDigest matches current state.',
+    inputSchema: assistantMcpToolSchemas.hopi_write_preferences,
+  },
+  (args) => callTool('hopi_write_preferences', args),
+)
 
-if (mode !== 'reflection') {
-  server.registerTool(
-    'hopi_create_goal',
-    {
-      description:
-        'Create one Goal from the current Inbox turn and atomically create its first Planning or Engineering Work.',
-      inputSchema: assistantMcpToolSchemas.hopi_create_goal,
-    },
-    (args) => callTool('hopi_create_goal', args),
-  )
+server.registerTool(
+  'hopi_create_goal',
+  {
+    description:
+      'Create one Goal from the current Inbox turn and atomically create its first Planning or Engineering Work.',
+    inputSchema: assistantMcpToolSchemas.hopi_create_goal,
+  },
+  (args) => callTool('hopi_create_goal', args),
+)
 
-  server.registerTool(
-    'hopi_create_work',
-    {
-      description:
-        'Create one Planning or Engineering Work in an active Goal. A new Planning revision records its explicit normalized contract change; Engineering records a complete Work contract and dependencies.',
-      inputSchema: assistantMcpToolSchemas.hopi_create_work,
-    },
-    (args) => callTool('hopi_create_work', args),
-  )
+server.registerTool(
+  'hopi_create_work',
+  {
+    description:
+      'Create one Planning or Engineering Work in an active Goal. A new Planning revision records its explicit normalized contract change; Engineering records a complete Work contract and dependencies.',
+    inputSchema: assistantMcpToolSchemas.hopi_create_work,
+  },
+  (args) => callTool('hopi_create_work', args),
+)
 
-  server.registerTool(
-    'hopi_write_design',
-    {
-      description:
-        'Write Goal-local design Markdown or adopt current Inbox attachments into Goal-local assets. This does not start Planning.',
-      inputSchema: assistantMcpToolSchemas.hopi_write_design,
-    },
-    (args) => callTool('hopi_write_design', args),
-  )
+server.registerTool(
+  'hopi_write_design',
+  {
+    description:
+      'Write Goal-local design Markdown or adopt current Inbox attachments into Goal-local assets. This does not start Planning.',
+    inputSchema: assistantMcpToolSchemas.hopi_write_design,
+  },
+  (args) => callTool('hopi_write_design', args),
+)
 
-  server.registerTool(
-    'hopi_control_goal',
-    {
-      description:
-        'Change one Goal lifecycle or priority. Reopen advances its contract revision, optionally records a normalized contract change, and creates Planning.',
-      inputSchema: assistantMcpToolSchemas.hopi_control_goal,
-    },
-    (args) => callTool('hopi_control_goal', args),
-  )
+server.registerTool(
+  'hopi_control_goal',
+  {
+    description:
+      'Change one Goal lifecycle or priority. Reopen advances its contract revision, optionally records a normalized contract change, and creates Planning.',
+    inputSchema: assistantMcpToolSchemas.hopi_control_goal,
+  },
+  (args) => callTool('hopi_control_goal', args),
+)
 
-  server.registerTool(
-    'hopi_control_work',
-    {
-      description:
-        'Retry, defer, or cancel one Work. Retry repeats unchanged Work authority and does not pass this Inbox turn to the role. Cancellation includes nonterminal dependents, interrupts their Runs, and preserves history.',
-      inputSchema: assistantMcpToolSchemas.hopi_control_work,
-    },
-    (args) => callTool('hopi_control_work', args),
-  )
+server.registerTool(
+  'hopi_control_work',
+  {
+    description:
+      'Retry, defer, change dependencies, append a Project Owner message, or cancel one Work. A message changes the canonical Work document, interrupts an active Run, and resumes the same responsibility lineage. Cancellation includes nonterminal dependents and preserves history.',
+    inputSchema: assistantMcpToolSchemas.hopi_control_work,
+  },
+  (args) => callTool('hopi_control_work', args),
+)
 
-  server.registerTool(
-    'hopi_resolve_attention',
-    {
-      description: 'Resolve one canonical Attention condition and remove its scheduling gate.',
-      inputSchema: assistantMcpToolSchemas.hopi_resolve_attention,
-    },
-    (args) => callTool('hopi_resolve_attention', args),
-  )
+server.registerTool(
+  'hopi_manage_attention',
+  {
+    description:
+      'Create, edit, or resolve one Project Attention todo. Attention is supplied to later Assistant turns and does not gate Work or Preview.',
+    inputSchema: assistantMcpToolSchemas.hopi_manage_attention,
+  },
+  (args) => callTool('hopi_manage_attention', args),
+)
 
-  server.registerTool(
-    'hopi_control_preview',
-    {
-      description: 'Start or stop the reviewed Project Preview runtime.',
-      inputSchema: assistantMcpToolSchemas.hopi_control_preview,
-    },
-    (args) => callTool('hopi_control_preview', args),
-  )
-
-  if (mode === 'internal') {
-    server.registerTool(
-      'hopi_request_user',
-      {
-        description:
-          "Transfer the selected open Attention references to the operator. They remain open, keep their targets unscheduled, and stop unattended progress until the operator replies. Assistant-owned diagnosis, execution, coordination, and waiting remain Assistant-owned; transfer represents genuinely missing operator-owned information, a decision, or an external action. The turn's non-empty final response becomes the question; this call sends no text.",
-        inputSchema: assistantMcpToolSchemas.hopi_request_user,
-      },
-      (args) => callTool('hopi_request_user', args),
-    )
-  }
-} else {
-  server.registerTool(
-    'hopi_handoff_to_main',
-    {
-      description:
-        'Create one internal Inbox brief for the speaking Assistant, optionally linked to canonical Attention references from one scope.',
-      inputSchema: assistantMcpToolSchemas.hopi_handoff_to_main,
-    },
-    (args) => callTool('hopi_handoff_to_main', args),
-  )
-}
+server.registerTool(
+  'hopi_control_preview',
+  {
+    description: 'Start or stop the reviewed Project Preview runtime.',
+    inputSchema: assistantMcpToolSchemas.hopi_control_preview,
+  },
+  (args) => callTool('hopi_control_preview', args),
+)
 
 await server.connect(new StdioServerTransport())
 

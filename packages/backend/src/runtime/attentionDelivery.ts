@@ -1,3 +1,4 @@
+import { isInternalInboxSource } from '../domain/assistantWorkspaceDocuments'
 import { parseAttentionDocument, renderAttentionDocument } from '../domain/canonicalDocuments'
 import { hashBytes } from '../publication/publisher'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -33,7 +34,7 @@ export function createAssistantReplyDeliveryWorker(
       const candidate = [...state.events.values()]
         .filter(
           (event) =>
-            event.attributes.source === 'reflection' &&
+            isInternalInboxSource(event.attributes.source) &&
             event.attributes.visibility === 'public' &&
             event.attributes.status === 'handled' &&
             !event.attributes.webhookDeliveredAt,
@@ -139,7 +140,6 @@ export async function acknowledgeGoalAttention(
   attention.attributes.notifiedAt ??= acknowledgedAt.toISOString()
   attention.attributes.operatorRequest = nextOperatorRequest
   if (completion) {
-    attention.attributes.retryRunId = null
     attention.attributes.resolvedAt = acknowledgedAt.toISOString()
     attention.body += '\n## Resolution\n\nCompletion update delivered.\n'
   }

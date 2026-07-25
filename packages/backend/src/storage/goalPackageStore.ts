@@ -359,7 +359,6 @@ function createInitialPlanningWork(
       dependsOn: [],
       contractRevision: 1,
       evidenceRefs: [],
-      attempts: 0,
     },
     body: [
       '## Objective',

@@ -13,7 +13,7 @@ import {
   reconcileProjectReleaseProjection,
 } from './c1Integrator'
 import { createCompletionStructureVerifier } from './completionVerifier'
-import type { WorkspaceAttentionController } from './workspaceAttentionController'
+import { recordProjectSystemEvent } from './projectSystemEvent'
 
 export interface CoordinatorBootstrapProject {
   projectId: string
@@ -39,7 +39,6 @@ export async function bootstrapCoordinator(input: {
   home: AssistantHomeStore
   workspace: AssistantWorkspaceStore
   projects: readonly CoordinatorBootstrapProject[]
-  attentions: WorkspaceAttentionController
 }): Promise<CoordinatorBootstrapResult> {
   const homeHopiRoot = join(input.homeRoot, '.hopi')
   await removeAbandonedTemporaryFiles(homeHopiRoot, new Set([join(homeHopiRoot, 'projects')]))
@@ -68,10 +67,11 @@ export async function bootstrapCoordinator(input: {
       eligible.add(project.projectId)
     } catch (error) {
       blocked.add(project.projectId)
-      await input.attentions.ensureProjectAttention(
-        project.projectId,
-        `Project validation failed: ${errorMessage(error)}`,
-      )
+      await recordProjectSystemEvent(input.workspace, {
+        projectId: project.projectId,
+        summary: 'Project startup validation failed.',
+        details: [errorMessage(error)],
+      })
     }
   }
   return { homeId, eligibleProjectIds: eligible, blockedProjectIds: blocked }

@@ -256,7 +256,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
-          attempts: 0,
         },
         body: `## Acceptance Criteria\n\n- Project equals ${input.projectId}.\n`,
       }),

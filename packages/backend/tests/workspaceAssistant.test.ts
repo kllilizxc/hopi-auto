@@ -16,13 +16,8 @@ import {
   workspaceAssistantContextDigest,
   workspaceAssistantRuntimeDigest,
 } from '../src/assistant/workspaceAssistant'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
-import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
 import {
   browserEnvironmentRoot,
   browserHarnessAdapterCommand,
@@ -33,6 +28,7 @@ import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
+import { publishTestWorkAttention } from './helpers/testGoalAttention'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'workspace-assistant')
 
@@ -46,7 +42,7 @@ afterEach(async () => {
 })
 
 describe('WorkspaceAssistant conversation', () => {
-  test('exposes browser targets as an Assistant environment without enabling Reflection', async () => {
+  test('exposes the same browser environment to user and system turns', async () => {
     const fakeHarness = join(temporaryRoot, 'fake-browser-harness')
     const fakeChrome = join(temporaryRoot, 'fake-chrome')
     await Promise.all([
@@ -72,7 +68,7 @@ describe('WorkspaceAssistant conversation', () => {
         resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
       })
       const main = await runner.prepare?.({ cwd, toolMode: 'main' })
-      const reflection = await runner.prepare?.({ cwd, toolMode: 'reflection' })
+      const internal = await runner.prepare?.({ cwd, toolMode: 'internal' })
 
       expect(main?.browserEnvironment).toEqual({
         command: browserHarnessAdapterCommand(),
@@ -82,8 +78,11 @@ describe('WorkspaceAssistant conversation', () => {
         writableRoot: browserEnvironmentRoot(homeRoot),
       })
       expect(main?.environment.writableRoots).toContain(browserEnvironmentRoot(homeRoot))
-      expect(reflection?.browserEnvironment).toBeUndefined()
-      expect(reflection?.environment.writableRoots).toEqual([])
+      expect(internal?.browserEnvironment).toEqual(main?.browserEnvironment)
+      expect(internal?.environment).toMatchObject({
+        ...main?.environment,
+        hopiToolMode: 'internal',
+      })
     } finally {
       restoreEnvironment('HOPI_BROWSER_HARNESS_COMMAND', previousHarness)
       restoreEnvironment('HOPI_BROWSER_CHROME_COMMAND', previousChrome)
@@ -596,15 +595,15 @@ describe('WorkspaceAssistant conversation', () => {
     })
     const controller = new AbortController()
     const run = runner.run({
-      eventId: 'RF-1',
-      prompt: 'Reflect.',
+      eventId: 'EV-system-1',
+      prompt: 'Inspect the Project event.',
       session: null,
-      cwd: join(temporaryRoot, 'reflection'),
-      lastMessageFile: join(temporaryRoot, 'reflection', 'last-message.txt'),
-      transcriptFile: join(temporaryRoot, 'reflection', 'transcript.log'),
+      cwd: join(temporaryRoot, 'internal'),
+      lastMessageFile: join(temporaryRoot, 'internal', 'last-message.txt'),
+      transcriptFile: join(temporaryRoot, 'internal', 'transcript.log'),
       toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
-      toolToken: 'reflection-token',
-      toolMode: 'reflection',
+      toolToken: 'internal-token',
+      toolMode: 'internal',
       signal: controller.signal,
     })
     setTimeout(() => controller.abort(), 20)
@@ -612,7 +611,7 @@ describe('WorkspaceAssistant conversation', () => {
     await expect(run).rejects.toThrow('interrupted')
   })
 
-  test('accepts an empty configured Codex message only as silent Reflection', async () => {
+  test('accepts an empty configured Codex message only for an internal wake', async () => {
     const binary = join(temporaryRoot, 'fake-codex-empty')
     await Bun.write(
       binary,
@@ -639,7 +638,7 @@ describe('WorkspaceAssistant conversation', () => {
       resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     })
 
-    const run = (eventId: string, toolMode?: 'reflection') => {
+    const run = (eventId: string, toolMode?: 'internal') => {
       const cwd = join(temporaryRoot, eventId)
       return runner.run({
         eventId,
@@ -654,25 +653,16 @@ describe('WorkspaceAssistant conversation', () => {
       })
     }
 
-    await expect(run('RF-empty', 'reflection')).resolves.toEqual({
+    await expect(run('EV-internal-empty', 'internal')).resolves.toEqual({
       reply: '',
       session: codexSession('thread-empty'),
     })
-    const reflectionArgs = JSON.parse(
-      await Bun.file(join(temporaryRoot, 'RF-empty', 'last-message.txt.args')).text(),
+    const internalArgs = JSON.parse(
+      await Bun.file(join(temporaryRoot, 'EV-internal-empty', 'last-message.txt.args')).text(),
     ) as string[]
-    expect(reflectionArgs).toContain('read-only')
-    expect(reflectionArgs).not.toContain('sandbox_workspace_write.network_access=true')
-    expect(reflectionArgs).toContain('skills.include_instructions=false')
-    expect(reflectionArgs).toContain('skills.bundled.enabled=false')
-    for (const feature of [
-      'browser_use',
-      'computer_use',
-      'image_generation',
-      'workspace_dependencies',
-    ]) {
-      expect(reflectionArgs[reflectionArgs.indexOf(feature) - 1]).toBe('--disable')
-    }
+    expect(internalArgs).toContain('workspace-write')
+    expect(internalArgs).toContain('sandbox_workspace_write.network_access=true')
+    expect(internalArgs).not.toContain('skills.include_instructions=false')
     await expect(run('EV-empty')).rejects.toThrow('empty Assistant message')
   })
 
@@ -905,8 +895,13 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('[Current execution environment observation]')
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
     expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
-    expect(seen[0]?.prompt).toContain('Owned outcome: complete the current Inbox turn')
-    expect(seen[0]?.prompt).toContain('Current state and canonical effects come from HOPI tools')
+    expect(seen[0]?.prompt).toContain('Role: final owner and supervisor of the current Project.')
+    expect(seen[0]?.prompt).toContain(
+      'Finishing a turn does not preserve unfinished responsibility or schedule another wake',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'Current Project facts and canonical effects come from supplied state, documents, and HOPI tools.',
+    )
     expect(seen[0]?.prompt).toContain('provider workspace is non-canonical scratch space')
     expect(seen[0]?.prompt).not.toContain('answer without polling')
     expect(seen[0]?.prompt).not.toContain('[Operator-facing reply contract]')
@@ -959,7 +954,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-2')
 
     expect(sessionIds).toEqual([null, 'thread-1'])
-    expect(prompts[0]).toContain('Owned outcome: complete the current Inbox turn')
+    expect(prompts[0]).toContain('Role: final owner and supervisor of the current Project.')
     expect(prompts[1]).not.toContain('# HOPI Workspace Assistant')
     expect(prompts[1]).not.toContain('[Operator-facing reply contract]')
     expect(prompts[1]).not.toContain('[Current durable cross-Project user preferences]')
@@ -1314,7 +1309,7 @@ describe('WorkspaceAssistant conversation', () => {
     )
   })
 
-  test('processes a Reflection brief in the main thread without treating it as user speech', async () => {
+  test('processes a system event in the Project session without treating it as user speech', async () => {
     const prompts: string[] = []
     const fixture = await setup(() => ({
       async run(input, observer) {
@@ -1323,26 +1318,25 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: '', session: codexSession('thread-1') }
       },
     }))
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-reflection',
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-system',
       content: 'A Work stage changed; revalidate whether action is useful.',
     })
 
-    await fixture.assistant.process('EV-reflection')
+    await fixture.assistant.process('EV-system')
 
-    const event = await fixture.workspace.readEvent('EV-reflection')
+    const event = await fixture.workspace.readEvent('EV-system')
     expect(event?.attributes).toMatchObject({
-      source: 'reflection',
+      source: 'system',
       visibility: 'internal',
       status: 'handled',
     })
-    expect(prompts[0]).toContain('Internal Reflection handoff. This is not operator input.')
+    expect(prompts[0]).toContain('Project system event. This is not operator input.')
     expect(prompts[0]).toContain('A non-empty final response becomes the public update')
-    expect(prompts[0]).not.toContain('Revalidate the brief with HOPI tools')
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
-  test('accepts a pending retry-only internal handoff without a second model call', async () => {
+  test('accepts a transient retry-only internal handoff without a second model call', async () => {
     let calls = 0
     const fixture = await setup((tools) => ({
       async run(input) {
@@ -1357,13 +1351,14 @@ describe('WorkspaceAssistant conversation', () => {
       },
     }))
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await fixture.controller.ensureOperationalFailureAttention(
+    const attention = await publishTestWorkAttention(
+      fixture.goalStore,
       'G-1',
       'plan-initial',
       3,
       'stream disconnected before completion',
     )
-    await fixture.workspace.receiveReflectionEvent({
+    await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-atomic-retry',
       content: 'The transient blocker is clear; retry the Work.',
       context: {
@@ -1380,576 +1375,10 @@ describe('WorkspaceAssistant conversation', () => {
       status: 'handled',
       visibility: 'internal',
     })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
-        ?.attributes,
-    ).toMatchObject({ resolvedAt: null, retryRunId: expect.any(String) })
-  })
-
-  test('lets one internal Assistant pass request the exact missing operator decision', async () => {
-    const prompts: string[] = []
-    const sessions: Array<string | null> = []
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        prompts.push(input.prompt)
-        sessions.push(input.session?.sessionId ?? null)
-        await tools.execute(input.toolToken, 'hopi_request_user', {
-          attentionRefs: ['project:P-1/goal:G-1/attention:A-settlement'],
-        })
-        return {
-          reply: 'Choose the release window: today or tomorrow?',
-          session: codexSession('thread-settlement'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-settlement')
-    const reference = 'project:P-1/goal:G-1/attention:A-settlement'
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-settlement',
-      content: 'Ask the operator for the unresolved choice.',
-      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
-    })
-
-    await fixture.assistant.process('EV-settlement')
-
-    expect(prompts).toHaveLength(1)
-    expect(prompts[0]).toContain('A non-empty final response becomes the public update')
-    expect(prompts[0]).not.toContain('call hopi_request_user')
-    expect(sessions).toEqual([null])
-    expect((await fixture.workspace.readEvent('EV-settlement'))?.attributes).toMatchObject({
-      status: 'handled',
-      visibility: 'public',
-      reply: 'Choose the release window: today or tomorrow?',
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-settlement')?.attributes,
-    ).toMatchObject({
-      notifiedAt: expect.any(String),
-      operatorRequest: expect.stringContaining('/event:EV-settlement'),
-      resolvedAt: null,
-    })
-  })
-
-  test('publishes one notification after the Assistant resolves verified-clear Attention', async () => {
-    let calls = 0
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        calls += 1
-        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
-          attentionRef: 'project:P-1/goal:G-1/attention:A-revised-notification',
-          resolution: 'The represented blocker was verified clear.',
-        })
-        return {
-          reply: 'The blocker was cleared and internal work has resumed.',
-          session: codexSession('thread-revised-notification'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-revised-notification')
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-revised-notification',
-      content: 'Reassess and continue this blocker.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-revised-notification'],
-      },
-    })
-
-    await fixture.assistant.process('EV-revised-notification')
-
-    expect(calls).toBe(1)
-    expect(
-      (await fixture.workspace.readEvent('EV-revised-notification'))?.attributes,
-    ).toMatchObject({
-      status: 'handled',
-      visibility: 'public',
-      disposition: 'notified',
-      reply: 'The blocker was cleared and internal work has resumed.',
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-revised-notification')
-        ?.attributes.resolvedAt,
-    ).not.toBeNull()
-  })
-
-  test('uses a fresh operator request when prior informational delivery did not settle Attention', async () => {
-    const prompts: string[] = []
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        prompts.push(input.prompt)
-        await tools.execute(input.toolToken, 'hopi_request_user', {
-          attentionRefs: ['project:P-1/goal:G-1/attention:A-informational-owner'],
-        })
-        return {
-          reply: 'Choose the release window: today or tomorrow?',
-          session: codexSession('thread-informational-owner'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-informational-owner')
-    await acknowledgeGoalAttention(
-      fixture.goalStore,
-      'G-1',
-      'A-informational-owner',
-      new Date('2026-07-11T01:00:00Z'),
+    const current = (await fixture.goalStore.readPackage('G-1')).attentions.get(
+      attention.attributes.id,
     )
-    const reference = 'project:P-1/goal:G-1/attention:A-informational-owner'
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-informational-owner',
-      content: 'Continue the internally owned blocker after its earlier status update.',
-      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
-    })
-
-    await fixture.assistant.process('EV-informational-owner')
-
-    expect(prompts).toHaveLength(1)
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-informational-owner')
-        ?.attributes,
-    ).toMatchObject({
-      notifiedAt: '2026-07-11T01:00:00.000Z',
-      operatorRequest: expect.stringContaining('/event:EV-informational-owner'),
-      resolvedAt: null,
-    })
-  })
-
-  test('accepts one internal response while concrete Attention repair remains in progress', async () => {
-    let calls = 0
-    const fixture = await setup(() => ({
-      async run() {
-        calls += 1
-        return {
-          reply: 'The concrete repair is still running; no operator action is required.',
-          session: codexSession('thread-repair-running'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-omission')
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-omission',
-      content: 'Settle this blocker.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-omission'],
-      },
-    })
-
-    await fixture.assistant.process('EV-omission')
-
-    expect((await fixture.workspace.readEvent('EV-omission'))?.attributes).toMatchObject({
-      status: 'handled',
-      visibility: 'public',
-      reply: 'The concrete repair is still running; no operator action is required.',
-    })
-    expect(calls).toBe(1)
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-omission')?.attributes,
-    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
-  })
-
-  test('publishes the first result after that turn concretely settles Attention', async () => {
-    const reference = 'project:P-1/goal:G-1/attention:A-corrected-settlement'
-    let calls = 0
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        calls += 1
-        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
-          attentionRef: reference,
-          resolution: 'The turn verified and cleared the represented condition.',
-        })
-        return {
-          reply: 'The blocker is cleared.',
-          session: codexSession('thread-settled'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-corrected-settlement')
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-corrected-settlement',
-      content: 'Settle this blocker.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [reference],
-      },
-    })
-
-    await fixture.assistant.process('EV-corrected-settlement')
-
-    expect(calls).toBe(1)
-    expect(
-      (await fixture.workspace.readEvent('EV-corrected-settlement'))?.attributes,
-    ).toMatchObject({
-      status: 'handled',
-      visibility: 'public',
-      reply: 'The blocker is cleared.',
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-corrected-settlement')
-        ?.attributes.resolvedAt,
-    ).not.toBeNull()
-  })
-
-  test('publishes only the explicit operator request before transferring linked Attention', async () => {
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        await tools.execute(input.toolToken, 'hopi_request_user', {
-          attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
-        })
-        return {
-          reply: 'Choose the release window: today or tomorrow?',
-          session: codexSession('thread-notify'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-choice')
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-notify',
-      content: 'The operator must choose a release window.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
-      },
-    })
-
-    await fixture.assistant.process('EV-notify')
-
-    expect((await fixture.workspace.readEvent('EV-notify'))?.attributes).toMatchObject({
-      source: 'reflection',
-      visibility: 'public',
-      status: 'handled',
-      reply: 'Choose the release window: today or tomorrow?',
-      disposition: 'operator-requested',
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-choice')?.attributes,
-    ).toMatchObject({
-      notifiedAt: expect.any(String),
-      operatorRequest: expect.stringContaining('/event:EV-notify'),
-      resolvedAt: null,
-    })
-  })
-
-  test('HOPI-E2E-013 contracts one Attention notification, durable answer, and continuation', async () => {
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        if (input.eventId === 'EV-notify') {
-          await tools.execute(input.toolToken, 'hopi_request_user', {
-            attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
-          })
-          return {
-            reply: 'Which release window should I use: today or tomorrow?',
-            session: codexSession('thread-attention'),
-          }
-        }
-        if (input.eventId === 'EV-info') {
-          await tools.execute(input.toolToken, 'hopi_read_state', {
-            projectId: 'P-1',
-            goalId: 'G-1',
-          })
-          return {
-            reply: 'The current output is available in Preview.',
-            session: codexSession('thread-attention'),
-          }
-        }
-        await tools.execute(input.toolToken, 'hopi_create_work', {
-          projectId: 'P-1',
-          goalId: 'G-1',
-          work: {
-            kind: 'planning',
-            mode: 'new_contract_revision',
-            contractChange: 'Replace the prior direction.',
-          },
-        })
-        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
-          attentionRef: 'project:P-1/goal:G-1/attention:A-choice',
-          resolution: 'The operator replaced the prior direction and Planning now represents it.',
-        })
-        return {
-          reply: 'I dropped the old direction and requested the revised plan.',
-          session: codexSession('thread-attention'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-choice')
-    await fixture.goalStore.createGoal({
-      goalId: 'G-other',
-      title: 'Other Goal',
-      objective: 'Keep unrelated page context.',
-    })
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-notify',
-      content: 'Ask the operator for the release window.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
-      },
-    })
-
-    await fixture.assistant.process('EV-notify')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-info',
-      content: 'Where can I inspect the current output?',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-other',
-      },
-    })
-    await fixture.assistant.process('EV-info')
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-choice')?.attributes
-        .resolvedAt,
-    ).toBeNull()
-
-    const operatorRequest = (await fixture.goalStore.readPackage('G-1')).attentions.get('A-choice')
-      ?.attributes.operatorRequest
-    if (!operatorRequest) throw new Error('Expected an operator request')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-answer',
-      content: 'The result is poor. Drop that direction and revise the plan.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
-        replyTo: operatorRequest,
-      },
-    })
-    await fixture.assistant.process('EV-answer')
-
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect((await fixture.workspace.readEvent('EV-notify'))?.attributes).toMatchObject({
-      visibility: 'public',
-      status: 'handled',
-      reply: 'Which release window should I use: today or tomorrow?',
-    })
-    expect((await fixture.workspace.readEvent('EV-answer'))?.attributes).toMatchObject({
-      status: 'handled',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-choice'],
-        replyTo: operatorRequest,
-      },
-      reply: 'I dropped the old direction and requested the revised plan.',
-    })
-    expect(goalPackage.attentions.get('A-choice')?.attributes).toMatchObject({
-      notifiedAt: expect.any(String),
-      operatorRequest: null,
-      resolvedAt: expect.any(String),
-    })
-    expect(goalPackage.inputs).toHaveLength(1)
-    expect(goalPackage.inputs[0]?.body).toBe(
-      'The result is poor. Drop that direction and revise the plan.\n',
-    )
-  })
-
-  test('applies an explicit Attention reply in one Assistant pass', async () => {
-    let calls = 0
-    const prompts: string[] = []
-    const reference = 'project:P-1/goal:G-1/attention:A-explicit-reply'
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        calls += 1
-        prompts.push(input.prompt)
-        await tools.execute(input.toolToken, 'hopi_resolve_attention', {
-          attentionRef: reference,
-          resolution: 'The operator explicitly chose to continue.',
-        })
-        return {
-          reply: 'The answer was applied and the original responsibility can continue.',
-          session: codexSession('thread-explicit-reply'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-explicit-reply')
-    const request = await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-explicit-question',
-      content: 'Ask for the exact answer.',
-      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
-    })
-    await fixture.workspace.handleEvent(request.attributes.id, {
-      reply: 'Please answer this blocker.',
-      disposition: 'operator-requested',
-      expose: true,
-    })
-    await fixture.tools.acknowledgeEventAttentions(request.attributes.id)
-    const operatorRequest = (await fixture.goalStore.readPackage('G-1')).attentions.get(
-      'A-explicit-reply',
-    )?.attributes.operatorRequest
-    if (!operatorRequest) throw new Error('Expected the exact operator request')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-explicit-answer',
-      content: 'Continue.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [reference],
-        replyTo: operatorRequest,
-      },
-    })
-
-    await fixture.assistant.process('EV-explicit-answer')
-
-    expect(calls).toBe(1)
-    expect(prompts).toHaveLength(1)
-    expect((await fixture.workspace.readEvent('EV-explicit-answer'))?.attributes).toMatchObject({
-      status: 'handled',
-      reply: 'The answer was applied and the original responsibility can continue.',
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-explicit-reply')?.attributes,
-    ).toMatchObject({ operatorRequest: null, resolvedAt: expect.any(String) })
-  })
-
-  test('keeps a Reflection turn internal and Attention unnotified when speech fails', async () => {
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        await tools.execute(input.toolToken, 'hopi_request_user', {
-          attentionRefs: ['project:P-1/goal:G-1/attention:A-failed'],
-        })
-        throw new Error('reply generation failed')
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-failed')
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-failed-notify',
-      content: 'Prepare an operator question.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-failed'],
-      },
-    })
-
-    await expect(fixture.assistant.process('EV-failed-notify')).rejects.toThrow(
-      'reply generation failed',
-    )
-
-    expect((await fixture.workspace.readEvent('EV-failed-notify'))?.attributes).toMatchObject({
-      visibility: 'internal',
-      status: 'pending',
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-failed')?.attributes,
-    ).toMatchObject({ notifiedAt: null, resolvedAt: null })
-  })
-
-  test('keeps a durable public reply successful when cross-root acknowledgement retries later', async () => {
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        await tools.execute(input.toolToken, 'hopi_request_user', {
-          attentionRefs: ['project:P-1/goal:G-1/attention:A-retry-ack'],
-        })
-        return {
-          reply: 'Choose the release window.',
-          session: codexSession('thread-retry-ack'),
-        }
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-retry-ack')
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-retry-ack',
-      content: 'Prepare a decision request.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-retry-ack'],
-      },
-    })
-    const acknowledge = fixture.tools.acknowledgeEventAttentions.bind(fixture.tools)
-    let failOnce = true
-    fixture.tools.acknowledgeEventAttentions = async (...args) => {
-      if (failOnce) {
-        failOnce = false
-        throw new Error('Project root temporarily unavailable')
-      }
-      return acknowledge(...args)
-    }
-
-    await expect(fixture.assistant.process('EV-retry-ack')).resolves.toMatchObject({
-      kind: 'answered',
-    })
-    expect((await fixture.workspace.readEvent('EV-retry-ack'))?.attributes).toMatchObject({
-      visibility: 'public',
-      status: 'handled',
-      reply: 'Choose the release window.',
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-retry-ack')?.attributes
-        .notifiedAt,
-    ).toBeNull()
-
-    expect(await fixture.assistant.finalizeNotifications?.()).toBe(1)
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-retry-ack')?.attributes
-        .notifiedAt,
-    ).not.toBeNull()
-  })
-
-  test('recovers historical notifications from one snapshot and backs off isolated failures', async () => {
-    const fixture = await setup(() => ({
-      async run() {
-        throw new Error('handled events must not rerun')
-      },
-    }))
-    for (const eventId of ['EV-broken-history', 'EV-valid-history']) {
-      await fixture.workspace.receiveReflectionEvent({ eventId, content: 'Historical update.' })
-      await fixture.workspace.handleEvent(eventId, {
-        reply: 'Published update.',
-        disposition: 'notified',
-        expose: true,
-      })
-    }
-
-    const calls: string[] = []
-    let ordinaryReads = 0
-    const readWorkspace = fixture.workspace.readWorkspace.bind(fixture.workspace)
-    fixture.workspace.readWorkspace = async () => {
-      ordinaryReads += 1
-      return readWorkspace()
-    }
-    fixture.tools.acknowledgeEventAttentions = async (eventId, _acknowledgedAt, snapshot) => {
-      expect(snapshot?.events.has(eventId)).toBe(true)
-      calls.push(eventId)
-      if (eventId === 'EV-broken-history') throw new Error('Missing historical target')
-      return ['goal-attention']
-    }
-
-    expect(await fixture.assistant.finalizeNotifications?.()).toBe(1)
-    expect(calls).toEqual(['EV-broken-history', 'EV-valid-history'])
-    expect(ordinaryReads).toBe(0)
-
-    expect(await fixture.assistant.finalizeNotifications?.()).toBe(0)
-    expect(calls).toEqual(['EV-broken-history', 'EV-valid-history'])
-  })
-
-  test('recovers legacy local-ID Attention context from an already handled public reply', async () => {
-    const fixture = await setup(() => ({
-      async run() {
-        throw new Error('the handled event must not rerun')
-      },
-    }))
-    await createGoalAttention(fixture.goalStore, 'G-1', 'A-recover')
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-recover',
-      content: 'Deliver a decision request.',
-      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: ['A-recover'] },
-    })
-    await fixture.workspace.handleEvent('EV-recover', {
-      reply: 'Choose the deployment target.',
-      disposition: 'tools-used',
-      expose: true,
-    })
-
-    expect(await fixture.assistant.finalizeNotifications?.()).toBe(1)
-    expect(await fixture.assistant.finalizeNotifications?.()).toBe(0)
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get('A-recover')?.attributes,
-    ).toMatchObject({ notifiedAt: expect.any(String), resolvedAt: null })
+    expect(current?.attributes.resolvedAt).toBeNull()
   })
 })
 
@@ -1984,6 +1413,12 @@ async function setup(
         projectRoot: linked.integrationRoot,
         store: goalStore,
         controller,
+        reconciler: {
+          interruptRuns() {},
+          async requestWorkRun() {
+            return 'R-transient-retry'
+          },
+        },
       },
     ],
   ])
@@ -2018,32 +1453,6 @@ async function currentAssistantContextDigest(
   workspace: ReturnType<typeof createAssistantWorkspaceStore>,
 ) {
   return workspaceAssistantContextDigest((await workspace.readWorkspace()).preference.digest)
-}
-
-async function createGoalAttention(
-  store: ReturnType<typeof createGoalPackageStore>,
-  goalId: string,
-  attentionId: string,
-) {
-  await store.createGoal({ goalId, title: 'Goal', objective: 'Ship it.' })
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path: store.paths.attentionDocument(goalId, attentionId),
-      expectedHash: null,
-      content: renderAttentionDocument({
-        attributes: {
-          id: attentionId,
-          target: `project:P-1/goal:${goalId}`,
-          createdAt: '2026-07-11T00:00:00Z',
-          resolvedAt: null,
-          notifiedAt: null,
-          operatorRequest: null,
-        },
-        body: '## Needs you\n\nChoose one option.\n',
-      }),
-    },
-  })
 }
 
 async function finishInitialPlanning(

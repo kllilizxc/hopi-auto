@@ -51,7 +51,6 @@ import {
   type AgentPlanSnapshot,
   type GoalControl,
   type KanbanColumn,
-  type PreviewSession,
   type RunAttemptDetail,
   type RunAttemptDiagnostics,
   type RunAttemptEvent,
@@ -66,7 +65,6 @@ import {
   readWorkAttemptEvents,
   readWorkAttempts,
   readWorkDocument,
-  requestPreviewRepair,
   startPreview,
   stopPreview,
 } from '../lib/api'
@@ -171,10 +169,6 @@ export function shouldShowWorkProgress(input: {
   const terminal = input.stage === 'done' || input.stage === 'cancelled'
   const started = input.running || input.hasAgentPlan || input.runAttemptCount > 0
   return !terminal && started
-}
-
-export function previewRepairPrompt(preview: PreviewSession | null | undefined) {
-  return preview?.repair?.prompt ?? null
 }
 
 const loadUnifiedMessageFeed = () => import('../components/UnifiedMessageFeed')
@@ -304,9 +298,8 @@ function useCompactKanban() {
 export function BoardView() {
   const { projectId, goalId } = useParams()
   const queryClient = useQueryClient()
-  const { openAssistant, selectGoal, warmGoal } = useShell()
+  const { selectGoal, warmGoal } = useShell()
   const [selectedWork, setSelectedWork] = useState<WorkCardView | null>(null)
-  const [repairPrompt, setRepairPrompt] = useState<string | null>(null)
   const [executionCostOpen, setExecutionCostOpen] = useState(false)
   const [goalViewState, updateGoalViewState] = useGoalViewState(projectId, goalId)
   const compactKanban = useCompactKanban()
@@ -473,31 +466,15 @@ export function BoardView() {
   })
   const previewStartMutation = useMutation({
     mutationFn: () => startPreview(projectId ?? ''),
-    onSuccess: async (result) => {
-      setRepairPrompt(result.kind === 'repair_required' ? result.prompt : null)
-      await refresh()
-    },
+    onSuccess: refresh,
     onError: refresh,
   })
   const previewStopMutation = useMutation({
     mutationFn: () => stopPreview(projectId ?? ''),
     onSuccess: refresh,
   })
-  const previewRepairMutation = useMutation({
-    mutationFn: () =>
-      requestPreviewRepair({
-        projectId: projectId ?? '',
-        goalId: goalId ?? '',
-      }),
-    onSuccess: async () => {
-      setRepairPrompt(null)
-      await refresh()
-      openAssistant()
-    },
-  })
   const previewSession = projectQuery.data?.preview
   useEffect(() => {
-    setRepairPrompt(previewRepairPrompt(previewSession))
     if (
       previewStartMutation.isError &&
       (previewSession?.status === 'starting' || previewSession?.status === 'running')
@@ -505,7 +482,6 @@ export function BoardView() {
       previewStartMutation.reset()
     }
   }, [
-    previewSession?.repair?.prompt,
     previewSession?.sessionId,
     previewSession?.status,
     previewStartMutation.isError,
@@ -536,8 +512,7 @@ export function BoardView() {
   const openAssistantAttentions = goal.attentions.filter(
     (attention) =>
       attention.target !== null &&
-      attention.resolvedAt === null &&
-      (attention.retryRunId ?? null) === null,
+      attention.resolvedAt === null,
   )
   const assistantAttention =
     openAssistantAttentions.find((attention) => Boolean(attention.operatorRequest)) ??
@@ -545,14 +520,12 @@ export function BoardView() {
   const assistantAttentionLabel = assistantAttention?.operatorRequest
     ? 'Needs you'
     : 'Waiting for Assistant'
-  const projectAttention = goal.projectAttention?.resolvedAt === null ? goal.projectAttention : null
   const focus =
     goal.works.find((work) => work.projection.primaryBadge === 'Needs you') ??
     goal.works.find((work) => work.projection.primaryBadge === 'Waiting for Assistant') ??
     goal.works.find((work) => work.projection.primaryBadge === 'working') ??
     goal.works.find((work) => work.stage !== 'done' && work.stage !== 'cancelled')
-  const mutationError =
-    previewStartMutation.error ?? previewStopMutation.error ?? previewRepairMutation.error
+  const mutationError = previewStartMutation.error ?? previewStopMutation.error
   const goalPeers = orderGoalsByRecency(
     project.goals,
     projectId,
@@ -653,19 +626,6 @@ export function BoardView() {
         <AppAlert className="error-banner board-error">{(error as Error).message}</AppAlert>
       )}
 
-      {projectAttention && (
-        <output className="attention-status-banner project-blocked-banner">
-          <span>
-            <AlertCircle />
-          </span>
-          <span>
-            <strong>Project blocked</strong>
-            <p>{excerpt(projectAttention.body, 360)}</p>
-            <small>Created {formatTime(projectAttention.createdAt)}</small>
-          </span>
-        </output>
-      )}
-
       <section className="goal-focus-strip">
         <div>
           <small>Contract · revision {goal.goal.contractRevision}</small>
@@ -674,20 +634,16 @@ export function BoardView() {
         <div>
           <small>Current focus</small>
           <strong>
-            {projectAttention
-              ? 'Project blocked'
-              : assistantAttention
-                ? assistantAttentionLabel
-                : (focus?.title ?? goal.goal.lifecycle)}
+            {assistantAttention
+              ? assistantAttentionLabel
+              : (focus?.title ?? goal.goal.lifecycle)}
           </strong>
           <p>
-            {projectAttention
-              ? excerpt(projectAttention.body)
-              : assistantAttention
-                ? assistantAttention.operatorRequest
-                  ? 'Your decision is needed. Open Assistant to reply.'
-                  : 'Assistant is diagnosing the blocker and will contact you only if needed.'
-                : (focus?.projection.primaryBadge ?? 'No pending Work')}
+            {assistantAttention
+              ? assistantAttention.operatorRequest
+                ? 'Your decision is needed. Open Assistant to reply.'
+                : 'Assistant is diagnosing the blocker and will contact you only if needed.'
+              : (focus?.projection.primaryBadge ?? 'No pending Work')}
           </p>
         </div>
         <div>
@@ -812,30 +768,6 @@ export function BoardView() {
         </AppDisclosure>
       )}
 
-      {repairPrompt && (
-        <aside className="preview-repair-banner">
-          <div>
-            <strong>Preview adapter needs work</strong>
-            <p>HOPI can check for equivalent Work and create the smallest reviewed repair.</p>
-          </div>
-          <AppButton
-            className="primary-button compact"
-            type="button"
-            onClick={() => previewRepairMutation.mutate()}
-            disabled={previewRepairMutation.isPending}
-          >
-            {previewRepairMutation.isPending ? <AppSpinner size="sm" /> : <MessageSquareText />}
-            Ask Assistant to repair
-          </AppButton>
-          <IconButton
-            type="button"
-            onClick={() => setRepairPrompt(null)}
-            aria-label="Dismiss repair prompt"
-          >
-            <X />
-          </IconButton>
-        </aside>
-      )}
       {mutationError && (
         <AppAlert className="error-banner board-error">{mutationError.message}</AppAlert>
       )}
@@ -1204,10 +1136,6 @@ function WorkDetail({
                 <span>
                   <small>Revision</small>
                   <strong>{work.contractRevision}</strong>
-                </span>
-                <span>
-                  <small>Recovery</small>
-                  <strong>{work.attempts} / 3</strong>
                 </span>
                 <span>
                   <small>Not before</small>

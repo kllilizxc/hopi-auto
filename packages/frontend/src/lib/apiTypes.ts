@@ -31,11 +31,11 @@ export interface AgentRoleCodingSettings {
   configurable: boolean
 }
 
-export interface PreviewRepair {
-  kind: 'repair_required'
+export interface PreviewFailure {
+  kind: 'failed'
   reason: 'missing' | 'not_executable' | 'preparation_failed' | 'startup_failed'
-  prompt: string
   logs: string
+  session: PreviewSession
 }
 
 export interface PreviewSurface {
@@ -51,11 +51,20 @@ export interface PreviewSession {
   status: 'starting' | 'running' | 'stopped' | 'failed'
   surfaces: PreviewSurface[]
   logPath: string
+  manifestPath: string
   startedAt: string
   endedAt: string | null
+  processId: number | null
+  preparation: {
+    kind: 'ready' | 'absent' | 'not_executable' | 'failed' | 'source_changed' | 'skipped_dirty'
+    adapterPath: string
+    exitCode: number | null
+    logPath: string
+    reposFile: string
+  } | null
   error: string | null
   stoppedReason: 'release_updated' | null
-  repair: PreviewRepair | null
+  failureReason: PreviewFailure['reason'] | null
 }
 
 export interface GoalSummary {
@@ -117,7 +126,7 @@ export interface InboxEventView {
   id: string
   receivedAt: string
   status: 'pending' | 'handled'
-  source: 'user' | 'reflection'
+  source: 'user' | 'system' | 'reflection'
   visibility: 'public' | 'internal'
   body: string
   attachments: InboxImageAttachmentView[]
@@ -175,7 +184,6 @@ export interface AttentionView {
   resolvedAt: string | null
   notifiedAt: string | null
   operatorRequest: string | null
-  retryRunId?: string | null
   body: string
   projectId?: string
   goalId?: string
@@ -272,7 +280,6 @@ export interface WorkView {
   dependsOn: string[]
   contractRevision: number
   evidenceRefs: string[]
-  attempts: number
   runAttemptCount: number
   completedAt: string | null
   body: string
@@ -467,4 +474,4 @@ export interface GoalDocsDetail {
 
 export type PreviewStartResult =
   | { kind: 'starting' | 'started'; session: PreviewSession }
-  | PreviewRepair
+  | PreviewFailure

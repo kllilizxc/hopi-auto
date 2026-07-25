@@ -66,8 +66,8 @@ describe('legacy Goal migration', () => {
     expect(goalPackage.works.get('W-open')?.attributes).toMatchObject({
       stage: 'generate',
       dependsOn: [],
-      attempts: 0,
     })
+    expect(goalPackage.works.get('W-open')?.attributes).not.toHaveProperty('attempts')
     expect(goalPackage.evidence.size).toBe(0)
     expect([...goalPackage.attentions.values()][0]?.attributes.target).toBe(
       'project:P-1/goal:G-1/work:W-open',

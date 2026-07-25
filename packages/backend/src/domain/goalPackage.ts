@@ -154,20 +154,18 @@ function validateNewGoal(goalId: string, goalPackage: GoalPackage) {
 function validateGoalTransition(goalId: string, previous: GoalPackage, next: GoalPackage) {
   const before = previous.goal
   const after = next.goal
-  if (after.attributes.id !== before.attributes.id) {
-    throw invalid(goalId, 'Goal identity is immutable')
+  if (
+    after.attributes.id !== before.attributes.id ||
+    after.attributes.title !== before.attributes.title ||
+    after.body !== before.body
+  ) {
+    throw invalid(goalId, 'Goal identity, title, and original statement are immutable')
   }
   if (
     after.attributes.contractRevision < before.attributes.contractRevision ||
     after.attributes.contractRevision > before.attributes.contractRevision + 1
   ) {
     throw invalid(goalId, 'contractRevision may only stay current or increment once')
-  }
-  if (
-    after.body !== before.body &&
-    after.attributes.contractRevision === before.attributes.contractRevision
-  ) {
-    throw invalid(goalId, 'Goal contract content changed without a contractRevision increment')
   }
   if (!legalGoalLifecycleTransition(before.attributes.lifecycle, after.attributes.lifecycle)) {
     throw invalid(
@@ -214,9 +212,6 @@ function validateWorkTransition(goalId: string, previous: WorkDocument, next: Wo
   }
   if (after.contractRevision < before.contractRevision) {
     throw invalid(goalId, `Work contractRevision moved backwards: ${before.id}`)
-  }
-  if (!before.dependsOn.every((dependencyId) => after.dependsOn.includes(dependencyId))) {
-    throw invalid(goalId, `Work dependency history was removed: ${before.id}`)
   }
   if (before.evidenceRefs.some((evidenceId, index) => after.evidenceRefs[index] !== evidenceId)) {
     throw invalid(goalId, `Work Evidence history is not append-only: ${before.id}`)
@@ -273,11 +268,6 @@ async function validateImmutableDocuments(
     const afterOperatorRequest = after.operatorRequest ?? null
     if (before.resolvedAt !== null && beforeOperatorRequest !== afterOperatorRequest) {
       throw invalid(goalId, `Resolved Attention ownership changed: ${attentionId}`)
-    }
-    const beforeRetryRunId = before.retryRunId ?? null
-    const afterRetryRunId = after.retryRunId ?? null
-    if (before.resolvedAt !== null && beforeRetryRunId !== afterRetryRunId) {
-      throw invalid(goalId, `Resolved Attention retry Run changed: ${attentionId}`)
     }
     if (
       beforeOperatorRequest !== null &&
@@ -414,8 +404,6 @@ function validateAttentions(
   works: Map<string, WorkDocument>,
   attentions: Map<string, AttentionDocument>,
 ) {
-  let openTargeted = 0
-
   for (const [attentionId, attention] of attentions) {
     const { target, resolvedAt } = attention.attributes
     if (target === null) {
@@ -429,7 +417,7 @@ function validateAttentions(
     if (match.scope === 'work' && !works.has(match.workId)) {
       throw invalid(goalId, `Attention ${attentionId} targets missing Work`)
     }
-    if (resolvedAt === null) openTargeted += 1
+    void resolvedAt
   }
 
   const completionId = goal.attributes.completionAttentionId
@@ -438,10 +426,6 @@ function validateAttentions(
     if (!completion || completion.attributes.target !== null) {
       throw invalid(goalId, 'completionAttentionId does not reference targetless Attention')
     }
-  }
-
-  if (goal.attributes.lifecycle === 'done' && openTargeted > 0) {
-    throw invalid(goalId, 'done Goal still has open targeted Attention')
   }
 }
 

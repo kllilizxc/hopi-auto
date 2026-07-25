@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test'
 import {
   readAssistantFeedChanges,
   readState,
-  requestPreviewRepair,
   updateAgentRoleSettings,
 } from './apiClient'
 
@@ -17,46 +16,6 @@ test('turns a transport failure into an actionable backend recovery message', as
   } finally {
     globalThis.fetch = originalFetch
   }
-})
-
-test('sends only the viewed Goal context for a server-owned Preview repair request', async () => {
-  const originalFetch = globalThis.fetch
-  let observed: { input: RequestInfo | URL; init?: RequestInit } | null = null
-  globalThis.fetch = (async (input, init) => {
-    observed = { input, init }
-    return Response.json({ eventId: 'EV-repair' })
-  }) as typeof fetch
-
-  try {
-    await requestPreviewRepair({ projectId: 'P-1', goalId: 'G-1' })
-  } finally {
-    globalThis.fetch = originalFetch
-  }
-
-  expect(observed?.input).toBe('/api/preview/repair')
-  expect(observed?.init?.method).toBe('POST')
-  expect(JSON.parse(String(observed?.init?.body))).toEqual({
-    context: { projectId: 'P-1', goalId: 'G-1' },
-  })
-})
-
-test('can route a Preview repair from the Project surface without inventing a Goal', async () => {
-  const originalFetch = globalThis.fetch
-  let observed: { input: RequestInfo | URL; init?: RequestInit } | null = null
-  globalThis.fetch = (async (input, init) => {
-    observed = { input, init }
-    return Response.json({ eventId: 'EV-project-repair' })
-  }) as typeof fetch
-
-  try {
-    await requestPreviewRepair({ projectId: 'P-1' })
-  } finally {
-    globalThis.fetch = originalFetch
-  }
-
-  expect(JSON.parse(String(observed?.init?.body))).toEqual({
-    context: { projectId: 'P-1' },
-  })
 })
 
 test('requests mutable Assistant changes from the independent synchronization cursor', async () => {

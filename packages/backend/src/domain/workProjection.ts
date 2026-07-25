@@ -1,6 +1,5 @@
 import { responsibilityFor } from '../runtime/softwareDeliveryProfile'
-import { goalAttentionTarget, workAttentionTarget } from './attentionTarget'
-import { type WorkAttributes, isAttentionBlocking, isWorkTerminal } from './canonicalDocuments'
+import { type WorkAttributes, isWorkTerminal } from './canonicalDocuments'
 import type { GoalPackage } from './goalPackage'
 
 export type KanbanColumn = 'Plan' | 'Build' | 'Review' | 'Done'
@@ -20,6 +19,7 @@ export type WorkReadinessReason =
   | 'dependency_incomplete'
   | 'not_before'
   | 'attention'
+  | 'failed_attempt'
   | 'live_run'
   | 'capacity'
   | 'no_profile_pass'
@@ -27,6 +27,7 @@ export type WorkReadinessReason =
 export interface WorkRuntimeFacts {
   projectEligible: boolean
   liveRunWorkIds: ReadonlySet<string>
+  settledFailureWorkIds?: ReadonlySet<string>
   passCapacity: Partial<Record<'planner' | 'generator' | 'reviewer', boolean>>
   now?: Date
 }
@@ -53,8 +54,8 @@ export function deriveGoalWorkProjections(
 }
 
 export function deriveWorkProjection(
-  projectId: string,
-  goalId: string,
+  _projectId: string,
+  _goalId: string,
   work: WorkAttributes,
   goalPackage: GoalPackage,
   runtime: WorkRuntimeFacts,
@@ -81,10 +82,7 @@ export function deriveWorkProjection(
   }
   const scheduled = work.notBefore !== null && Date.parse(work.notBefore) > now.getTime()
   if (scheduled) failedPredicates.push('not_before')
-  const coveringAttention = findCoveringAttention(projectId, goalId, work.id, goalPackage)
-  const needsAttention = Boolean(coveringAttention)
-  const waitingForOperator = Boolean(coveringAttention?.attributes.operatorRequest)
-  if (needsAttention) failedPredicates.push('attention')
+  if (runtime.settledFailureWorkIds?.has(work.id)) failedPredicates.push('failed_attempt')
   const working = runtime.liveRunWorkIds.has(work.id)
   if (working) failedPredicates.push('live_run')
   if (responsibility && runtime.passCapacity[responsibility] === false) {
@@ -101,35 +99,15 @@ export function deriveWorkProjection(
     responsibility,
     primaryBadge: terminal
       ? null
-      : needsAttention
-        ? waitingForOperator
-          ? 'Needs you'
-          : 'Waiting for Assistant'
-        : working
-          ? 'working'
-          : scheduled
-            ? 'scheduled'
-            : ready
-              ? 'queued'
-              : 'waiting',
+      : working
+        ? 'working'
+        : scheduled
+          ? 'scheduled'
+          : ready
+            ? 'queued'
+            : 'waiting',
     failedPredicates,
   }
-}
-
-function findCoveringAttention(
-  projectId: string,
-  goalId: string,
-  workId: string,
-  goalPackage: GoalPackage,
-) {
-  const goalTarget = goalAttentionTarget(projectId, goalId)
-  const workTarget = workAttentionTarget(projectId, goalId, workId)
-  const covering = [...goalPackage.attentions.values()].filter(
-    (attention) =>
-      isAttentionBlocking(attention.attributes) &&
-      (attention.attributes.target === goalTarget || attention.attributes.target === workTarget),
-  )
-  return covering.find((attention) => Boolean(attention.attributes.operatorRequest)) ?? covering[0]
 }
 
 function kanbanColumn(work: WorkAttributes): KanbanColumn | null {

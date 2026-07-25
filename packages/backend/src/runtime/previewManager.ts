@@ -1,27 +1,30 @@
-import { appendFile, chmod, mkdir } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { appendFile, chmod, mkdir, readdir } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { z } from 'zod'
 import { projectReleaseRef } from '../domain/project'
 import { BoundedLineTail } from './boundedLineTail'
+import { createProcessGroupTerminator } from './processGroup'
 import {
   type ProjectPreparationRepoRoot,
+  type ProjectPreparationResult,
   type ProjectPreparer,
   createProjectPreparer,
 } from './projectPreparation'
 import { runtimeCacheRoot } from './runPaths'
 
 export type PreviewStatus = 'starting' | 'running' | 'stopped' | 'failed'
-export type PreviewStoppedReason = 'release_updated'
-export type PreviewRepairReason =
+export type PreviewStoppedReason = 'release_updated' | 'runtime_restarted'
+export type PreviewFailureReason =
   | 'missing'
   | 'not_executable'
   | 'preparation_failed'
   | 'startup_failed'
 
-export interface PreviewRepair {
-  kind: 'repair_required'
-  reason: PreviewRepairReason
-  prompt: string
+export interface PreviewFailure {
+  kind: 'failed'
+  reason: PreviewFailureReason
   logs: string
+  session: PreviewSession
 }
 
 export interface PreviewSurface {
@@ -37,20 +40,33 @@ export interface PreviewSession {
   status: PreviewStatus
   surfaces: PreviewSurface[]
   logPath: string
+  manifestPath: string
   startedAt: string
   endedAt: string | null
+  processId: number | null
+  preparation: Pick<
+    ProjectPreparationResult,
+    'kind' | 'adapterPath' | 'exitCode' | 'logPath' | 'reposFile'
+  > | null
   error: string | null
   stoppedReason: PreviewStoppedReason | null
-  repair: PreviewRepair | null
+  failureReason: PreviewFailureReason | null
 }
 
-export type FormalReleasePreviewContext =
-  | { kind: 'not_configured' }
-  | { kind: 'session'; session: PreviewSession }
+export type PreviewStartResult = { kind: 'started'; session: PreviewSession } | PreviewFailure
 
-export type PreviewStartResult = { kind: 'started'; session: PreviewSession } | PreviewRepair
+export interface PreviewProjectEvent {
+  projectId: string
+  sessionId: string
+  status: 'failed' | 'stopped'
+  message: string
+  manifestPath: string
+  logPath: string
+  reason: PreviewFailureReason | PreviewStoppedReason
+}
 
 export interface PreviewManager {
+  recover(): Promise<void>
   start(input: {
     projectId: string
     projectRoot: string
@@ -88,6 +104,7 @@ export interface PreviewManagerOptions {
   preparer?: ProjectPreparer
   preparationTimeoutMs?: number
   surfaceProbe?: (url: string) => Promise<void>
+  onEvent?(event: PreviewProjectEvent): Promise<void> | void
 }
 
 export function createPreviewManager(
@@ -103,6 +120,50 @@ export function createPreviewManager(
     options.surfaceProbe ??
     ((url: string) => probePreviewSurface(url, Math.min(startupTimeoutMs, 10_000)))
   const operations = new Map<string, PreviewOperation>()
+  const latestSessions = new Map<string, PreviewSession>()
+
+  async function persistSession(session: PreviewSession) {
+    await mkdir(dirname(session.manifestPath), { recursive: true })
+    await Bun.write(session.manifestPath, `${JSON.stringify(session, null, 2)}\n`)
+    latestSessions.set(session.projectId, session)
+  }
+
+  async function emitEvent(
+    session: PreviewSession,
+    reason: PreviewFailureReason | PreviewStoppedReason,
+    message: string,
+  ) {
+    try {
+      await options.onEvent?.({
+        projectId: session.projectId,
+        sessionId: session.sessionId,
+        status: session.status === 'failed' ? 'failed' : 'stopped',
+        message,
+        manifestPath: session.manifestPath,
+        logPath: session.logPath,
+        reason,
+      })
+    } catch {
+      // Preview lifecycle is durable even when the Assistant wake cannot be published immediately.
+    }
+  }
+
+  async function failPreview(
+    operation: PreviewOperation,
+    reason: PreviewFailureReason,
+    error: string,
+    logs: string,
+  ): Promise<PreviewFailure> {
+    operation.session.status = 'failed'
+    operation.session.surfaces = []
+    operation.session.endedAt ??= now().toISOString()
+    operation.session.processId = null
+    operation.session.error = error
+    operation.session.failureReason = reason
+    await persistSession(operation.session)
+    await emitEvent(operation.session, reason, error)
+    return { kind: 'failed', reason, logs, session: operation.session }
+  }
 
   async function runStart(
     operation: PreviewOperation,
@@ -119,20 +180,15 @@ export function createPreviewManager(
     const adapterFile = Bun.file(paths.adapter)
     if (!(await adapterFile.exists())) {
       if (isStopped(operation)) return stoppedResult(operation.session, now)
-      return failWithRepair(
-        operation,
-        repairRequired('missing', paths.adapter, ''),
-        `Preview adapter is missing: ${paths.adapter}`,
-        now,
-      )
+      return failPreview(operation, 'missing', `Preview adapter is missing: ${paths.adapter}`, '')
     }
     if (!(await isExecutable(paths.adapter))) {
       if (isStopped(operation)) return stoppedResult(operation.session, now)
-      return failWithRepair(
+      return failPreview(
         operation,
-        repairRequired('not_executable', paths.adapter, ''),
+        'not_executable',
         `Preview adapter is not executable: ${paths.adapter}`,
-        now,
+        '',
       )
     }
 
@@ -148,12 +204,20 @@ export function createPreviewManager(
       releaseHeads: input.releaseHeads,
     })
     if (isStopped(operation)) return stoppedResult(operation.session, now)
-    if (preparation.kind !== 'ready') {
-      return failWithRepair(
+    operation.session.preparation = {
+      kind: preparation.kind,
+      adapterPath: preparation.adapterPath,
+      exitCode: preparation.exitCode,
+      logPath: preparation.logPath,
+      reposFile: preparation.reposFile,
+    }
+    await persistSession(operation.session)
+    if (preparation.kind !== 'ready' && preparation.kind !== 'absent') {
+      return failPreview(
         operation,
-        repairRequired('preparation_failed', preparation.adapterPath, preparation.logs),
+        'preparation_failed',
         `Preview preparation failed through ${preparation.adapterPath}`,
-        now,
+        preparation.logs,
       )
     }
 
@@ -169,9 +233,13 @@ export function createPreviewManager(
         HOPI_PROJECT_ROOT: paths.projectRoot,
         HOPI_REPOS_FILE: paths.reposFile,
         HOPI_PREVIEW_RUNTIME_DIR: paths.sessionRoot,
+        HOPI_CACHE_DIR: runtimeCacheRoot(homeRoot),
       },
+      detached: true,
     })
     operation.process = child
+    operation.session.processId = child.pid
+    await persistSession(operation.session)
     operation.streams = [
       consumePreviewStream(child.stdout, operation, paths.logPath),
       consumePreviewStream(child.stderr, operation, paths.logPath),
@@ -199,9 +267,12 @@ export function createPreviewManager(
           : startup.kind === 'invalid'
             ? `Preview surface declaration is invalid: ${startup.error}`
             : `Preview adapter exited with code ${startup.exitCode}`
-      const repair = repairRequired('startup_failed', paths.adapter, operation.logs.text())
-      operation.session.repair = repair
-      return repair
+      return failPreview(
+        operation,
+        'startup_failed',
+        operation.session.error,
+        operation.logs.text(),
+      )
     }
     if (isStopped(operation)) {
       return stoppedResult(operation.session, now)
@@ -229,30 +300,26 @@ export function createPreviewManager(
       if (isStopped(operation)) {
         return stoppedResult(operation.session, now)
       }
-      return failWithRepair(
-        operation,
-        repairRequired('startup_failed', paths.adapter, operation.logs.text()),
-        message,
-        now,
-      )
+      return failPreview(operation, 'startup_failed', message, operation.logs.text())
     }
     if (isStopped(operation)) {
       return stoppedResult(operation.session, now)
     }
     operation.session.surfaces = startup.surfaces
     operation.session.status = 'running'
+    operation.session.failureReason = null
+    await persistSession(operation.session)
     void child.exited.then(async (exitCode) => {
       if (operation.session.status === 'stopped') return
-      operation.session.status = exitCode === 0 ? 'stopped' : 'failed'
+      operation.session.status = 'failed'
       operation.session.surfaces = []
-      operation.session.error =
-        exitCode === 0 ? null : `Preview adapter exited with code ${exitCode}`
+      operation.session.processId = null
+      operation.session.error = `Preview adapter exited unexpectedly with code ${exitCode}`
       operation.session.endedAt = now().toISOString()
       await settlePreviewLogs(operation)
-      operation.session.repair =
-        exitCode === 0
-          ? null
-          : repairRequired('startup_failed', paths.adapter, operation.logs.text())
+      operation.session.failureReason = 'startup_failed'
+      await persistSession(operation.session)
+      await emitEvent(operation.session, 'startup_failed', operation.session.error)
     })
     return { kind: 'started', session: operation.session }
   }
@@ -267,11 +334,20 @@ export function createPreviewManager(
     operation.session.status = 'stopped'
     operation.session.stoppedReason = reason ?? null
     operation.session.surfaces = []
+    operation.session.processId = null
     if (operation.process) {
       await terminatePreview(operation.process, stopGraceMs)
       await settlePreviewLogs(operation)
     }
     operation.session.endedAt ??= now().toISOString()
+    await persistSession(operation.session)
+    if (reason) {
+      await emitEvent(
+        operation.session,
+        reason,
+        'Preview stopped because the managed Project release changed.',
+      )
+    }
     return operation.session
   }
 
@@ -293,22 +369,40 @@ export function createPreviewManager(
     operation.session.status = 'failed'
     operation.session.surfaces = []
     operation.session.endedAt = now().toISOString()
+    operation.session.processId = null
     operation.session.error = message
-    return failWithRepair(
+    return failPreview(
       operation,
-      repairRequired(
-        operation.phase === 'preparation' ? 'preparation_failed' : 'startup_failed',
-        paths.adapter,
-        operation.logs.text(),
-      ),
+      operation.phase === 'preparation' ? 'preparation_failed' : 'startup_failed',
       message,
-      now,
+      operation.logs.text(),
     )
   }
 
   const manager: PreviewManager = {
     inspect(projectId) {
-      return operations.get(projectId)?.session ?? null
+      return operations.get(projectId)?.session ?? latestSessions.get(projectId) ?? null
+    },
+    async recover() {
+      const sessions = await readLatestPreviewSessions(runtimeRoot)
+      for (const session of sessions) {
+        latestSessions.set(session.projectId, session)
+        if (session.status !== 'starting' && session.status !== 'running') continue
+        if (session.processId !== null) {
+          await createProcessGroupTerminator(session.processId)().catch(() => undefined)
+        }
+        session.status = 'stopped'
+        session.surfaces = []
+        session.processId = null
+        session.endedAt ??= now().toISOString()
+        session.stoppedReason = 'runtime_restarted'
+        await persistSession(session)
+        await emitEvent(
+          session,
+          'runtime_restarted',
+          'Preview stopped because the HOPI runtime restarted.',
+        )
+      }
     },
     start(input) {
       const releaseHeads = Object.freeze({ ...input.releaseHeads })
@@ -337,6 +431,7 @@ export function createPreviewManager(
       const logPath = join(sessionRoot, 'preview.log')
       const preparationRoot = join(sessionRoot, 'project-prepare')
       const reposFile = join(preparationRoot, 'repos.json')
+      const manifestPath = join(sessionRoot, 'session.json')
       const session: PreviewSession = {
         sessionId,
         projectId: input.projectId,
@@ -344,11 +439,14 @@ export function createPreviewManager(
         status: 'starting',
         surfaces: [],
         logPath,
+        manifestPath,
         startedAt: now().toISOString(),
         endedAt: null,
+        processId: null,
+        preparation: null,
         error: null,
         stoppedReason: null,
-        repair: null,
+        failureReason: null,
       }
       let signalReady: (readiness: PreviewReadiness) => void = () => undefined
       const ready = new Promise<PreviewReadiness>((resolveReady) => {
@@ -376,7 +474,8 @@ export function createPreviewManager(
         preparationRoot,
         reposFile,
       }
-      operation.startPromise = runStart(operation, input, paths)
+      operation.startPromise = persistSession(session)
+        .then(() => runStart(operation, input, paths))
         .catch((error) => failUnexpectedStart(operation, paths, error))
         .finally(() => {
           operation.settled = true
@@ -421,6 +520,75 @@ function sameReleaseHeads(
     leftEntries.length === rightEntries.length &&
     leftEntries.every(([repoId, commit]) => right[repoId] === commit)
   )
+}
+
+const previewSessionSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    projectId: z.string().min(1),
+    releaseHeads: z.record(z.string()),
+    status: z.enum(['starting', 'running', 'stopped', 'failed']),
+    surfaces: z.array(
+      z
+        .object({
+          id: z.string(),
+          label: z.string(),
+          url: z.string(),
+        })
+        .strict(),
+    ),
+    logPath: z.string(),
+    manifestPath: z.string(),
+    startedAt: z.string(),
+    endedAt: z.string().nullable(),
+    processId: z.number().int().positive().nullable(),
+    preparation: z
+      .object({
+        kind: z.enum([
+          'ready',
+          'absent',
+          'not_executable',
+          'failed',
+          'source_changed',
+          'skipped_dirty',
+        ]),
+        adapterPath: z.string(),
+        exitCode: z.number().int().nullable(),
+        logPath: z.string(),
+        reposFile: z.string(),
+      })
+      .strict()
+      .nullable(),
+    error: z.string().nullable(),
+    stoppedReason: z.enum(['release_updated', 'runtime_restarted']).nullable(),
+    failureReason: z
+      .enum(['missing', 'not_executable', 'preparation_failed', 'startup_failed'])
+      .nullable(),
+  })
+  .strict()
+
+async function readLatestPreviewSessions(runtimeRoot: string) {
+  const sessions: PreviewSession[] = []
+  const projectEntries = await readdir(runtimeRoot, { withFileTypes: true }).catch(() => [])
+  for (const projectEntry of projectEntries) {
+    if (!projectEntry.isDirectory()) continue
+    const projectRoot = join(runtimeRoot, projectEntry.name)
+    const sessionEntries = await readdir(projectRoot, { withFileTypes: true }).catch(() => [])
+    let latest: PreviewSession | null = null
+    for (const sessionEntry of sessionEntries) {
+      if (!sessionEntry.isDirectory()) continue
+      const manifestPath = join(projectRoot, sessionEntry.name, 'session.json')
+      try {
+        const parsed = previewSessionSchema.parse(await Bun.file(manifestPath).json())
+        const session: PreviewSession = { ...parsed, manifestPath }
+        if (!latest || session.startedAt > latest.startedAt) latest = session
+      } catch {
+        // A malformed historical manifest is not process authority.
+      }
+    }
+    if (latest) sessions.push(latest)
+  }
+  return sessions
 }
 
 async function gitOutput(cwd: string, args: string[]) {
@@ -553,35 +721,14 @@ async function settlePreviewLogs(operation: PreviewOperation) {
 }
 
 async function terminatePreview(process: ReturnType<typeof Bun.spawn>, stopGraceMs: number) {
-  process.kill('SIGTERM')
-  const stopped = await Promise.race([
-    process.exited.then(() => true),
-    Bun.sleep(stopGraceMs).then(() => false),
-  ])
-  if (!stopped) {
-    process.kill('SIGKILL')
-    await process.exited
-  }
+  void stopGraceMs
+  await createProcessGroupTerminator(process.pid)()
 }
 
 function stoppedResult(session: PreviewSession, now: () => Date): PreviewStartResult {
   session.surfaces = []
   session.endedAt ??= now().toISOString()
   return { kind: 'started', session }
-}
-
-function failWithRepair(
-  operation: PreviewOperation,
-  repair: PreviewRepair,
-  error: string,
-  now: () => Date,
-): PreviewRepair {
-  operation.session.status = 'failed'
-  operation.session.surfaces = []
-  operation.session.endedAt ??= now().toISOString()
-  operation.session.error = error
-  operation.session.repair = repair
-  return repair
 }
 
 function isStopped(operation: PreviewOperation) {
@@ -595,20 +742,6 @@ async function isExecutable(path: string) {
     return stats.isFile() && (stats.mode & 0o111) !== 0
   } catch {
     return false
-  }
-}
-
-function repairRequired(reason: PreviewRepairReason, adapter: string, logs: string): PreviewRepair {
-  const details = logs.trim() ? `\n\nDiagnostics:\n\n\`\`\`\n${logs.trim()}\n\`\`\`` : ''
-  return {
-    kind: 'repair_required',
-    reason,
-    logs,
-    prompt: [
-      'Repair the current Project Preview capability.',
-      `Observed failure: ${reason} at ${adapter}.`,
-      details,
-    ].join('\n'),
   }
 }
 

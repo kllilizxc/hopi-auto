@@ -69,24 +69,25 @@ function ThinkingBlock({ content }: { content: string }) {
 }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
+  const visibleText = unwrapNeedsYou(text)
   const chunks = []
   const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/gi
   let lastIndex = 0
   let match
 
-  while ((match = thinkingRegex.exec(text)) !== null) {
+  while ((match = thinkingRegex.exec(visibleText)) !== null) {
     if (match.index > lastIndex) {
-      chunks.push({ type: 'text', content: text.substring(lastIndex, match.index) })
+      chunks.push({ type: 'text', content: visibleText.substring(lastIndex, match.index) })
     }
     chunks.push({ type: 'thinking', content: match[1] })
     lastIndex = thinkingRegex.lastIndex
   }
-  if (lastIndex < text.length) {
-    chunks.push({ type: 'text', content: text.substring(lastIndex) })
+  if (lastIndex < visibleText.length) {
+    chunks.push({ type: 'text', content: visibleText.substring(lastIndex) })
   }
 
   if (chunks.length <= 1 && chunks[0]?.type === 'text') {
-    return <MarkdownRenderer text={text} />
+    return <MarkdownRenderer text={visibleText} />
   }
 
   return (
@@ -101,6 +102,12 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { tex
     </div>
   )
 })
+
+function unwrapNeedsYou(text: string) {
+  return text
+    .replace(/<NeedsYou\b[^>]*>/giu, '')
+    .replace(/<\/NeedsYou>/giu, '')
+}
 
 function isSafeAssistantLink(href: string) {
   if (href.startsWith('/api/') || href.startsWith('/projects/')) return true

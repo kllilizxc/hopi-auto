@@ -25,6 +25,7 @@ import type {
   RunAttemptSummary,
 } from '../runtime/runAttemptStore'
 import { legacyRunStoragePath, runStoragePath } from '../runtime/runPaths'
+import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
 import { inspectSourceMerge } from '../runtime/sourceMergePreflight'
 import { createStableWorktreeManager } from '../runtime/stableWorktreeManager'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -49,11 +50,14 @@ export interface AssistantStateProject {
 }
 
 export interface AssistantStateReader {
-  read(input?: {
-    projectId?: string
-    goalId?: string
-    includeEvidence?: boolean
-  }): Promise<AssistantStateSnapshot>
+  read(input?: AssistantStateReadInput): Promise<AssistantStateSnapshot>
+  readForReflection?(): Promise<AssistantStateSnapshot>
+}
+
+export interface AssistantStateReadInput {
+  projectId?: string
+  goalId?: string
+  includeEvidence?: boolean
 }
 
 export interface AssistantStateSnapshot {
@@ -79,29 +83,37 @@ export interface AssistantStateActiveRun {
 interface DigestWorkspaceAttention {
   reference: string
   id: string
-  target: string
   createdAt: string
+  updatedAt: string
   resolvedAt: string | null
-  notifiedAt: string | null
-  operatorRequest?: string | null
+  refs: string[]
   body: string
+  inspectionPath: string
 }
 
 interface DigestProject {
   projectId: string
   available: boolean
   releaseHead: string | null
+  error?: string
   goals: Array<{
     goal: { attributes: unknown }
     latestPlanningOutcome: {
       attributes: unknown
-      runtime: { latestAttempt: { status: string } | null; stale: boolean }
+      runtime: {
+        latestAttempt: { status: string } | null
+        recentAttempts: Array<{ status: string }>
+        attemptCount: number
+        stale: boolean
+      }
     } | null
     works: Array<{
       attributes: unknown
       candidateIntegration?: unknown
       runtime: {
         latestAttempt: { status: string } | null
+        recentAttempts: Array<{ status: string }>
+        attemptCount: number
         stale: boolean
       }
     }>
@@ -123,51 +135,57 @@ export function createAssistantStateReader(options: {
   const now = options.now ?? (() => new Date())
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_ATTEMPT_STALE_AFTER_MS
   const worktrees = createStableWorktreeManager(homeRoot)
+  let reflectionCache: { token: string; snapshot: AssistantStateSnapshot } | null = null
 
-  return {
-    async read(input = {}) {
-      const observedAt = now()
-      const [workspace, attemptSnapshot] = await Promise.all([
-        options.workspace.readWorkspace(),
-        options.attempts.snapshot(),
-      ])
-      const runningAttempts = attemptSnapshot.running()
-      const activeCounts = responsibilityCounts(runningAttempts)
-      const runningAttemptsByWork = new Map<string, RunAttemptSummary>()
-      for (const attempt of runningAttempts) {
-        const key = `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`
-        if (!runningAttemptsByWork.has(key)) runningAttemptsByWork.set(key, attempt)
-      }
-      const activeRunViews: AssistantStateActiveRun[] = []
-      const selected = input.projectId
-        ? [requireProject(options.projects, input.projectId)]
-        : [...options.projects.values()].sort((left, right) =>
-            left.projectId.localeCompare(right.projectId),
-          )
-      const workspaceAttentions = [...workspace.attentions.values()]
-        .filter((attention) => attention.attributes.resolvedAt === null)
-        .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
-        .map((attention) => ({
+  const read = async (input: AssistantStateReadInput = {}) => {
+    const observedAt = now()
+    const [workspace, attemptSnapshot] = await Promise.all([
+      options.workspace.readWorkspaceForControl(),
+      options.attempts.snapshot(),
+    ])
+    const runningAttempts = attemptSnapshot.running()
+    const activeCounts = responsibilityCounts(runningAttempts)
+    const runningAttemptsByWork = new Map<string, RunAttemptSummary>()
+    for (const attempt of runningAttempts) {
+      const key = `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`
+      if (!runningAttemptsByWork.has(key)) runningAttemptsByWork.set(key, attempt)
+    }
+    const activeRunViews: AssistantStateActiveRun[] = []
+    const selected = input.projectId
+      ? [requireProject(options.projects, input.projectId)]
+      : [...options.projects.values()].sort((left, right) =>
+          left.projectId.localeCompare(right.projectId),
+        )
+    const workspaceAttentions = [...workspace.attentions.values()]
+      .filter((attention) => attention.attributes.resolvedAt === null)
+      .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
+      .map((attention) => {
+        const {
+          target: _target,
+          notifiedAt: _notifiedAt,
+          operatorRequest: _operatorRequest,
+          ...attributes
+        } = attention.attributes
+        return {
           reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
-          ...attention.attributes,
+          ...attributes,
           body: boundedText(attention.body, 1_200),
           inspectionPath: resolve(
             options.workspace.root.path,
             options.workspace.paths.attention(attention.attributes.id),
           ),
-        }))
+        }
+      })
 
-      const projects = await Promise.all(
-        selected.map(async (project) => {
-          const projectAttention = workspaceAttentions.find(
-            (attention) =>
-              attention.target === `project:${project.projectId}` && attention.resolvedAt === null,
-          )
-          const projectAttentionOpen = Boolean(projectAttention)
-          const goalIds = input.goalId ? [input.goalId] : await project.store.listGoalIds()
+    const projects = await Promise.all(
+      selected.map(async (project) => {
+        try {
+          const goalPackages = await project.store.readReconciliationSnapshot()
+          const goalIds = input.goalId ? [input.goalId] : [...goalPackages.keys()]
           const goals = await Promise.all(
             goalIds.toSorted().map(async (goalId) => {
-              const goalPackage = await project.store.readPackage(goalId)
+              const goalPackage = goalPackages.get(goalId)
+              if (!goalPackage) throw new AssistantToolRequestError(`Goal not found: ${goalId}`)
               const prefix = `${project.projectId}/${goalId}/`
               const liveWorkIds = new Set(
                 runningAttempts
@@ -177,13 +195,19 @@ export function createAssistantStateReader(options: {
                   )
                   .map((attempt) => attempt.workId),
               )
+              const failedWorkIds = await settledFailureWorkIds(
+                goalPackage,
+                attemptSnapshot.listGoal(project.projectId, goalId),
+                liveWorkIds,
+              )
               const projections = deriveGoalWorkProjections(
                 project.projectId,
                 goalId,
                 goalPackage,
                 {
-                  projectEligible: !projectAttentionOpen,
+                  projectEligible: true,
                   liveRunWorkIds: liveWorkIds,
+                  settledFailureWorkIds: failedWorkIds,
                   passCapacity: {
                     planner:
                       activeCounts.planner <
@@ -372,58 +396,104 @@ export function createAssistantStateReader(options: {
             projectRoot: project.projectRoot,
             ...(project.primaryRepoId ? { primaryRepoId: project.primaryRepoId } : {}),
             ...(repos ? { repos } : {}),
-            available: !projectAttentionOpen,
+            available: true,
             releaseHead: await releaseHead(project.projectRoot, project.projectId),
             goals,
           }
-        }),
-      )
-      const projectIds = new Set(projects.map((project) => project.projectId))
-      const workspaceAttentionProjectId = (attention: DigestWorkspaceAttention) => {
-        if (!attention.target.startsWith('project:')) return null
-        const projectId = attention.target.slice('project:'.length)
-        return projectIds.has(projectId) ? projectId : null
-      }
-      const [stateDigest, homeDigest, projectDigestEntries] = await Promise.all([
-        semanticDigest(projects, workspaceAttentions),
-        semanticDigest(
-          [],
-          workspaceAttentions.filter(
-            (attention) => workspaceAttentionProjectId(attention) === null,
-          ),
-        ),
-        Promise.all(
-          projects.map(
-            async (project) =>
-              [
-                project.projectId,
-                await semanticDigest(
-                  [project],
-                  workspaceAttentions.filter(
-                    (attention) => workspaceAttentionProjectId(attention) === project.projectId,
-                  ),
-                ),
-              ] as const,
-          ),
-        ),
-      ])
+        } catch (error) {
+          return {
+            projectId: project.projectId,
+            projectRoot: project.projectRoot,
+            ...(project.sourceRoot ? { sourceRoot: project.sourceRoot } : {}),
+            available: false,
+            releaseHead: null,
+            error: errorMessage(error),
+            inspectionPaths: {
+              projectRoot: project.projectRoot,
+              publicationRoot: project.store.paths.publicationRoot.path,
+            },
+            goals: [],
+          }
+        }
+      }),
+    )
 
-      return {
-        observedAt: observedAt.toISOString(),
-        stateDigest,
-        conversationDigests: {
-          home: homeDigest,
-          projects: Object.fromEntries(projectDigestEntries),
-        },
-        activeRuns: activeRunViews.sort(
-          (left, right) =>
-            left.projectId.localeCompare(right.projectId) ||
-            left.goalId.localeCompare(right.goalId) ||
-            left.workId.localeCompare(right.workId),
+    const projectIds = new Set(projects.map((project) => project.projectId))
+    const attentionProjectId = (attention: DigestWorkspaceAttention) => {
+      const projectId = attention.refs
+        .filter((reference) => reference.startsWith('project:'))
+        .map((reference) => reference.slice('project:'.length))
+        .find((candidate) => candidate && !candidate.includes('/'))
+      return projectId && projectIds.has(projectId) ? projectId : null
+    }
+    const [stateDigest, homeDigest, projectDigestEntries] = await Promise.all([
+      semanticDigest(projects, workspaceAttentions),
+      semanticDigest(
+        [],
+        workspaceAttentions.filter((attention) => attentionProjectId(attention) === null),
+      ),
+      Promise.all(
+        projects.map(
+          async (project) =>
+            [
+              project.projectId,
+              await semanticDigest(
+                [project],
+                workspaceAttentions.filter(
+                  (attention) => attentionProjectId(attention) === project.projectId,
+                ),
+              ),
+            ] as const,
         ),
-        workspaceAttentions,
-        projects,
+      ),
+    ])
+
+    return {
+      observedAt: observedAt.toISOString(),
+      stateDigest,
+      conversationDigests: {
+        home: homeDigest,
+        projects: Object.fromEntries(projectDigestEntries),
+      },
+      activeRuns: activeRunViews.sort(
+        (left, right) =>
+          left.projectId.localeCompare(right.projectId) ||
+          left.goalId.localeCompare(right.goalId) ||
+          left.workId.localeCompare(right.workId),
+      ),
+      workspaceAttentions,
+      projects,
+    }
+  }
+
+  const reflectionSourceToken = async () => {
+    const roots = [
+      options.workspace.root,
+      ...[...options.projects.values()]
+        .sort((left, right) => left.projectId.localeCompare(right.projectId))
+        .map((project) => project.store.paths.publicationRoot),
+    ]
+    const generations = await Promise.all(roots.map((root) => options.publisher.generation(root)))
+    return JSON.stringify([options.attempts.generation(), ...generations])
+  }
+
+  return {
+    read,
+    async readForReflection() {
+      const before = await reflectionSourceToken()
+      if (
+        before &&
+        reflectionCache?.token === before &&
+        reflectionCache.snapshot.activeRuns.length === 0
+      ) {
+        return reflectionCache.snapshot
       }
+      const snapshot = await read()
+      const after = await reflectionSourceToken()
+      if (before && after === before && snapshot.activeRuns.length === 0) {
+        reflectionCache = { token: before, snapshot }
+      }
+      return snapshot
     },
   }
 }
@@ -462,7 +532,6 @@ function compactWorkAttributes(work: WorkDocument) {
     notBefore: attributes.notBefore,
     dependsOn: attributes.dependsOn,
     contractRevision: attributes.contractRevision,
-    attempts: attributes.attempts,
     ...(attributes.kind === 'engineering'
       ? {
           ...(attributes.assistantDispatch
@@ -559,7 +628,8 @@ async function readWorkRuntime(input: {
   observedAt: Date
   staleAfterMs: number
 }) {
-  const latest = input.attemptSnapshot.list(input.projectId, input.goalId, input.workId)[0] ?? null
+  const attempts = input.attemptSnapshot.list(input.projectId, input.goalId, input.workId)
+  const latest = attempts[0] ?? null
   const runRoot = latest
     ? await existingRunRoot(
         input.homeRoot,
@@ -595,6 +665,8 @@ async function readWorkRuntime(input: {
   return {
     activeResponsibility: input.activeResponsibility,
     latestAttempt: latest ? boundedAttempt(latest) : null,
+    attemptCount: attempts.length,
+    recentAttempts: attempts.slice(0, 3).map(compactAttemptIndex),
     lastActivityAt,
     stale,
     worktree: {
@@ -726,6 +798,22 @@ function boundedAttempt(attempt: RunAttemptSummary) {
   }
 }
 
+function compactAttemptIndex(attempt: RunAttemptSummary) {
+  return {
+    runId: attempt.runId,
+    responsibility: attempt.responsibility,
+    status: attempt.status,
+    result: attempt.result,
+    application: attempt.application,
+    startedAt: attempt.startedAt,
+    endedAt: attempt.endedAt,
+    summary:
+      attempt.summary && attempt.summary.length > 240
+        ? `${attempt.summary.slice(0, 240)}...`
+        : attempt.summary,
+  }
+}
+
 async function semanticDigest(
   projects: DigestProject[],
   workspaceAttentions: DigestWorkspaceAttention[],
@@ -738,6 +826,7 @@ async function semanticDigest(
       projectId: project.projectId,
       available: project.available,
       releaseHead: project.releaseHead,
+      ...(project.error ? { error: project.error } : {}),
       goals: project.goals.map((goal) => ({
         goal: goal.goal.attributes,
         latestPlanningOutcome: goal.latestPlanningOutcome
@@ -796,4 +885,8 @@ function requireProject(projects: ReadonlyMap<string, AssistantStateProject>, pr
   const project = projects.get(projectId)
   if (!project) throw new AssistantToolRequestError(`Project not found: ${projectId}`)
   return project
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }

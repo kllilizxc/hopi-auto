@@ -45,7 +45,6 @@ describe('createGoalPackageStore', () => {
           dependsOn: [],
           contractRevision: 1,
           evidenceRefs: [],
-          attempts: 0,
         },
         body: 'Incomplete package.\n',
       }),
@@ -209,7 +208,6 @@ describe('createGoalPackageStore', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: [],
-              attempts: 0,
             },
             body: 'Plan again.\n',
           }),
@@ -285,7 +283,7 @@ describe('createGoalPackageStore', () => {
     expect(await Bun.file(store.paths.absolute(inputPath)).text()).toBe(inputSource)
   })
 
-  test('preserves permanent dependency edges across later Work publications', async () => {
+  test('allows current dependency edges on nonterminal Work to be rewired', async () => {
     const publisher = new PublicationCoordinator()
     const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -319,20 +317,21 @@ describe('createGoalPackageStore', () => {
 
     const secondSource = await Bun.file(store.paths.absolute(secondWorkPath)).text()
     secondWork.attributes.dependsOn = []
-    await expect(
-      store.publishGoal('G-1', {
-        supportingWrites: [],
-        gateWrite: {
-          path: secondWorkPath,
-          expectedHash: await hashBytes(new TextEncoder().encode(secondSource)),
-          content: renderWorkDocument(secondWork),
-        },
-      }),
-    ).rejects.toThrow('dependency history was removed')
-    expect(await Bun.file(store.paths.absolute(secondWorkPath)).text()).toBe(secondSource)
+    await store.publishGoal('G-1', {
+      supportingWrites: [],
+      gateWrite: {
+        path: secondWorkPath,
+        expectedHash: await hashBytes(new TextEncoder().encode(secondSource)),
+        content: renderWorkDocument(secondWork),
+      },
+    })
+    expect(
+      parseWorkDocument(await Bun.file(store.paths.absolute(secondWorkPath)).text()).attributes
+        .dependsOn,
+    ).toEqual([])
   })
 
-  test('requires a contract revision when Goal contract Markdown changes', async () => {
+  test('keeps the original Goal statement immutable even across revisions', async () => {
     const publisher = new PublicationCoordinator()
     const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -350,7 +349,7 @@ describe('createGoalPackageStore', () => {
           content: renderGoalDocument(goal),
         },
       }),
-    ).rejects.toThrow('without a contractRevision increment')
+    ).rejects.toThrow('Goal identity, title, and original statement are immutable')
   })
 
   test('reuses the Coordinator reconciliation snapshot until publication changes', async () => {
@@ -400,7 +399,6 @@ function engineeringWork(id: string, dependsOn: string[]) {
       dependsOn,
       contractRevision: 1,
       evidenceRefs: [],
-      attempts: 0,
     },
     body: `Implement ${id}.\n`,
   }

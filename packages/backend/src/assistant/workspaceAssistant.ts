@@ -20,7 +20,10 @@ import {
   withNativeCompactionEnabled,
 } from '../agent/vendorTransport'
 import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
-import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
+import {
+  type InboxEventDocument,
+  isInternalInboxSource,
+} from '../domain/assistantWorkspaceDocuments'
 import { normalizeInboxAttentionReferences } from '../domain/attentionReference'
 import { BoundedLineTail } from '../runtime/boundedLineTail'
 import {
@@ -28,8 +31,8 @@ import {
   browserEnvironmentRoot,
   browserHarnessAdapterCommand,
   browserTargetManifest,
+  hasManagedBrowserConfiguration,
   resolveBrowserHarnessBackendCommand,
-  resolveManagedBrowserCommand,
 } from '../runtime/browserEnvironment'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -38,6 +41,7 @@ import {
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
+import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import type { AssistantTools } from './assistantTools'
 
 export interface AssistantModelInput {
@@ -53,7 +57,7 @@ export interface AssistantModelInput {
   toolToken: string
   imageFiles?: string[]
   readableRoots?: string[]
-  toolMode?: 'main' | 'internal' | 'reflection'
+  toolMode?: 'main' | 'internal'
   fullAccess?: boolean
   signal?: AbortSignal
   executionPlan?: AssistantModelExecutionPlan
@@ -64,7 +68,7 @@ export interface AssistantModelPreparationInput {
   projectId?: string
   cwd: string
   readableRoots?: string[]
-  toolMode?: 'main' | 'internal' | 'reflection'
+  toolMode?: 'main' | 'internal'
 }
 
 export interface AssistantModelExecutionPlan {
@@ -99,7 +103,6 @@ export interface AssistantModelRunner {
 
 export interface WorkspaceAssistant {
   process(eventId: string, signal?: AbortSignal): Promise<WorkspaceAssistantResult>
-  finalizeNotifications?(): Promise<number>
 }
 
 export type WorkspaceAssistantResult = { kind: 'answered'; eventId: string }
@@ -125,10 +128,9 @@ export function createConfiguredAssistantModelRunner(options: {
     ) {
       throw new WorkspaceAssistantError('Workspace Assistant requires a built-in vendor transport')
     }
-    const fullAccess =
-      input.toolMode !== 'reflection' && input.projectId
-        ? ((await options.fullAccess?.(input.projectId)) ?? false)
-        : false
+    const fullAccess = input.projectId
+      ? ((await options.fullAccess?.(input.projectId)) ?? false)
+      : false
     const browserEnvironment = resolveAssistantBrowserEnvironment(
       options.homeRoot,
       input,
@@ -331,7 +333,7 @@ export function createConfiguredAssistantModelRunner(options: {
         throw new WorkspaceAssistantError(`${transport} did not produce a final Assistant message`)
       }
       const reply = (await file.text()).trim()
-      if (!reply && (input.toolMode ?? 'main') === 'main')
+      if (!reply && (input.toolMode ?? 'main') !== 'internal')
         throw new WorkspaceAssistantError(`${transport} produced an empty Assistant message`)
       return { reply, session: { transport, sessionId: observedSessionId } }
     },
@@ -344,15 +346,11 @@ function resolveAssistantBrowserEnvironment(
   config: Extract<RoleTransportConfig, { transport: 'codex' | 'claude' | 'opencode' }>,
   fullAccess: boolean,
 ): AssistantBrowserEnvironment | undefined {
-  if (
-    !homeRoot ||
-    input.toolMode === 'reflection' ||
-    (config.transport === 'opencode' && !fullAccess)
-  ) {
+  if (!homeRoot || (config.transport === 'opencode' && !fullAccess)) {
     return undefined
   }
   const backendCommand = resolveBrowserHarnessBackendCommand()
-  if (!backendCommand || !resolveManagedBrowserCommand()) return undefined
+  if (!backendCommand || !hasManagedBrowserConfiguration()) return undefined
   return {
     command: browserHarnessAdapterCommand(),
     backendCommand,
@@ -383,9 +381,8 @@ function assistantExecutionEnvelope(
   fullAccess: boolean,
   browserWritableRoot?: string,
 ): ExecutionEnvelope {
-  const reflection = input.toolMode === 'reflection'
   const opencodeBounded = config.transport === 'opencode' && !fullAccess
-  const mode = reflection ? 'read-only' : fullAccess ? 'unrestricted' : 'bounded'
+  const mode = fullAccess ? 'unrestricted' : 'bounded'
   return {
     transport: config.transport,
     mode,
@@ -395,11 +392,11 @@ function assistantExecutionEnvelope(
     readableRoots: fullAccess ? ['*'] : [...new Set([input.cwd, ...(input.readableRoots ?? [])])],
     writableRoots: fullAccess
       ? ['*']
-      : reflection || opencodeBounded
+      : opencodeBounded
         ? []
         : [input.cwd, ...(browserWritableRoot ? [browserWritableRoot] : [])],
-    networkAccess: fullAccess || (!reflection && !opencodeBounded),
-    subprocessAccess: fullAccess || (!reflection && !opencodeBounded),
+    networkAccess: fullAccess || !opencodeBounded,
+    subprocessAccess: fullAccess || !opencodeBounded,
     privilegeEscalation: false,
     hostEnvironmentMutation: fullAccess,
     linkedSourceAccess: fullAccess ? 'read-write' : 'read-only',
@@ -413,6 +410,7 @@ export function createWorkspaceAssistant(input: {
   workspace: AssistantWorkspaceStore
   conversation: AssistantConversationStore
   tools: AssistantTools
+  state?: AssistantStateReader
   runner: AssistantModelRunner
   resolveToolUrl(): string
   onTurnSettled?(eventId: string): Promise<void> | void
@@ -421,26 +419,22 @@ export function createWorkspaceAssistant(input: {
   const now = input.now ?? (() => new Date())
   const workspaceRoot = join(resolve(input.homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
   const runtimeDigest = workspaceAssistantRuntimeDigest(input.homeRoot)
-  let notificationRecoveryComplete = false
-  let notificationRecoveryFailures = 0
-  let notificationRecoveryRetryAt = 0
-
   return {
     async process(eventId, signal) {
       const workspaceState = await input.workspace.readWorkspace()
       const event = workspaceState.events.get(eventId)
       if (!event) throw new WorkspaceAssistantError(`Inbox turn not found: ${eventId}`)
       const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
-      if (event.attributes.source === 'user') {
-        await input.tools.acceptUserAttentionReply(eventId)
-      }
       if (event.attributes.status === 'handled') {
-        await input.tools.acknowledgeEventAttentions(eventId, now())
         return { kind: 'answered', eventId }
       }
 
       await input.conversation.begin(eventId)
       const conversationScope = assistantConversationScopeForEvent(event)
+      const conversationWorkspace =
+        conversationScope.kind === 'project'
+          ? join(workspaceRoot, 'projects', encodeURIComponent(conversationScope.projectId))
+          : join(workspaceRoot, 'home')
       const turnRoot = join(
         resolve(input.homeRoot),
         '.hopi',
@@ -467,10 +461,13 @@ export function createWorkspaceAssistant(input: {
         const imageFiles = await resolveEventImages(input.workspace, event)
         const projectId =
           conversationScope.kind === 'project' ? conversationScope.projectId : undefined
-        const toolMode = event.attributes.source === 'reflection' ? 'internal' : 'main'
+        const toolMode = isInternalInboxSource(event.attributes.source) ? 'internal' : 'main'
+        const stateSnapshot = input.state
+          ? await input.state.read(projectId ? { projectId } : {})
+          : undefined
         const preparation = {
           ...(projectId ? { projectId } : {}),
-          cwd: workspaceRoot,
+          cwd: conversationWorkspace,
           readableRoots: [resolve(input.homeRoot)],
           toolMode,
         } satisfies AssistantModelPreparationInput
@@ -493,6 +490,7 @@ export function createWorkspaceAssistant(input: {
           workspaceState.events,
           event,
           workspaceState.preference,
+          stateSnapshot,
           conversationScope,
         )
         let result: AssistantModelResult
@@ -501,10 +499,10 @@ export function createWorkspaceAssistant(input: {
             {
               eventId,
               ...(projectId ? { projectId } : {}),
-              prompt: session ? renderTurn(event) : rebuildPrompt,
+              prompt: session ? renderTurn(event, stateSnapshot) : rebuildPrompt,
               rebuildPrompt,
               session,
-              cwd: workspaceRoot,
+              cwd: conversationWorkspace,
               lastMessageFile: join(turnRoot, 'last-message.txt'),
               transcriptFile: join(turnRoot, 'transcript.log'),
               toolUrl: input.resolveToolUrl(),
@@ -535,7 +533,7 @@ export function createWorkspaceAssistant(input: {
               prompt: rebuildPrompt,
               rebuildPrompt,
               session,
-              cwd: workspaceRoot,
+              cwd: conversationWorkspace,
               lastMessageFile: join(turnRoot, 'last-message.txt'),
               transcriptFile: join(turnRoot, 'transcript.log'),
               toolUrl: input.resolveToolUrl(),
@@ -551,12 +549,9 @@ export function createWorkspaceAssistant(input: {
         }
 
         const reply = result.reply.trim()
-        if (!reply && event.attributes.source !== 'reflection') {
+        const internal = isInternalInboxSource(event.attributes.source)
+        if (!reply && !internal) {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
-        }
-        let internalIntent: 'silent' | 'inform' | 'request' | null = null
-        if (event.attributes.source === 'reflection') {
-          internalIntent = await input.tools.finalizeInternalResponse(toolToken, eventId, reply)
         }
         await input.conversation.writeSession(
           conversationScope,
@@ -566,26 +561,19 @@ export function createWorkspaceAssistant(input: {
         )
         await input.workspace.handleEvent(eventId, {
           reply: reply || 'No operator update.',
-          disposition:
-            internalIntent === 'request'
-              ? 'operator-requested'
-              : internalIntent === 'inform'
-                ? 'notified'
-                : usedTool
-                  ? 'tools-used'
-                  : 'answered',
+          disposition: internal
+            ? reply
+              ? 'notified'
+              : usedTool
+                ? 'tools-used'
+                : 'silent'
+            : usedTool
+              ? 'tools-used'
+              : 'answered',
           handledAt: now(),
-          expose: internalIntent !== null && internalIntent !== 'silent',
+          expose: internal && Boolean(reply),
         })
         await input.conversation.complete(eventId)
-        if (internalIntent === 'inform' || internalIntent === 'request') {
-          try {
-            await input.tools.acknowledgeEventAttentions(eventId, now())
-          } catch {
-            notificationRecoveryComplete = false
-            notificationRecoveryRetryAt = 0
-          }
-        }
         return { kind: 'answered', eventId }
       } catch (error) {
         await input.conversation.fail(eventId, errorMessage(error))
@@ -594,41 +582,6 @@ export function createWorkspaceAssistant(input: {
         input.tools.revoke(toolToken)
         await input.onTurnSettled?.(eventId)
       }
-    },
-
-    async finalizeNotifications() {
-      if (notificationRecoveryComplete) return 0
-      const attemptedAt = now().getTime()
-      if (attemptedAt < notificationRecoveryRetryAt) return 0
-      const workspace = await input.workspace.readWorkspaceForControl()
-      let acknowledged = 0
-      let failed = false
-      for (const event of workspace.events.values()) {
-        if (
-          event.attributes.source !== 'reflection' ||
-          event.attributes.visibility !== 'public' ||
-          event.attributes.status !== 'handled'
-        ) {
-          continue
-        }
-        try {
-          acknowledged += (
-            await input.tools.acknowledgeEventAttentions(event.attributes.id, now(), workspace)
-          ).length
-        } catch {
-          failed = true
-        }
-      }
-      if (failed) {
-        notificationRecoveryFailures += 1
-        notificationRecoveryRetryAt =
-          attemptedAt + Math.min(60_000, 1_000 * 2 ** (notificationRecoveryFailures - 1))
-        return acknowledged
-      }
-      notificationRecoveryComplete = true
-      notificationRecoveryFailures = 0
-      notificationRecoveryRetryAt = 0
-      return acknowledged
     },
   }
 }
@@ -657,26 +610,20 @@ async function prepareAssistantWorkspace(
       assistantClaudeSettingsPath(input.cwd),
       `${JSON.stringify(
         {
-          sandbox:
-            input.toolMode === 'reflection' || !input.fullAccess
-              ? {
-                  enabled: true,
-                  failIfUnavailable: true,
-                  autoAllowBashIfSandboxed: true,
-                  allowUnsandboxedCommands: false,
-                  filesystem: {
-                    allowWrite:
-                      input.toolMode === 'reflection'
-                        ? []
-                        : [
-                            input.cwd,
-                            ...(input.browserEnvironment
-                              ? [input.browserEnvironment.writableRoot]
-                              : []),
-                          ],
-                  },
-                }
-              : { enabled: false },
+          sandbox: !input.fullAccess
+            ? {
+                enabled: true,
+                failIfUnavailable: true,
+                autoAllowBashIfSandboxed: true,
+                allowUnsandboxedCommands: false,
+                filesystem: {
+                  allowWrite: [
+                    input.cwd,
+                    ...(input.browserEnvironment ? [input.browserEnvironment.writableRoot] : []),
+                  ],
+                },
+              }
+            : { enabled: false },
         },
         null,
         2,
@@ -699,18 +646,17 @@ async function prepareAssistantWorkspace(
             environment: server.env,
           },
         },
-        permission:
-          input.toolMode === 'reflection' || !input.fullAccess
-            ? {
-                '*': 'deny',
-                'hopi_*': 'allow',
-                read: 'allow',
-                grep: 'allow',
-                glob: 'allow',
-                list: 'allow',
-                external_directory: externalDirectoryPermissions(input.readableRoots ?? []),
-              }
-            : { '*': 'allow' },
+        permission: !input.fullAccess
+          ? {
+              '*': 'deny',
+              'hopi_*': 'allow',
+              read: 'allow',
+              grep: 'allow',
+              glob: 'allow',
+              list: 'allow',
+              external_directory: externalDirectoryPermissions(input.readableRoots ?? []),
+            }
+          : { '*': 'allow' },
       },
       null,
       2,
@@ -816,9 +762,7 @@ function assistantClaudeCommand(
     for (const imageFile of input.imageFiles ?? []) readableDirectories.add(dirname(imageFile))
     for (const directory of readableDirectories) command.push('--add-dir', directory)
   }
-  if (input.toolMode === 'reflection') {
-    command.push('--tools', 'Read,Glob,Grep', '--allowedTools', 'mcp__hopi__*,Read,Glob,Grep')
-  } else if (!input.fullAccess) {
+  if (!input.fullAccess) {
     command.push(
       '--tools',
       'Read,Glob,Grep,Bash,WebFetch,WebSearch',
@@ -889,13 +833,8 @@ function assistantCodexCommand(
 ) {
   const command = [config.binary ?? 'codex']
   appendCodexHttpsOnlyConfig(command)
-  appendCodexAssistantProviderConfig(command, input.toolMode ?? 'main')
-  const sandbox =
-    input.toolMode === 'reflection'
-      ? 'read-only'
-      : input.fullAccess
-        ? 'danger-full-access'
-        : 'workspace-write'
+  appendCodexAssistantProviderConfig(command)
+  const sandbox = input.fullAccess ? 'danger-full-access' : 'workspace-write'
   command.push('-a', NON_INTERACTIVE_CODEX_APPROVAL_POLICY)
   if (sandbox === 'workspace-write') {
     command.push('-c', 'sandbox_workspace_write.network_access=true')
@@ -941,17 +880,7 @@ const CODEX_ASSISTANT_DISABLED_PRODUCT_FEATURES = [
   'plugins',
 ] as const
 
-const CODEX_REFLECTION_DISABLED_EXECUTION_FEATURES = [
-  'browser_use',
-  'computer_use',
-  'image_generation',
-  'workspace_dependencies',
-] as const
-
-function appendCodexAssistantProviderConfig(
-  command: string[],
-  toolMode: NonNullable<AssistantModelInput['toolMode']>,
-) {
+function appendCodexAssistantProviderConfig(command: string[]) {
   command.push(
     '-c',
     'include_apps_instructions=false',
@@ -961,16 +890,14 @@ function appendCodexAssistantProviderConfig(
   for (const feature of CODEX_ASSISTANT_DISABLED_PRODUCT_FEATURES) {
     command.push('--disable', feature)
   }
-  if (toolMode !== 'reflection') return
-  command.push('-c', 'skills.include_instructions=false', '-c', 'skills.bundled.enabled=false')
-  for (const feature of CODEX_REFLECTION_DISABLED_EXECUTION_FEATURES) {
-    command.push('--disable', feature)
-  }
 }
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'Owned outcome: complete the current Inbox turn using its intent and the durable conversation.',
-  'Page context is a location hint. Current state and canonical effects come from HOPI tools.',
+  'Role: final owner and supervisor of the current Project.',
+  'Current Project facts and canonical effects come from supplied state, documents, and HOPI tools.',
+  'A user turn is operator input. A system turn is a durable Project event for the same Assistant session.',
+  'Finishing a turn does not preserve unfinished responsibility or schedule another wake; Project Attention is the durable todo available to later turns.',
+  'A <NeedsYou attentionId="...">...</NeedsYou> reply block is highlighted while that Project Attention remains unresolved; the tag does not mutate Attention.',
   'The provider workspace is non-canonical scratch space.',
 ] as const
 
@@ -993,7 +920,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 6
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 8
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
@@ -1011,6 +938,7 @@ function renderNewConversation(
   events: ReadonlyMap<string, InboxEventDocument>,
   current: InboxEventDocument,
   preference: AssistantPreferenceDocument,
+  state?: AssistantStateSnapshot,
   scope = assistantConversationScopeForEvent(current),
 ) {
   const historyEvents = [...events.values()]
@@ -1039,24 +967,28 @@ function renderNewConversation(
       : []),
     '## Current turn',
     '',
-    renderTurn(current),
+    renderTurn(current, state),
   ].join('\n')
 }
 
-function renderTurn(event: InboxEventDocument) {
+function renderTurn(event: InboxEventDocument, state?: AssistantStateSnapshot) {
   const context = event.attributes.context
-  if (event.attributes.source === 'reflection') {
+  if (isInternalInboxSource(event.attributes.source)) {
     return [
       `[Current internal Inbox turn ${event.attributes.id}; complete this event, not an earlier turn.]`,
-      '[Internal Reflection handoff. This is not operator input.]',
+      '[Project system event. This is not operator input.]',
       'A non-empty final response becomes the public update; an empty response remains internal.',
       context ? `[Suggested context: ${renderInboxContext(context)}]` : '[Home context]',
+      renderCurrentState(state),
       event.body,
-    ].join('\n\n')
+    ]
+      .filter(Boolean)
+      .join('\n\n')
   }
   return [
     `[Current user Inbox turn ${event.attributes.id}; answer this event, not an earlier turn.]`,
     context ? `[Preferred page context: ${renderInboxContext(context)}]` : '[Home context]',
+    renderCurrentState(state),
     renderAttachmentReferences(event),
     event.body,
   ]
@@ -1109,7 +1041,7 @@ function renderInboxContext(context: {
 }
 
 function renderHistoryEvent(event: InboxEventDocument) {
-  if (event.attributes.source === 'reflection') {
+  if (isInternalInboxSource(event.attributes.source)) {
     return event.attributes.reply ? [`Assistant update: ${event.attributes.reply}`] : []
   }
   return [
@@ -1119,6 +1051,18 @@ function renderHistoryEvent(event: InboxEventDocument) {
       : []),
     `Assistant: ${event.attributes.reply ?? ''}`,
   ]
+}
+
+function renderCurrentState(state: AssistantStateSnapshot | undefined) {
+  if (!state) return ''
+  const encoded = JSON.stringify(state, null, 2)
+  const bounded = encoded.length > 30_000 ? `${encoded.slice(0, 30_000)}\n... truncated` : encoded
+  return [
+    '[Current Project state and unresolved Attention; canonical paths inside this snapshot remain the source references.]',
+    '```json',
+    bounded,
+    '```',
+  ].join('\n')
 }
 
 async function resolveEventImages(workspace: AssistantWorkspaceStore, event: InboxEventDocument) {

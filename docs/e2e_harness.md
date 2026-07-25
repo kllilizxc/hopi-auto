@@ -83,6 +83,13 @@ The operator-browser daemon is never part of Test Run cleanup or initialization.
 interactive per-attachment authorization outside unattended regression while preserving exact
 operator login access as a separate host capability.
 
+Browser ownership is a host adapter, not a scenario concern. On a host where Chrome runs outside the
+backend environment, such as WSL with an isolated Windows automation browser, the host may supply its
+loopback DevTools endpoint through `HOPI_BROWSER_MANAGED_CDP_URL`. HOPI then reuses that browser
+process while retaining its own per-Home Harness identity, per-Test-Run audit, and owned-tab cleanup.
+All scenario scripts and assertions remain identical. Without that explicit endpoint, HOPI launches
+and owns its normal managed browser process and profile.
+
 That idempotent initialization may retry before any browser action if the host is still releasing
 its IPC endpoint or the freshly started daemon is not yet reachable. Reload and probe output share
 one retained log. The shared executor then records the tabs that existed before each script and closes every
@@ -106,6 +113,11 @@ Browser assertions locate an entity through an existing stable semantic identity
 ID in `title` or a canonical route in `href`; a human-facing display name is presentation, not test
 identity. Visible copy is asserted only when that copy is itself the behavior under test. The Harness
 does not add product-only selectors when the rendered product already carries the required identity.
+
+Assistant-feed checkpoints open the page whose conversation scope owns the expected message. Home
+updates use Projects; Project and Goal updates use a page in that Project. The shared helper accepts
+that page path and a per-checkpoint evidence prefix, so one scenario can retain several distinct
+messages and screenshots without treating the Assistant feed as global or overwriting earlier proof.
 
 ## Live Execution And Artifact Inspection
 

@@ -150,10 +150,11 @@ Planning Work is published before related replanning effects and changed to `don
 Planner outputs validate; its existence alone does not block Engineering.
 Planner success requires no separate design-approval publication; unresolved operator authority is
 represented by targeted Attention instead.
-An Attention-producing result must be `attention`; `success`, `reject`, or `fail` combined with
-targeted Attention is rejected before the Attention gate is publishable. Its target is the exact
-canonical reference of the producing Run's owning Work; targetless Attention is legacy completion
-state and is not a writable Run proposal.
+An Attention-producing result is identified by its targeted Attention proposal rather than a second
+matching result label. Its target is the exact canonical reference of the producing Run's owning
+Work; targetless Attention is legacy completion state and is not a writable Run proposal. An
+`attention` label without a valid proposal follows the ordinary failed-Work path and never causes
+Coordinator to invent an Attention.
 Planner publications require their staged integration target. Engineering publications allow an
 unrelated C1 to advance that target when all selected canonical guard hashes remain current; the
 task branch stays isolated and the later C1 path owns deterministic rebuild or conflict rejection.
@@ -224,8 +225,8 @@ and visibility distinguish it from operator input without adding a second queue 
 
 - Supporting Evidence without a Work gate is provenance only. The pass may run again with a new
   Run identity.
-- An Attention-producing result stops after its Attention gate and does not update Work or
-  `attempts`. After Attention resolves, the pass runs again with a new Run identity.
+- An Attention-producing result stops after its Attention gate and does not update Work. After
+  Attention resolves, the pass runs again with a new Run identity.
 - Planner clarification is the same Attention-producing path. Established design may be supporting
   content, Planning Work remains at `plan`, and a clear requirement may bypass this path entirely.
 - Replan stops after the Planning Work gate, which references its Evidence as the consumed-result
@@ -238,8 +239,8 @@ and visibility distinguish it from operator input without adding a second queue 
   Goal `done` gate. A crash before that gate leaves no false completion; ordinary reconciliation
   ensures another final Planning Work if needed.
 
-Work stores `attempts` as a top-level repair-history field. A crash before the Work gate may
-undercount one reviewed repair outcome; the MVP accepts that. The value is never a dispatch budget.
+Immutable Attempt records are the only execution and repair history. A crash before the Work gate is
+recorded as interruption and never mutates Work.
 
 Completion uses final Planning Evidence and creates no Attention or content-digest identity.
 
@@ -335,20 +336,20 @@ the C1 verifier does not add another lock or retry policy to race its own comman
 
 A successful guarded ref command is the irreversible integration boundary. A clean target advance
 observed after Reviewer staging but before construction causes Coordinator to rebuild against the
-new target without incrementing Work `attempts`. A ref change during the globally serialized
+new target without inventing a repair state. A ref change during the globally serialized
 guarded update is external ambiguity and follows the old/C1/other reread rule below.
 
 After any uncertain ref-update result, only a ref verified at the old target permits a normal Work
 failure. A ref at C1 means source is already integrated and Work is `done` in C1; Coordinator may
 retry durability confirmation or block the project, but never publishes Work failure, retries
-integration, or increments `attempts`. Any other ref value is ambiguous and blocks. Orphan objects
+integration, or mutates repair history into Work. Any other ref value is ambiguous and blocks. Orphan objects
 created before a ref move own no domain effect.
 
 If materialization stops or a managed worktree does not match C1, Coordinator creates or reuses
 project-targeted Attention and keeps the Project out of scheduling. It does not compare and repair
 paths or reset the managed root: ordinary canonical publications may be newer than the latest Git
 checkpoint. Since the ref already contains Work `done`, projection recovery never returns Work to
-`generate` or increments `attempts`.
+`generate` or invents a failed Attempt.
 
 ### Selected checkout boundary
 
@@ -432,7 +433,9 @@ The implementation must cover:
   cancels it
 - Evidence without a Work gate remains unconsumed and a fresh Run may retry
 - Attention or Planning gates never cause an old Work transition to be reconstructed
-- arbitrary `attempts` history does not prevent otherwise-ready Work from dispatching
+- historical rejected or interrupted Attempts do not prevent otherwise-ready Work from dispatching;
+  only a latest settled failure against the current Work assignment fingerprint pauses redispatch,
+  and append-only Evidence history is not an assignment change
 - final Planner success with no nonterminal Engineering Work publishes final Planning Evidence and
   the Goal `done` gate without a targetless Attention
 - a crash before the Goal gate never exposes false completion and remains recoverable by ordinary
@@ -441,7 +444,7 @@ The implementation must cover:
 - successful guarded ref update returns only after C1 ref durability
 - ref-update error rereads old/C1/other and respectively fails safely, treats C1 as integrated, or
   blocks; C1 never produces a Work failure
-- a clean target advance after Reviewer staging rebuilds C1 without incrementing `attempts`
+- a clean target advance after Reviewer staging rebuilds C1 without inventing repair state
 - post-ref managed-worktree mismatch blocks, while delivery mismatch remains nonblocking; neither
   path destructively mutates the checkout
 - invalid project and Assistant-home handling follow the documented failure boundary

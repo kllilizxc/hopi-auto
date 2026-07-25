@@ -71,6 +71,46 @@ describe('browser environment', () => {
     ).toContain('data:text/html,<title>HOPI%20Managed%20Browser</title>')
   })
 
+  test('uses a supplied loopback endpoint without launching another browser', async () => {
+    const fixture = await createFixture()
+    let server: ReturnType<typeof Bun.serve>
+    server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      routes: {
+        '/json/version': () =>
+          Response.json({
+            Browser: 'Host managed Chrome',
+            webSocketDebuggerUrl: `ws://127.0.0.1:${server.port}/devtools/browser/host`,
+          }),
+      },
+    })
+
+    try {
+      const endpoint = await ensureManagedBrowser(fixture.homeRoot, {
+        endpointUrl: `http://127.0.0.1:${server.port}`,
+      })
+
+      expect(endpoint).toEqual({
+        httpUrl: `http://127.0.0.1:${server.port}`,
+        webSocketUrl: `ws://127.0.0.1:${server.port}/devtools/browser/host`,
+        profileRoot: managedBrowserProfileRoot(fixture.homeRoot),
+      })
+      expect(
+        await Bun.file(
+          join(managedBrowserProfileRoot(fixture.homeRoot), 'DevToolsActivePort'),
+        ).exists(),
+      ).toBe(false)
+      expect(
+        await Bun.file(
+          join(managedBrowserProfileRoot(fixture.homeRoot), '..', 'state.json'),
+        ).exists(),
+      ).toBe(false)
+    } finally {
+      await server.stop(true)
+    }
+  })
+
   test('recovers a launch lock whose owner no longer exists', async () => {
     const fixture = await createFixture()
     const launchLock = join(browserHarnessRuntimeRoot(fixture.homeRoot), 'managed-launch.lock')

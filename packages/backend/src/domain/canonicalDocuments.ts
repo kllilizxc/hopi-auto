@@ -45,7 +45,6 @@ const workBaseSchema = z.object({
   dependsOn: uniqueStableIdsSchema,
   contractRevision: z.number().int().positive(),
   evidenceRefs: uniqueStableIdsSchema,
-  attempts: z.number().int().nonnegative(),
 })
 
 export const planningWorkAttributesSchema = workBaseSchema
@@ -73,52 +72,40 @@ export const engineeringWorkAttributesSchema = workBaseSchema
   .strict()
 
 export const workAttributesSchema = z.preprocess(
-  stripLegacyEngineeringRepos,
+  stripLegacyWorkFields,
   z.union([planningWorkAttributesSchema, engineeringWorkAttributesSchema]),
 )
 
-export const attentionAttributesSchema = z
-  .object({
-    id: stableIdSchema,
-    target: canonicalRefSchema.nullable(),
-    createdAt: timestampSchema,
-    resolvedAt: timestampSchema.nullable(),
-    notifiedAt: timestampSchema.nullable(),
-    operatorRequest: inboxEventReferenceSchema.nullable().optional(),
-    resolutionInput: canonicalRefSchema.nullable().optional(),
-    retryRunId: stableIdSchema.nullable().optional(),
-  })
-  .strict()
-  .superRefine((attention, context) => {
-    if (attention.target === null && attention.operatorRequest) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['operatorRequest'],
-        message: 'Completion Attention cannot wait for operator input',
-      })
-    }
-    if (attention.resolvedAt !== null && attention.operatorRequest) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['operatorRequest'],
-        message: 'Resolved Attention cannot wait for operator input',
-      })
-    }
-    if (attention.resolvedAt !== null && attention.retryRunId) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['retryRunId'],
-        message: 'Resolved Attention cannot have a pending retry',
-      })
-    }
-    if (attention.operatorRequest && attention.retryRunId) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['retryRunId'],
-        message: 'Operator-owned Attention cannot have a pending retry',
-      })
-    }
-  })
+export const attentionAttributesSchema = z.preprocess(
+  stripLegacyAttentionFields,
+  z
+    .object({
+      id: stableIdSchema,
+      target: canonicalRefSchema.nullable(),
+      createdAt: timestampSchema,
+      resolvedAt: timestampSchema.nullable(),
+      notifiedAt: timestampSchema.nullable(),
+      operatorRequest: inboxEventReferenceSchema.nullable().optional(),
+      resolutionInput: canonicalRefSchema.nullable().optional(),
+    })
+    .strict()
+    .superRefine((attention, context) => {
+      if (attention.target === null && attention.operatorRequest) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['operatorRequest'],
+          message: 'Completion Attention cannot wait for operator input',
+        })
+      }
+      if (attention.resolvedAt !== null && attention.operatorRequest) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['operatorRequest'],
+          message: 'Resolved Attention cannot wait for operator input',
+        })
+      }
+    }),
+)
 
 export const inputAttributesSchema = z
   .object({
@@ -192,12 +179,8 @@ export function isWorkTerminal(work: WorkAttributes) {
   return work.stage === 'done' || work.stage === 'cancelled'
 }
 
-export function isAttentionRetryPending(attention: AttentionAttributes) {
-  return attention.resolvedAt === null && (attention.retryRunId ?? null) !== null
-}
-
 export function isAttentionBlocking(attention: AttentionAttributes) {
-  return attention.resolvedAt === null && !isAttentionRetryPending(attention)
+  return attention.resolvedAt === null
 }
 
 export function isPlanningWork(work: WorkAttributes): work is PlanningWorkAttributes {
@@ -208,10 +191,19 @@ export function isEngineeringWork(work: WorkAttributes): work is EngineeringWork
   return work.kind === 'engineering'
 }
 
-function stripLegacyEngineeringRepos(value: unknown) {
+function stripLegacyWorkFields(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
   const attributes = value as Record<string, unknown>
-  if (attributes.kind !== 'engineering' || !Object.hasOwn(attributes, 'repos')) return value
-  const { repos: _legacyRepos, ...current } = attributes
+  const { attempts: _legacyAttempts, ...withoutAttempts } = attributes
+  if (attributes.kind !== 'engineering' || !Object.hasOwn(attributes, 'repos')) {
+    return withoutAttempts
+  }
+  const { repos: _legacyRepos, ...current } = withoutAttempts
+  return current
+}
+
+function stripLegacyAttentionFields(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const { retryRunId: _legacyRetryRunId, ...current } = value as Record<string, unknown>
   return current
 }

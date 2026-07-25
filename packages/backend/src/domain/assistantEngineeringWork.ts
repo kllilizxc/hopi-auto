@@ -24,7 +24,6 @@ export function createAssistantEngineeringWork(input: AssistantEngineeringWorkIn
       dependsOn: [...(input.dependsOn ?? [])],
       contractRevision: input.contractRevision,
       evidenceRefs: [],
-      attempts: 0,
       assistantDispatch: input.assistantDispatch,
     },
     body: [

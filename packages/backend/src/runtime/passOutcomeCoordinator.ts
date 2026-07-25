@@ -1,10 +1,9 @@
 import type { PassResultKind, RoleRunResult } from '../agent/RoleRunner'
-import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
+import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   type AttentionDocument,
   type EvidenceDocument,
   type WorkDocument,
-  isAttentionBlocking,
   isEngineeringWork,
   isPlanningWork,
   isWorkTerminal,
@@ -19,13 +18,11 @@ import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
 import { type GoalPackage, GoalPackageValidationError } from '../domain/goalPackage'
 import { MarkdownDocumentError } from '../domain/markdownDocument'
 import { projectReleaseRef } from '../domain/project'
-import { WorkCancellationError, workCancellationClosure } from '../domain/workCancellation'
 import { PublicationError, hashBytes } from '../publication/publisher'
 import type { PublicationCoordinator } from '../publication/publisher'
 import type { PublicationCandidate, PublicationWrite } from '../publication/types'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { Responsibility, RoleContextBundle } from './roleContextStager'
-import { parsePortableArtifactReference } from './runArtifacts'
 
 export interface ApplyPassOutcomeInput {
   goalId: string
@@ -81,7 +78,6 @@ export function createPassOutcomeCoordinator(
       let proposal: PassProposal
       try {
         proposal = await readPassProposal(store, publisher, input)
-        proposal = await expandPlannerCancellations(store, input, current, proposal)
         proposal = normalizeNewAttentions(
           store,
           input.goalId,
@@ -122,11 +118,6 @@ export function createPassOutcomeCoordinator(
   ): Promise<PassOutcomeApplication> {
     const targetedAttentions = proposal.newAttentions
     if (targetedAttentions.length > 0) {
-      if (input.outcome.result !== 'attention') {
-        throw new PassProposalError(
-          `Targeted Attention requires attention, received ${input.outcome.result}`,
-        )
-      }
       const application = buildAttentionApplication(
         store,
         input,
@@ -253,73 +244,6 @@ function normalizeNewAttentions(
   })
 
   return { ...proposal, changedWrites, newAttentions }
-}
-
-async function expandPlannerCancellations(
-  store: GoalPackageStore,
-  input: ApplyPassOutcomeInput,
-  current: GoalPackage,
-  proposal: PassProposal,
-): Promise<PassProposal> {
-  if (input.responsibility !== 'planner') return proposal
-  const proposedByPath = new Map(proposal.changedWrites.map((write) => [write.path, write]))
-  const requestedWorkIds: string[] = []
-  for (const write of proposal.changedWrites) {
-    if (!isWorkPath(store, input.goalId, write.path)) continue
-    const proposed = parseWorkDocument(publicationWriteText(write.content))
-    const previous = current.works.get(proposed.attributes.id)
-    if (
-      previous &&
-      isEngineeringWork(previous.attributes) &&
-      proposed.attributes.stage === 'cancelled' &&
-      previous.attributes.stage !== 'cancelled'
-    ) {
-      requestedWorkIds.push(proposed.attributes.id)
-    }
-  }
-  if (requestedWorkIds.length === 0) return proposal
-  if (input.outcome.result !== 'success') {
-    throw new PassProposalError('Planner may cancel Engineering Work only in a success proposal')
-  }
-
-  let closure: ReadonlySet<string>
-  try {
-    closure = workCancellationClosure(current, requestedWorkIds)
-  } catch (error) {
-    if (error instanceof WorkCancellationError) throw new PassProposalError(error.message)
-    throw error
-  }
-  for (const workId of closure) {
-    const previous = current.works.get(workId)
-    if (!previous || isWorkTerminal(previous.attributes)) continue
-    const path = store.paths.workDocument(input.goalId, workId)
-    const explicit = proposedByPath.get(path)
-    const proposed = explicit ? parseWorkDocument(publicationWriteText(explicit.content)) : previous
-    if (!isEngineeringWork(proposed.attributes)) {
-      throw new PassProposalError(
-        `Planner cancellation closure contains non-Engineering Work ${workId}`,
-      )
-    }
-    const currentBytes = explicit ? null : await readCanonicalBytes(store, path)
-    if (!explicit && !currentBytes) {
-      throw new PassProposalError(`Planner cancellation source is missing for Work ${workId}`)
-    }
-    const source = explicit
-      ? explicit
-      : {
-          path,
-          expectedHash: await hashBytes(currentBytes as Uint8Array),
-          content: renderWorkDocument(previous),
-        }
-    proposedByPath.set(path, {
-      ...source,
-      content: renderWorkDocument({
-        ...proposed,
-        attributes: { ...proposed.attributes, stage: 'cancelled' },
-      }),
-    })
-  }
-  return { ...proposal, changedWrites: [...proposedByPath.values()] }
 }
 
 function allocateFreshAttentionId(proposedId: string, reservedIds: ReadonlySet<string>) {
@@ -463,7 +387,7 @@ function buildPlannerApplication(
     throw new PassProposalError('Planner result does not own current Planning Work')
   }
 
-  if (input.outcome.result === 'fail') {
+  if (input.outcome.result === 'fail' || input.outcome.result === 'attention') {
     const failed = appendEvidence(currentWork, evidence.attributes.id)
     return {
       supportingWrites: [evidenceWrite(store, input.goalId, evidence)],
@@ -496,10 +420,8 @@ function buildPlannerApplication(
     current,
     proposal,
   )
-  if (completesGoal) {
-    validateCompletionEvidenceSource(input)
+  if (completesGoal)
     supportingWrites.push(workWrite(store, input.goalId, completedWork, input.context.workHash))
-  }
   const completedGoal = completesGoal
     ? {
         ...current.goal,
@@ -573,9 +495,8 @@ function buildEngineeringApplication(
     next.attributes.stage = 'review'
   } else if (input.responsibility === 'reviewer' && input.outcome.result === 'reject') {
     next.attributes.stage = 'generate'
-    next.attributes.attempts += 1
-  } else if (input.outcome.result === 'fail') {
-    // Semantic failure preserves the stage; Assistant recovery is represented by Work Attention.
+  } else if (input.outcome.result === 'fail' || input.outcome.result === 'attention') {
+    // The settled Attempt pauses this unchanged Work until Assistant chooses the next action.
   } else {
     throw new PassProposalError(
       `Unsupported ${input.responsibility} outcome: ${input.outcome.result}`,
@@ -680,17 +601,6 @@ export async function validatePassSemanticGuard(
       }
     }
   }
-  const goalTarget = goalAttentionTarget(store.paths.projectId, input.goalId)
-  const workTarget = workAttentionTarget(store.paths.projectId, input.goalId, input.workId)
-  if (
-    [...current.attentions.values()].some(
-      (attention) =>
-        isAttentionBlocking(attention.attributes) &&
-        (attention.attributes.target === goalTarget || attention.attributes.target === workTarget),
-    )
-  ) {
-    stale('Targeted Attention now blocks the result')
-  }
   await validateGuardSnapshot(
     store,
     input.context.guardFiles,
@@ -782,7 +692,6 @@ function validatePlannerTransition(
   if (!planning.attributes.evidenceRefs.includes(evidenceId)) {
     throw new PassProposalError('Planner gate must consume its Run Evidence')
   }
-  const newlyCancelled: string[] = []
   for (const [workId, work] of after.works) {
     const previous = before.works.get(workId)
     if (!previous) {
@@ -801,63 +710,16 @@ function validatePlannerTransition(
       }
       continue
     }
-    if (work.attributes.stage === 'cancelled') {
-      const expected = {
-        ...previous,
-        attributes: { ...previous.attributes, stage: 'cancelled' },
-      }
-      if (JSON.stringify(expected) !== JSON.stringify(work)) {
-        throw new PassProposalError(
-          `Planner cancellation may change only the stage of Work ${workId}`,
-        )
-      }
-      newlyCancelled.push(workId)
-      continue
-    }
     if (
       previous.attributes.stage !== work.attributes.stage &&
-      work.attributes.stage !== 'generate'
+      work.attributes.stage !== 'generate' &&
+      work.attributes.stage !== 'cancelled'
     ) {
-      throw new PassProposalError('Planner may only reset existing Engineering Work to generate')
-    }
-    if (
-      work.attributes.attempts !== previous.attributes.attempts &&
-      work.attributes.attempts !== 0
-    ) {
-      throw new PassProposalError('Planner may only preserve or reset Work attempts')
+      throw new PassProposalError(
+        'Planner may preserve, reset, or cancel existing Engineering Work but may not skip execution',
+      )
     }
   }
-  if (newlyCancelled.length > 0) {
-    let closure: ReadonlySet<string>
-    try {
-      closure = workCancellationClosure(before, newlyCancelled)
-    } catch (error) {
-      if (error instanceof WorkCancellationError) throw new PassProposalError(error.message)
-      throw error
-    }
-    for (const workId of closure) {
-      const previous = before.works.get(workId)
-      if (previous && !isWorkTerminal(previous.attributes)) {
-        if (after.works.get(workId)?.attributes.stage !== 'cancelled') {
-          throw new PassProposalError(
-            `Planner cancellation must also cancel dependent Work ${workId}`,
-          )
-        }
-      }
-    }
-  }
-  const staleEngineering = [...after.works.values()].find(
-    (work) =>
-      isEngineeringWork(work.attributes) &&
-      !isWorkTerminal(work.attributes) &&
-      work.attributes.contractRevision !== after.goal.attributes.contractRevision,
-  )
-  if (staleEngineering) {
-    throw new PassProposalError(
-      `Planner must retain or cancel stale Engineering Work ${staleEngineering.attributes.id}`,
-    )
-  }
-
   const hasNonterminalEngineering = [...after.works.values()].some(
     (work) => isEngineeringWork(work.attributes) && !isWorkTerminal(work.attributes),
   )
@@ -866,34 +728,6 @@ function validatePlannerTransition(
       completesGoal
         ? 'Goal completion contains nonterminal Engineering Work'
         : 'Planner result left no Engineering Work without completing the Goal',
-    )
-  }
-}
-
-function validateCompletionEvidenceSource(input: ApplyPassOutcomeInput) {
-  const preview = input.context.formalReleasePreview
-  if (!preview || preview.kind === 'not_configured') return
-  if (preview.session.status !== 'running' || preview.session.surfaces.length === 0) {
-    throw new PassProposalError(
-      'Goal completion requires a running formal release Preview with operator-facing surfaces',
-    )
-  }
-  const expectedHeads = input.context.repoReleaseHeads
-  const previewHeads = preview.session.releaseHeads
-  if (
-    Object.keys(previewHeads).length !== Object.keys(expectedHeads).length ||
-    Object.entries(expectedHeads).some(([repoId, commit]) => previewHeads[repoId] !== commit)
-  ) {
-    throw new PassProposalError(
-      'Goal completion Preview does not match the current Project release heads',
-    )
-  }
-  const hasCurrentRunEvidence = input.outcome.artifacts.some(
-    (artifact) => parsePortableArtifactReference(artifact)?.runId === input.runId,
-  )
-  if (!hasCurrentRunEvidence) {
-    throw new PassProposalError(
-      'Goal completion requires direct formal release Preview evidence retained by the current Planner Run',
     )
   }
 }
@@ -1099,24 +933,6 @@ function createRunEvidence(
 }
 
 function renderEvidenceBody(input: ApplyPassOutcomeInput) {
-  const preview = input.context.formalReleasePreview
-  const previewLines = !preview
-    ? []
-    : preview.kind === 'not_configured'
-      ? ['', '## Formal Release Preview', '', '- Project Preview capability: not configured']
-      : [
-          '',
-          '## Formal Release Preview',
-          '',
-          `- Session: ${preview.session.sessionId}`,
-          `- Status: ${preview.session.status}`,
-          ...Object.entries(preview.session.releaseHeads).map(
-            ([repoId, commit]) => `- Release ${repoId}: ${commit}`,
-          ),
-          ...preview.session.surfaces.map(
-            (surface) => `- Surface ${surface.id} (${surface.label}): ${surface.url}`,
-          ),
-        ]
   return [
     '## Responsibility Result',
     '',
@@ -1127,7 +943,6 @@ function renderEvidenceBody(input: ApplyPassOutcomeInput) {
     '## Summary',
     '',
     input.outcome.summary.trim(),
-    ...previewLines,
     '',
   ].join('\n')
 }

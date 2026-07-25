@@ -273,7 +273,7 @@ describe('CoordinatorReconciler', () => {
     coordinator.settleAssistantTurn('EV-late-effect')
   })
 
-  test('turns one terminal Assistant failure into event-target Attention without retrying', async () => {
+  test('records one terminal Assistant failure on the original event without retrying', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Unsafe ambiguity.' })
     let calls = 0
@@ -295,16 +295,15 @@ describe('CoordinatorReconciler', () => {
     const workspace = await fixture.workspace.readWorkspace()
 
     expect(calls).toBe(1)
-    expect(
-      [...workspace.attentions.values()].some(
-        (attention) =>
-          attention.attributes.target === `home:${workspace.homeId}/event:EV-1` &&
-          attention.attributes.resolvedAt === null,
-      ),
-    ).toBe(true)
+    expect(workspace.attentions.size).toBe(0)
+    expect(workspace.events.get('EV-1')?.attributes).toMatchObject({
+      status: 'handled',
+      disposition: 'operational-failed',
+      reply: 'Assistant unavailable: conversation process failed',
+    })
   })
 
-  test('terminates a failed internal Reflection handoff without recursive Attention', async () => {
+  test('surfaces a failed internal Assistant wake without creating Attention', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveReflectionEvent({
       eventId: 'EV-reflection-failed',
@@ -332,15 +331,15 @@ describe('CoordinatorReconciler', () => {
     expect(calls).toBe(1)
     expect(event?.attributes).toMatchObject({
       source: 'reflection',
-      visibility: 'internal',
+      visibility: 'public',
       status: 'handled',
-      disposition: 'internal-failed',
+      disposition: 'operational-failed',
+      reply: 'Assistant unavailable: speaking transport failed',
     })
-    expect(event?.attributes.reply).toContain('durable turn diagnostics')
     expect(workspace.attentions.size).toBe(0)
   })
 
-  test('does not let an Attention-blocked public turn suppress Reflection', async () => {
+  test('does not let an Attention suppress a public turn or the following wake observation', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveEvent({ eventId: 'EV-blocked', content: 'Blocked turn.' })
     await fixture.attentions.ensureEventAttention('EV-blocked', 'Assistant transport failed.')
@@ -360,8 +359,12 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: {
-        async process() {
-          throw new Error('Blocked event must not be processed')
+        async process(eventId) {
+          await fixture.workspace.handleEvent(eventId, {
+            reply: 'Processed with Attention still open.',
+            disposition: 'answered',
+          })
+          return { kind: 'answered' as const, eventId }
         },
       },
       reflection,
@@ -369,11 +372,13 @@ describe('CoordinatorReconciler', () => {
       projects: [],
     })
 
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    await coordinator.waitForIdle()
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
     expect(observations).toEqual([true])
   })
 
-  test('does not let an Attention-blocked internal handoff suppress newer Reflection state', async () => {
+  test('does not let an Attention suppress an internal turn or the following wake observation', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveReflectionEvent({
       eventId: 'EV-internal',
@@ -396,8 +401,13 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: {
-        async process() {
-          throw new Error('Blocked internal event must not be processed')
+        async process(eventId) {
+          await fixture.workspace.handleEvent(eventId, {
+            reply: 'Internal state assessed.',
+            disposition: 'notified',
+            expose: true,
+          })
+          return { kind: 'answered' as const, eventId }
         },
       },
       reflection,
@@ -405,6 +415,8 @@ describe('CoordinatorReconciler', () => {
       projects: [],
     })
 
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    await coordinator.waitForIdle()
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
     expect(observations).toEqual([true])
   })
@@ -833,7 +845,6 @@ describe('CoordinatorReconciler', () => {
         dependsOn: [],
         contractRevision: 1,
         evidenceRefs: [],
-        attempts: 0,
       },
       body: 'Plan the concurrent instruction.\n',
     })
@@ -906,7 +917,7 @@ describe('CoordinatorReconciler', () => {
     expect(dispatches).toBe(0)
   })
 
-  test('turns a failed deterministic Goal action into one project Attention', async () => {
+  test('turns a failed deterministic Goal action into a Project system event', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
@@ -939,15 +950,17 @@ describe('CoordinatorReconciler', () => {
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'deterministic_action', count: 1 })
     const workspace = await fixture.workspace.readWorkspace()
+    expect(workspace.attentions.size).toBe(0)
     expect(
-      [...workspace.attentions.values()].filter(
-        (attention) =>
-          attention.attributes.target === 'project:P-1' && attention.attributes.resolvedAt === null,
+      [...workspace.events.values()].some(
+        (event) =>
+          event.attributes.source === 'system' &&
+          event.body.includes('invalid completion structure'),
       ),
-    ).toHaveLength(1)
+    ).toBe(true)
   })
 
-  test('fails one project closed when canonical validation breaks during reconciliation', async () => {
+  test('fails one project closed and records canonical validation as a system event', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
@@ -975,15 +988,16 @@ describe('CoordinatorReconciler', () => {
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
     const workspace = await fixture.workspace.readWorkspace()
+    expect(workspace.attentions.size).toBe(0)
     expect(
-      [...workspace.attentions.values()].filter(
-        (attention) =>
-          attention.attributes.target === 'project:P-1' && attention.attributes.resolvedAt === null,
+      [...workspace.events.values()].some(
+        (event) =>
+          event.attributes.source === 'system' && event.body.includes('goal.md is invalid'),
       ),
-    ).toHaveLength(1)
+    ).toBe(true)
   })
 
-  test('recreates Project Attention when optimistic recovery reaches the same execution fault', async () => {
+  test('records a fresh system event when explicit recovery reaches the same execution fault', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
@@ -1032,16 +1046,15 @@ describe('CoordinatorReconciler', () => {
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
     await coordinator.waitForIdle()
     const workspace = await fixture.workspace.readWorkspace()
-    const openProjectAttentions = [...workspace.attentions.values()].filter(
-      (attention) =>
-        attention.attributes.target === 'project:P-1' && attention.attributes.resolvedAt === null,
+    const failureEvents = [...workspace.events.values()].filter(
+      (event) =>
+        event.attributes.source === 'system' &&
+        event.body.includes('The repaired Project still fails C1 publication.'),
     )
 
     expect(dispatches).toBe(1)
     expect(workspace.attentions.get(original.attributes.id)?.attributes.resolvedAt).not.toBeNull()
-    expect(openProjectAttentions).toHaveLength(1)
-    expect(openProjectAttentions[0]?.attributes.id).not.toBe(original.attributes.id)
-    expect(openProjectAttentions[0]?.body).toContain('still fails C1 publication')
+    expect(failureEvents).toHaveLength(1)
   })
 
   test('keeps Project Attention open until an Agent explicitly resolves it', async () => {
@@ -1134,7 +1147,6 @@ function engineeringPackage(goalId: string): GoalPackage {
             dependsOn: [],
             contractRevision: 1,
             evidenceRefs: [],
-            attempts: 0,
           },
           body: 'Build.\n',
         },
@@ -1161,7 +1173,6 @@ function planningPackage(goalId: string): GoalPackage {
           dependsOn: [],
           contractRevision: 1,
           evidenceRefs: [],
-          attempts: 0,
         },
         body: 'Plan.\n',
       },

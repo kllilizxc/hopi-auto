@@ -162,6 +162,42 @@ describe('RunAttemptStore', () => {
     expect((await store.snapshot()).list('P-1', 'G-1', 'W-0')).toHaveLength(5)
   })
 
+  test('advances the rebuildable index only after durable manifest transitions', async () => {
+    const store = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
+    expect(store.generation()).toBe(0)
+
+    const recorder = await store.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-indexed',
+      responsibility: 'generator',
+      runRoot: runRoot('R-indexed'),
+    })
+    const running = await store.snapshot()
+    expect(store.generation()).toBe(1)
+
+    await recorder.setExecution({
+      transport: 'codex',
+      model: 'gpt-5.6',
+      reasoningEffort: 'medium',
+    })
+    expect(store.generation()).toBe(2)
+    expect((await store.snapshot()).list('P-1', 'G-1', 'W-1')[0]?.execution).toMatchObject({
+      model: 'gpt-5.6',
+    })
+
+    await recorder.finish({
+      outcome: { result: 'success', summary: 'Indexed.', exitCode: 0 },
+      application: 'published',
+    })
+    expect(store.generation()).toBe(3)
+    expect((await store.snapshot()).list('P-1', 'G-1', 'W-1')[0]?.status).toBe('finished')
+    expect(running.list('P-1', 'G-1', 'W-1')[0]?.status).toBe('running')
+  })
+
   test('marks a running Attempt interrupted when a new Coordinator starts', async () => {
     const first = createRunAttemptStore(temporaryRoot, {
       now: () => new Date('2026-07-11T00:00:00Z'),

@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
-import { workAttentionTarget } from '../domain/attentionTarget'
 import { isEngineeringWork, isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import {
@@ -13,23 +13,25 @@ import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { type C1Integrator, createC1Integrator } from '../runtime/c1Integrator'
 import { createCompletionStructureVerifier } from '../runtime/completionVerifier'
-import {
-  type GoalController,
-  type WorkRetryResult,
-  createGoalController,
-} from '../runtime/goalController'
+import { type GoalController, createGoalController } from '../runtime/goalController'
 import {
   type PassOutcomeApplication,
   type PassOutcomeCoordinator,
   createPassOutcomeCoordinator,
 } from '../runtime/passOutcomeCoordinator'
-import type { FormalReleasePreviewContext } from '../runtime/previewManager'
+import {
+  PROJECT_PREPARE_PATH,
+  type ProjectPreparationResult,
+  type ProjectPreparer,
+  createProjectPreparer,
+} from '../runtime/projectPreparation'
 import {
   type ResponsibilitySessionStore,
   createResponsibilitySessionStore,
 } from '../runtime/responsibilitySessionStore'
 import {
   type Responsibility,
+  type RoleContextBundle,
   type RoleContextStager,
   createRoleContextStager,
 } from '../runtime/roleContextStager'
@@ -40,12 +42,15 @@ import {
   type RunAttemptSummary,
   createRunAttemptStore,
 } from '../runtime/runAttemptStore'
+import { runStoragePath } from '../runtime/runPaths'
+import { settledFailureWorkIds as deriveSettledFailureWorkIds } from '../runtime/settledAttemptFailure'
 import {
   type StableWorktreeManager,
   StableWorktreeSyncError,
   createStableWorktreeManager,
 } from '../runtime/stableWorktreeManager'
 import { TaskCheckpointError, checkpointTaskWorktree } from '../runtime/taskCheckpoint'
+import { workAssignmentHash } from '../runtime/workAssignment'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import { type ReconcileDecision, decideGoalReconciliation } from './reconcileDecision'
 
@@ -62,6 +67,8 @@ export interface ProjectReconcilerOptions {
   worktrees?: StableWorktreeManager
   outcomes?: PassOutcomeCoordinator
   attempts?: RunAttemptStore
+  preparer?: ProjectPreparer
+  preparationTimeoutMs?: number
   responsibilitySessions?: ResponsibilitySessionStore
   integrator?: C1Integrator
   goalController?: GoalController
@@ -69,7 +76,6 @@ export interface ProjectReconcilerOptions {
   createRunId?: () => string
   checkpointTask?: typeof checkpointTaskWorktree
   apiOrigin?: () => string
-  prepareFormalReleasePreview?(): Promise<FormalReleasePreviewContext>
   onProjectBlocked?(input: {
     projectId: string
     reason: string
@@ -81,7 +87,6 @@ export interface ProjectReconcilerOptions {
 export type ProjectReconcileResult =
   | { kind: 'wait'; decision: ReconcileDecision }
   | { kind: 'planning_ensured'; workId: string }
-  | { kind: 'attention_ensured'; attentionId: string }
   | { kind: 'goal_completed'; attentionId: string }
   | { kind: 'cancellation_finished' }
   | {
@@ -99,6 +104,8 @@ export interface ProjectReconciler {
     runtime?: Partial<WorkRuntimeFacts>,
   ): Promise<ProjectReconcileResult>
   liveWorkIds(): ReadonlySet<string>
+  settledFailureWorkIds?(goalId: string, goalPackage?: GoalPackage): Promise<ReadonlySet<string>>
+  requestWorkRun?(goalId: string, workId: string): Promise<string>
   interruptRuns(goalId?: string, workId?: string): void
 }
 
@@ -110,6 +117,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     options.contextStager ?? createRoleContextStager(options.homeRoot, options.publisher)
   const worktrees = options.worktrees ?? createStableWorktreeManager(options.homeRoot)
   const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot, { now })
+  const preparer = options.preparer ?? createProjectPreparer()
   const responsibilitySessions =
     options.responsibilitySessions ?? createResponsibilitySessionStore(options.homeRoot)
   const primaryRepoId = options.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
@@ -150,6 +158,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       verifyCompletion: (goalId, goalPackage) => completion.verify(goalId, goalPackage),
     })
   const live = new Set<string>()
+  const requestedRuns = new Map<string, string>()
   const runControllers = new Map<string, AbortController>()
   let projectInterruptionGeneration = 0
   const goalInterruptionGenerations = new Map<string, number>()
@@ -159,6 +168,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     if (workId) {
       if (!goalId) throw new Error('A Work interruption requires its Goal ID')
       const liveKey = `${goalId}/${workId}`
+      requestedRuns.delete(liveKey)
       workInterruptionSequence += 1
       workInterruptionGenerations.set(liveKey, workInterruptionSequence)
       runControllers.get(liveKey)?.abort()
@@ -166,8 +176,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     }
     const goalPrefix = goalId ? `${goalId}/` : null
     if (goalId) {
+      for (const key of requestedRuns.keys()) {
+        if (key.startsWith(`${goalId}/`)) requestedRuns.delete(key)
+      }
       goalInterruptionGenerations.set(goalId, (goalInterruptionGenerations.get(goalId) ?? 0) + 1)
     } else {
+      requestedRuns.clear()
       projectInterruptionGeneration += 1
     }
     for (const [key, controller] of runControllers) {
@@ -180,69 +194,37 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     liveWorkIds() {
       return new Set(live)
     },
+    async settledFailureWorkIds(goalId, suppliedPackage) {
+      const goalPackage = suppliedPackage ?? (await options.store.readPackage(goalId))
+      const snapshot = await attempts.snapshot()
+      return deriveSettledFailureWorkIds(
+        goalPackage,
+        snapshot.listGoal(options.projectId, goalId),
+        requestedWorkIds(requestedRuns, goalId),
+      )
+    },
+    async requestWorkRun(goalId, workId) {
+      const goalPackage = await options.store.readPackage(goalId)
+      const work = goalPackage.works.get(workId)
+      if (!work || isWorkTerminal(work.attributes)) {
+        throw new Error(`Cannot retry missing or terminal Work: ${workId}`)
+      }
+      const key = `${goalId}/${workId}`
+      const existing = requestedRuns.get(key)
+      if (existing) return existing
+      const runId = createRunId()
+      requestedRuns.set(key, runId)
+      return runId
+    },
     async reconcileGoal(goalId, runtime = {}) {
       const interruptionGeneration = {
         project: projectInterruptionGeneration,
         goal: goalInterruptionGenerations.get(goalId) ?? 0,
         work: workInterruptionSequence,
       }
-      let goalPackage = await options.store.readPackage(goalId)
+      const goalPackage = await options.store.readPackage(goalId)
       const attemptSnapshot = await attempts.snapshot()
-      let recoveredRetry = false
-      for (const work of goalPackage.works.values()) {
-        const target = workAttentionTarget(options.projectId, goalId, work.attributes.id)
-        const pending = [...goalPackage.attentions.values()].find(
-          (attention) =>
-            attention.attributes.target === target &&
-            attention.attributes.resolvedAt === null &&
-            (attention.attributes.retryRunId ?? null) !== null,
-        )
-        const retryRunId = pending?.attributes.retryRunId ?? null
-        if (!retryRunId) continue
-        if (isWorkTerminal(work.attributes)) {
-          await goalController.finishWorkRetry(goalId, work.attributes.id, {
-            status: 'succeeded',
-            diagnostic: 'The Work became terminal while its retry result was being finalized.',
-          })
-          recoveredRetry = true
-          continue
-        }
-        const attempt = attemptSnapshot
-          .list(options.projectId, goalId, work.attributes.id)
-          .find((candidate) => candidate.runId === retryRunId)
-        if (!attempt) continue
-        const liveKey = `${goalId}/${work.attributes.id}`
-        if (attempt.status === 'running' && live.has(liveKey)) continue
-        const progressed = work.attributes.stage !== responsibilityStage(attempt.responsibility)
-        const succeeded = progressed || retryAttemptSucceeded(attempt)
-        await goalController.finishWorkRetry(goalId, work.attributes.id, {
-          status: succeeded ? 'succeeded' : 'failed',
-          diagnostic: progressed
-            ? `The bound retry Run ${attempt.runId} durably advanced the Work.`
-            : (attempt.summary ??
-              `The bound retry Run ${attempt.runId} ended with status ${attempt.status}.`),
-        })
-        recoveredRetry = true
-      }
-      if (recoveredRetry) goalPackage = await options.store.readPackage(goalId)
-      for (const work of goalPackage.works.values()) {
-        if (isWorkTerminal(work.attributes)) continue
-        const episode = operationalFailureEpisode(
-          attemptSnapshot.list(options.projectId, goalId, work.attributes.id),
-          latestResolvedWorkAttentionAt(goalPackage, options.projectId, goalId, work.attributes.id),
-        )
-        if (episode.count < 1) continue
-        if (hasOpenWorkAttention(goalPackage, options.projectId, goalId, work.attributes.id)) {
-          continue
-        }
-        const attention = await goalController.ensureOperationalFailureAttention(
-          goalId,
-          work.attributes.id,
-          episode.count,
-          episode.latestSummary,
-        )
-        return { kind: 'attention_ensured', attentionId: attention.attributes.id }
-      }
+      const requested = requestedWorkIds(requestedRuns, goalId)
       const livePrefix = `${goalId}/`
       const localLiveWorkIds = [...live]
         .filter((key) => key.startsWith(livePrefix))
@@ -250,6 +232,13 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const facts: WorkRuntimeFacts = {
         projectEligible: runtime.projectEligible ?? true,
         liveRunWorkIds: new Set([...localLiveWorkIds, ...(runtime.liveRunWorkIds ?? [])]),
+        settledFailureWorkIds:
+          runtime.settledFailureWorkIds ??
+          (await deriveSettledFailureWorkIds(
+            goalPackage,
+            attemptSnapshot.listGoal(options.projectId, goalId),
+            requested,
+          )),
         passCapacity: {
           planner: runtime.passCapacity?.planner ?? true,
           generator: runtime.passCapacity?.generator ?? true,
@@ -285,23 +274,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const { workId, responsibility } = decision
       const liveKey = `${goalId}/${workId}`
       if (live.has(liveKey)) return { kind: 'wait', decision }
-      const retryRunId = [...goalPackage.attentions.values()].find(
-        (attention) =>
-          attention.attributes.target === workAttentionTarget(options.projectId, goalId, workId) &&
-          attention.attributes.resolvedAt === null &&
-          (attention.attributes.retryRunId ?? null) !== null,
-      )?.attributes.retryRunId
-      const retryPending = Boolean(retryRunId)
-      let retryResult: WorkRetryResult | null = retryPending
-        ? {
-            status: 'failed' as const,
-            diagnostic: 'The requested invocation ended before reporting a completed pass.',
-          }
-        : null
+      const runId = requestedRuns.get(liveKey) ?? createRunId()
+      requestedRuns.delete(liveKey)
       live.add(liveKey)
       const runController = new AbortController()
       runControllers.set(liveKey, runController)
-      const runId = retryRunId ?? createRunId()
       let attempt: RunAttemptRecorder | null = null
       try {
         if (
@@ -313,6 +290,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
         const owningWork = goalPackage.works.get(workId)
         if (!owningWork) throw new Error(`Work is missing: ${workId}`)
+        const assignmentHash = await workAssignmentHash(owningWork)
         const runRepos =
           responsibility === 'planner' || isEngineeringWork(owningWork.attributes)
             ? projectRepos
@@ -349,13 +327,37 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                 )
         } catch (error) {
           if (!(error instanceof StableWorktreeSyncError)) throw error
-          retryResult = retryPending ? { status: 'failed', diagnostic: error.message } : null
-          const attention = await goalController.ensureSynchronizationAttention(
+          const summary = `Task worktree preparation failed: ${error.message}`
+          const failedAttempt = await attempts.start({
+            projectId: options.projectId,
             goalId,
             workId,
-            error.message,
-          )
-          return { kind: 'attention_ensured', attentionId: attention.attributes.id }
+            runId,
+            responsibility,
+            runRoot: runStoragePath(options.homeRoot, runId),
+            workHash: assignmentHash,
+          })
+          await failedAttempt.record({
+            kind: 'message',
+            level: 'error',
+            role: 'coordinator',
+            content: summary,
+          })
+          await failedAttempt.finish({
+            outcome: {
+              result: 'fail',
+              summary,
+              exitCode: null,
+            },
+            application: 'operational_failure',
+          })
+          return {
+            kind: 'pass_finished',
+            workId,
+            runId,
+            result: 'fail',
+            application: 'operational_failure',
+          }
         }
         const scopedWorktrees = await Promise.all(
           worktreeEntries.map(async (entry) => ({
@@ -382,17 +384,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           workId,
           responsibility,
         }
-        const responsibilitySession = await responsibilitySessions.open(
-          sessionKey,
-          owningWork.attributes.contractRevision,
-        )
-        const formalReleasePreview =
-          responsibility === 'planner' &&
-          ![...goalPackage.works.values()].some(
-            (work) => isEngineeringWork(work.attributes) && !isWorkTerminal(work.attributes),
-          )
-            ? await options.prepareFormalReleasePreview?.()
-            : undefined
+        const sessionScope = {
+          contractRevision: owningWork.attributes.contractRevision,
+          assignmentHash,
+        }
+        const responsibilitySession = await responsibilitySessions.open(sessionKey, sessionScope)
         const context = await contextStager.prepare({
           projectRoot: options.projectRoot,
           projectPath: primaryProjectRepo.projectPath,
@@ -405,12 +401,20 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           repoRoots: roleRepoRoots,
           apiOrigin: options.apiOrigin?.(),
           runtimeScratchDir: responsibilitySession.workspaceDir,
-          formalReleasePreview,
           previousAttempt: latestResponsibilityAttempt(
             attemptSnapshot.list(options.projectId, goalId, workId),
             responsibility,
           ),
         })
+        const preparation =
+          responsibility === 'planner'
+            ? null
+            : await prepareResponsibilityProject({
+                preparer,
+                timeoutMs: options.preparationTimeoutMs,
+                context,
+                primaryRepoId,
+              })
         attempt = await attempts
           .start({
             projectId: options.projectId,
@@ -419,8 +423,17 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runId,
             responsibility,
             runRoot: context.runRoot,
+            workHash: sessionScope.assignmentHash,
           })
           .catch(() => null)
+        if (preparation) {
+          await attempt?.record({
+            kind: 'message',
+            level: preparation.kind === 'ready' || preparation.kind === 'absent' ? 'info' : 'error',
+            role: 'coordinator',
+            content: `Project preparation ${preparation.kind}. Log: ${preparation.logPath}`,
+          })
+        }
         if (runController.signal.aborted) {
           await attempt?.interrupt(new Error(`${responsibility} Run was interrupted`))
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
@@ -447,16 +460,9 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             onEvent: (event) => attempt?.record(event),
             onExecution: (execution) => attempt?.setExecution(execution).catch(() => undefined),
             onSession: (nextSession) =>
-              responsibilitySessions.write(
-                sessionKey,
-                owningWork.attributes.contractRevision,
-                nextSession,
-              ),
+              responsibilitySessions.write(sessionKey, sessionScope, nextSession),
             onSessionInvalid: () =>
-              responsibilitySessions.invalidateVendor(
-                sessionKey,
-                owningWork.attributes.contractRevision,
-              ),
+              responsibilitySessions.invalidateVendor(sessionKey, sessionScope),
           },
         )
         if (runController.signal.aborted) {
@@ -567,21 +573,17 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
 
         if (outcome.failureKind === 'operational') {
-          retryResult = retryPending ? { status: 'failed', diagnostic: outcome.summary } : null
-          await attempt?.finish({ outcome, application: 'operational_failure' })
-          const currentGoalPackage = await options.store.readPackage(goalId)
-          const currentAttemptSnapshot = await attempts.snapshot()
-          const persistedEpisode = operationalFailureEpisode(
-            currentAttemptSnapshot.list(options.projectId, goalId, workId),
-            latestResolvedWorkAttentionAt(currentGoalPackage, options.projectId, goalId, workId),
-          )
-          const attention = await goalController.ensureOperationalFailureAttention(
-            goalId,
+          await attempt?.finish({
+            outcome,
+            application: 'operational_failure',
+          })
+          return {
+            kind: 'pass_finished',
             workId,
-            Math.max(1, persistedEpisode.count),
-            persistedEpisode.latestSummary || outcome.summary,
-          )
-          return { kind: 'attention_ensured', attentionId: attention.attributes.id }
+            runId,
+            result: outcome.result,
+            application: 'operational_failure',
+          }
         }
 
         const pass = { goalId, workId, runId, responsibility, context, outcome }
@@ -606,24 +608,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
         if (application.kind !== 'integration_required') {
           await finishAttempt(attempt, options.store, goalId, outcome, application)
-          if (application.kind === 'published' && application.result === 'fail') {
-            await goalController.ensureResponsibilityFailureAttention(
-              goalId,
-              workId,
-              responsibility,
-              application.summary,
-            )
-          }
-          retryResult = retryPending
-            ? application.kind === 'published' && application.result === 'fail'
-              ? { status: 'failed', diagnostic: application.summary }
-              : application.kind === 'attention'
-                ? { status: 'failed', diagnostic: outcome.summary }
-                : {
-                    status: 'succeeded',
-                    diagnostic: `The requested ${responsibility} invocation completed with application ${application.kind}.`,
-                  }
-            : null
           return {
             kind: 'pass_finished',
             workId,
@@ -647,7 +631,10 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           completedWork: application.work,
         })
         if (integration.kind === 'integrated' || integration.kind === 'already_integrated') {
-          await attempt?.finish({ outcome, application: integration.kind })
+          await attempt?.finish({
+            outcome,
+            application: integration.kind,
+          })
           try {
             await options.onReleaseUpdated?.({
               projectId: options.projectId,
@@ -656,12 +643,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           } catch {
             // Disposable Preview cleanup cannot change an already durable C1 outcome.
           }
-          retryResult = retryPending
-            ? {
-                status: 'succeeded',
-                diagnostic: `The requested ${responsibility} invocation completed and integration was ${integration.kind}.`,
-              }
-            : null
           return {
             kind: 'pass_finished',
             workId,
@@ -682,12 +663,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             outcome: rejectedOutcome,
           })
           await finishAttempt(attempt, options.store, goalId, rejectedOutcome, rejected)
-          retryResult = retryPending
-            ? {
-                status: 'succeeded',
-                diagnostic: `The requested ${responsibility} invocation completed with a reviewed rejection.`,
-              }
-            : null
           return {
             kind: 'pass_finished',
             workId,
@@ -698,7 +673,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
 
         if (integration.kind === 'blocked') {
-          retryResult = retryPending ? { status: 'failed', diagnostic: integration.reason } : null
           await options.onProjectBlocked?.({
             projectId: options.projectId,
             reason: integration.reason,
@@ -738,14 +712,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           },
           application: 'project_blocked',
         })
-        retryResult = retryPending ? { status: 'failed', diagnostic: integration.reason } : null
         return {
           kind: 'project_blocked',
           reason: integration.reason,
           commit: integration.commit,
         }
       } catch (error) {
-        retryResult = retryPending ? { status: 'failed', diagnostic: errorMessage(error) } : null
         if (runController.signal.aborted) {
           await attempt?.interrupt(error)
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
@@ -759,17 +731,14 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           },
           application: 'operational_failure',
         })
-        const attention = await goalController.ensureOperationalFailureAttention(
-          goalId,
+        return {
+          kind: 'pass_finished',
           workId,
-          1,
-          summary,
-        )
-        return { kind: 'attention_ensured', attentionId: attention.attributes.id }
-      } finally {
-        if (retryResult) {
-          await goalController.finishWorkRetry(goalId, workId, retryResult)
+          runId,
+          result: 'fail',
+          application: 'operational_failure',
         }
+      } finally {
         await clearTerminalWorkSessions(
           responsibilitySessions,
           options.store,
@@ -794,6 +763,70 @@ async function clearTerminalWorkSessions(
   const work = (await store.readPackage(goalId)).works.get(workId)
   if (!work || !isWorkTerminal(work.attributes)) return
   await sessions.clearWork({ projectId, goalId, workId })
+}
+
+async function prepareResponsibilityProject(input: {
+  preparer: ProjectPreparer
+  timeoutMs?: number
+  context: RoleContextBundle
+  primaryRepoId: string
+}) {
+  const runtimeDir = join(input.context.runRoot, 'project-prepare')
+  let result: ProjectPreparationResult
+  try {
+    result = await input.preparer.prepare({
+      projectRoot: input.context.primaryRepoRoot,
+      runtimeDir,
+      cacheDir: input.context.runtimeCacheDir,
+      timeoutMs: input.timeoutMs,
+      primaryRepoId: input.primaryRepoId,
+      repoRoots: input.context.repoRoots.map((repo) => ({
+        repoId: repo.repoId,
+        path: repo.path,
+      })),
+      releaseHeads: input.context.repoReleaseHeads,
+    })
+  } catch (error) {
+    const logs = `Unexpected Project preparation failure: ${errorMessage(error)}`
+    const logPath = join(runtimeDir, 'prepare.log')
+    await mkdir(runtimeDir, { recursive: true })
+    await Bun.write(logPath, `${logs}\n`)
+    result = {
+      kind: 'failed',
+      adapterPath: join(input.context.primaryRepoRoot, ...PROJECT_PREPARE_PATH.split('/')),
+      exitCode: null,
+      logs,
+      logPath,
+      reposFile: input.context.reposFile,
+    }
+  }
+
+  const resultPath = join(runtimeDir, 'result.json')
+  await Bun.write(resultPath, `${JSON.stringify(result, null, 2)}\n`)
+  const facts = [
+    '## Project Preparation',
+    '',
+    `- Status: ${result.kind}`,
+    `- Adapter: ${result.adapterPath}`,
+    `- Exit code: ${result.exitCode ?? 'none'}`,
+    `- Repo manifest: ${result.reposFile}`,
+    `- Log: ${result.logPath}`,
+    `- Result: ${resultPath}`,
+    '',
+  ]
+  const contextSource = await Bun.file(input.context.contextFile).text()
+  await Bun.write(input.context.contextFile, `${contextSource.trimEnd()}\n\n${facts.join('\n')}`)
+
+  const promptSource = await Bun.file(input.context.promptFile).text()
+  const marker = '<!-- HOPI_ASSIGNMENT_SECTION_END:supporting-authority -->'
+  const preparationFacts = ['## Project Preparation', '', ...facts.slice(2)]
+  await Bun.write(
+    input.context.promptFile,
+    promptSource.includes(marker)
+      ? promptSource.replace(marker, `${preparationFacts.join('\n')}\n${marker}`)
+      : `${promptSource.trimEnd()}\n\n${preparationFacts.join('\n')}`,
+  )
+  return result
 }
 
 async function preserveOutcomeArtifacts(
@@ -842,65 +875,12 @@ function latestResponsibilityAttempt(
     : undefined
 }
 
-function responsibilityStage(responsibility: Responsibility) {
-  return responsibility === 'planner'
-    ? 'plan'
-    : responsibility === 'generator'
-      ? 'generate'
-      : 'review'
-}
-
-function retryAttemptSucceeded(attempt: RunAttemptSummary) {
-  if (attempt.status !== 'finished') return false
-  if (attempt.result !== 'success' && attempt.result !== 'reject') return false
-  return ![
-    'stale',
-    'operational_failure',
-    'project_blocked',
-    'candidate_preparation_failed',
-  ].includes(attempt.application ?? '')
-}
-
-function operationalFailureEpisode(attempts: readonly RunAttemptSummary[], after: string | null) {
-  let count = 0
-  let latestSummary = ''
-  for (const attempt of attempts) {
-    if (after && attempt.startedAt < after) break
-    if (attempt.status !== 'finished') continue
-    if (attempt.application !== 'operational_failure') break
-    if (count === 0) latestSummary = attempt.summary ?? ''
-    count += 1
-  }
-  return { count, latestSummary }
-}
-
-function latestResolvedWorkAttentionAt(
-  goalPackage: GoalPackage,
-  projectId: string,
-  goalId: string,
-  workId: string,
-) {
-  const target = workAttentionTarget(projectId, goalId, workId)
-  let latest: string | null = null
-  for (const attention of goalPackage.attentions.values()) {
-    if (attention.attributes.target !== target || attention.attributes.resolvedAt === null) continue
-    if (latest === null || attention.attributes.resolvedAt > latest) {
-      latest = attention.attributes.resolvedAt
-    }
-  }
-  return latest
-}
-
-function hasOpenWorkAttention(
-  goalPackage: GoalPackage,
-  projectId: string,
-  goalId: string,
-  workId: string,
-) {
-  const target = workAttentionTarget(projectId, goalId, workId)
-  return [...goalPackage.attentions.values()].some(
-    (attention) =>
-      attention.attributes.target === target && attention.attributes.resolvedAt === null,
+function requestedWorkIds(requestedRuns: ReadonlyMap<string, string>, goalId: string) {
+  const prefix = `${goalId}/`
+  return new Set(
+    [...requestedRuns.keys()]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length)),
   )
 }
 

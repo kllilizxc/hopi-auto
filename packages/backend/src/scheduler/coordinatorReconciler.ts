@@ -1,8 +1,10 @@
 import type { AssistantReflection } from '../assistant/assistantReflection'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
+import type { InboxEventAttributes } from '../domain/assistantWorkspaceDocuments'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
+import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
 import type { Responsibility } from '../runtime/roleContextStager'
 import type { WorkspaceAttentionController } from '../runtime/workspaceAttentionController'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -49,7 +51,7 @@ export interface CoordinatorReconciler {
 }
 
 interface ActiveAssistantTurn {
-  source: 'user' | 'reflection'
+  source: InboxEventAttributes['source']
   controller: AbortController
   promise: Promise<void>
 }
@@ -84,7 +86,7 @@ export function createCoordinatorReconciler(
     },
     interruptInternalAssistant() {
       for (const entry of assistantActive.values()) {
-        if (entry.source === 'reflection') entry.controller.abort()
+        if (entry.source !== 'user') entry.controller.abort()
       }
       this.wake()
     },
@@ -164,12 +166,7 @@ export function createCoordinatorReconciler(
         .then(async (result) => {
           if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
             const workspace = await options.workspace.readWorkspaceForControl()
-            const pendingEvents = eligiblePendingEvents(workspace, assistantActive)
-            const publicPending = pendingEvents.some((event) => event.attributes.source === 'user')
-            const internalHandoffPending = pendingEvents.some(
-              (event) => event.attributes.source === 'reflection',
-            )
-            if (!publicPending && !internalHandoffPending) {
+            if (eligiblePendingEvents(workspace, assistantActive).length === 0) {
               await options.reflection.observe({
                 settled:
                   result.kind === 'idle' && !startedWithReservation && reservations.size === 0,
@@ -195,10 +192,6 @@ export function createCoordinatorReconciler(
   }
 
   async function reconcileTick(epoch: number): Promise<CoordinatorReconcileTick> {
-    const finalizedNotifications = (await options.assistant.finalizeNotifications?.()) ?? 0
-    if (finalizedNotifications > 0) {
-      return { kind: 'deterministic_action', count: finalizedNotifications }
-    }
     const workspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const event =
@@ -216,18 +209,12 @@ export function createCoordinatorReconciler(
         .then(() => undefined)
         .catch(async (error) => {
           if (controller.signal.aborted) return
-          if (event.attributes.source === 'reflection') {
-            await options.workspace.handleEvent(event.attributes.id, {
-              reply: 'Internal Reflection speaking turn failed; see its durable turn diagnostics.',
-              disposition: 'internal-failed',
-              handledAt: now(),
-            })
-            return
-          }
-          await options.attentions.ensureEventAttention(
-            event.attributes.id,
-            `Assistant could not safely process this message: ${errorMessage(error)}`,
-          )
+          await options.workspace.handleEvent(event.attributes.id, {
+            reply: `Assistant unavailable: ${errorMessage(error)}`,
+            disposition: 'operational-failed',
+            handledAt: now(),
+            expose: event.attributes.source !== 'user',
+          })
         })
         .finally(() => {
           assistantActive.delete(event.attributes.id)
@@ -242,13 +229,11 @@ export function createCoordinatorReconciler(
       return { kind: 'assistant_started', count: 1 }
     }
 
-    const refreshedWorkspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
-    const projectBlocks = blockedProjects(refreshedWorkspace)
     const passCounts = reservationPassCounts(reservations)
     const candidates: GoalCandidate[] = []
     for (const project of options.projects) {
-      if (!eligibleProjects.has(project.projectId) || projectBlocks.has(project.projectId)) continue
+      if (!eligibleProjects.has(project.projectId)) continue
       try {
         const reconciliationPackages = project.store.readReconciliationSnapshot
           ? await project.store.readReconciliationSnapshot()
@@ -266,6 +251,8 @@ export function createCoordinatorReconciler(
           const runtime: WorkRuntimeFacts = {
             projectEligible: true,
             liveRunWorkIds: liveWorkIds,
+            settledFailureWorkIds:
+              (await project.reconciler.settledFailureWorkIds?.(goalId, goalPackage)) ?? new Set(),
             passCapacity: {
               planner: passCounts.planner < options.concurrency.planner,
               generator: passCounts.generator < options.concurrency.generator,
@@ -287,7 +274,7 @@ export function createCoordinatorReconciler(
         }
       } catch (error) {
         eligibleProjects.delete(project.projectId)
-        await options.attentions.ensureProjectAttention(
+        await reportProjectFailure(
           project.projectId,
           `Project reconciliation validation failed: ${errorMessage(error)}`,
         )
@@ -318,14 +305,11 @@ export function createCoordinatorReconciler(
         })
         if (result.kind === 'project_blocked') {
           eligibleProjects.delete(deterministic.project.projectId)
-          await options.attentions.ensureProjectAttention(
-            deterministic.project.projectId,
-            result.reason,
-          )
+          await reportProjectFailure(deterministic.project.projectId, result.reason)
         }
       } catch (error) {
         eligibleProjects.delete(deterministic.project.projectId)
-        await options.attentions.ensureProjectAttention(
+        await reportProjectFailure(
           deterministic.project.projectId,
           `Coordinator action failed closed: ${errorMessage(error)}`,
         )
@@ -353,15 +337,12 @@ export function createCoordinatorReconciler(
         .then(async (result) => {
           if (result.kind === 'project_blocked') {
             eligibleProjects.delete(candidate.project.projectId)
-            await options.attentions.ensureProjectAttention(
-              candidate.project.projectId,
-              result.reason,
-            )
+            await reportProjectFailure(candidate.project.projectId, result.reason)
           }
         })
         .catch(async (error) => {
           eligibleProjects.delete(candidate.project.projectId)
-          await options.attentions.ensureProjectAttention(
+          await reportProjectFailure(
             candidate.project.projectId,
             `Coordinator pass failed closed: ${errorMessage(error)}`,
           )
@@ -389,6 +370,15 @@ export function createCoordinatorReconciler(
       assistantTurnBarriers.set(eventId, barrier)
     }
     return barrier
+  }
+
+  async function reportProjectFailure(projectId: string, message: string) {
+    await recordProjectSystemEvent(options.workspace, {
+      projectId,
+      summary: 'Project execution stopped at a deterministic integrity boundary.',
+      details: [message],
+      receivedAt: now(),
+    })
   }
 
   function goalDispatchBlocked(projectId: string, goalId: string) {
@@ -419,14 +409,8 @@ function eligiblePendingEvent<T>(workspace: AssistantWorkspace, active: Readonly
 }
 
 function eligiblePendingEvents<T>(workspace: AssistantWorkspace, active: ReadonlyMap<string, T>) {
-  const blockedTargets = new Set(
-    [...workspace.attentions.values()]
-      .filter((attention) => attention.attributes.resolvedAt === null)
-      .map((attention) => attention.attributes.target),
-  )
   return [...workspace.events.values()]
     .filter((event) => event.attributes.status === 'pending' && !active.has(event.attributes.id))
-    .filter((event) => !blockedTargets.has(`home:${workspace.homeId}/event:${event.attributes.id}`))
     .sort(
       (left, right) =>
         inboxSourceRank(left.attributes.source) - inboxSourceRank(right.attributes.source) ||
@@ -435,21 +419,8 @@ function eligiblePendingEvents<T>(workspace: AssistantWorkspace, active: Readonl
     )
 }
 
-function inboxSourceRank(source: 'user' | 'reflection') {
+function inboxSourceRank(source: InboxEventAttributes['source']) {
   return source === 'user' ? 0 : 1
-}
-
-function blockedProjects(workspace: AssistantWorkspace) {
-  const blocked = new Set<string>()
-  for (const attention of workspace.attentions.values()) {
-    if (
-      attention.attributes.resolvedAt === null &&
-      attention.attributes.target.startsWith('project:')
-    ) {
-      blocked.add(attention.attributes.target.slice('project:'.length))
-    }
-  }
-  return blocked
 }
 
 function reservationPassCounts(

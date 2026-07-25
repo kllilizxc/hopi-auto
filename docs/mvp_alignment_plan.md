@@ -1,7 +1,7 @@
 # HOPI MVP Implementation Alignment
 
 Status: MVP implementation aligned; live end-to-end audit complete
-Last updated: 2026-07-13
+Last updated: 2026-07-24
 
 This ledger records implementation evidence for [the MVP design](./mvp_design.md). It is not a
 second product or architecture authority. The design, document model, execution design, state
@@ -36,7 +36,7 @@ Alignment is complete only when:
 | --- | --- | --- | --- |
 | Project | user checkout locator | `home.yml`, multi-Repo `projects.yml`, primary `project.yml` release manifest, Project-qualified managed release worktrees | migration, dirty checkout, shared binding, link, and rebind tests |
 | Goal | one mutable `todo.yml` board | bounded Goal package with one document per fact owner | schema, migration, and transition tests |
-| Ordering | blockers, decisions, planning requests | permanent Engineering `dependsOn`, exact Work authority, and Goal contract revisions | graph and readiness tests |
+| Ordering | blockers, decisions, planning requests | current Engineering `dependsOn`, exact Work authority, and Goal contract revisions | graph and readiness tests |
 | Assistant | Goal thread, parsed `actions[]`, or stateless staged diffs | durable Inbox turns, vendor-qualified persistent session, read-only Reflection, and validated HOPI tools | direct conversation, per-vendor session resume, Reflection, tool, and recovery tests |
 | Workflow | manual controls and hard-coded task lanes | one code-owned profile through generic `RoleRunner` | profile parity and end-to-end reconcile tests |
 | Publication | direct writes and nested locks | OS instance lock, global mutex, one-gate `publish`, durable receipt and C1 ref | concurrency and fault-injection tests |
@@ -50,7 +50,8 @@ Alignment is complete only when:
 - [x] Let Home configure Codex, Claude, or OpenCode for both speaking Assistant and Reflection while
   preserving one conversation, one HOPI tool protocol, and a vendor-qualified disposable session cache.
 - [x] Keep blocked user Inbox events Reflection-eligible, normalize malformed proposal documents to
-  ordinary Work failure, and derive restart-safe operational exhaustion from Attempt plus Attention.
+  ordinary Work failure, and derive a restart-safe unchanged-Work pause from the settled Attempt hash
+  without synthetic Attention or a retry threshold.
 - [x] Restore the Home Assistant model editor without changing current Attention/Kanban semantics,
   then prove all three vendor adapters with fake-CLI contracts and full end-to-end regression tests.
 
@@ -146,7 +147,8 @@ Alignment is complete only when:
    writes support before one gate, durably acknowledges Inbox receipt, and delegates C1 to a guarded
    durable Git ref boundary.
 3. Canonical Goal, Work, Input, Attention, and Evidence documents enforce identity, revision,
-   permanent dependencies, singleton Planning, retry, targeting, provenance, and completion rules.
+   valid current dependencies, singleton Planning, retry, targeting, provenance, and completion
+   rules.
 4. The fixed profile runs immutable Planner, Generator, and Reviewer contexts through one
    `RoleRunner`; missing `AGENTS.md` is silent Planner bootstrap and Engineering Work keeps one stable
    branch and checkout in every Project Repo.
@@ -199,12 +201,12 @@ Alignment is complete only when:
   Generator checkpoint: `roleContextStager.test.ts`, `vendorTransport.test.ts`,
   `assistantTools.test.ts`, and `projectReconciler.test.ts`
 - Project preparation bootstrap, repeated execution, source-mutation guard, Reviewer clean rebuild,
-  operational retry backoff, and Preview reuse: `projectPreparation.test.ts`,
+  settled-failure pause, explicit retry reservation, and Preview reuse: `projectPreparation.test.ts`,
   `stableWorktreeManager.test.ts`, `projectReconciler.test.ts`, `workProjection.test.ts`, and
   `previewManager.test.ts`
 - blocked-event Reflection eligibility, malformed proposal normalization, and restart-safe
-  operational exhaustion through ordinary Work Attention: `coordinatorReconciler.test.ts`,
-  `passOutcomeCoordinator.test.ts`, `projectReconciler.test.ts`, and `goalController.test.ts`
+  failed-Attempt recovery without synthetic Attention: `coordinatorReconciler.test.ts`,
+  `assistantReflection.test.ts`, `passOutcomeCoordinator.test.ts`, and `projectReconciler.test.ts`
 - portable image adoption and exact role image input: `assistantTools.test.ts`,
   `roleContextStager.test.ts`, `vendorTransport.test.ts`, and `passOutcomeCoordinator.test.ts`
 - Home role model persistence, fallback, resolution, and API: `adapterConfig.test.ts`,

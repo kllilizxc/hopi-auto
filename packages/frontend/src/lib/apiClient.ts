@@ -296,13 +296,6 @@ export function stopPreview(projectId: string) {
   )
 }
 
-export function requestPreviewRepair(context: { projectId: string; goalId?: string }) {
-  return apiRequest<{ eventId: string }>('/api/preview/repair', {
-    method: 'POST',
-    body: { context },
-  })
-}
-
 function goalPath(projectId: string, goalId: string) {
   return `/api/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(goalId)}`
 }

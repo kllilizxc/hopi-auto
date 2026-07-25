@@ -41,9 +41,7 @@ describe('ProjectPreparer', () => {
 
     expect(result).toMatchObject({ kind: 'ready', exitCode: 0 })
     expect(result.logs).toContain('stdout: ready')
-    const repoResult = result.repos[0]
-    if (!repoResult) throw new Error('Expected Repo preparation result')
-    expect(await Bun.file(join(dirname(repoResult.logPath), 'cwd.txt')).text()).toBe(
+    expect(await Bun.file(join(fixture.runtime, 'cwd.txt')).text()).toBe(
       await realpath(fixture.repo),
     )
     expect(await git(fixture.repo, ['status', '--porcelain'])).toBe('')
@@ -89,9 +87,7 @@ describe('ProjectPreparer', () => {
     expect(result).toMatchObject({ kind: 'failed', exitCode: null })
     expect(result.logs).toContain('timed out after 50ms')
     await Bun.sleep(400)
-    expect(
-      await Bun.file(join(fixture.runtime, 'repos', '000-primary', 'descendant.txt')).exists(),
-    ).toBe(false)
+    expect(await Bun.file(join(fixture.runtime, 'descendant.txt')).exists()).toBe(false)
   })
 
   test('fails when preparation mutates Project source', async () => {
@@ -124,10 +120,7 @@ describe('ProjectPreparer', () => {
       fixture.repo,
       'const manifest = await Bun.file(process.env.HOPI_REPOS_FILE!).json(); console.log(`api=${manifest.repos.api}`)',
     )
-    await writeAdapter(
-      api,
-      'console.log(`repo=${process.env.HOPI_REPO_ID} root=${process.env.HOPI_REPO_ROOT}`)',
-    )
+    await writeAdapter(api, 'await Bun.write("secondary-ran.txt", "unexpected")')
     await git(fixture.repo, ['add', '.'])
     await git(fixture.repo, ['commit', '-m', 'add prepare'])
     await git(api, ['add', '.'])
@@ -146,21 +139,17 @@ describe('ProjectPreparer', () => {
     })
 
     expect(result.kind).toBe('ready')
-    expect(result.repos.map((repo) => repo.repoId)).toEqual(['web', 'api'])
     expect(result.logs).toContain(`api=${api}`)
-    expect(await Bun.file(join(fixture.runtime, 'repos.json')).json()).toMatchObject({
+    expect(await Bun.file(result.reposFile).json()).toMatchObject({
       primaryRepoId: 'web',
       repoOrder: ['web', 'api'],
       releaseHeads: { web: 'release-web', api: 'release-api' },
     })
-    expect(result.logs).toContain(`repo=api root=${api}`)
+    expect(await Bun.file(join(api, 'secondary-ran.txt')).exists()).toBe(false)
 
     await writeAdapter(fixture.repo, 'console.error("web failed"); process.exit(2)')
-    await writeAdapter(api, 'console.log("api still ran")')
     await git(fixture.repo, ['add', '.'])
     await git(fixture.repo, ['commit', '-m', 'fail prepare'])
-    await git(api, ['add', '.'])
-    await git(api, ['commit', '-m', 'track prepare attempt'])
     const failed = await createProjectPreparer().prepare({
       projectRoot: fixture.repo,
       runtimeDir: join(fixture.runtime, 'failed'),
@@ -174,8 +163,8 @@ describe('ProjectPreparer', () => {
     })
 
     expect(failed.kind).toBe('failed')
-    expect(failed.repos.map((repo) => repo.kind)).toEqual(['failed', 'ready'])
-    expect(failed.logs).toContain('api still ran')
+    expect(failed.logs).toContain('web failed')
+    expect(await Bun.file(join(api, 'secondary-ran.txt')).exists()).toBe(false)
   })
 
   test('does not inherit an unrelated Goal identity during Project preparation', async () => {

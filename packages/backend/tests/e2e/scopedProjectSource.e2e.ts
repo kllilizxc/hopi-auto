@@ -52,7 +52,7 @@ const deterministicModelRunner: AssistantModelRunner = {
     modelInvocations.push(input.toolMode ?? 'main')
     return {
       reply:
-        input.toolMode === 'reflection' ? '' : 'Deterministic Project-source notification handled.',
+        input.toolMode === 'internal' ? '' : 'Deterministic Project-source notification handled.',
       session: { transport: 'codex', sessionId: `source-no-action-${input.eventId}` },
     }
   },
@@ -76,7 +76,6 @@ try {
     port: 0,
     roleRunner: roles,
     assistantRunner: deterministicModelRunner,
-    reflectionRunner: deterministicModelRunner,
     directoryPicker: async () => selections.shift() ?? null,
   })
   serverCleanup = ownTestRunServer(testRun, server)
@@ -112,7 +111,6 @@ try {
     port: 0,
     roleRunner: roles,
     assistantRunner: deterministicModelRunner,
-    reflectionRunner: deterministicModelRunner,
   })
   restartedCleanup = ownTestRunServer(testRun, restarted)
   baseUrl = `http://127.0.0.1:${restarted.port}`
@@ -461,7 +459,6 @@ async function planScopedWork(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
-          attempts: 0,
         },
         body:
           input.goalId === DELIVERY_GOAL

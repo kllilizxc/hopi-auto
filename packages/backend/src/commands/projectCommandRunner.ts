@@ -1,14 +1,15 @@
 import { isWorkTerminal } from '../domain/canonicalDocuments'
 import type { PublicationCoordinator } from '../publication/publisher'
-import type { WorkspaceAttentionController } from '../runtime/workspaceAttentionController'
+import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
+import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../storage/goalPackageStore'
 import { createCommandRunner } from './commandRunner'
 
 export function createProjectCommandRunner(options: {
   home: AssistantHomeStore
   publisher: PublicationCoordinator
-  attentions: WorkspaceAttentionController
+  workspace: AssistantWorkspaceStore
   runProjectMutation?: <T>(projectId: string, operation: () => Promise<T>) => Promise<T>
 }) {
   return createCommandRunner(options.home, {
@@ -28,10 +29,14 @@ export function createProjectCommandRunner(options: {
           .map((work) => work.attributes.id),
       )
       if (affectedWorks.length === 0) return
-      await options.attentions.ensureProjectAttention(
-        plan.input.projectId,
-        `Repo binding changed. Reconcile nonterminal Work before execution: ${affectedWorks.join(', ')}. Obsolete managed worktrees remain available in the Rebind operation journal as recovery evidence.`,
-      )
+      await recordProjectSystemEvent(options.workspace, {
+        projectId: plan.input.projectId,
+        summary: 'Project Repo bindings changed while nonterminal Work exists.',
+        details: [
+          `Affected Work: ${affectedWorks.join(', ')}.`,
+          'Obsolete managed worktrees remain in the Rebind operation journal as recovery evidence.',
+        ],
+      })
     },
   })
 }

@@ -12,7 +12,6 @@ import {
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPassOutcomeCoordinator } from '../src/runtime/passOutcomeCoordinator'
-import type { FormalReleasePreviewContext } from '../src/runtime/previewManager'
 import { createRoleContextStager } from '../src/runtime/roleContextStager'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
@@ -54,7 +53,7 @@ describe('PassOutcomeCoordinator', () => {
     )
   })
 
-  test('expands one Planner cancellation through all nonterminal dependents', async () => {
+  test('lets Planner atomically rewire current dependencies around cancelled Work', async () => {
     const fixture = await createFixture()
     const base = engineeringWork('W-base', 'generate')
     const dependent = engineeringWork('W-dependent', 'generate')
@@ -76,6 +75,17 @@ describe('PassOutcomeCoordinator', () => {
       renderWorkDocument({
         ...base,
         attributes: { ...base.attributes, stage: 'cancelled' },
+        body: '# Cancelled route\n\nSuperseded by the rewired current plan.\n',
+      }),
+    )
+    await Bun.write(
+      join(
+        context.proposalRoot,
+        ...fixture.store.paths.workDocument('goal-1', 'W-dependent').split('/'),
+      ),
+      renderWorkDocument({
+        ...dependent,
+        attributes: { ...dependent.attributes, dependsOn: [] },
       }),
     )
 
@@ -86,7 +96,11 @@ describe('PassOutcomeCoordinator', () => {
 
     expect(result).toMatchObject({ kind: 'published', result: 'success' })
     expect(goalPackage.works.get('W-base')?.attributes.stage).toBe('cancelled')
-    expect(goalPackage.works.get('W-dependent')?.attributes.stage).toBe('cancelled')
+    expect(goalPackage.works.get('W-base')?.body).toContain(
+      'Superseded by the rewired current plan',
+    )
+    expect(goalPackage.works.get('W-dependent')?.attributes.stage).toBe('generate')
+    expect(goalPackage.works.get('W-dependent')?.attributes.dependsOn).toEqual([])
     expect(goalPackage.works.get('W-independent')?.attributes.stage).toBe('generate')
     expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('done')
   })
@@ -164,7 +178,6 @@ describe('PassOutcomeCoordinator', () => {
 
     expect(result).toMatchObject({ kind: 'published', result: 'success' })
     expect(work?.attributes.stage).toBe('review')
-    expect(work?.attributes.attempts).toBe(0)
     expect(work?.attributes.evidenceRefs).toEqual(['E-run-generate'])
   })
 
@@ -257,7 +270,6 @@ describe('PassOutcomeCoordinator', () => {
     })
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 0,
       evidenceRefs: [],
     })
     expect(goalPackage.attentions.get('A-storage')?.attributes.createdAt).toBe(
@@ -302,51 +314,6 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('generate')
   })
 
-  test('publishes a new represented blocker without semantically merging an existing one', async () => {
-    const fixture = await createEngineeringFixture('generate')
-    const controller = createGoalController(fixture.store, { verifyCompletion: () => false })
-    const original = await controller.ensureOperationalFailureAttention(
-      'goal-1',
-      'W-1',
-      3,
-      'provider unavailable',
-    )
-    await controller.retryWork('goal-1', 'W-1', null, {
-      resolution: 'Request one new invocation.',
-    })
-    const context = await fixture.stage('W-1', 'run-retry-attention', 'generator')
-    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-duplicate')
-    const stagedAttentionPath = join(context.proposalRoot, ...attentionPath.split('/'))
-    await mkdir(dirname(stagedAttentionPath), { recursive: true })
-    await Bun.write(
-      stagedAttentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: 'A-duplicate',
-          target: 'project:project-1/goal:goal-1/work:W-1',
-          createdAt: '2099-12-31T23:59:59Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Still blocked\n\nThe requested invocation could not continue.\n',
-      }),
-    )
-
-    const result = await fixture.outcomes.apply(
-      fixture.input('W-1', 'run-retry-attention', 'generator', context, 'attention'),
-    )
-    const goalPackage = await fixture.store.readPackage('goal-1')
-
-    expect(result).toMatchObject({
-      kind: 'attention',
-      attentionIds: ['A-duplicate'],
-    })
-    expect(goalPackage.attentions.size).toBe(2)
-    expect(goalPackage.attentions.has(original.attributes.id)).toBe(true)
-    expect(goalPackage.attentions.has('A-duplicate')).toBe(true)
-    expect(goalPackage.works.get('W-1')?.attributes.evidenceRefs).toEqual([])
-  })
-
   test('rejects a Planner document path target with the exact owning Work target', async () => {
     const fixture = await createFixture()
     const context = await fixture.stage('plan-initial', 'run-planner-path-target', 'planner')
@@ -378,11 +345,10 @@ describe('PassOutcomeCoordinator', () => {
         'Targeted Attention must use owning Work target: project:project-1/goal:goal-1/work:plan-initial',
     })
     expect(goalPackage.attentions.has('A-choice')).toBe(false)
-    expect(goalPackage.works.get('plan-initial')?.attributes.attempts).toBe(0)
     expect(goalPackage.evidence.has('E-run-planner-path-target')).toBe(false)
   })
 
-  test('rejects targeted Attention combined with Generator success', async () => {
+  test('uses a targeted Attention proposal as the concrete effect regardless of result label', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-invalid-attention', 'generator')
     const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-invalid-success')
@@ -408,13 +374,56 @@ describe('PassOutcomeCoordinator', () => {
     const goalPackage = await fixture.store.readPackage('goal-1')
 
     expect(result).toMatchObject({
-      kind: 'invalid',
-      reason: 'Targeted Attention requires attention, received success',
+      kind: 'attention',
+      attentionIds: ['A-invalid-success'],
     })
-    expect(goalPackage.attentions.has('A-invalid-success')).toBe(false)
+    expect(goalPackage.attentions.has('A-invalid-success')).toBe(true)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 0,
+    })
+  })
+
+  test('settles an unmaterialized Generator attention label as an ordinary failure', async () => {
+    const fixture = await createEngineeringFixture('generate')
+    const context = await fixture.stage('W-1', 'run-unmaterialized-attention', 'generator')
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('W-1', 'run-unmaterialized-attention', 'generator', context, 'attention'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'attention' })
+    expect(goalPackage.attentions.size).toBe(0)
+    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
+      stage: 'generate',
+      evidenceRefs: ['E-run-unmaterialized-attention'],
+    })
+  })
+
+  test('does not complete Planning from an unmaterialized attention label', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage(
+      'plan-initial',
+      'run-unmaterialized-planner-attention',
+      'planner',
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input(
+        'plan-initial',
+        'run-unmaterialized-planner-attention',
+        'planner',
+        context,
+        'attention',
+      ),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'attention' })
+    expect(goalPackage.goal.attributes.lifecycle).toBe('active')
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      stage: 'plan',
+      evidenceRefs: ['E-run-unmaterialized-planner-attention'],
     })
   })
 
@@ -451,7 +460,6 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.attentions.has('A-wrong-target')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 0,
     })
     expect(goalPackage.evidence.has('E-run-wrong-attention-target')).toBe(false)
   })
@@ -476,7 +484,6 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.attentions.has('A-malformed')).toBe(false)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
-      attempts: 0,
     })
     expect(goalPackage.evidence.has('E-run-malformed-attention')).toBe(false)
   })
@@ -500,7 +507,6 @@ describe('PassOutcomeCoordinator', () => {
     })
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       stage: 'plan',
-      attempts: 0,
     })
   })
 
@@ -534,7 +540,7 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.evidence.has('E-run-stale')).toBe(false)
   })
 
-  test('requires Planner to retain or cancel every stale Engineering route', async () => {
+  test('lets Planner leave an older Engineering route visibly stale', async () => {
     const fixture = await createEngineeringFixture('review')
     const goals = createGoalController(fixture.store, { verifyCompletion: () => false })
     await goals.applyMaterialInstruction('goal-1', {
@@ -547,73 +553,33 @@ describe('PassOutcomeCoordinator', () => {
     )
     if (!planning) throw new Error('Expected current Planning Work')
 
-    const incompleteContext = await fixture.stage(
+    const context = await fixture.stage(
       planning.attributes.id,
-      'run-stale-work-incomplete',
+      'run-stale-work-left-visible',
       'planner',
     )
-    const incomplete = await fixture.outcomes.apply(
+    const result = await fixture.outcomes.apply(
       fixture.input(
         planning.attributes.id,
-        'run-stale-work-incomplete',
+        'run-stale-work-left-visible',
         'planner',
-        incompleteContext,
+        context,
         'success',
       ),
     )
     goalPackage = await fixture.store.readPackage('goal-1')
 
-    expect(incomplete).toMatchObject({
-      kind: 'invalid',
-      reason: 'Planner must retain or cancel stale Engineering Work W-1',
-    })
-    expect(goalPackage.evidence.has('E-run-stale-work-incomplete')).toBe(false)
+    expect(result).toMatchObject({ kind: 'published', result: 'success' })
+    expect(goalPackage.evidence.has('E-run-stale-work-left-visible')).toBe(true)
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'review',
       contractRevision: 1,
     })
-
-    const retryContext = await fixture.stage(
-      planning.attributes.id,
-      'run-stale-work-retained',
-      'planner',
-    )
-    const retained = goalPackage.works.get('W-1')
-    if (!retained || retained.attributes.kind !== 'engineering') {
-      throw new Error('Expected stale Engineering Work')
-    }
-    await Bun.write(
-      join(
-        retryContext.proposalRoot,
-        ...fixture.store.paths.workDocument('goal-1', 'W-1').split('/'),
-      ),
-      renderWorkDocument({
-        ...retained,
-        attributes: {
-          ...retained.attributes,
-          stage: 'generate',
-          attempts: 0,
-          contractRevision: 2,
-        },
-      }),
-    )
-    const completed = await fixture.outcomes.apply(
-      fixture.input(
-        planning.attributes.id,
-        'run-stale-work-retained',
-        'planner',
-        retryContext,
-        'success',
-      ),
-    )
-    goalPackage = await fixture.store.readPackage('goal-1')
-
-    expect(completed).toMatchObject({ kind: 'published', result: 'success' })
-    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
-      stage: 'generate',
-      attempts: 0,
+    expect(goalPackage.works.get(planning.attributes.id)?.attributes).toMatchObject({
+      stage: 'done',
       contractRevision: 2,
     })
+    expect(goalPackage.goal.attributes.lifecycle).toBe('active')
   })
 
   test('normalizes paused Reviewer success before C1 to stale', async () => {
@@ -662,68 +628,8 @@ describe('PassOutcomeCoordinator', () => {
     const work = (await fixture.store.readPackage('goal-1')).works.get('plan-initial')
 
     expect(result).toMatchObject({ kind: 'published', result: 'success' })
-    expect(work?.attributes.attempts).toBe(0)
     expect(work?.attributes.stage).toBe('done')
     expect(work?.attributes.evidenceRefs).toEqual(['E-run-empty'])
-  })
-
-  test('rejects final Planning without current-Run formal release Preview evidence', async () => {
-    const fixture = await createFixture()
-    const baseline = await fixture.stage('plan-initial', 'run-preview-baseline', 'planner')
-    const context = await fixture.stage(
-      'plan-initial',
-      'run-preview-without-evidence',
-      'planner',
-      formalPreview(baseline.releaseHead),
-    )
-    const result = await fixture.outcomes.apply(
-      fixture.input('plan-initial', 'run-preview-without-evidence', 'planner', context, 'success', [
-        'README.md',
-        'artifact:older-preview-run/old-browser-proof.png',
-      ]),
-    )
-    const goalPackage = await fixture.store.readPackage('goal-1')
-
-    expect(result).toMatchObject({
-      kind: 'invalid',
-      reason: expect.stringContaining(
-        'Goal completion requires direct formal release Preview evidence retained by the current Planner Run',
-      ),
-    })
-    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('plan')
-  })
-
-  test('publishes completion with direct evidence from the matching formal release Preview', async () => {
-    const fixture = await createFixture()
-    const baseline = await fixture.stage('plan-initial', 'run-preview-baseline-ok', 'planner')
-    const context = await fixture.stage(
-      'plan-initial',
-      'run-preview-complete',
-      'planner',
-      formalPreview(baseline.releaseHead),
-    )
-    const result = await fixture.outcomes.apply(
-      fixture.input('plan-initial', 'run-preview-complete', 'planner', context, 'success', [
-        'artifact:run-preview-complete/formal-browser-proof.json',
-      ]),
-    )
-    const goalPackage = await fixture.store.readPackage('goal-1')
-    const evidence = goalPackage.evidence.get('E-run-preview-complete')
-
-    expect(result).toMatchObject({ kind: 'published', result: 'success' })
-    expect(goalPackage.goal.attributes).toMatchObject({
-      lifecycle: 'done',
-      completionAttentionId: null,
-    })
-    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
-      stage: 'done',
-      evidenceRefs: ['E-run-preview-complete'],
-    })
-    expect(evidence?.attributes.artifacts).toEqual([
-      'artifact:run-preview-complete/formal-browser-proof.json',
-    ])
-    expect(evidence?.body).toContain('Session: preview-formal')
-    expect(evidence?.body).toContain('Surface default (Preview): http://127.0.0.1:4311/app')
   })
 
   test('preserves legacy completion Attention history while final Planning completes directly', async () => {
@@ -807,7 +713,6 @@ describe('PassOutcomeCoordinator', () => {
       completionAttentionId: null,
     })
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
-      attempts: 0,
       stage: 'done',
       evidenceRefs: ['E-run-empty-incomplete'],
     })
@@ -838,7 +743,7 @@ describe('PassOutcomeCoordinator', () => {
       kind: 'invalid',
       reason: 'Planner may propose Engineering Work but may not write Planning Work',
     })
-    expect(failedPlanning?.attributes).toMatchObject({ stage: 'plan', attempts: 0 })
+    expect(failedPlanning?.attributes).toMatchObject({ stage: 'plan' })
     expect(failedPlanning?.attributes.evidenceRefs).toEqual([])
 
     const retryContext = await fixture.stage('plan-initial', 'run-retry', 'planner')
@@ -856,7 +761,7 @@ describe('PassOutcomeCoordinator', () => {
     const completedPlanning = goalPackage.works.get('plan-initial')
 
     expect(retryResult).toMatchObject({ kind: 'published', result: 'success' })
-    expect(completedPlanning?.attributes).toMatchObject({ stage: 'done', attempts: 0 })
+    expect(completedPlanning?.attributes).toMatchObject({ stage: 'done' })
     expect(completedPlanning?.attributes.evidenceRefs).toEqual(['E-run-retry'])
     expect(completedPlanning?.body).toBe(planningBody)
     expect(goalPackage.works.get('W-retry')?.attributes.stage).toBe('generate')
@@ -903,7 +808,6 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.attentions.has('A-premature')).toBe(false)
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       stage: 'plan',
-      attempts: 0,
     })
     expect(goalPackage.evidence.has('E-run-premature-completion')).toBe(false)
   })
@@ -1005,12 +909,7 @@ async function createFixture() {
     projectRoot: linked.integrationRoot,
     store,
     outcomes,
-    stage(
-      workId: string,
-      runId: string,
-      responsibility: 'planner' | 'generator' | 'reviewer',
-      formalReleasePreview?: FormalReleasePreviewContext,
-    ) {
+    stage(workId: string, runId: string, responsibility: 'planner' | 'generator' | 'reviewer') {
       return stager.prepare({
         projectRoot: linked.integrationRoot,
         projectId: 'project-1',
@@ -1018,7 +917,6 @@ async function createFixture() {
         workId,
         runId,
         responsibility,
-        formalReleasePreview,
       })
     },
     input(
@@ -1041,25 +939,6 @@ async function createFixture() {
   }
 }
 
-function formalPreview(releaseHead: string): FormalReleasePreviewContext {
-  return {
-    kind: 'session',
-    session: {
-      sessionId: 'preview-formal',
-      projectId: 'project-1',
-      releaseHeads: { primary: releaseHead },
-      status: 'running',
-      surfaces: [{ id: 'default', label: 'Preview', url: 'http://127.0.0.1:4311/app' }],
-      logPath: '/tmp/preview-formal.log',
-      startedAt: '2026-07-23T00:00:00.000Z',
-      endedAt: null,
-      error: null,
-      stoppedReason: null,
-      repair: null,
-    },
-  }
-}
-
 function engineeringWork(
   id: string,
   stage: 'generate' | 'review',
@@ -1074,7 +953,6 @@ function engineeringWork(
       dependsOn: [],
       contractRevision: 1,
       evidenceRefs: [],
-      attempts: 0,
     },
     body: '## Acceptance Criteria\n\n- The feature works.\n',
   }

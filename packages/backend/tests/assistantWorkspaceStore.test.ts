@@ -176,31 +176,31 @@ describe('AssistantWorkspaceStore', () => {
     ).rejects.toThrow('receipt is immutable')
   })
 
-  test('keeps Reflection turns internal until the speaking thread exposes them', async () => {
+  test('keeps system turns internal until the Assistant publishes an update', async () => {
     const fixture = await setup(true)
     const user = await fixture.store.receiveEvent({ eventId: 'EV-user', content: 'Hello.' })
-    const reflection = await fixture.store.receiveReflectionEvent({
-      eventId: 'EV-reflection',
+    const system = await fixture.store.receiveSystemEvent({
+      eventId: 'EV-system',
       content: 'Work W-1 needs diagnosis.',
       context: { projectId: 'P-1', goalId: 'G-1' },
     })
 
     expect(user.attributes).toMatchObject({ source: 'user', visibility: 'public' })
-    expect(reflection.attributes).toMatchObject({ source: 'reflection', visibility: 'internal' })
-    expect((await fixture.store.exposeEvent('EV-reflection')).attributes.visibility).toBe('public')
+    expect(system.attributes).toMatchObject({ source: 'system', visibility: 'internal' })
+    expect((await fixture.store.exposeEvent('EV-system')).attributes.visibility).toBe('public')
     await expect(fixture.store.exposeEvent('EV-user')).rejects.toThrow(
-      'Only Reflection turns can be exposed',
+      'Only internal Assistant turns can be exposed',
     )
-    await fixture.store.handleEvent('EV-reflection', {
+    await fixture.store.handleEvent('EV-system', {
       reply: 'The operator should inspect W-1.',
       disposition: 'notified',
     })
-    await expect(fixture.store.exposeEvent('EV-reflection')).rejects.toThrow(
-      'Handled Reflection turns cannot be exposed',
+    await expect(fixture.store.exposeEvent('EV-system')).rejects.toThrow(
+      'Handled internal Assistant turns cannot be exposed',
     )
   })
 
-  test('uses Workspace Attention as the sole durable operator blocker', async () => {
+  test('persists and resolves a Workspace Attention todo', async () => {
     const fixture = await setup(true)
     await fixture.store.receiveEvent({ eventId: 'EV-1', content: 'Ambiguous request.' })
     const attention = {
@@ -208,48 +208,47 @@ describe('AssistantWorkspaceStore', () => {
         id: 'A-event',
         target: `home:${fixture.homeId}/event:EV-1`,
         createdAt: '2026-07-11T00:00:00Z',
+        updatedAt: '2026-07-11T00:00:00Z',
         resolvedAt: null,
+        refs: [`home:${fixture.homeId}/event:EV-1`],
         notifiedAt: null,
+        operatorRequest: null,
       },
       body: '## Needs you\n\nWhich Project owns this request?\n',
     }
 
     await fixture.store.createAttention(attention)
-    const notified = await fixture.store.markAttentionNotified(
-      'A-event',
-      new Date('2026-07-11T00:01:00Z'),
-    )
     const resolved = await fixture.store.resolveAttention(
       'A-event',
       'Answered by EV-2.',
       new Date('2026-07-11T00:02:00Z'),
     )
 
-    expect(notified.attributes.resolvedAt).toBeNull()
     expect(resolved.attributes.resolvedAt).toBe('2026-07-11T00:02:00.000Z')
     expect(resolved.body).toContain('## Resolution')
   })
 
-  test('permits only one open project-target Attention', async () => {
+  test('permits several independent todos for one Project', async () => {
     const fixture = await setup(true)
     const attention = (id: string) => ({
       attributes: {
         id,
         target: 'project:P-1',
         createdAt: '2026-07-11T00:00:00Z',
+        updatedAt: '2026-07-11T00:00:00Z',
         resolvedAt: null,
+        refs: ['project:P-1'],
         notifiedAt: null,
+        operatorRequest: null,
       },
       body: '## Needs you\n\nProject root is invalid.\n',
     })
     await fixture.store.createAttention(attention('A-project-1'))
-
-    await expect(fixture.store.createAttention(attention('A-project-2'))).rejects.toThrow(
-      'More than one open',
-    )
+    await fixture.store.createAttention(attention('A-project-2'))
+    expect((await fixture.store.readWorkspace()).attentions.size).toBe(2)
     expect(
       await Bun.file(join(temporaryRoot, fixture.store.paths.attention('A-project-2'))).exists(),
-    ).toBe(false)
+    ).toBe(true)
   })
 
   test('publication can retry a receipt left installed before durability acknowledgement', async () => {

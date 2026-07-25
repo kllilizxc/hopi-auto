@@ -13,10 +13,13 @@ const vendorSessionSchema = z
   })
   .strict()
 
+const assignmentHashSchema = z.string().regex(/^[a-f0-9]{64}$/)
+
 const sessionManifestSchema = z
   .object({
-    version: z.literal(2),
+    version: z.literal(3),
     contractRevision: z.number().int().positive(),
+    assignmentHash: assignmentHashSchema,
     session: vendorSessionSchema.nullable(),
   })
   .strict()
@@ -44,18 +47,27 @@ export interface ResponsibilityWorkKey {
 
 export interface ResponsibilitySessionState {
   contractRevision: number
+  assignmentHash: string
   session: VendorSession | null
   workspaceDir: string
 }
 
+export interface ResponsibilitySessionScope {
+  contractRevision: number
+  assignmentHash: string
+}
+
 export interface ResponsibilitySessionStore {
-  open(key: ResponsibilitySessionKey, contractRevision: number): Promise<ResponsibilitySessionState>
+  open(
+    key: ResponsibilitySessionKey,
+    scope: ResponsibilitySessionScope,
+  ): Promise<ResponsibilitySessionState>
   write(
     key: ResponsibilitySessionKey,
-    contractRevision: number,
+    scope: ResponsibilitySessionScope,
     session: VendorSession,
   ): Promise<void>
-  invalidateVendor(key: ResponsibilitySessionKey, contractRevision: number): Promise<void>
+  invalidateVendor(key: ResponsibilitySessionKey, scope: ResponsibilitySessionScope): Promise<void>
   clearWork(key: ResponsibilityWorkKey): Promise<void>
 }
 
@@ -73,14 +85,16 @@ export function createResponsibilitySessionStore(homeRoot: string): Responsibili
     return join(root, normalized.projectId, normalized.goalId, normalized.workId)
   }
 
-  const revisionPaths = (key: ResponsibilitySessionKey, contractRevision: number) => {
-    const revision = z.number().int().positive().parse(contractRevision)
+  const assignmentPaths = (key: ResponsibilitySessionKey, scope: ResponsibilitySessionScope) => {
+    const contractRevision = z.number().int().positive().parse(scope.contractRevision)
+    const assignmentHash = assignmentHashSchema.parse(scope.assignmentHash)
     const responsibility = z.enum(RESPONSIBILITIES).parse(key.responsibility)
-    const revisionRoot = join(workRoot(key), responsibility, `revision-${revision}`)
+    const assignmentRoot = join(workRoot(key), responsibility, `assignment-${assignmentHash}`)
     return {
-      revision,
-      manifestPath: join(revisionRoot, 'session.json'),
-      workspaceDir: join(revisionRoot, 'workspace'),
+      contractRevision,
+      assignmentHash,
+      manifestPath: join(assignmentRoot, 'session.json'),
+      workspaceDir: join(assignmentRoot, 'workspace'),
       legacyPath: join(workRoot(key), `${responsibility}.json`),
     }
   }
@@ -88,11 +102,13 @@ export function createResponsibilitySessionStore(homeRoot: string): Responsibili
   const writeManifest = async (
     path: string,
     contractRevision: number,
+    assignmentHash: string,
     session: VendorSession | null,
   ) => {
     const manifest = sessionManifestSchema.parse({
-      version: 2,
+      version: 3,
       contractRevision,
+      assignmentHash,
       session,
     })
     await mkdir(dirname(path), { recursive: true })
@@ -110,46 +126,51 @@ export function createResponsibilitySessionStore(homeRoot: string): Responsibili
     }
   }
 
-  const readLegacySession = async (path: string) => {
+  const discardLegacySession = async (path: string) => {
     const file = Bun.file(path)
-    if (!(await file.exists())) return null
+    if (!(await file.exists())) return
     try {
-      const legacy = legacySessionManifestSchema.parse(await file.json())
-      return { transport: legacy.transport, sessionId: legacy.sessionId } satisfies VendorSession
+      legacySessionManifestSchema.parse(await file.json())
     } catch {
-      return null
+      // Legacy sessions have no assignment fingerprint and are never safe to resume.
     } finally {
       await rm(path, { force: true })
     }
   }
 
   return {
-    async open(key, contractRevision) {
-      const paths = revisionPaths(key, contractRevision)
+    async open(key, scope) {
+      const paths = assignmentPaths(key, scope)
       await mkdir(paths.workspaceDir, { recursive: true })
       let manifest = await readManifest(paths.manifestPath)
       if (!manifest) {
-        const session = await readLegacySession(paths.legacyPath)
-        await writeManifest(paths.manifestPath, paths.revision, session)
-        manifest = { version: 2, contractRevision: paths.revision, session }
+        await discardLegacySession(paths.legacyPath)
+        await writeManifest(paths.manifestPath, paths.contractRevision, paths.assignmentHash, null)
+        manifest = {
+          version: 3,
+          contractRevision: paths.contractRevision,
+          assignmentHash: paths.assignmentHash,
+          session: null,
+        }
       }
       return {
-        contractRevision: paths.revision,
+        contractRevision: paths.contractRevision,
+        assignmentHash: paths.assignmentHash,
         session: manifest.session,
         workspaceDir: paths.workspaceDir,
       }
     },
 
-    async write(key, contractRevision, session) {
-      const paths = revisionPaths(key, contractRevision)
+    async write(key, scope, session) {
+      const paths = assignmentPaths(key, scope)
       await mkdir(paths.workspaceDir, { recursive: true })
-      await writeManifest(paths.manifestPath, paths.revision, session)
+      await writeManifest(paths.manifestPath, paths.contractRevision, paths.assignmentHash, session)
     },
 
-    async invalidateVendor(key, contractRevision) {
-      const paths = revisionPaths(key, contractRevision)
+    async invalidateVendor(key, scope) {
+      const paths = assignmentPaths(key, scope)
       await mkdir(paths.workspaceDir, { recursive: true })
-      await writeManifest(paths.manifestPath, paths.revision, null)
+      await writeManifest(paths.manifestPath, paths.contractRevision, paths.assignmentHash, null)
     },
 
     async clearWork(key) {

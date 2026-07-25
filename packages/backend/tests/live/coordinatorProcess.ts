@@ -13,24 +13,13 @@ const homeRoot = configuredHomeRoot
 
 const transport = configuredTransport(process.env.HOPI_E2E_TRANSPORT)
 const instance = process.env.HOPI_E2E_INSTANCE ?? 'unknown'
-const reflectionRunner: AssistantModelRunner = {
-  async run(input) {
-    if (input.toolMode !== 'reflection') {
-      throw new Error('Focused restart Reflection runner received a speaking turn')
-    }
-    return {
-      reply: '',
-      session: { transport, sessionId: `restart-reflection-${crypto.randomUUID()}` },
-    }
-  },
-}
 const assistantRunner = createRestartAssistantRunner(instance, transport)
 const instanceLock = await acquireCoordinatorInstanceLock(
   join(homeRoot, '.hopi', 'runtime', 'coordinator.lock'),
 )
 let server: ReturnType<typeof createServer>
 try {
-  server = createServer({ rootDir: homeRoot, port, assistantRunner, reflectionRunner })
+  server = createServer({ rootDir: homeRoot, port, assistantRunner })
 } catch (error) {
   await instanceLock.release()
   throw error

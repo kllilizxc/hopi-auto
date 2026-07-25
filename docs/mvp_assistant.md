@@ -1,7 +1,12 @@
 # HOPI MVP Assistant
 
 Status: forward Assistant authority
-Last updated: 2026-07-23
+Last updated: 2026-07-24
+
+> [Project Owner And Attention](./mvp_project_owner.md) supersedes this document wherever it
+> describes a separate Reflection Agent, Attention targets/owners/waiting states, operator-request
+> fields, or notification policy. The remaining sections document conversation transport, context,
+> attachments, tools, and UI details.
 
 This document owns the workspace Assistant conversation, its configured vendor session, HOPI tool
 boundary, turn recovery, and UI behavior. Canonical schemas belong to
@@ -122,11 +127,15 @@ follows one small protocol:
    Those changes keep coalescing behind the same delay instead of resetting retries; after a small
    failure threshold, HOPI probes that scope only at the capped interval until one Reflection
    succeeds and clears the backoff. Other scopes remain eligible.
-4. Reflection first decides from the supplied trigger and compact delta. Work facts contain only
-   control state plus a bounded latest-Run outcome. It may reread bounded scoped HOPI state and follow
-   an exact diagnostic path only when a concrete anomaly needs revalidation. It does not scan the
-   HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
-5. If no response or action is useful, it ends silently. A successful Reflection transport may
+4. Reflection first decides from the supplied trigger and compact delta. Work facts contain control
+   state, a bounded latest-Run outcome, and a small newest-first Attempt index. That index exposes
+   repeated unchanged actions without imposing a retry count or recovery policy; the model judges
+   whether new facts make another invocation useful. It may reread bounded scoped HOPI state and
+   follow an exact diagnostic path only when a concrete anomaly needs revalidation. It does not scan
+   the HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
+5. If no response or action is useful, it ends silently. Whether Assistant action is useful and
+   whether the operator needs a public update are separate judgments: Reflection hands recoverable
+   internal work to the speaking thread even when that thread should act silently. A successful Reflection transport may
    express that result with an empty final message; empty output is `No action` in Reflection mode,
    not a failed model Run. Public user turns still require a non-empty reply; an internal speaking
    turn may remain silent, publish one informational final response, or call `request_user` before
@@ -470,7 +479,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
 | Create Work | Admit the current instruction as one Planning or Engineering Work | Goal Input and exactly one selected Work; Planning never retries Work or resolves Attention implicitly |
 | Control Goal | Pause, resume, cancel, reopen, or reprioritize one Goal | Validated Goal lifecycle or priority transition |
-| Control Work | Retry or defer one Work, or cancel one Engineering Work | Validated Work transition; retry remains pending until its invocation result, while cancellation settles only affected Work Attention |
+| Control Work | Retry or defer one Work, or cancel one Engineering Work | One transient retry reservation, a `notBefore` Work update, or validated cancellation |
 | Resolve Attention | Record that one exact reported condition has cleared | Attention settlement after the owning validator accepts the condition |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 | Request user | Stage selected open Attention for an operator question from an internal turn | None by itself; the validated final response becomes the public Inbox reply and then records Attention `operatorRequest` |
@@ -478,10 +487,10 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
 
-Every mutation returns its verified canonical effect, pending retry references, and any Attention
-references it settled. The model does not infer execution success from a retry request or reconstruct
-state from prose. Results omit derived continuation, Kanban predicates, and unrelated open Attention;
-Assistant reads current state only when the next decision actually needs them.
+Every mutation returns its verified effect and any Attention references it settled. The model does
+not infer execution success from a retry request or reconstruct state from prose. Results omit
+derived continuation, Kanban predicates, and unrelated open Attention; Assistant reads current state
+only when the next decision actually needs them.
 
 A failed Preview retains its diagnosis on the disposable Project Preview session. The UI can
 therefore offer an ordinary Assistant turn with Project context and optional Goal context even when
@@ -718,12 +727,11 @@ Mutation tools follow these rules:
 - use domain identity and expected current content for idempotency
 - return stable document references and a concise result to Assistant
 - reject stale, invalid, or unauthorized requests without partially advancing a control gate
-- create or reuse targeted Attention when safe automatic recovery is exhausted
 
-Each Goal or Work control is one atomic operation, not a required pair of model calls. A Work retry resets that Work
-and settles every open Attention targeted exactly at it; cancellation settles only Attention for the
-Work it makes terminal. Deferral changes scheduling time only. No control operation closes a Goal,
-Project, or unrelated Work Attention.
+Each Goal or Work control is one atomic operation, not a required pair of model calls. A Work retry
+reserves one invocation against unchanged Work and does not rewrite Work or Attention. Cancellation
+settles only Attention for the Work it makes terminal. Deferral changes scheduling time only. No
+control operation closes a Goal, Project, or unrelated Work Attention.
 
 The Assistant chooses ordinary operations from the verified state: it creates Engineering Work for
 a bounded direct change; writes design and creates Planning Work when authority or decomposition changes;
@@ -746,9 +754,11 @@ acceptance contract, dependency graph, and delivery boundary remain valid and an
 wanted, the answer is `retry`; that includes a previous invocation stopped by transient preparation,
 network, provider, or capacity failure. `revise` is used only when those represented facts must
 change. A Planner success with an empty proposal confirms that no such represented change was made.
-When the transferred Attention remains open, Reflection returns that compact outcome to the speaking
-Assistant, which applies a different real effect or requests genuinely missing authority; it does not
-repeat the already answered choice.
+When a transferred Attention remains open, Reflection returns that compact outcome to the speaking
+Assistant, which applies a different real effect or requests genuinely missing authority; it does
+not repeat the already answered choice. Failed Attempts need no synthetic Attention: their settled
+Work hash pauses automatic redispatch and makes Reflection eligible to ask Assistant for the same
+judgment.
 
 An expected domain precondition failure, such as requesting Planning for a terminal Goal before
 reopening it, is a recoverable tool error. The internal HTTP boundary returns a conflict response

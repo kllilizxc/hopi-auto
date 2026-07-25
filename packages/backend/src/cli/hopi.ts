@@ -4,7 +4,6 @@ import { createProjectCommandRunner } from '../commands/projectCommandRunner'
 import { acquireCoordinatorInstanceLock } from '../publication/instanceLock'
 import { PublicationCoordinator } from '../publication/publisher'
 import { defaultAssistantHomeRoot } from '../runtime/assistantHomeMigration'
-import { createWorkspaceAttentionController } from '../runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 
@@ -38,7 +37,7 @@ const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
 const commands = createProjectCommandRunner({
   home,
   publisher,
-  attentions: createWorkspaceAttentionController(workspace),
+  workspace,
 })
 const input = {
   projectId,

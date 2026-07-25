@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  RunArtifactError,
   cleanupRunScratch,
   parsePortableArtifactReference,
   preserveRunArtifacts,
@@ -34,7 +33,8 @@ describe('Run artifacts', () => {
     const result = await preserveRunArtifacts({
       runId: 'R-1',
       runRoot,
-      artifacts: [source],
+      artifacts: [source, 'deep/asset.png'],
+      sourceRoots: [scratch],
       resultFile,
     })
 
@@ -54,15 +54,30 @@ describe('Run artifacts', () => {
     expect(await Bun.file(join(runRoot, 'artifacts', '001-asset.png')).text()).toBe('proof')
   })
 
-  test('rejects a dangling declared proof and accepts portable legacy references', async () => {
+  test('retains a portable unavailable diagnostic without rejecting the outcome', async () => {
     const root = await temporaryRoot()
-    await expect(
-      preserveRunArtifacts({
-        runId: 'R-1',
-        runRoot: join(root, 'R-1'),
-        artifacts: [join(root, 'missing.png')],
-      }),
-    ).rejects.toBeInstanceOf(RunArtifactError)
+    const runRoot = join(root, 'R-1')
+    const result = await preserveRunArtifacts({
+      runId: 'R-1',
+      runRoot,
+      artifacts: ['reports/missing.png', join(root, 'host-only-missing.png')],
+    })
+
+    expect(result.references).toEqual(['reports/missing.png'])
+    expect(result.unavailable).toEqual([
+      {
+        reference: 'reports/missing.png',
+        reason: 'Declared Run artifact is unavailable.',
+      },
+      {
+        reference: join(root, 'host-only-missing.png'),
+        reason: 'Declared Run artifact is unavailable.',
+      },
+    ])
+    expect(await Bun.file(join(runRoot, 'artifacts.json')).json()).toMatchObject({
+      artifacts: [],
+      unavailable: result.unavailable,
+    })
 
     expect(parsePortableArtifactReference('artifact:R-1/001-proof.txt')).toEqual({
       runId: 'R-1',
@@ -133,6 +148,30 @@ describe('Run artifacts', () => {
     expect(result.references).toEqual([])
     expect(result.ignoredProposalPaths).toEqual([proposalPath])
     expect(await Bun.file(join(runRoot, 'artifacts.json')).exists()).toBe(false)
+  })
+
+  test('keeps a Project-relative artifact directory as supporting material', async () => {
+    const root = await temporaryRoot()
+    const runRoot = join(root, 'R-1')
+    const projectRoot = join(root, 'project')
+    await mkdir(join(projectRoot, 'reports', 'bundle'), { recursive: true })
+    await Bun.write(join(projectRoot, 'reports', 'bundle', 'proof.json'), '{}\n')
+
+    const result = await preserveRunArtifacts({
+      runId: 'R-1',
+      runRoot,
+      artifacts: ['reports/bundle'],
+      sourceRoots: [projectRoot],
+      portableRoots: [projectRoot],
+    })
+
+    expect(result.references).toEqual(['reports/bundle'])
+    expect(result.unavailable).toEqual([
+      {
+        reference: 'reports/bundle',
+        reason: 'Declared Run artifact is not a file.',
+      },
+    ])
   })
 })
 

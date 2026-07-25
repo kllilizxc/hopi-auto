@@ -20,6 +20,7 @@ import { hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { PlanningReference } from '../storage/goalPackageStore'
+import { appendProjectOwnerMessage } from './workAssignment'
 
 export interface PlanningInputAdmission {
   path: string
@@ -34,16 +35,6 @@ export interface PlanningContext {
 export interface PlanningAttentionSettlement {
   attentionIds: readonly string[]
   resolution: string
-}
-
-export interface WorkRetrySettlement {
-  resolution: string
-  acceptedInput?: PlanningInputAdmission
-}
-
-export interface WorkRetryResult {
-  status: 'succeeded' | 'failed'
-  diagnostic: string
 }
 
 export interface AssistantEngineeringAdmission {
@@ -83,36 +74,22 @@ export interface GoalController {
       planningSettlement?: PlanningAttentionSettlement
     },
   ): Promise<GoalDocument>
-  ensureResponsibilityFailureAttention(
-    goalId: string,
-    workId: string,
-    responsibility: 'planner' | 'generator' | 'reviewer',
-    latestFailure: string,
-  ): Promise<AttentionDocument>
-  ensureOperationalFailureAttention(
-    goalId: string,
-    workId: string,
-    failures: number,
-    latestFailure: string,
-  ): Promise<AttentionDocument>
-  ensureSynchronizationAttention(
-    goalId: string,
-    workId: string,
-    diagnostic: string,
-  ): Promise<AttentionDocument>
   completeGoal(goalId: string, attentionId: string): Promise<GoalDocument>
   pauseGoal(goalId: string): Promise<GoalDocument>
   resumeGoal(goalId: string): Promise<GoalDocument>
   setPriority(goalId: string, priority: number): Promise<GoalDocument>
   returnEngineeringWorkToGenerate(goalId: string, workId: string): Promise<WorkDocument>
   setWorkNotBefore(goalId: string, workId: string, notBefore: string | null): Promise<WorkDocument>
-  retryWork(
+  setWorkDependencies(
     goalId: string,
     workId: string,
-    notBefore: string | null,
-    settlement?: WorkRetrySettlement,
+    dependsOn: readonly string[],
   ): Promise<WorkDocument>
-  finishWorkRetry(goalId: string, workId: string, result: WorkRetryResult): Promise<string[]>
+  appendWorkMessage(
+    goalId: string,
+    workId: string,
+    input: { sourceEventId: string; content: string },
+  ): Promise<WorkDocument>
   cancelWork(goalId: string, workId: string): Promise<readonly WorkDocument[]>
   cancelGoal(goalId: string): Promise<GoalDocument>
   reopenGoal(
@@ -300,7 +277,6 @@ export function createGoalController(
           dependsOn: [],
           contractRevision: goalPackage.goal.attributes.contractRevision,
           evidenceRefs: [],
-          attempts: 0,
         },
         body: [
           '## Objective',
@@ -358,7 +334,7 @@ export function createGoalController(
       ) {
         throw new GoalControllerError('Terminal Goal must be explicitly reopened')
       }
-      if (hasAcceptedGoalChange(goalPackage.goal.body, input.eventId)) {
+      if (hasAcceptedGoalInput(goalPackage, input.eventId)) {
         await this.ensurePlanning(
           goalId,
           `Reassess accepted Inbox event ${input.eventId}.`,
@@ -368,10 +344,27 @@ export function createGoalController(
         )
         return (await store.readPackage(goalId)).goal
       }
+      const representedPlanning = [...goalPackage.works.values()].find(
+        (work) =>
+          isPlanningWork(work.attributes) &&
+          work.attributes.stage === 'plan' &&
+          work.attributes.contractRevision === goalPackage.goal.attributes.contractRevision &&
+          replacePlanningObjective(work.body, input.contractChange) === work.body,
+      )
+      if (representedPlanning) {
+        await this.ensurePlanning(
+          goalId,
+          input.contractChange,
+          input.acceptedInput,
+          input.planningContext,
+          input.planningSettlement,
+        )
+        return (await store.readPackage(goalId)).goal
+      }
 
       await this.ensurePlanning(
         goalId,
-        `Interpret accepted Inbox event ${input.eventId} and update the contract, design, and Work plan.`,
+        input.contractChange,
         input.acceptedInput,
         input.planningContext,
         input.planningSettlement,
@@ -396,7 +389,6 @@ export function createGoalController(
             ...work.attributes,
             stage: 'plan',
             contractRevision: revision,
-            attempts: 0,
           },
         }
         supportingWrites.push({
@@ -413,7 +405,6 @@ export function createGoalController(
           ...goalPackage.goal.attributes,
           contractRevision: revision,
         },
-        body: appendGoalChange(goalPackage.goal.body, input),
       }
       await store.publishGoal(goalId, {
         supportingWrites,
@@ -424,142 +415,6 @@ export function createGoalController(
         },
       })
       return nextGoal
-    },
-    async ensureResponsibilityFailureAttention(goalId, workId, responsibility, latestFailure) {
-      const goalPackage = await store.readPackage(goalId)
-      const work = goalPackage.works.get(workId)
-      if (!work || isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(
-          `Cannot create responsibility failure Attention for missing or terminal Work: ${workId}`,
-        )
-      }
-      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
-      const existing = [...goalPackage.attentions.values()].find(
-        (attention) =>
-          attention.attributes.target === target && attention.attributes.resolvedAt === null,
-      )
-      if (existing) return existing
-
-      const attention: AttentionDocument = {
-        attributes: {
-          id: `failure-${workId}-${crypto.randomUUID()}`,
-          target,
-          createdAt: now().toISOString(),
-          resolvedAt: null,
-          notifiedAt: null,
-          operatorRequest: null,
-        },
-        body: [
-          '## Assistant recovery needed',
-          '',
-          `${responsibility} could not complete Work ${workId} under its current contract.`,
-          '',
-          '## Latest result',
-          '',
-          latestFailure.trim() || 'No failure summary was recorded.',
-          '',
-        ].join('\n'),
-      }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path: store.paths.attentionDocument(goalId, attention.attributes.id),
-          expectedHash: null,
-          content: renderAttentionDocument(attention),
-        },
-      })
-      return attention
-    },
-    async ensureOperationalFailureAttention(goalId, workId, failures, latestFailure) {
-      const goalPackage = await store.readPackage(goalId)
-      const work = goalPackage.works.get(workId)
-      if (!work || isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(
-          `Cannot create operational Attention for missing or terminal Work: ${workId}`,
-        )
-      }
-      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
-      const existing = [...goalPackage.attentions.values()].find(
-        (attention) =>
-          attention.attributes.target === target && attention.attributes.resolvedAt === null,
-      )
-      if (existing) return existing
-
-      const attention: AttentionDocument = {
-        attributes: {
-          id: `A-${crypto.randomUUID()}`,
-          target,
-          createdAt: now().toISOString(),
-          resolvedAt: null,
-          notifiedAt: null,
-          operatorRequest: null,
-        },
-        body: [
-          '## Runtime failure observed',
-          '',
-          `Work ${workId} ended at the execution boundary without publishing a responsibility result.`,
-          `Observed consecutive runtime failures: ${failures}.`,
-          '',
-          '## Observation',
-          '',
-          boundedAttentionText(latestFailure),
-          '',
-        ].join('\n'),
-      }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path: store.paths.attentionDocument(goalId, attention.attributes.id),
-          expectedHash: null,
-          content: renderAttentionDocument(attention),
-        },
-      })
-      return attention
-    },
-    async ensureSynchronizationAttention(goalId, workId, diagnostic) {
-      const goalPackage = await store.readPackage(goalId)
-      const work = goalPackage.works.get(workId)
-      if (!work || isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(
-          `Cannot create synchronization Attention for missing or terminal Work: ${workId}`,
-        )
-      }
-      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
-      const existing = [...goalPackage.attentions.values()].find(
-        (attention) =>
-          attention.attributes.target === target && attention.attributes.resolvedAt === null,
-      )
-      if (existing) return existing
-
-      const attention: AttentionDocument = {
-        attributes: {
-          id: `sync-${workId}-${crypto.randomUUID()}`,
-          target,
-          createdAt: now().toISOString(),
-          resolvedAt: null,
-          notifiedAt: null,
-          operatorRequest: null,
-        },
-        body: [
-          '## Work synchronization needs recovery',
-          '',
-          `Coordinator preserved Work ${workId} but could not safely prepare its task lineage against the current release.`,
-          '',
-          '## Current diagnostic',
-          '',
-          boundedAttentionText(diagnostic),
-          '',
-        ].join('\n'),
-      }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path: store.paths.attentionDocument(goalId, attention.attributes.id),
-          expectedHash: null,
-          content: renderAttentionDocument(attention),
-        },
-      })
-      return attention
     },
     async completeGoal(goalId, attentionId) {
       const goalPackage = await store.readPackage(goalId)
@@ -579,14 +434,6 @@ export function createGoalController(
       }
       if ([...goalPackage.works.values()].some((work) => !isWorkTerminal(work.attributes))) {
         throw new GoalControllerError('Goal completion requires every Work to be terminal')
-      }
-      if (
-        [...goalPackage.attentions.values()].some(
-          (attention) =>
-            attention.attributes.target !== null && attention.attributes.resolvedAt === null,
-        )
-      ) {
-        throw new GoalControllerError('Goal completion is blocked by targeted Attention')
       }
       if (!(await options.verifyCompletion(goalId, goalPackage))) {
         throw new GoalControllerError('Goal completion structure is not valid')
@@ -710,124 +557,75 @@ export function createGoalController(
       })
       return next
     },
-    async retryWork(goalId, workId, notBefore, settlement) {
-      if (notBefore !== null && Number.isNaN(Date.parse(notBefore))) {
-        throw new GoalControllerError('Work notBefore must be an ISO timestamp or null')
-      }
+    async setWorkDependencies(goalId, workId, dependsOn) {
       const goalPackage = await store.readPackage(goalId)
       const work = goalPackage.works.get(workId)
-      if (!work || isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(`Cannot retry missing or terminal Work: ${workId}`)
+      if (!work || !isEngineeringWork(work.attributes) || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(
+          `Cannot change dependencies for missing, terminal, or non-Engineering Work: ${workId}`,
+        )
       }
+      const nextDependencies = [...new Set(dependsOn)]
+      for (const dependencyId of nextDependencies) {
+        if (dependencyId === workId) {
+          throw new GoalControllerError(`Work cannot depend on itself: ${workId}`)
+        }
+        const dependency = goalPackage.works.get(dependencyId)
+        if (!dependency || !isEngineeringWork(dependency.attributes)) {
+          throw new GoalControllerError(
+            `Work dependency is missing or not Engineering Work: ${dependencyId}`,
+          )
+        }
+        if (dependency.attributes.stage === 'cancelled') {
+          throw new GoalControllerError(`Work cannot depend on cancelled Work: ${dependencyId}`)
+        }
+      }
+      if (JSON.stringify(nextDependencies) === JSON.stringify(work.attributes.dependsOn)) {
+        return work
+      }
+      const path = store.paths.workDocument(goalId, workId)
+      const source = await Bun.file(store.paths.absolute(path)).text()
       const next: WorkDocument = {
         ...work,
-        attributes: { ...work.attributes, attempts: 0, notBefore },
+        attributes: { ...work.attributes, dependsOn: nextDependencies },
       }
-      const writes: PublicationWrite[] = []
-      if (settlement?.acceptedInput?.write) writes.push(settlement.acceptedInput.write)
-      if (work.attributes.attempts !== 0 || work.attributes.notBefore !== notBefore) {
-        const path = store.paths.workDocument(goalId, workId)
-        const source = await Bun.file(store.paths.absolute(path)).text()
-        writes.push({
+      await store.publishGoal(goalId, {
+        supportingWrites: [],
+        gateWrite: {
           path,
           expectedHash: await hashBytes(new TextEncoder().encode(source)),
           content: renderWorkDocument(next),
-        })
-      }
-
-      if (settlement) {
-        const target = workAttentionTarget(store.paths.projectId, goalId, workId)
-        const retryRunId = `R-${crypto.randomUUID()}`
-        for (const attention of goalPackage.attentions.values()) {
-          if (attention.attributes.target !== target || attention.attributes.resolvedAt !== null) {
-            continue
-          }
-          if ((attention.attributes.retryRunId ?? null) !== null) continue
-          const path = store.paths.attentionDocument(goalId, attention.attributes.id)
-          const source = await Bun.file(store.paths.absolute(path)).text()
-          const requested: AttentionDocument = {
-            ...attention,
-            attributes: {
-              ...attention.attributes,
-              operatorRequest: null,
-              retryRunId,
-            },
-            body: [
-              attention.body.trimEnd(),
-              '',
-              '## Retry requested',
-              '',
-              ...(settlement.acceptedInput
-                ? [`Answer Input: \`${settlement.acceptedInput.path}\``, '']
-                : []),
-              settlement.resolution.trim(),
-              'This Attention remains unresolved until the requested invocation reports its result.',
-              '',
-            ].join('\n'),
-          }
-          writes.push({
-            path,
-            expectedHash: await hashBytes(new TextEncoder().encode(source)),
-            content: renderAttentionDocument(requested),
-          })
-        }
-      }
-
-      if (writes.length === 0) return work
-      const attentionPrefix = `${store.paths.attentionRoot(goalId)}/`
-      const attentionGateIndex = writes.findLastIndex((write) =>
-        write.path.startsWith(attentionPrefix),
-      )
-      const gateIndex = attentionGateIndex >= 0 ? attentionGateIndex : writes.length - 1
-      const [gateWrite] = writes.splice(gateIndex, 1)
-      if (!gateWrite) return next
-      await store.publishGoal(goalId, { supportingWrites: writes, gateWrite })
+        },
+      })
       return next
     },
-    async finishWorkRetry(goalId, workId, result) {
+    async appendWorkMessage(goalId, workId, input) {
       const goalPackage = await store.readPackage(goalId)
-      const target = workAttentionTarget(store.paths.projectId, goalId, workId)
-      const writes: PublicationWrite[] = []
-      const attentionIds: string[] = []
-      const finishedAt = now().toISOString()
-      for (const attention of goalPackage.attentions.values()) {
-        if (
-          attention.attributes.target !== target ||
-          attention.attributes.resolvedAt !== null ||
-          (attention.attributes.retryRunId ?? null) === null
-        ) {
-          continue
-        }
-        const path = store.paths.attentionDocument(goalId, attention.attributes.id)
-        const source = await Bun.file(store.paths.absolute(path)).text()
-        const next: AttentionDocument = {
-          ...attention,
-          attributes: {
-            ...attention.attributes,
-            retryRunId: null,
-            ...(result.status === 'succeeded' ? { resolvedAt: finishedAt } : {}),
-          },
-          body: [
-            attention.body.trimEnd(),
-            '',
-            result.status === 'succeeded' ? '## Resolution' : '## Retry result',
-            '',
-            result.diagnostic.trim(),
-            '',
-          ].join('\n'),
-        }
-        writes.push({
+      const work = goalPackage.works.get(workId)
+      if (!work || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(`Cannot message missing or terminal Work: ${workId}`)
+      }
+      const content = input.content.trim()
+      if (!content) throw new GoalControllerError('Work message cannot be empty')
+      const path = store.paths.workDocument(goalId, workId)
+      const source = await Bun.file(store.paths.absolute(path)).text()
+      const next: WorkDocument = {
+        ...work,
+        body: appendProjectOwnerMessage(work.body, {
+          recordedAt: now().toISOString(),
+          sourceEventId: input.sourceEventId,
+          content,
+        }),
+      }
+      await store.publishGoal(goalId, {
+        supportingWrites: [],
+        gateWrite: {
           path,
           expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderAttentionDocument(next),
-        })
-        attentionIds.push(attention.attributes.id)
-      }
-      if (writes.length === 0) return []
-      const gateWrite = writes.pop()
-      if (!gateWrite) return []
-      await store.publishGoal(goalId, { supportingWrites: writes, gateWrite })
-      return attentionIds.toSorted()
+          content: renderWorkDocument(next),
+        },
+      })
+      return next
     },
     async cancelWork(goalId, workId) {
       let goalPackage = await store.readPackage(goalId)
@@ -908,7 +706,7 @@ export function createGoalController(
       let goalPackage = await store.readPackage(goalId)
       if (
         goalPackage.goal.attributes.lifecycle === 'active' &&
-        hasAcceptedGoalChange(goalPackage.goal.body, input.eventId)
+        hasAcceptedGoalInput(goalPackage, input.eventId)
       ) {
         await this.ensurePlanning(
           goalId,
@@ -939,7 +737,6 @@ export function createGoalController(
           attributes: {
             ...completion.attributes,
             operatorRequest: null,
-            retryRunId: null,
             resolvedAt: now().toISOString(),
           },
           body: `${completion.body}\n## Resolution\n\nSuperseded by explicit Goal reopen.\n`,
@@ -960,12 +757,6 @@ export function createGoalController(
           contractRevision: goalPackage.goal.attributes.contractRevision + 1,
           completionAttentionId: null,
         },
-        body: input.contractChange
-          ? appendGoalChange(goalPackage.goal.body, {
-              eventId: input.eventId,
-              contractChange: input.contractChange,
-            })
-          : goalPackage.goal.body,
       }
       await store.publishGoal(goalId, {
         supportingWrites,
@@ -977,7 +768,7 @@ export function createGoalController(
       })
       await this.ensurePlanning(
         goalId,
-        `Reassess reopened Goal after Inbox event ${input.eventId}.`,
+        input.contractChange ?? `Reassess reopened Goal after Inbox event ${input.eventId}.`,
       )
       return (await store.readPackage(goalId)).goal
     },
@@ -1017,7 +808,6 @@ async function planningAttentionResolutionWrites(
     const source = await Bun.file(store.paths.absolute(path)).text()
     const resolved = parseAttentionDocument(source)
     resolved.attributes.operatorRequest = null
-    resolved.attributes.retryRunId = null
     resolved.attributes.resolvedAt = resolvedAt.toISOString()
     resolved.attributes.resolutionInput = acceptedInput.path
     resolved.body = [
@@ -1064,7 +854,6 @@ async function supersededCompletionWrites(
     const source = await Bun.file(store.paths.absolute(path)).text()
     const resolved = parseAttentionDocument(source)
     resolved.attributes.operatorRequest = null
-    resolved.attributes.retryRunId = null
     resolved.attributes.resolvedAt = resolvedAt.toISOString()
     resolved.body = [
       resolved.body.trimEnd(),
@@ -1110,7 +899,6 @@ async function resolveAttention(
   const source = await Bun.file(store.paths.absolute(path)).text()
   const next = parseAttentionDocument(source)
   next.attributes.operatorRequest = null
-  next.attributes.retryRunId = null
   next.attributes.resolvedAt = resolvedAt.toISOString()
   next.body += `\n## Resolution\n\n${reason}\n`
   await store.publishGoal(goalId, {
@@ -1142,10 +930,6 @@ async function publishWorkCancellation(
       content: renderWorkDocument(next),
     },
   })
-}
-
-function appendGoalChange(body: string, input: { eventId: string; contractChange: string }) {
-  return `${body.trimEnd()}\n\n${goalChangeHeading(input.eventId)}\n\n${input.contractChange.trim()}\n`
 }
 
 function replacePlanningObjective(body: string, objective: string) {
@@ -1196,20 +980,8 @@ function appendListEntry(body: string, heading: string, entry: string) {
     .trimStart()}`
 }
 
-function hasAcceptedGoalChange(body: string, eventId: string) {
-  return (
-    body.includes(goalChangeHeading(eventId)) ||
-    body.includes(`## Accepted Inbox Instruction ${eventId}`)
-  )
-}
-
-function goalChangeHeading(eventId: string) {
-  return `## Accepted Goal Change ${eventId}`
-}
-
-function boundedAttentionText(value: string) {
-  const normalized = value.trim() || 'No failure summary was recorded.'
-  return normalized.length <= 4_000 ? normalized : `${normalized.slice(0, 4_000)}\n[truncated]`
+function hasAcceptedGoalInput(goalPackage: GoalPackage, eventId: string) {
+  return goalPackage.inputs.some((input) => input.attributes.sourceEventId === eventId)
 }
 
 function nextPlanningWorkId(goalPackage: GoalPackage) {

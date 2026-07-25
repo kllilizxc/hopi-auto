@@ -36,7 +36,6 @@ describe('canonical Markdown documents', () => {
         dependsOn: [],
         contractRevision: 1,
         evidenceRefs: [],
-        attempts: 0,
       },
       body: '## Objective\n\nClarify and plan.\n',
     })
@@ -94,7 +93,7 @@ describe('canonical Markdown documents', () => {
     expect(evidence.attributes.producerRun).toContain('/run:R-1')
   })
 
-  test('accepts but removes a legacy Engineering Work Repo subset', () => {
+  test('accepts but removes obsolete Work and Attention fields', () => {
     const work = parseWorkDocument(`---
 id: W-legacy
 title: Build across the Project
@@ -109,9 +108,24 @@ attempts: 0
 ---
 All Project Repos are available.
 `)
+    const attention = parseAttentionDocument(`---
+id: A-legacy
+target: project:P-1/goal:G-1/work:W-legacy
+createdAt: 2026-07-11T00:00:00Z
+resolvedAt: null
+notifiedAt: null
+operatorRequest: null
+retryRunId: R-legacy
+---
+Legacy retry state is represented by Attempt history now.
+`)
 
     expect(work.attributes).not.toHaveProperty('repos')
+    expect(work.attributes).not.toHaveProperty('attempts')
     expect(renderWorkDocument(work)).not.toContain('repos:')
+    expect(renderWorkDocument(work)).not.toContain('attempts:')
+    expect(attention.attributes).not.toHaveProperty('retryRunId')
+    expect(renderAttentionDocument(attention)).not.toContain('retryRunId:')
   })
 
   test('rejects illegal discriminators and duplicated control references', () => {

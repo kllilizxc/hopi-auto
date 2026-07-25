@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { createProcessGroupTerminator } from './processGroup'
 
 export const PROJECT_PREPARE_PATH = 'scripts/hopi/prepare'
@@ -12,23 +12,13 @@ export type ProjectPreparationKind =
   | 'source_changed'
   | 'skipped_dirty'
 
-export interface RepoPreparationResult {
-  repoId: string
-  repoRoot: string
-  kind: ProjectPreparationKind
-  adapterPath: string
-  exitCode: number | null
-  logs: string
-  logPath: string
-}
-
 export interface ProjectPreparationResult {
   kind: ProjectPreparationKind
   adapterPath: string
   exitCode: number | null
   logs: string
   logPath: string
-  repos: readonly RepoPreparationResult[]
+  reposFile: string
 }
 
 export interface ProjectPreparationRepoRoot {
@@ -93,66 +83,68 @@ export function createProjectPreparer(): ProjectPreparer {
       const initialStatuses = await sourceStatuses(observedRoots)
       const dirtyRoots = [...initialStatuses].filter(([, status]) => status)
       if (dirtyRoots.length > 0) {
-        const logs = `Repo preparation was skipped because a task checkout already has uncheckpointed source:\n${renderStatuses(dirtyRoots)}`
-        const repos = await Promise.all(
-          repoRoots.map((repo, index) =>
-            finishRepo(
-              repo,
-              repoRuntimeDir(runtimeDir, repo.repoId, index),
-              'skipped_dirty',
-              null,
-              logs,
-            ),
-          ),
+        return finishPreparation(
+          {
+            kind: 'skipped_dirty',
+            adapterPath: join(resolve(input.projectRoot), ...PROJECT_PREPARE_PATH.split('/')),
+            exitCode: null,
+            logs: `Project preparation was skipped because the managed release has uncheckpointed source:\n${renderStatuses(dirtyRoots)}`,
+            logPath,
+            reposFile,
+          },
+          logPath,
         )
-        return finishProject(repos, logPath)
       }
 
-      const repos: RepoPreparationResult[] = []
-      for (const [index, repo] of repoRoots.entries()) {
-        const result = await prepareRepo({
-          repo,
-          repoRoots,
-          reposFile,
-          runtimeDir: repoRuntimeDir(runtimeDir, repo.repoId, index),
-          cacheDir,
-          timeoutMs: input.timeoutMs,
-        })
-        repos.push(result)
-      }
-      return finishProject(repos, logPath)
+      return prepareProject({
+        projectRoot: resolve(input.projectRoot),
+        repoRoots,
+        reposFile,
+        runtimeDir,
+        cacheDir,
+        timeoutMs: input.timeoutMs,
+      })
     },
   }
 }
 
-async function prepareRepo(input: {
-  repo: ProjectPreparationRepoRoot
+async function prepareProject(input: {
+  projectRoot: string
   repoRoots: readonly ProjectPreparationRepoRoot[]
   reposFile: string
   runtimeDir: string
   cacheDir: string
   timeoutMs?: number
 }) {
-  const adapterPath = join(input.repo.path, ...PROJECT_PREPARE_PATH.split('/'))
+  const adapterPath = join(input.projectRoot, ...PROJECT_PREPARE_PATH.split('/'))
+  const logPath = join(input.runtimeDir, 'prepare.log')
   await mkdir(input.runtimeDir, { recursive: true })
   const adapter = Bun.file(adapterPath)
   if (!(await adapter.exists())) {
-    return finishRepo(
-      input.repo,
-      input.runtimeDir,
-      'absent',
-      null,
-      `${PROJECT_PREPARE_PATH} is missing.`,
+    return finishPreparation(
+      {
+        kind: 'absent',
+        adapterPath,
+        exitCode: null,
+        logs: `${PROJECT_PREPARE_PATH} is missing.`,
+        logPath,
+        reposFile: input.reposFile,
+      },
+      logPath,
     )
   }
   const stats = await adapter.stat()
   if (!stats.isFile() || (stats.mode & 0o111) === 0) {
-    return finishRepo(
-      input.repo,
-      input.runtimeDir,
-      'not_executable',
-      null,
-      `${PROJECT_PREPARE_PATH} is not executable.`,
+    return finishPreparation(
+      {
+        kind: 'not_executable',
+        adapterPath,
+        exitCode: null,
+        logs: `${PROJECT_PREPARE_PATH} is not executable.`,
+        logPath,
+        reposFile: input.reposFile,
+      },
+      logPath,
     )
   }
 
@@ -161,15 +153,13 @@ async function prepareRepo(input: {
   let exitCode: number | null = null
   try {
     const child = Bun.spawn([adapterPath], {
-      cwd: input.repo.path,
+      cwd: input.projectRoot,
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
         ...process.env,
         HOPI_GOAL_ID: undefined,
-        HOPI_PROJECT_ROOT: input.repo.path,
-        HOPI_REPO_ID: input.repo.repoId,
-        HOPI_REPO_ROOT: input.repo.path,
+        HOPI_PROJECT_ROOT: input.projectRoot,
         HOPI_REPOS_FILE: input.reposFile,
         HOPI_PREPARE_RUNTIME_DIR: input.runtimeDir,
         HOPI_CACHE_DIR: input.cacheDir,
@@ -205,16 +195,30 @@ async function prepareRepo(input: {
   const after = await sourceStatuses(input.repoRoots.map((repo) => repo.path))
   if (JSON.stringify([...after]) !== JSON.stringify([...before])) {
     lines.push(
-      `stderr: ${PROJECT_PREPARE_PATH} modified Repo source:\n${renderStatuses([...after])}`,
+      `stderr: ${PROJECT_PREPARE_PATH} modified Project source:\n${renderStatuses([...after])}`,
     )
-    return finishRepo(input.repo, input.runtimeDir, 'source_changed', exitCode, lines.join('\n'))
+    return finishPreparation(
+      {
+        kind: 'source_changed',
+        adapterPath,
+        exitCode,
+        logs: lines.join('\n'),
+        logPath,
+        reposFile: input.reposFile,
+      },
+      logPath,
+    )
   }
-  return finishRepo(
-    input.repo,
-    input.runtimeDir,
-    exitCode === 0 ? 'ready' : 'failed',
-    exitCode,
-    lines.join('\n'),
+  return finishPreparation(
+    {
+      kind: exitCode === 0 ? 'ready' : 'failed',
+      adapterPath,
+      exitCode,
+      logs: lines.join('\n'),
+      logPath,
+      reposFile: input.reposFile,
+    },
+    logPath,
   )
 }
 
@@ -237,58 +241,13 @@ function renderStatuses(entries: readonly (readonly [string, string])[]) {
   return entries.map(([root, status]) => `${root}:\n${status || '(clean)'}`).join('\n')
 }
 
-async function finishRepo(
-  repo: ProjectPreparationRepoRoot,
-  runtimeDir: string,
-  kind: ProjectPreparationKind,
-  exitCode: number | null,
-  logs: string,
-): Promise<RepoPreparationResult> {
-  const logPath = join(runtimeDir, 'prepare.log')
-  await mkdir(runtimeDir, { recursive: true })
-  await Bun.write(logPath, logs ? `${logs}\n` : '')
-  return {
-    repoId: repo.repoId,
-    repoRoot: repo.path,
-    kind,
-    adapterPath: join(repo.path, ...PROJECT_PREPARE_PATH.split('/')),
-    exitCode,
-    logs,
-    logPath,
-  }
-}
-
-async function finishProject(
-  repos: readonly RepoPreparationResult[],
+async function finishPreparation(
+  result: ProjectPreparationResult,
   logPath: string,
 ): Promise<ProjectPreparationResult> {
-  if (repos.length === 0) throw new Error('Repo preparation produced no result')
-  const failed = repos.find((repo) => repo.kind !== 'ready')
-  const representative = failed ?? repos[0]
-  if (!representative) throw new Error('Repo preparation produced no representative result')
-  const logs = repos
-    .map(
-      (repo) =>
-        `## Repo ${repo.repoId}\n\nStatus: ${repo.kind}\nAdapter: ${repo.adapterPath}\nLog: ${repo.logPath}\n\n${repo.logs}`,
-    )
-    .join('\n\n')
-  await Bun.write(logPath, logs ? `${logs}\n` : '')
-  return {
-    kind: representative.kind,
-    adapterPath: representative.adapterPath,
-    exitCode: representative.exitCode,
-    logs,
-    logPath,
-    repos,
-  }
-}
-
-function repoRuntimeDir(runtimeDir: string, repoId: string, index: number) {
-  return join(
-    runtimeDir,
-    'repos',
-    `${String(index).padStart(3, '0')}-${encodeURIComponent(repoId)}`,
-  )
+  await mkdir(dirname(logPath), { recursive: true })
+  await Bun.write(logPath, result.logs ? `${result.logs}\n` : '')
+  return result
 }
 
 async function sourceStatus(cwd: string) {

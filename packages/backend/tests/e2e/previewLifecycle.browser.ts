@@ -373,7 +373,6 @@ async function plan(input: RoleRunInput, hasEngineering: boolean): Promise<RoleR
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
-          attempts: 0,
         },
         body: '## Acceptance Criteria\n\n- `src/feature.ts` exports feature with value 2.\n',
       }),

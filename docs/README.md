@@ -7,8 +7,12 @@
   Attention, and Evidence documents.
 - [`mvp_assistant.md`](./mvp_assistant.md): Home-configured Assistant conversation, HOPI tools,
   session recovery, Reflection, and Assistant UI behavior.
+- [`mvp_project_owner.md`](./mvp_project_owner.md): authoritative Project Assistant, wake-up,
+  Attention, Needs You, and intervention model.
 - [`mvp_execution.md`](./mvp_execution.md): fixed responsibilities,
   scheduling, worktrees, integration, completion, notification, and Preview.
+- [`mvp_project_runtime.md`](./mvp_project_runtime.md): authoritative Project-level Prepare and
+  Preview capability model.
 - [`mvp_multi_repo.md`](./mvp_multi_repo.md): Project Repo membership, multi-root Work execution,
   the primary C1 release manifest, and projection recovery.
 - [`multi_vendor_agent_support.md`](./multi_vendor_agent_support.md): adapter-only command, event,

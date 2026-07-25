@@ -104,7 +104,6 @@ try {
     PROJECT_ID,
     'Repository paths must be rebound after the machine move.',
   )
-  await runtime.workspace.markAttentionNotified(attention.attributes.id)
   await runtime.assistantConversation.writeSession(
     { kind: 'project', projectId: PROJECT_ID },
     {
@@ -145,7 +144,6 @@ try {
     port: 0,
     roleRunner,
     assistantRunner: silentAssistant,
-    reflectionRunner: silentAssistant,
   })
   serverCleanup = ownTestRunServer(testRun, server)
   const baseUrl = `http://127.0.0.1:${server.port}`

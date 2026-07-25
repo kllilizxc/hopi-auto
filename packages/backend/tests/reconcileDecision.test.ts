@@ -18,7 +18,7 @@ describe('decideGoalReconciliation', () => {
     })
   })
 
-  test('uses permanent Engineering dependency order', () => {
+  test('uses current Engineering dependency order', () => {
     const first = work('W-1', 'engineering', 'generate')
     const second = work('W-2', 'engineering', 'generate', ['W-1'])
     const goalPackage = packageWith([second, first])
@@ -26,21 +26,9 @@ describe('decideGoalReconciliation', () => {
     expect(decide(goalPackage)).toMatchObject({ kind: 'dispatch', workId: 'W-1' })
   })
 
-  test('treats attempts as history rather than a dispatch limit', () => {
-    const attempted = work('W-1', 'engineering', 'generate')
-    attempted.attributes.attempts = 30
-    const goalPackage = packageWith([attempted])
-    expect(decide(goalPackage)).toEqual({
-      kind: 'dispatch',
-      workId: 'W-1',
-      responsibility: 'generator',
-    })
-  })
-
-  test('dispatches through one pending retry without resolving its Attention', () => {
+  test('does not use an open Work Attention as a scheduling gate', () => {
     const target = 'project:P-1/goal:G-1/work:W-1'
     const pending = attention('A-1', target)
-    pending.attributes.retryRunId = 'R-1'
     const goalPackage = packageWith([work('W-1', 'engineering', 'generate')], [pending])
 
     expect(decide(goalPackage)).toEqual({
@@ -152,7 +140,6 @@ function work(
     dependsOn,
     contractRevision: 1,
     evidenceRefs: stage === 'done' && kind === 'engineering' ? ['E-1'] : [],
-    attempts: 0,
   }
   return kind === 'planning'
     ? { attributes: { ...common, kind, stage: stage as 'plan' | 'done' }, body: '' }

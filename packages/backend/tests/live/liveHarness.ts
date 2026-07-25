@@ -1,7 +1,6 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { ensureDefaultAgentAdapterConfig } from '../../src/agent/defaultAdapterConfig'
-import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
 import { parseInboxEventDocument } from '../../src/domain/assistantWorkspaceDocuments'
 import { projectReleaseRef } from '../../src/domain/project'
 import {
@@ -14,8 +13,8 @@ import {
   browserAdapterEnvironment,
   browserHarnessAdapterCommand,
   defaultBrowserTestHome,
+  hasManagedBrowserConfiguration,
   resolveBrowserHarnessBackendCommand,
-  resolveManagedBrowserCommand,
 } from '../../src/runtime/browserEnvironment'
 import { managedRepoWorktreePaths } from '../../src/runtime/managedWorktreePaths'
 import {
@@ -146,7 +145,7 @@ export interface StateRecorder {
 
 export async function startLiveHarness(
   scenario: string,
-  options: { deterministicReflection?: boolean } = {},
+  _options: { deterministicReflection?: boolean } = {},
 ): Promise<LiveHarness> {
   const logicalRunLimit = resolveLogicalRunLimit()
   const run = await startTestRun(scenario, 'live')
@@ -155,16 +154,13 @@ export async function startLiveHarness(
   const repoRoot = join(artifactRoot, 'repo')
   const codingDefaults = liveCodingDefaults()
   const modelBoundaries = {
-    reflection: options.deterministicReflection ? 'deterministic' : 'real',
+    reflection: 'deterministic',
   } as const
   const code = run.code
   await ensureDefaultAgentAdapterConfig(homeRoot, codingDefaults)
   const server = createServer({
     rootDir: homeRoot,
     port: 0,
-    ...(options.deterministicReflection
-      ? { reflectionRunner: createDeterministicReflectionRunner(codingDefaults.transport) }
-      : {}),
   })
   const harness: LiveHarness = {
     scenario,
@@ -718,14 +714,17 @@ export async function captureBrowserPage(
 export async function captureAssistantReply(
   harness: BrowserHarnessContext,
   visibleReplyText: string,
+  view: { pagePath?: string; evidencePrefix?: string } = {},
 ) {
+  const prefix = view.evidencePrefix ? `${safeSegment(view.evidencePrefix)}-` : ''
   return captureAssistantFeedCheckpoint(harness, visibleReplyText, {
     action: 'assistant_reply_captured',
     auditLabel: 'HOPI Assistant reply visible',
-    evidenceName: 'browser-reply-evidence.json',
-    logName: 'browser-reply.log',
+    evidenceName: `${prefix}browser-reply-evidence.json`,
+    logName: `${prefix}browser-reply.log`,
     marker: 'HOPI_E2E_REPLY=',
-    screenshotName: '05-assistant-reply.png',
+    pagePath: view.pagePath,
+    screenshotName: `${prefix}05-assistant-reply.png`,
     subject: 'Handled Assistant reply',
   })
 }
@@ -733,15 +732,18 @@ export async function captureAssistantReply(
 export async function captureCompletionUpdate(
   harness: BrowserHarnessContext,
   visibleUpdateText: string,
+  view: { pagePath?: string; evidencePrefix?: string } = {},
 ) {
+  const prefix = view.evidencePrefix ? `${safeSegment(view.evidencePrefix)}-` : ''
   return captureAssistantFeedCheckpoint(harness, visibleUpdateText, {
     action: 'completion_update_captured',
     auditLabel: 'HOPI Goal completion update visible',
-    evidenceName: 'browser-completion-evidence.json',
-    logName: 'browser-completion.log',
+    evidenceName: `${prefix}browser-completion-evidence.json`,
+    logName: `${prefix}browser-completion.log`,
     marker: 'HOPI_E2E_COMPLETION=',
+    pagePath: view.pagePath,
     rejectVisibleErrorActivity: true,
-    screenshotName: '05-completion-update.png',
+    screenshotName: `${prefix}05-completion-update.png`,
     subject: 'Goal completion update',
   })
 }
@@ -755,12 +757,13 @@ async function captureAssistantFeedCheckpoint(
     evidenceName: string
     logName: string
     marker: string
+    pagePath?: string
     rejectVisibleErrorActivity?: boolean
     screenshotName: string
     subject: string
   },
 ) {
-  const url = `${harness.baseUrl}/projects`
+  const url = `${harness.baseUrl}${options.pagePath ?? '/projects'}`
   const screenshot = await screenshotTarget(harness, options.screenshotName)
   const openExpression = [
     '(() => {',
@@ -2078,7 +2081,7 @@ export function liveCodingDefaults() {
 function resolveBrowserHarnessInvocation(context: BrowserHarnessContext) {
   const backendCommand = resolveBrowserHarnessBackendCommand()
   if (!backendCommand) throw new Error('Browser Harness is not installed')
-  if (!resolveManagedBrowserCommand()) {
+  if (!hasManagedBrowserConfiguration()) {
     throw new Error('A supported managed Chrome, Chromium, Edge, or Brave browser is not installed')
   }
   return {
@@ -2270,22 +2273,6 @@ function positiveLogicalRunLimit(value: number) {
     throw new Error('HOPI_E2E_MAX_LOGICAL_RUNS must be a positive integer')
   }
   return value
-}
-
-function createDeterministicReflectionRunner(
-  transport: ProjectCodingDefaults['transport'],
-): AssistantModelRunner {
-  return {
-    async run(input) {
-      if (input.toolMode !== 'reflection') {
-        throw new Error('Deterministic Reflection runner received a speaking turn')
-      }
-      return {
-        reply: '',
-        session: { transport, sessionId: `e2e-no-action-${input.eventId}` },
-      }
-    },
-  }
 }
 
 function numberValue(value: unknown) {

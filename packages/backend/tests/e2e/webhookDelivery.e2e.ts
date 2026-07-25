@@ -21,7 +21,7 @@ const homeRoot = join(artifactRoot, 'home')
 const home = createAssistantHomeStore(homeRoot)
 const homeDocument = await home.initialize()
 const workspace = createAssistantWorkspaceStore(homeRoot, new PublicationCoordinator())
-const event = await workspace.receiveReflectionEvent({
+const event = await workspace.receiveSystemEvent({
   eventId: 'EV-webhook-retry',
   content: 'An operator-facing delivery must be sent through the configured webhook.',
 })

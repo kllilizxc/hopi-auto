@@ -40,8 +40,11 @@ test('backfills legacy delivered blockers while preserving explicit Assistant ow
       id: 'A-workspace-legacy',
       target: 'project:P-1',
       createdAt: '2026-07-18T00:00:00Z',
+      updatedAt: '2026-07-18T00:01:00Z',
       resolvedAt: null,
+      refs: ['project:P-1'],
       notifiedAt: '2026-07-18T00:01:00Z',
+      operatorRequest: null,
     },
     body: 'Legacy Project request.\n',
   })
@@ -99,12 +102,12 @@ test('backfills legacy delivered blockers while preserving explicit Assistant ow
       workspace,
       projects: new Map([['P-1', { store }]]),
     }),
-  ).toBe(2)
+  ).toBe(1)
   const expectedRequest = `home:${homeId}/event:EV-legacy-request`
   expect(
     (await workspace.readWorkspace()).attentions.get('A-workspace-legacy')?.attributes
       .operatorRequest,
-  ).toBe(expectedRequest)
+  ).toBeNull()
   const goalPackage = await store.readPackage('G-1')
   expect(goalPackage.attentions.get('A-goal-legacy')?.attributes.operatorRequest).toBe(
     expectedRequest,

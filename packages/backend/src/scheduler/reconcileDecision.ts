@@ -26,10 +26,7 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
   const goal = goalPackage.goal.attributes
   if (
     goal.lifecycle === 'cancelled' &&
-    ([...goalPackage.works.values()].some((work) => !isWorkTerminal(work.attributes)) ||
-      [...goalPackage.attentions.values()].some(
-        (attention) => attention.attributes.resolvedAt === null,
-      ))
+    [...goalPackage.works.values()].some((work) => !isWorkTerminal(work.attributes))
   ) {
     return { kind: 'finish_cancellation' }
   }
@@ -51,9 +48,6 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
         attention.attributes.id !== goal.completionAttentionId,
     )
     if (!completion) return { kind: 'ensure_planning' }
-    if (hasAnyOpenTargetedAttention(goalPackage)) {
-      return { kind: 'wait', reasons: ['attention'] }
-    }
     if (input.completionStructureValid === false) {
       return { kind: 'wait', reasons: ['completion_structure_invalid'] }
     }
@@ -96,12 +90,6 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
       ),
     ],
   }
-}
-
-function hasAnyOpenTargetedAttention(goalPackage: GoalPackage) {
-  return [...goalPackage.attentions.values()].some(
-    (attention) => attention.attributes.target !== null && attention.attributes.resolvedAt === null,
-  )
 }
 
 function dependencyRank(

@@ -12,6 +12,7 @@ import {
   type InboxEventDocument,
   type WorkspaceAttentionDocument,
   inboxSourceDigest,
+  isInternalInboxSource,
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
   renderInboxEventDocument,
@@ -36,7 +37,7 @@ export interface ReceiveInboxEventInput {
   receivedAt?: Date
 }
 
-export interface ReceiveReflectionEventInput {
+export interface ReceiveInternalEventInput {
   eventId?: string
   content: string
   context?: InboxContext
@@ -55,7 +56,8 @@ export interface AssistantWorkspaceStore {
   readEvent(eventId: string): Promise<InboxEventDocument | null>
   resolveAttachment(reference: string): Promise<AssistantImageAttachment | null>
   receiveEvent(input: ReceiveInboxEventInput): Promise<InboxEventDocument>
-  receiveReflectionEvent(input: ReceiveReflectionEventInput): Promise<InboxEventDocument>
+  receiveSystemEvent(input: ReceiveInternalEventInput): Promise<InboxEventDocument>
+  receiveReflectionEvent(input: ReceiveInternalEventInput): Promise<InboxEventDocument>
   exposeEvent(eventId: string): Promise<InboxEventDocument>
   handleEvent(
     eventId: string,
@@ -63,14 +65,9 @@ export interface AssistantWorkspaceStore {
   ): Promise<InboxEventDocument>
   markEventWebhookDelivered(eventId: string, deliveredAt?: Date): Promise<InboxEventDocument>
   createAttention(attention: WorkspaceAttentionDocument): Promise<WorkspaceAttentionDocument>
-  markAttentionNotified(
+  updateAttention(
     attentionId: string,
-    notifiedAt?: Date,
-    operatorRequest?: string,
-  ): Promise<WorkspaceAttentionDocument>
-  clearAttentionOperatorRequest(
-    attentionId: string,
-    expectedRequest?: string,
+    input: { body?: string; refs?: string[]; updatedAt?: Date },
   ): Promise<WorkspaceAttentionDocument>
   resolveAttention(
     attentionId: string,
@@ -170,13 +167,16 @@ export function createAssistantWorkspaceStore(
     async receiveReflectionEvent(input) {
       return receiveEvent(root, paths, publisher, input, 'reflection', 'internal', [], [])
     },
+    async receiveSystemEvent(input) {
+      return receiveEvent(root, paths, publisher, input, 'system', 'internal', [], [])
+    },
     async exposeEvent(eventId) {
       const { source, event } = await requireEvent(this, homeRoot, eventId)
-      if (event.attributes.source !== 'reflection') {
-        throw new AssistantWorkspaceStoreError('Only Reflection turns can be exposed')
+      if (!isInternalInboxSource(event.attributes.source)) {
+        throw new AssistantWorkspaceStoreError('Only internal Assistant turns can be exposed')
       }
       if (event.attributes.status !== 'pending') {
-        throw new AssistantWorkspaceStoreError('Handled Reflection turns cannot be exposed')
+        throw new AssistantWorkspaceStoreError('Handled internal Assistant turns cannot be exposed')
       }
       if (event.attributes.visibility === 'public') return event
       event.attributes.visibility = 'public'
@@ -187,8 +187,8 @@ export function createAssistantWorkspaceStore(
       const { source, event } = await requireEvent(this, homeRoot, eventId)
       if (event.attributes.status === 'handled') return event
       if (input.expose) {
-        if (event.attributes.source !== 'reflection') {
-          throw new AssistantWorkspaceStoreError('Only Reflection turns can be exposed')
+        if (!isInternalInboxSource(event.attributes.source)) {
+          throw new AssistantWorkspaceStoreError('Only internal Assistant turns can be exposed')
         }
         event.attributes.visibility = 'public'
       }
@@ -223,31 +223,20 @@ export function createAssistantWorkspaceStore(
       })
       return attention
     },
-    async markAttentionNotified(attentionId, notifiedAt = new Date(), operatorRequest = undefined) {
+    async updateAttention(attentionId, input) {
       return mutateAttention(this, publisher, homeRoot, attentionId, (attention) => {
         if (attention.attributes.resolvedAt !== null) {
-          throw new AssistantWorkspaceStoreError('Resolved Attention cannot be newly notified')
+          throw new AssistantWorkspaceStoreError('Resolved Attention cannot be edited')
         }
-        attention.attributes.notifiedAt ??= notifiedAt.toISOString()
-        if (operatorRequest !== undefined) {
-          attention.attributes.operatorRequest = operatorRequest
-        } else {
-          attention.attributes.operatorRequest ??= null
-        }
-      })
-    },
-    async clearAttentionOperatorRequest(attentionId, expectedRequest) {
-      return mutateAttention(this, publisher, homeRoot, attentionId, (attention) => {
-        const current = attention.attributes.operatorRequest ?? null
-        if (attention.attributes.resolvedAt !== null || current === null) return
-        if (expectedRequest !== undefined && current !== expectedRequest) return
-        attention.attributes.operatorRequest = null
+        if (input.body !== undefined) attention.body = normalizeReceivedContent(input.body)
+        if (input.refs !== undefined) attention.attributes.refs = [...new Set(input.refs)]
+        attention.attributes.updatedAt = (input.updatedAt ?? new Date()).toISOString()
       })
     },
     async resolveAttention(attentionId, resolution, resolvedAt = new Date()) {
       return mutateAttention(this, publisher, homeRoot, attentionId, (attention) => {
-        attention.attributes.operatorRequest = null
         attention.attributes.resolvedAt ??= resolvedAt.toISOString()
+        attention.attributes.updatedAt = resolvedAt.toISOString()
         if (!attention.body.includes('\n## Resolution\n')) {
           attention.body += `\n## Resolution\n\n${resolution.trim()}\n`
         }
@@ -260,8 +249,8 @@ async function receiveEvent(
   root: PublicationRoot,
   paths: AssistantWorkspacePaths,
   publisher: PublicationCoordinator,
-  input: ReceiveInboxEventInput | ReceiveReflectionEventInput,
-  source: 'user' | 'reflection',
+  input: ReceiveInboxEventInput | ReceiveInternalEventInput,
+  source: 'user' | 'system' | 'reflection',
   visibility: 'public' | 'internal',
   attachments: string[],
   supportingWrites: PublicationWrite[],

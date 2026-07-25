@@ -173,7 +173,6 @@ async function buildMigration(
       dependsOn: [],
       contractRevision: 1,
       evidenceRefs: [],
-      attempts: 0,
     },
     body: [
       '## Objective',
@@ -183,7 +182,7 @@ async function buildMigration(
       '## Acceptance Criteria',
       '',
       '- The design reflects current facts rather than legacy workflow state.',
-      '- Remaining Engineering Work and its permanent dependency edges are explicit.',
+      '- Remaining Engineering Work and its current dependency edges are explicit.',
       '- Completed legacy entries are treated as history, not fabricated Run Evidence.',
       '',
     ].join('\n'),
@@ -247,7 +246,6 @@ function migrateEngineeringWork(item: LegacyItem, activeIds: ReadonlySet<string>
       dependsOn,
       contractRevision: 1,
       evidenceRefs: [],
-      attempts: 0,
     },
     body: [
       '## Objective',

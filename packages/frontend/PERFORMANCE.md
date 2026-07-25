@@ -90,7 +90,13 @@ running animations and a 0.01 ms tab-indicator transition.
   fetched independently and cached by path plus contract revision; changing the catalog never
   re-downloads every canonical document.
 - The shell projection does not transfer Attention bodies. Assistant Attention detail is read only
-  while Assistant is mounted and visible.
+  while Assistant is mounted and visible, and contains only currently open Attention. Resolved
+  Attention remains available through canonical documents and the Assistant feed; it is never
+  retransferred as reply state on every poll.
+- Polled projections use rebuildable process-local indexes and publication generations rather than
+  rescanning durable history. Run Attempt manifests are scanned once after process start and every
+  successful manifest transition updates the in-memory index only after the durable write. A restart
+  rebuilds the same index from files, so this optimization adds no database or second authority.
 - Active canonical projections may poll every two seconds. Settled Goal projections back off to
   fifteen seconds, inactive live streams stop, and browser-hidden polling remains disabled. A slow
   request must never create an overlapping request for the same query.

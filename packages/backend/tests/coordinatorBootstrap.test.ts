@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { projectReleaseRef } from '../src/domain/project'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { CoordinatorBootError, bootstrapCoordinator } from '../src/runtime/coordinatorBootstrap'
-import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
@@ -81,7 +80,7 @@ describe('bootstrapCoordinator', () => {
     )
   })
 
-  test('creates and reuses one project Attention for invalid canonical identity', async () => {
+  test('records each invalid canonical identity observation without creating a gate', async () => {
     const fixture = await setup()
     await Bun.write(
       join(fixture.projectRoot, '.hopi', 'project.yml'),
@@ -94,12 +93,15 @@ describe('bootstrapCoordinator', () => {
 
     expect([...first.blockedProjectIds]).toEqual(['P-1'])
     expect([...second.blockedProjectIds]).toEqual(['P-1'])
-    expect(
-      [...workspace.attentions.values()].filter(
-        (attention) =>
-          attention.attributes.target === 'project:P-1' && attention.attributes.resolvedAt === null,
-      ),
-    ).toHaveLength(1)
+    expect(workspace.attentions.size).toBe(0)
+    const events = [...workspace.events.values()].filter(
+      (event) =>
+        event.attributes.source === 'system' &&
+        event.attributes.context?.projectId === 'P-1' &&
+        event.body.includes('Project startup validation failed.'),
+    )
+    expect(events).toHaveLength(2)
+    expect(events.every((event) => event.body.includes('projectId'))).toBe(true)
   })
 
   test('repairs a regressed managed ref without consulting a newer selected checkout', async () => {
@@ -150,10 +152,6 @@ async function setup(twoCommits = false, projectPath?: string) {
   const publisher = new PublicationCoordinator()
   const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
   const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher, linked.projectPath)
-  const attentions = createWorkspaceAttentionController(
-    workspace,
-    () => new Date('2026-07-11T00:00:00Z'),
-  )
   return {
     repoRoot,
     projectRoot: linked.integrationRoot,
@@ -171,7 +169,6 @@ async function setup(twoCommits = false, projectPath?: string) {
             store,
           },
         ],
-        attentions,
       }),
   }
 }

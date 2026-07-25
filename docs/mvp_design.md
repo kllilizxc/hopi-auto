@@ -1,10 +1,14 @@
 # HOPI MVP Design
 
 Status: forward product and architecture authority
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 This document defines the target MVP for HOPI. New product and architecture work follows it.
 
+- [The Project Owner design](./mvp_project_owner.md) owns Assistant supervision, wake-up, Attention,
+  and Needs You. It supersedes older Reflection-Agent and targeted-Attention rules.
+- [The Project Runtime design](./mvp_project_runtime.md) owns Project-level Prepare and Preview. It
+  supersedes older per-Repo preparation and formal-Planning Preview rules.
 - [The document model](./mvp_document_model.md) owns file layout, schemas, and field invariants.
 - [The Assistant design](./mvp_assistant.md) owns conversation, vendor-qualified session continuity, HOPI
   tools, and Assistant UI behavior.
@@ -15,6 +19,10 @@ This document defines the target MVP for HOPI. New product and architecture work
 - [The publish protocol ADR](./mvp_publish_protocol.md) owns implementation details for the
   kernel publication primitive.
 - `docs/unified_design.md` is a historical redirect only; it is not current implementation authority.
+
+When an older MVP document conflicts with either focused authority above, the focused document wins.
+Compatibility readers may still accept old fields during migration, but new writes and behavior
+follow the focused authority.
 
 ## Product Goal
 
@@ -31,8 +39,9 @@ Together they interrupt the operator only when:
 
 Every deviation is detected, recorded, and owned. HOPI repairs safe deviations without
 interruption. A deviation that changes the Goal contract or requires authority HOPI does not have
-becomes Attention and a reliable notification. Runtime failure is surfaced immediately as a
-strategy-free Work Attention rather than hidden behind a retry budget.
+becomes Attention and a reliable notification. Runtime failure remains visible as a settled Attempt:
+the unchanged Work is not automatically redispatched, while Reflection and Assistant decide whether
+to retry, change the plan, or ask the operator.
 
 The MVP proves this loop for software delivery before generalizing responsibilities or workflows.
 
@@ -245,8 +254,9 @@ The kernel exposes three ideas to product architecture:
 
 - `publish(bundle)`: validated, idempotent document publication with at most one control gate
 - semantic guard: stale or no-longer-authorized results cannot advance state
-- bounded Work recovery: reviewed or operational exhaustion becomes Attention instead of an
-  infinite automatic retry; HOPI adds no Goal-level Run-count or similarity fuse
+- settled Work recovery: an unchanged failed Attempt pauses automatic redispatch; Reflection and
+  Assistant choose the next action without a retry threshold, synthetic Attention, Run-count fuse,
+  or failure-kind workflow
 
 Publication mechanics live only in [the publish protocol ADR](./mvp_publish_protocol.md).
 
@@ -523,8 +533,9 @@ without a derivable completion time follow timestamped cards in stable projectio
 presentation rule over the server-derived read projection and durable Attempt log, not another
 model-maintained Work field; older Attempt records without application metadata may be used only
 when their successful terminal responsibility unambiguously matches the Work kind. This runtime
-count is not the canonical Work `attempts` repair counter. Lane placement and segmented progress
-already communicate ordinary running and queued state without repeating footer labels.
+count is the only attempt count; Work carries no duplicate repair counter. Lane placement and
+segmented progress already communicate ordinary running and queued state without repeating footer
+labels.
 Kanban is read-only: it has no drag-to-transition or direct status mutation. A card links to its
 canonical Work, Evidence, dependency, timing, and error facts. Only the running title and current
 segment fill carry restrained status motion; the title uses the Lane color while the card surface
@@ -637,10 +648,8 @@ and Reconciler drives Planner,
 Generator, and Reviewer passes through the generic runner. After Reviewer success, Coordinator
 integrates deterministically. Final Planning judges the Goal criteria satisfied and returns success
 with current Evidence. When the Project exposes a reviewed Preview
-capability, that final assessment runs with the formal Project Preview bound to the exact current
-release heads, and direct evidence from its operator-facing surfaces must be newly retained by that
-Planner Run. The evidence target is the Goal's accepted user-visible outcome, not a generic healthy
-Preview state; candidate Preview evidence may finish Engineering Work but cannot finish the Goal.
+capability, that final assessment receives the formal Project Preview bound to the current release
+heads as supporting context. Planner decides what evidence is sufficient for the accepted outcome.
 Coordinator checks structural facts, marks the Goal `done`, and exposes final Planning Evidence as
 the completion update.
 
@@ -717,12 +726,12 @@ The CardGame history supports the retained choices:
 - task worktrees keep failed work off the integration target
 - fixed Planner, Generator, and Reviewer responsibilities provide understandable passes while
   deterministic integration does not require another responsibility pass
-- bounded failure followed by proactive Attention is valuable
+- bounded failure followed by proactive Assistant assessment is valuable
 
 It also demonstrates what this MVP removes:
 
 - a 161-task, 1,275-line `todo.yml`
-- erased dependency history
+- invalid or unaudited dependency graph edits
 - duplicate planning refills
 - stale or malformed Goal and design text
 - disagreement between tasks, blockers, requests, and runtime state

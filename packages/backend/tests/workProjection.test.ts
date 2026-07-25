@@ -55,8 +55,8 @@ describe('derived Work projection', () => {
 
     expect(Object.fromEntries(projections.map((item) => [item.workId, item.primaryBadge]))).toEqual(
       {
-        'W-attention': 'Waiting for Assistant',
-        'W-needs-you': 'Needs you',
+        'W-attention': 'working',
+        'W-needs-you': 'scheduled',
         'W-working': 'working',
         'W-scheduled': 'scheduled',
         'W-queued': 'queued',
@@ -70,7 +70,6 @@ describe('derived Work projection', () => {
       work('P-1', 'planning', 'plan'),
       work('W-1', 'engineering', 'generate', {
         contractRevision: 1,
-        attempts: 3,
       }),
     ])
     goalPackage.goal.attributes.lifecycle = 'paused'
@@ -110,7 +109,7 @@ describe('derived Work projection', () => {
     expect(projection?.failedPredicates).not.toContain('attention')
   })
 
-  test('prioritizes a notified covering Attention over file order', () => {
+  test('does not let Attention presentation override Work readiness', () => {
     const target = 'project:Project-1/goal:G-1/work:W-1'
     const goalPackage = packageWith(
       [work('W-1', 'engineering', 'generate')],
@@ -119,10 +118,10 @@ describe('derived Work projection', () => {
 
     expect(
       deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())[0]?.primaryBadge,
-    ).toBe('Needs you')
+    ).toBe('queued')
   })
 
-  test('keeps an informationally notified blocker with Assistant ownership', () => {
+  test('does not turn informational Attention into a Work owner', () => {
     const target = 'project:Project-1/goal:G-1/work:W-1'
     const goalPackage = packageWith(
       [work('W-1', 'engineering', 'generate')],
@@ -131,13 +130,12 @@ describe('derived Work projection', () => {
 
     expect(
       deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())[0]?.primaryBadge,
-    ).toBe('Waiting for Assistant')
+    ).toBe('queued')
   })
 
-  test('projects a pending retry as executable instead of Assistant-owned', () => {
+  test('keeps an open Work Attention outside the scheduling projection', () => {
     const target = 'project:Project-1/goal:G-1/work:W-1'
     const pending = attention('A-retry', target)
-    pending.attributes.retryRunId = 'R-1'
     const goalPackage = packageWith([work('W-1', 'engineering', 'generate')], [pending])
 
     expect(deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())[0]).toMatchObject({
@@ -230,7 +228,6 @@ function work(
     dependsOn: [],
     contractRevision: 1,
     evidenceRefs: stage === 'done' && kind === 'engineering' ? ['E-1'] : [],
-    attempts: 0,
     ...overrides,
   }
   return kind === 'planning'

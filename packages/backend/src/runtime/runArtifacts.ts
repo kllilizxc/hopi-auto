@@ -15,6 +15,7 @@ export interface PreservedRunArtifact {
 export interface PreserveRunArtifactsResult {
   references: readonly string[]
   preserved: readonly PreservedRunArtifact[]
+  unavailable: readonly { reference: string; reason: string }[]
   replacements: ReadonlyMap<string, string>
   ignoredProposalPaths: readonly string[]
 }
@@ -36,15 +37,22 @@ export async function preserveRunArtifacts(input: {
   const artifactRoot = join(runRoot, 'artifacts')
   const sourceRoots = [runRoot, ...(input.sourceRoots ?? []).map((path) => resolve(path))]
   const references: string[] = []
+  const referenceSet = new Set<string>()
+  const addReference = (reference: string) => {
+    if (referenceSet.has(reference)) return
+    referenceSet.add(reference)
+    references.push(reference)
+  }
   const preserved: PreservedRunArtifact[] = []
   const replacements = new Map<string, string>()
   const preservedSources = new Map<string, string>()
+  const unavailable: Array<{ reference: string; reason: string }> = []
   const ignoredProposalPaths: string[] = []
 
   for (const [index, artifact] of input.artifacts.entries()) {
     const portable = parsePortableArtifactReference(artifact)
     if (portable) {
-      references.push(artifact)
+      addReference(artifact)
       continue
     }
     if (await isProposalPath(artifact, input.proposalRoots)) {
@@ -52,21 +60,33 @@ export async function preserveRunArtifacts(input: {
       continue
     }
     if (await isPortableProjectArtifact(artifact, runRoot, input.portableRoots)) {
-      references.push(artifact)
+      addReference(artifact)
       continue
     }
 
     const source = await resolveArtifactSource(artifact, sourceRoots, input.legacyRunRoot, runRoot)
+    if (!source) {
+      unavailable.push({ reference: artifact, reason: 'Declared Run artifact is unavailable.' })
+      if (isSafeRelativePath(artifact)) addReference(artifact)
+      continue
+    }
     const existing = preservedSources.get(source)
     if (existing) {
-      references.push(existing)
+      addReference(existing)
       replacements.set(artifact, existing)
       continue
     }
 
     const sourceStat = await stat(source).catch(() => null)
     if (!sourceStat?.isFile()) {
-      throw new RunArtifactError(`Declared Run artifact is not a readable file: ${artifact}`)
+      unavailable.push({
+        reference: artifact,
+        reason: sourceStat
+          ? 'Declared Run artifact is not a file.'
+          : 'Declared Run artifact is unavailable.',
+      })
+      if (isSafeRelativePath(artifact)) addReference(artifact)
+      continue
     }
 
     const name = `${String(index + 1).padStart(3, '0')}-${safeArtifactName(basename(source))}`
@@ -81,7 +101,7 @@ export async function preserveRunArtifacts(input: {
     const reference = `artifact:${input.runId}/${name}`
     preservedSources.set(source, reference)
     replacements.set(artifact, reference)
-    references.push(reference)
+    addReference(reference)
     preserved.push({
       reference,
       path: relativePath,
@@ -90,14 +110,18 @@ export async function preserveRunArtifacts(input: {
     })
   }
 
-  if (preserved.length > 0) {
+  if (preserved.length > 0 || unavailable.length > 0) {
     await Bun.write(
       join(runRoot, 'artifacts.json'),
-      `${JSON.stringify({ version: 1, runId: input.runId, artifacts: preserved }, null, 2)}\n`,
+      `${JSON.stringify(
+        { version: 1, runId: input.runId, artifacts: preserved, unavailable },
+        null,
+        2,
+      )}\n`,
     )
   }
   if (input.resultFile) await rewriteResultArtifacts(input.resultFile, references)
-  return { references, preserved, replacements, ignoredProposalPaths }
+  return { references, preserved, unavailable, replacements, ignoredProposalPaths }
 }
 
 export async function discoverRunArtifactPaths(root: string) {
@@ -156,9 +180,9 @@ async function resolveArtifactSource(
 
   for (const candidate of new Set(candidates)) {
     const candidateStat = await stat(candidate).catch(() => null)
-    if (candidateStat?.isFile()) return candidate
+    if (candidateStat) return candidate
   }
-  throw new RunArtifactError(`Declared Run artifact is missing: ${artifact}`)
+  return null
 }
 
 async function isPortableProjectArtifact(
