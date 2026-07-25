@@ -11,6 +11,7 @@ import type {
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
+import type { ProjectPreparer } from '../src/runtime/projectPreparation'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import {
   type StableWorktreeManager,
@@ -740,7 +741,10 @@ describe('ProjectReconciler', () => {
       kind: 'wait',
       decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toBe('run-3')
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+      runId: 'run-3',
+      disposition: 'scheduled',
+    })
     const retryResult = await fixture.reconciler.reconcileGoal('goal-1')
 
     expect(retryResult).toMatchObject({
@@ -764,8 +768,14 @@ describe('ProjectReconciler', () => {
       decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
 
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toBe('run-2')
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toBe('run-2')
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+      runId: 'run-2',
+      disposition: 'scheduled',
+    })
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+      runId: 'run-2',
+      disposition: 'already_scheduled',
+    })
     const retried = await fixture.reconciler.reconcileGoal('goal-1')
     expect(retried).toMatchObject({
       kind: 'pass_finished',
@@ -778,6 +788,64 @@ describe('ProjectReconciler', () => {
       kind: 'wait',
       decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
+  })
+
+  test('returns the active Attempt when retry arrives during Project preparation', async () => {
+    let markPreparationStarted: () => void = () => undefined
+    const preparationStarted = new Promise<void>((resolve) => {
+      markPreparationStarted = resolve
+    })
+    let releasePreparation: () => void = () => undefined
+    const preparationGate = new Promise<void>((resolve) => {
+      releasePreparation = resolve
+    })
+    const preparer: ProjectPreparer = {
+      async prepare(input) {
+        markPreparationStarted()
+        await preparationGate
+        return {
+          kind: 'ready',
+          adapterPath: join(input.projectRoot, 'scripts', 'hopi', 'prepare'),
+          exitCode: 0,
+          startedAt: '2026-07-11T00:00:00.000Z',
+          endedAt: '2026-07-11T00:00:01.000Z',
+          durationMs: 1_000,
+          logs: 'prepared',
+          logPath: join(input.runtimeDir, 'prepare.log'),
+          reposFile: join(input.runtimeDir, 'repos.json'),
+        }
+      },
+    }
+    const fixture = await createFixture({ directInitialWork: true, preparer })
+
+    const generator = fixture.reconciler.reconcileGoal('goal-1')
+    await preparationStarted
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+      runId: 'run-1',
+      disposition: 'already_active',
+    })
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+      runId: 'run-1',
+      disposition: 'already_active',
+    })
+    expect(await fixture.attempts.list('project-1', 'goal-1', 'W-1')).toMatchObject([
+      { runId: 'run-1', responsibility: 'generator', status: 'running' },
+    ])
+
+    releasePreparation()
+    expect(await generator).toMatchObject({
+      kind: 'pass_finished',
+      runId: 'run-1',
+      result: 'success',
+    })
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'pass_finished',
+      runId: 'run-2',
+      result: 'success',
+    })
+    expect(
+      (await fixture.attempts.list('project-1', 'goal-1', 'W-1')).map((attempt) => attempt.runId),
+    ).toEqual(['run-2', 'run-1'])
   })
 
   test('resumes the same responsibility Session after a Project Owner Work message', async () => {
@@ -1141,6 +1209,7 @@ async function createFixture(
     onReleaseUpdated?: Parameters<typeof createProjectReconciler>[0]['onReleaseUpdated']
     directInitialWork?: boolean
     prepareScript?: string
+    preparer?: ProjectPreparer
   } = {},
 ) {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-project-reconciler-'))
@@ -1243,6 +1312,7 @@ async function createFixture(
       publisher,
       roleRunner: runner,
       attempts,
+      preparer: options.preparer,
       worktrees: options.worktrees,
       checkpointTask: options.checkpointTask,
       onProjectBlocked: options.onProjectBlocked,

@@ -1553,7 +1553,7 @@ async function executeDirectUserCommand(
       })
       return result
     } finally {
-      runtime.coordinator.settleAssistantTurn(event.attributes.id)
+      await runtime.coordinator.settleAssistantTurn(event.attributes.id)
     }
   })
 }

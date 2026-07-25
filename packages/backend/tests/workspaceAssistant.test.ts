@@ -1416,7 +1416,7 @@ async function setup(
         reconciler: {
           interruptRuns() {},
           async requestWorkRun() {
-            return 'R-transient-retry'
+            return { runId: 'R-transient-retry', disposition: 'scheduled' as const }
           },
         },
       },

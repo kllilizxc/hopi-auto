@@ -278,7 +278,6 @@ export const assistantToolSchemas = {
           .object({
             kind: z.literal('resolve'),
             attentionId: stableIdSchema,
-            goalId: stableIdSchema.optional(),
             resolution: z.string().trim().min(1).max(2_000),
           })
           .strict(),

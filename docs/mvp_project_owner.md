@@ -79,6 +79,9 @@ Wake-up is edge-triggered:
 
 Events coalesce while an invocation is running. Advancing the observed cursor and persisting any
 Assistant effects is crash-safe. An interrupted invocation does not acknowledge unseen events.
+Effects produced by the current Assistant turn are acknowledged with that turn and do not wake the
+same Assistant again. A different operator or runtime event that arrives while the turn is active
+remains newer than the turn and causes the next wake.
 
 New operator input interrupts an internal Assistant invocation so the persistent session can receive
 the new turn. Interruption does not itself create or modify Attention. The Assistant may persist
@@ -112,6 +115,21 @@ state.
 The Assistant may create, edit, merge, or resolve Attention. An operator message is not
 automatically converted into Attention, and an operator reply never automatically resolves one.
 Attention does not block unrelated Work or Preview. Historical resolved documents remain auditable.
+
+The model-facing Attention tool operates only on this Project-level set. Goal, Work, Attempt, and
+source relationships are expressed through `refs`; adding a Goal ID never selects another Attention
+store. Historical Goal-local Attention documents may remain as compatibility evidence or
+kernel-owned completion records, but they are not a second Assistant todo surface.
+
+Attention tool results report the resulting fact:
+
+```json
+{ "attentionId": "A-...", "resolved": true }
+```
+
+Create returns `resolved: false`; update returns the document's resulting resolved fact; resolve,
+including an idempotent repeated resolve, returns `resolved: true`. Missing or cross-Project IDs are
+errors rather than `resolved: false`.
 
 All unresolved Attention is supplied together on each wake. The model may consider their
 relationships and current Project facts rather than consuming them as a strict FIFO.

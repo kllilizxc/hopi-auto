@@ -16,6 +16,7 @@ export interface AttentionTransport {
 
 export interface AttentionDeliveryWorker {
   deliverOnce(): Promise<number>
+  nextAttemptAt(): number | null
 }
 
 export function createAssistantReplyDeliveryWorker(
@@ -29,6 +30,10 @@ export function createAssistantReplyDeliveryWorker(
   const retries = new Map<string, { failures: number; nextAt: number }>()
 
   return {
+    nextAttemptAt() {
+      const deadlines = [...retries.values()].map((retry) => retry.nextAt)
+      return deadlines.length > 0 ? Math.min(...deadlines) : null
+    },
     async deliverOnce() {
       const state = await workspace.readWorkspace()
       const candidate = [...state.events.values()]

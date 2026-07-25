@@ -46,10 +46,18 @@ The Project script decides which linked Repos need preparation. HOPI runs the cu
 of storing an initialized revision or attempting to predict freshness. The script is expected to be
 idempotent and may use the persistent Project cache.
 
+Prepare success means that the declared runtime dependencies and capabilities are available for the
+responsibility or Preview process. Prepare does not own Work acceptance, full test suites, semantic
+artifact validation, or traversal and hashing of large Project datasets. Those operations remain
+ordinary Work verification so they run only when the responsible Agent judges them necessary. HOPI
+does not enforce this distinction by parsing the script or add a freshness cache; duration and logs
+make an adapter that violates the boundary observable to the Project Assistant.
+
 Before every Generator or Reviewer starts, HOPI runs Prepare from the primary Repo's responsibility
 worktree and supplies all responsibility worktree roots in the manifest. It attaches the result and
-log to the Run prompt and Attempt stream. A Prepare failure is observable but does not prevent that
-Agent from starting, because the assigned change may repair the script or environment itself.
+log, including start, end, and duration, to the Run prompt and Attempt stream. A Prepare failure is
+observable but does not prevent that Agent from starting, because the assigned change may repair the
+script or environment itself.
 
 Before one-click Preview starts, an existing Prepare script must succeed. A missing Prepare script is
 skipped. Preview invokes it from the managed release root with managed release Repo roots. A failing

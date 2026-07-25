@@ -349,6 +349,7 @@ describe('CoordinatorReconciler', () => {
         observations.push(input.settled)
         return 'running' as const
       },
+      acknowledgeProjects: async () => undefined,
       isActive: () => false,
       listRuns: async () => [],
       listRunSummaries: async () => [],
@@ -391,6 +392,7 @@ describe('CoordinatorReconciler', () => {
         observations.push(input.settled)
         return 'running' as const
       },
+      acknowledgeProjects: async () => undefined,
       isActive: () => false,
       listRuns: async () => [],
       listRunSummaries: async () => [],
@@ -663,6 +665,7 @@ describe('CoordinatorReconciler', () => {
         observations.push(input.settled)
         return 'baseline' as const
       },
+      acknowledgeProjects: async () => undefined,
       isActive: () => false,
       listRuns: async () => [],
       listRunSummaries: async () => [],
@@ -917,6 +920,55 @@ describe('CoordinatorReconciler', () => {
     expect(dispatches).toBe(0)
   })
 
+  test('stops after an in-flight deterministic action without leaving a wake pending', async () => {
+    const fixture = await workspaceFixture()
+    const goalPackage = engineeringPackage('G-1')
+    goalPackage.works = new Map()
+    let markActionStarted: (() => void) | undefined
+    const actionStarted = new Promise<void>((resolve) => {
+      markActionStarted = resolve
+    })
+    let finishAction: (() => void) | undefined
+    const actionGate = new Promise<void>((resolve) => {
+      finishAction = resolve
+    })
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      attentions: fixture.attentions,
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            readReconciliationSnapshot: async () => new Map([['G-1', goalPackage]]),
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+            async reconcileGoal() {
+              markActionStarted?.()
+              await actionGate
+              return {
+                kind: 'pass_finished' as const,
+                workId: 'plan-initial',
+                runId: 'R-1',
+                result: 'success' as const,
+                application: 'published' as const,
+              }
+            },
+          },
+        },
+      ],
+    })
+
+    coordinator.start()
+    await actionStarted
+    const stopping = coordinator.stop()
+    finishAction?.()
+
+    await stopping
+  })
+
   test('turns a failed deterministic Goal action into a Project system event', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(
@@ -1098,6 +1150,138 @@ describe('CoordinatorReconciler', () => {
         .resolvedAt,
     ).toBeNull()
   })
+
+  test('does not rescan an idle Project until another edge arrives', async () => {
+    const fixture = await workspaceFixture()
+    let scans = 0
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      attentions: fixture.attentions,
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            async readReconciliationSnapshot() {
+              scans += 1
+              return new Map()
+            },
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+          } as unknown as ProjectReconciler,
+        },
+      ],
+    })
+
+    coordinator.start()
+    await coordinator.waitForIdle()
+    const idleScans = scans
+    await Bun.sleep(50)
+    expect(scans).toBe(idleScans)
+
+    coordinator.wake()
+    await coordinator.waitForIdle()
+    expect(scans).toBe(idleScans + 1)
+    await coordinator.stop()
+  })
+
+  test('wakes once when Work notBefore becomes ready', async () => {
+    const fixture = await workspaceFixture()
+    const goalPackage = engineeringPackage('G-1')
+    const work = goalPackage.works.get('W-1')
+    if (!work) throw new Error('Missing Engineering Work')
+    work.attributes.notBefore = new Date(Date.now() + 60).toISOString()
+    let dispatches = 0
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      attentions: fixture.attentions,
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            readReconciliationSnapshot: async () => new Map([['G-1', goalPackage]]),
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+            async reconcileGoal() {
+              dispatches += 1
+              goalPackage.goal.attributes.lifecycle = 'paused'
+              return {
+                kind: 'pass_finished' as const,
+                workId: 'W-1',
+                runId: 'R-1',
+                result: 'success',
+                application: 'published',
+              }
+            },
+          },
+        },
+      ],
+    })
+
+    coordinator.start()
+    await coordinator.waitForIdle()
+    expect(dispatches).toBe(0)
+    await waitUntil(() => dispatches === 1)
+    await coordinator.waitForIdle()
+    expect(dispatches).toBe(1)
+    await coordinator.stop()
+  })
+
+  test('wakes at the delivery retry deadline without periodic Project scans', async () => {
+    const fixture = await workspaceFixture()
+    const retryAt = Date.now() + 60
+    let delivered = false
+    let deliveryCalls = 0
+    let scans = 0
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      attentions: fixture.attentions,
+      delivery: {
+        async deliverOnce() {
+          deliveryCalls += 1
+          if (!delivered && Date.now() >= retryAt) {
+            delivered = true
+            return 1
+          }
+          return 0
+        },
+        nextAttemptAt() {
+          return delivered ? null : retryAt
+        },
+      },
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            async readReconciliationSnapshot() {
+              scans += 1
+              return new Map()
+            },
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+          } as unknown as ProjectReconciler,
+        },
+      ],
+    })
+
+    coordinator.start()
+    await coordinator.waitForIdle()
+    const initialScans = scans
+    expect(deliveryCalls).toBe(1)
+    await waitUntil(() => delivered)
+    await coordinator.waitForIdle()
+    expect(scans).toBeGreaterThan(initialScans)
+    expect(deliveryCalls).toBeGreaterThanOrEqual(2)
+    await coordinator.stop()
+  })
 })
 
 async function workspaceFixture() {
@@ -1193,4 +1377,13 @@ function responsibilityPackage(
     work.attributes.stage = 'review'
   }
   return goalPackage
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await Bun.sleep(10)
+  }
+  throw new Error('Timed out waiting for Coordinator state')
 }

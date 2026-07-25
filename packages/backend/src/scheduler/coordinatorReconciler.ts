@@ -27,12 +27,12 @@ export interface CoordinatorReconcilerOptions {
   concurrency: Readonly<Record<Responsibility, number>>
   delivery?: AttentionDeliveryWorker
   now?: () => Date
-  intervalMs?: number
 }
 
 export interface CoordinatorReconcileTick {
   kind: 'assistant_started' | 'deterministic_action' | 'passes_started' | 'delivery' | 'idle'
   count?: number
+  nextWakeAt?: number | null
 }
 
 export interface CoordinatorReconciler {
@@ -45,7 +45,7 @@ export interface CoordinatorReconciler {
   quiesceProject(projectId: string): Promise<void>
   protectAssistantGoal(eventId: string, projectId: string, goalId: string): void
   protectAssistantProject(eventId: string, projectId: string): void
-  settleAssistantTurn(eventId: string): void
+  settleAssistantTurn(eventId: string): Promise<void>
   setProjectEligible(projectId: string, eligible: boolean): void
   interruptInternalAssistant(): void
 }
@@ -54,6 +54,12 @@ interface ActiveAssistantTurn {
   source: InboxEventAttributes['source']
   controller: AbortController
   promise: Promise<void>
+}
+
+interface AssistantTurnBarrier {
+  projects: Set<string>
+  goals: Set<string>
+  activityVersions: Map<string, number>
 }
 
 interface GoalCandidate {
@@ -67,12 +73,15 @@ export function createCoordinatorReconciler(
   options: CoordinatorReconcilerOptions,
 ): CoordinatorReconciler {
   const now = options.now ?? (() => new Date())
-  const intervalMs = options.intervalMs ?? 1_000
   const eligibleProjects = new Set(options.projects.map((project) => project.projectId))
   const reservations = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
-  const assistantTurnBarriers = new Map<string, { projects: Set<string>; goals: Set<string> }>()
-  let timer: ReturnType<typeof setTimeout> | null = null
+  const assistantTurnBarriers = new Map<string, AssistantTurnBarrier>()
+  const projectActivityVersions = new Map<string, number>()
+  let wakeTimer: ReturnType<typeof setTimeout> | null = null
+  let deadlineTimer: ReturnType<typeof setTimeout> | null = null
+  let deadlineAt: number | null = null
+  let wakePending = false
   let stopped = true
   let reconcileEpoch = 0
   let reconciling: Promise<CoordinatorReconcileTick> | null = null
@@ -98,27 +107,37 @@ export function createCoordinatorReconciler(
     async stop() {
       stopped = true
       reconcileEpoch += 1
-      if (timer) clearTimeout(timer)
-      timer = null
+      wakePending = false
+      if (wakeTimer) clearTimeout(wakeTimer)
+      if (deadlineTimer) clearTimeout(deadlineTimer)
+      wakeTimer = null
+      deadlineTimer = null
+      deadlineAt = null
       for (const project of options.projects) project.reconciler.interruptRuns()
       for (const entry of assistantActive.values()) entry.controller.abort()
       await options.reflection?.stop()
       await this.waitForIdle()
     },
     wake() {
-      if (stopped || timer) return
-      timer = setTimeout(() => {
-        timer = null
-        void this.reconcileOnce().finally(() => scheduleNext())
-      }, 0)
+      if (stopped) return
+      wakePending = true
+      scheduleWake()
     },
     async waitForIdle() {
-      while (reconciling || reservations.size > 0 || assistantActive.size > 0) {
-        await Promise.allSettled([
+      while (
+        reconciling ||
+        reservations.size > 0 ||
+        assistantActive.size > 0 ||
+        wakePending ||
+        wakeTimer
+      ) {
+        const work = [
           ...(reconciling ? [reconciling] : []),
           ...[...reservations.values()].map((entry) => entry.promise),
           ...[...assistantActive.values()].map((entry) => entry.promise),
-        ])
+        ]
+        if (work.length > 0) await Promise.allSettled(work)
+        else await Bun.sleep(0)
       }
       await options.reflection?.waitForIdle()
     },
@@ -150,13 +169,36 @@ export function createCoordinatorReconciler(
       }
     },
     protectAssistantGoal(eventId, projectId, goalId) {
-      assistantTurnBarrier(eventId).goals.add(goalBarrierKey(projectId, goalId))
+      const barrier = assistantTurnBarrier(eventId)
+      protectBarrierProject(barrier, projectId)
+      barrier.goals.add(goalBarrierKey(projectId, goalId))
     },
     protectAssistantProject(eventId, projectId) {
-      assistantTurnBarrier(eventId).projects.add(projectId)
+      const barrier = assistantTurnBarrier(eventId)
+      protectBarrierProject(barrier, projectId)
+      barrier.projects.add(projectId)
     },
-    settleAssistantTurn(eventId) {
-      if (assistantTurnBarriers.delete(eventId)) this.wake()
+    async settleAssistantTurn(eventId) {
+      const barrier = assistantTurnBarriers.get(eventId)
+      if (!barrier) return
+      const projectIds = new Set([
+        ...barrier.projects,
+        ...[...barrier.goals].map((key) => key.slice(0, key.indexOf('\u0000'))),
+      ])
+      // Hold each touched Project only while its post-turn cursor is captured.
+      for (const projectId of projectIds) barrier.projects.add(projectId)
+      const acknowledgeable = [...projectIds].filter(
+        (projectId) =>
+          barrier.activityVersions.get(projectId) === projectActivityVersion(projectId) &&
+          !projectHasLiveActivity(projectId),
+      )
+      try {
+        await options.reflection?.acknowledgeProjects(acknowledgeable)
+      } catch {
+        // A missed acknowledgement can only cause a redundant wake; it must not fail the turn.
+      } finally {
+        assistantTurnBarriers.delete(eventId)
+      }
     },
     async reconcileOnce() {
       if (reconciling) return reconciling
@@ -164,6 +206,7 @@ export function createCoordinatorReconciler(
       const startedWithReservation = reservations.size > 0
       const run = reconcileTick(epoch)
         .then(async (result) => {
+          if (result.kind !== 'assistant_started') armDeadline(result.nextWakeAt ?? null)
           if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
             const workspace = await options.workspace.readWorkspaceForControl()
             if (eligiblePendingEvents(workspace, assistantActive).length === 0) {
@@ -173,22 +216,45 @@ export function createCoordinatorReconciler(
               })
             }
           }
+          if (
+            !stopped &&
+            epoch === reconcileEpoch &&
+            (result.kind === 'deterministic_action' || result.kind === 'delivery')
+          ) {
+            wakePending = true
+          }
           return result
         })
         .finally(() => {
           reconciling = null
+          scheduleWake()
         })
       reconciling = run
       return run
     },
   }
 
-  function scheduleNext() {
-    if (stopped || timer) return
-    timer = setTimeout(() => {
-      timer = null
-      void coordinator.reconcileOnce().finally(() => scheduleNext())
-    }, intervalMs)
+  function scheduleWake() {
+    if (stopped || !wakePending || wakeTimer || reconciling) return
+    wakeTimer = setTimeout(() => {
+      wakeTimer = null
+      wakePending = false
+      void coordinator.reconcileOnce()
+    }, 0)
+  }
+
+  function armDeadline(nextAt: number | null) {
+    if (deadlineAt === nextAt && (nextAt === null || deadlineTimer)) return
+    if (deadlineTimer) clearTimeout(deadlineTimer)
+    deadlineTimer = null
+    deadlineAt = nextAt
+    if (stopped || nextAt === null) return
+    const delay = Math.max(0, Math.min(nextAt - now().getTime(), 2_147_483_647))
+    deadlineTimer = setTimeout(() => {
+      deadlineTimer = null
+      deadlineAt = null
+      coordinator.wake()
+    }, delay)
   }
 
   async function reconcileTick(epoch: number): Promise<CoordinatorReconcileTick> {
@@ -218,8 +284,9 @@ export function createCoordinatorReconciler(
         })
         .finally(() => {
           assistantActive.delete(event.attributes.id)
-          coordinator.settleAssistantTurn(event.attributes.id)
-          coordinator.wake()
+          return coordinator.settleAssistantTurn(event.attributes.id).finally(() => {
+            coordinator.wake()
+          })
         })
       assistantActive.set(event.attributes.id, {
         source: event.attributes.source,
@@ -232,6 +299,7 @@ export function createCoordinatorReconciler(
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const passCounts = reservationPassCounts(reservations)
     const candidates: GoalCandidate[] = []
+    let nextWakeAt: number | null = null
     for (const project of options.projects) {
       if (!eligibleProjects.has(project.projectId)) continue
       try {
@@ -239,6 +307,15 @@ export function createCoordinatorReconciler(
           ? await project.store.readReconciliationSnapshot()
           : await readReconciliationPackages(project.store)
         for (const [goalId, goalPackage] of reconciliationPackages) {
+          if (goalPackage.goal.attributes.lifecycle === 'active') {
+            for (const work of goalPackage.works.values()) {
+              const notBefore = work.attributes.notBefore
+              if (!notBefore) continue
+              const timestamp = Date.parse(notBefore)
+              if (timestamp <= now().getTime()) continue
+              nextWakeAt = nextWakeAt === null ? timestamp : Math.min(nextWakeAt, timestamp)
+            }
+          }
           if (goalDispatchBlocked(project.projectId, goalId)) continue
           const liveWorkIds = new Set(
             [...reservations.keys()]
@@ -314,7 +391,12 @@ export function createCoordinatorReconciler(
           `Coordinator action failed closed: ${errorMessage(error)}`,
         )
       }
-      return { kind: 'deterministic_action', count: 1 }
+      markProjectActivity(deterministic.project.projectId)
+      return {
+        kind: 'deterministic_action',
+        count: 1,
+        ...(nextWakeAt === null ? {} : { nextWakeAt }),
+      }
     }
 
     let started = 0
@@ -329,6 +411,7 @@ export function createCoordinatorReconciler(
       const key = `${candidate.project.projectId}/${candidate.goalId}/${candidate.decision.workId}`
       if (reservations.has(key)) continue
       reserved[responsibility] += 1
+      markProjectActivity(candidate.project.projectId)
       const promise = candidate.project.reconciler
         .reconcileGoal(candidate.goalId, {
           projectEligible: true,
@@ -349,27 +432,64 @@ export function createCoordinatorReconciler(
         })
         .finally(() => {
           reservations.delete(key)
+          markProjectActivity(candidate.project.projectId)
           coordinator.wake()
         })
       reservations.set(key, { responsibility, promise })
       started += 1
     }
-    if (started > 0) return { kind: 'passes_started', count: started }
+    if (started > 0) {
+      return {
+        kind: 'passes_started',
+        count: started,
+        ...(nextWakeAt === null ? {} : { nextWakeAt }),
+      }
+    }
 
     if (options.delivery) {
       const delivered = await options.delivery.deliverOnce()
-      if (delivered > 0) return { kind: 'delivery', count: delivered }
+      const deliveryDeadline = options.delivery.nextAttemptAt()
+      if (deliveryDeadline !== null) {
+        nextWakeAt = nextWakeAt === null ? deliveryDeadline : Math.min(nextWakeAt, deliveryDeadline)
+      }
+      if (delivered > 0) {
+        return {
+          kind: 'delivery',
+          count: delivered,
+          ...(nextWakeAt === null ? {} : { nextWakeAt }),
+        }
+      }
     }
-    return { kind: 'idle' }
+    return { kind: 'idle', ...(nextWakeAt === null ? {} : { nextWakeAt }) }
   }
 
   function assistantTurnBarrier(eventId: string) {
     let barrier = assistantTurnBarriers.get(eventId)
     if (!barrier) {
-      barrier = { projects: new Set(), goals: new Set() }
+      barrier = { projects: new Set(), goals: new Set(), activityVersions: new Map() }
       assistantTurnBarriers.set(eventId, barrier)
     }
     return barrier
+  }
+
+  function protectBarrierProject(barrier: AssistantTurnBarrier, projectId: string) {
+    if (!barrier.activityVersions.has(projectId)) {
+      barrier.activityVersions.set(projectId, projectActivityVersion(projectId))
+    }
+  }
+
+  function projectActivityVersion(projectId: string) {
+    return projectActivityVersions.get(projectId) ?? 0
+  }
+
+  function markProjectActivity(projectId: string) {
+    projectActivityVersions.set(projectId, projectActivityVersion(projectId) + 1)
+  }
+
+  function projectHasLiveActivity(projectId: string) {
+    if ([...reservations.keys()].some((key) => key.startsWith(`${projectId}/`))) return true
+    const project = options.projects.find((candidate) => candidate.projectId === projectId)
+    return (project?.reconciler.liveWorkIds().size ?? 0) > 0
   }
 
   async function reportProjectFailure(projectId: string, message: string) {

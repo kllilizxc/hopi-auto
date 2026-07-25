@@ -31,6 +31,7 @@ import type {
 } from '../runtime/goalController'
 import { type PreviewManager, readProjectReleaseHeads } from '../runtime/previewManager'
 import { withPreparedProjectRepositories } from '../runtime/projectDirectory'
+import type { WorkRunRequest } from '../scheduler/projectReconciler'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
@@ -59,7 +60,7 @@ export interface AssistantToolProject {
   controller: GoalController
   reconciler?: {
     interruptRuns(goalId?: string, workId?: string): void
-    requestWorkRun?(goalId: string, workId: string): Promise<string>
+    requestWorkRun?(goalId: string, workId: string): Promise<WorkRunRequest>
   }
 }
 
@@ -207,15 +208,22 @@ export function createAssistantTools(options: {
     affectedWorkIds?: readonly string[]
     settledRefs?: readonly string[]
     pendingRefs?: readonly string[]
-    retryRunId?: string | null
+    runRequest?: WorkRunRequest
   }): Promise<AssistantToolResult> {
     const currentPackage = await input.project.store.readPackage(input.goalId)
     const currentWork = currentPackage.works.get(input.workId)
     if (!currentWork) throw new Error(`Work not found after control: ${input.workId}`)
-    const retryRunId = input.kind === 'work_retry_requested' ? (input.retryRunId ?? null) : null
+    const runRequest = input.kind === 'work_retry_requested' ? input.runRequest : undefined
+    const changed = runRequest ? runRequest.disposition === 'scheduled' : true
     return {
-      summary: `${input.kind} applied to Work ${input.workId}.`,
-      changed: true,
+      summary: runRequest
+        ? runRequest.disposition === 'already_active'
+          ? `Work ${input.workId} is already running as ${runRequest.runId}.`
+          : runRequest.disposition === 'already_scheduled'
+            ? `Work ${input.workId} is already scheduled as ${runRequest.runId}.`
+            : `Scheduled Work ${input.workId} as ${runRequest.runId}.`
+        : `${input.kind} applied to Work ${input.workId}.`,
+      changed,
       value: {
         effect: {
           kind: input.kind,
@@ -225,7 +233,9 @@ export function createAssistantTools(options: {
           affectedWorkIds: input.affectedWorkIds ?? [input.workId],
           stage: currentWork.attributes.stage,
           notBefore: currentWork.attributes.notBefore,
-          retryRunId,
+          ...(runRequest
+            ? { runId: runRequest.runId, runDisposition: runRequest.disposition }
+            : {}),
         },
         settledAttentionRefs: input.settledRefs ?? [],
         pendingAttentionRefs: input.pendingRefs ?? [],
@@ -821,8 +831,8 @@ export function createAssistantTools(options: {
                 args.action.notBefore,
               )
             }
-            const retryRunId = await project.reconciler?.requestWorkRun?.(args.goalId, args.workId)
-            if (!retryRunId) {
+            const runRequest = await project.reconciler?.requestWorkRun?.(args.goalId, args.workId)
+            if (!runRequest) {
               throw new AssistantToolRequestError('Project runtime cannot reserve a Work retry')
             }
             return currentWorkResult({
@@ -830,7 +840,7 @@ export function createAssistantTools(options: {
               goalId: args.goalId,
               workId: args.workId,
               kind: 'work_retry_requested',
-              retryRunId,
+              runRequest,
             })
           }
           if (args.action.kind === 'defer') {
@@ -875,17 +885,11 @@ export function createAssistantTools(options: {
             }
           }
           if (args.action.kind === 'message') {
-            if (!project.reconciler?.requestWorkRun) {
-              throw new AssistantToolRequestError(
-                'Project runtime cannot schedule a Work message continuation',
-              )
-            }
             const current = await project.controller.appendWorkMessage(args.goalId, args.workId, {
               sourceEventId: eventId,
               content: args.action.content,
             })
             project.reconciler?.interruptRuns(args.goalId, args.workId)
-            const retryRunId = await project.reconciler.requestWorkRun(args.goalId, args.workId)
             return {
               summary: `Message appended to Work ${args.workId}.`,
               changed: true,
@@ -896,7 +900,6 @@ export function createAssistantTools(options: {
                   goalId: args.goalId,
                   workId: args.workId,
                   stage: current.attributes.stage,
-                  retryRunId,
                 },
               },
             }
@@ -990,36 +993,8 @@ export function createAssistantTools(options: {
         case 'hopi_manage_attention': {
           const args = parseAssistantToolArguments(name, input)
           const project = requireProject(options.projects, args.projectId)
+          options.onProjectDispatchEffect?.(eventId, project.projectId)
           const change = args.change
-          if (change.kind === 'resolve' && change.goalId) {
-            options.onGoalEffect?.(eventId, project.projectId, change.goalId)
-            await requireGoal(project.store, change.goalId)
-            const admission = await goalInputAdmission(
-              options.workspace,
-              project.store,
-              change.goalId,
-              event,
-            )
-            const changed = await resolveGoalAttention(
-              project.store,
-              change.goalId,
-              change.attentionId,
-              change.resolution,
-              admission,
-              now(),
-            )
-            return {
-              summary: `Resolved Goal Attention ${change.attentionId}.`,
-              changed,
-              value: {
-                attentionRef: goalAttentionReference(
-                  project.projectId,
-                  change.goalId,
-                  change.attentionId,
-                ),
-              },
-            }
-          }
           const state = await options.workspace.readWorkspace()
           const target = `project:${project.projectId}`
           if (change.kind === 'create') {
@@ -1035,6 +1010,8 @@ export function createAssistantTools(options: {
                   summary: `Project Attention ${attentionId} was already current.`,
                   changed: false,
                   value: {
+                    attentionId,
+                    resolved: false,
                     attentionRef: workspaceAttentionReference(state.homeId, attentionId),
                   },
                 }
@@ -1060,6 +1037,8 @@ export function createAssistantTools(options: {
               summary: `Created Project Attention ${attentionId}.`,
               changed: true,
               value: {
+                attentionId,
+                resolved: false,
                 attentionRef: workspaceAttentionReference(state.homeId, attentionId),
               },
             }
@@ -1085,6 +1064,8 @@ export function createAssistantTools(options: {
               summary: `Updated Project Attention ${change.attentionId}.`,
               changed: true,
               value: {
+                attentionId: change.attentionId,
+                resolved: updated.attributes.resolvedAt !== null,
                 attentionRef: workspaceAttentionReference(state.homeId, change.attentionId),
                 updatedAt: updated.attributes.updatedAt,
               },
@@ -1098,6 +1079,8 @@ export function createAssistantTools(options: {
             summary: `Resolved Project Attention ${change.attentionId}.`,
             changed,
             value: {
+              attentionId: change.attentionId,
+              resolved: true,
               attentionRef: workspaceAttentionReference(state.homeId, change.attentionId),
             },
           }

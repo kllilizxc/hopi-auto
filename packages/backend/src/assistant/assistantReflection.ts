@@ -60,6 +60,7 @@ export interface ReflectionRunDetail extends ReflectionRunSummary {
  */
 export interface AssistantReflection {
   observe(input: ReflectionObservation): Promise<ReflectionObserveResult>
+  acknowledgeProjects(projectIds: readonly string[]): Promise<void>
   isActive(): boolean
   listRuns(limit?: number): Promise<ReflectionRunDetail[]>
   listRunSummaries(): Promise<ReflectionRunSummary[]>
@@ -157,6 +158,29 @@ export function createAssistantWake(options: {
       active = operation
       void operation
       return 'started'
+    },
+
+    async acknowledgeProjects(projectIds) {
+      if (stopped || projectIds.length === 0) return
+      await active
+      const snapshot = await (options.state.readForReflection?.() ?? options.state.read())
+      const scopes = new Map(
+        wakeScopeSnapshots(snapshot).map((candidate) => [candidate.scopeKey, candidate]),
+      )
+      for (const projectId of [...new Set(projectIds)].toSorted()) {
+        const scopeKey = `project:${projectId}`
+        const candidate = scopes.get(scopeKey)
+        if (!candidate) continue
+        const path = cursorPath(cursorsRoot, scopeKey)
+        const cursor = await readCursor(path)
+        await writeCursor(path, {
+          version: 1,
+          scope: candidate.scope,
+          stateDigest: candidate.snapshot.stateDigest,
+          eventId: cursor?.eventId ?? null,
+          updatedAt: now().toISOString(),
+        })
+      }
     },
 
     isActive() {

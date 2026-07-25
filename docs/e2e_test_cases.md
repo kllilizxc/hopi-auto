@@ -420,6 +420,7 @@ variant of `022`, and dependency Evidence handoff; earlier terminal evidence rem
 | `HOPI-E2E-031` | Safe Project source selection and scoped execution        | P0       | Browser and Contract       | Covered; scoped lifecycle and C1 escape rejection passed          |
 | `HOPI-E2E-032` | Durable cross-Project preference judgment                 | P1       | Live Assistant and Contract | Covered; focused Live judgment canary passed                     |
 | `HOPI-E2E-033` | Dependency Evidence and artifact handoff                  | P0       | Contract                   | Covered; production Coordinator handoff passed                    |
+| `HOPI-E2E-034` | Idempotent retry during Prepare and edge-triggered idle   | P0       | Contract                    | Covered; production race and deadline wakes passed                |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
@@ -455,6 +456,7 @@ is the only intentional execution exclusion.
 | `HOPI-E2E-031` | `tests/e2e/scopedProjectSource.e2e.ts`                                                                                       |
 | `HOPI-E2E-032` | `tests/assistantWorkspaceStore.test.ts`, `tests/workspaceAssistant.test.ts`, `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts` |
 | `HOPI-E2E-033` | `tests/contract/dependencyEvidenceHandoff.test.ts`, `tests/roleContextStager.test.ts`                                      |
+| `HOPI-E2E-034` | `tests/projectReconciler.test.ts`, `tests/coordinatorReconciler.test.ts`, `tests/assistantTools.test.ts`                       |
 
 ## Detailed Cases
 
@@ -1424,6 +1426,33 @@ Current implementation: `packages/backend/tests/contract/dependencyEvidenceHando
 by `bun run e2e:contract`. It runs the production Coordinator and managed Git path through both Works,
 their Reviewers, C1, and final Planning while the dependent Generator directly verifies staged
 Evidence and immutable artifact bytes.
+
+### HOPI-E2E-034: Idempotent Retry During Prepare And Edge-Triggered Idle
+
+| Field   | Value                                                                                                      |
+| ------- | ---------------------------------------------------------------------------------------------------------- |
+| Risk    | Assistant retry races automatic dispatch, invents a second Run ID, or leaves Coordinator scanning forever. |
+| Reality | Production ProjectReconciler, Attempt store, Prepare boundary, Assistant tool, and Coordinator wake loop.  |
+| Fixture | One Work with a controllably blocked Prepare adapter and one Project Attention.                             |
+| Cost    | Deterministic contract first; one focused Assistant call only for final tool-selection confirmation.        |
+
+Actions:
+
+1. Let automatic reconciliation admit the Work and hold its real Attempt inside Prepare.
+2. Resolve the Project Attention and issue retry while that same Attempt is active.
+3. Release Prepare, finish Generator, and admit Reviewer.
+4. Leave Coordinator quiescent, then set one future `notBefore` and one webhook retry deadline.
+
+Pass conditions:
+
+- Retry returns the active Attempt ID with no second reservation or later phantom Generator.
+- Reviewer receives a new Run ID and never consumes the retry response as its identity.
+- Project Attention resolve returns `resolved: true`; repeating it remains successful and idempotent.
+- No reconciliation snapshot reads occur while no event or deadline is pending.
+- `notBefore` and webhook delivery each wake once at their deadline.
+- Assistant effects do not create an empty self-wake, while an external event arriving during the
+  turn remains pending.
+- Prepare duration and complete logs remain attached to the same Attempt that runs the Agent.
 
 ## Harness Self-Verification
 

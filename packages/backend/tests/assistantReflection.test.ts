@@ -110,6 +110,21 @@ describe('Assistant wake trigger', () => {
     await fixture.wake.waitForIdle()
     expect((await fixture.wake.listRuns()).length).toBe(1)
   })
+
+  test('acknowledges the current Assistant effect without consuming a later state edge', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+
+    fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '6'.repeat(64) } }))
+    await fixture.wake.acknowledgeProjects(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('unchanged')
+    expect(await fixture.wake.listRuns()).toEqual([])
+
+    fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '7'.repeat(64) } }))
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
+    expect(await fixture.wake.listRuns()).toHaveLength(1)
+  })
 })
 
 async function setup(projectIds: string[]) {

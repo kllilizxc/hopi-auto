@@ -214,11 +214,11 @@ blocker. A reply may leave an Attention open when its evidence does not clear th
 Unrelated Attention is never settled as a page-scoped batch. Planner and Coordinator do not infer
 closure from prose or from a Goal revision because an environmental or external blocker may survive it.
 
-Explicitly retrying a Work requests one new invocation in the existing lineage; it does not claim
-that the invocation succeeded and does not mutate Attention. The command reserves one in-process Run
-against the unchanged Work authority. A process crash before that Run starts safely leaves the prior
-failed Attempt settled, so Reflection may judge it again after restart. There is no durable pending
-retry, retry episode, or retry-specific Attention ownership.
+Explicitly retrying a Work ensures that one current invocation exists in the existing lineage; it
+does not claim that the invocation succeeded and does not mutate Attention. If the Work already has
+an active Attempt, retry is an idempotent no-op and returns that exact Run ID. If the unchanged Work
+is settled after failure, retry creates one new Attempt. There is no queued second retry behind an
+active Attempt, retry episode, or retry-specific Attention ownership.
 
 Retry is independent of failure kind and contains no Git-, test-, sandbox-, or vendor-specific
 recovery policy. Assistant chooses retry, document change, defer, cancellation, or an exact operator
@@ -246,9 +246,10 @@ Engineering Work. If an accepted instruction makes a blocker obsolete, Assistant
 Attention as a separate explicit effect. An empty Planner proposal means only that Planning changed
 nothing.
 
-Retry authorizes another invocation in the same Work lineage; it is not a worktree mutation and is
-not proof that a deterministic environment defect was repaired. The tool reports the reserved Run,
-and speaking Assistant describes success only after a later state or Attempt proves it.
+Retry authorizes at most one current invocation in the same Work lineage; it is not a worktree
+mutation and is not proof that a deterministic environment defect was repaired. The tool reports
+the actual Attempt ID and whether it was newly scheduled or already active. Speaking Assistant
+describes success only after a later state or Attempt proves it.
 An internal Reflection handoff that identifies an unchanged branch defect must request Planning or
 another represented effect instead of using retry as a fictional repair. Direct operator retry keeps
 the same transient reservation because the operator instruction authorizes trying the same lineage
@@ -465,12 +466,19 @@ stdout/stderr line to the Run's `transcript.log`; normalized summaries may be bo
 the diagnostic source is not discarded. These streams are diagnostics: a transcript never advances
 Work and cannot replace Evidence or a canonical gate.
 
-The durable Attempt manifest is the sole runtime authority for whether that Run is active. An
-in-memory Coordinator reservation begins before preparation so concurrent ticks cannot admit the
-same Work or oversubscribe a responsibility, and it may outlive a terminal Attempt while application
-cleanup unwinds. That reservation is private scheduling state, not a Run, and never appears in API,
-Assistant, Reflection, or Kanban projections. Before the manifest exists the Work remains publicly
-queued; after the manifest becomes terminal it is publicly non-running.
+The durable Attempt manifest is the sole runtime authority for whether that Run is active. One
+Attempt begins before Project preparation and keeps the same Run ID through preparation, model
+execution, publication, and cleanup. Task-worktree synchronization uses the same reserved Run ID
+and records an operational Attempt if it fails before context staging. Attempt events distinguish
+those runtime boundaries without adding Work stages. One Work may have at most one nonterminal
+Attempt, so concurrent ticks, ordinary scheduling, and explicit retry all converge on the same
+identity. After the manifest becomes terminal the Work is publicly non-running; a later
+responsibility or retry receives a new Run ID.
+
+Coordinator reconciliation is edge-triggered. Startup, canonical publication, Assistant effects,
+Run completion, Preview events, and topology changes coalesce into one wake. When time alone can
+change readiness, Coordinator arms one timer for the earliest `notBefore` or delivery retry
+deadline. An idle Coordinator does not repeatedly scan every Project, Goal, and Attempt.
 
 Vendor-native task tracking is normalized at this boundary. A Codex todo snapshot is already
 complete. Claude `TaskCreate`, `TaskUpdate`, and `TaskList` operations are reduced into the same

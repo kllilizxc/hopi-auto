@@ -1125,7 +1125,8 @@ describe('Assistant HOPI tools', () => {
         kind: 'work_retry_requested',
         workId: 'plan-initial',
         stage: 'plan',
-        retryRunId: 'R-requested-1',
+        runId: 'R-requested-1',
+        runDisposition: 'scheduled',
       },
       pendingAttentionRefs: [],
       settledAttentionRefs: [],
@@ -1171,7 +1172,8 @@ describe('Assistant HOPI tools', () => {
         kind: 'work_retry_requested',
         workId: 'plan-initial',
         stage: 'plan',
-        retryRunId: 'R-requested-1',
+        runId: 'R-requested-1',
+        runDisposition: 'scheduled',
       },
       pendingAttentionRefs: [],
       settledAttentionRefs: [],
@@ -1341,7 +1343,6 @@ describe('Assistant HOPI tools', () => {
         effect: {
           kind: 'work_message_appended',
           workId: 'W-owner',
-          retryRunId: 'R-requested-1',
         },
       },
     })
@@ -1355,7 +1356,7 @@ describe('Assistant HOPI tools', () => {
     ])
   })
 
-  test('does not append a Work message when the Project runtime cannot continue it', async () => {
+  test('persists a Work message without inventing a separate retry reservation', async () => {
     const fixture = await setup({ omitWorkScheduler: true })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
@@ -1368,21 +1369,26 @@ describe('Assistant HOPI tools', () => {
     const workPath = fixture.goalStore.paths.absolute(
       fixture.goalStore.paths.workDocument('G-1', 'W-owner'),
     )
-    const before = await Bun.file(workPath).text()
-
-    await expect(
-      fixture.tools.executeForEvent('EV-unscheduled-message', 'hopi_control_work', {
+    const result = await fixture.tools.executeForEvent(
+      'EV-unscheduled-message',
+      'hopi_control_work',
+      {
         projectId: 'P-1',
         goalId: 'G-1',
         workId: 'W-owner',
         action: {
           kind: 'message',
-          content: 'This message must not be persisted without a continuation.',
+          content: 'Use this guidance on the next natural invocation.',
         },
-      }),
-    ).rejects.toThrow('Project runtime cannot schedule a Work message continuation')
+      },
+    )
 
-    expect(await Bun.file(workPath).text()).toBe(before)
+    expect(result.value).toMatchObject({
+      effect: { kind: 'work_message_appended', workId: 'W-owner' },
+    })
+    expect(await Bun.file(workPath).text()).toContain(
+      'Use this guidance on the next natural invocation.',
+    )
   })
 
   test('starting Planning preserves attached Attention', async () => {
@@ -1457,16 +1463,12 @@ describe('Assistant HOPI tools', () => {
     ).toBeNull()
   })
 
-  test('answers a blocked Planner with one represented material revision', async () => {
+  test('records one material revision and resolves its Project Attention', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      1,
-      'The runtime invocation ended before producing a result.',
-    )
+    const attention = await createWorkspaceAttentionController(
+      fixture.workspace,
+    ).ensureProjectAttention('P-1', 'The current direction needs a material revision.')
     await fixture.workspace.receiveEvent({
       eventId: 'EV-revise',
       content: 'The result is poor. Abandon that direction and try the model native task.',
@@ -1489,7 +1491,6 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       change: {
         kind: 'resolve',
-        goalId: 'G-1',
         attentionId: attention.attributes.id,
         resolution: 'The accepted material revision is now represented by Planning.',
       },
@@ -1498,22 +1499,45 @@ describe('Assistant HOPI tools', () => {
       (await fixture.goalStore.readPackage('G-1')).works.get('plan-initial')?.attributes,
     ).toMatchObject({ contractRevision: 2 })
     expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
-        ?.attributes.resolvedAt,
+      (await fixture.workspace.readWorkspace()).attentions.get(attention.attributes.id)?.attributes
+        .resolvedAt,
     ).not.toBeNull()
   })
 
   test('records Project Attention resolution without treating it as a recovery gate', async () => {
     const fixture = await setup()
-    const attention = await createWorkspaceAttentionController(
-      fixture.workspace,
-    ).ensureProjectAttention('P-1', 'The managed integration root is invalid.')
     await fixture.workspace.receiveEvent({
       eventId: 'EV-project-repaired',
       content: 'I repaired the Project. Resume it.',
     })
     const homeId = (await fixture.workspace.readWorkspace()).homeId
+    const attentionId = 'A-project-runtime'
     const resolution = 'The managed integration root was repaired and verified.'
+    const created = await fixture.tools.executeForEvent(
+      'EV-project-repaired',
+      'hopi_manage_attention',
+      {
+        projectId: 'P-1',
+        change: {
+          kind: 'create',
+          attentionId,
+          body: 'The managed integration root is invalid.',
+          refs: ['goal:G-1'],
+        },
+      },
+    )
+    const updated = await fixture.tools.executeForEvent(
+      'EV-project-repaired',
+      'hopi_manage_attention',
+      {
+        projectId: 'P-1',
+        change: {
+          kind: 'update',
+          attentionId,
+          body: 'The managed integration root must be verified.',
+        },
+      },
+    )
 
     const result = await fixture.tools.executeForEvent(
       'EV-project-repaired',
@@ -1522,7 +1546,7 @@ describe('Assistant HOPI tools', () => {
         projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionId: attention.attributes.id,
+          attentionId,
           resolution,
         },
       },
@@ -1534,24 +1558,74 @@ describe('Assistant HOPI tools', () => {
         projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionId: attention.attributes.id,
+          attentionId,
           resolution,
         },
       },
     )
-    const resolved = (await fixture.workspace.readWorkspace()).attentions.get(
-      attention.attributes.id,
-    )
+    const resolved = (await fixture.workspace.readWorkspace()).attentions.get(attentionId)
 
+    expect(created).toMatchObject({
+      changed: true,
+      value: { attentionId, resolved: false },
+    })
+    expect(updated).toMatchObject({
+      changed: true,
+      value: { attentionId, resolved: false },
+    })
     expect(result).toMatchObject({
       changed: true,
-      value: { attentionRef: workspaceAttentionReference(homeId, attention.attributes.id) },
+      value: {
+        attentionId,
+        resolved: true,
+        attentionRef: workspaceAttentionReference(homeId, attentionId),
+      },
     })
-    expect(repeated.changed).toBe(false)
+    expect(repeated).toMatchObject({
+      changed: false,
+      value: { attentionId, resolved: true },
+    })
     expect(resolved?.attributes.resolvedAt).not.toBeNull()
     expect(resolved?.body).toContain('## Resolution')
     expect(fixture.restoredProjectIds).toEqual([])
-    expect(fixture.projectDispatchEffects).toEqual([])
+    expect(fixture.projectDispatchEffects).toEqual([
+      { eventId: 'EV-project-repaired', projectId: 'P-1' },
+      { eventId: 'EV-project-repaired', projectId: 'P-1' },
+      { eventId: 'EV-project-repaired', projectId: 'P-1' },
+      { eventId: 'EV-project-repaired', projectId: 'P-1' },
+    ])
+  })
+
+  test('does not route a Goal-local Attention through the Project Attention tool', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await publishTestWorkAttention(
+      fixture.goalStore,
+      'G-1',
+      'plan-initial',
+      'planner',
+      'Choose recovery.',
+    )
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-goal-attention',
+      content: 'Resolve the old Goal Attention.',
+    })
+
+    await expect(
+      fixture.tools.executeForEvent('EV-goal-attention', 'hopi_manage_attention', {
+        projectId: 'P-1',
+        change: {
+          kind: 'resolve',
+          goalId: 'G-1',
+          attentionId: attention.attributes.id,
+          resolution: 'Resolved.',
+        },
+      }),
+    ).rejects.toThrow()
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
+        ?.attributes.resolvedAt,
+    ).toBeNull()
   })
 
   test('explicitly requests deterministic Project recovery', async () => {
@@ -1581,13 +1655,9 @@ describe('Assistant HOPI tools', () => {
   test('allows Planning and verified Attention resolution in one Assistant turn', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      'planner',
-      'Choose recovery.',
-    )
+    const attention = await createWorkspaceAttentionController(
+      fixture.workspace,
+    ).ensureProjectAttention('P-1', 'Choose recovery.')
     await fixture.workspace.receiveEvent({
       eventId: 'EV-no-double-planning',
       content: 'Reconsider the blocker.',
@@ -1604,7 +1674,6 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       change: {
         kind: 'resolve',
-        goalId: 'G-1',
         attentionId: attention.attributes.id,
         resolution: 'The new Planning run now represents the blocker.',
       },
@@ -1615,8 +1684,8 @@ describe('Assistant HOPI tools', () => {
       ),
     ).toHaveLength(1)
     expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
-        ?.attributes.resolvedAt,
+      (await fixture.workspace.readWorkspace()).attentions.get(attention.attributes.id)?.attributes
+        .resolvedAt,
     ).not.toBeNull()
   })
 
@@ -2319,7 +2388,10 @@ async function setup(
             ? undefined
             : async () => {
                 requestedRunSequence += 1
-                return `R-requested-${requestedRunSequence}`
+                return {
+                  runId: `R-requested-${requestedRunSequence}`,
+                  disposition: 'scheduled' as const,
+                }
               },
         },
       },

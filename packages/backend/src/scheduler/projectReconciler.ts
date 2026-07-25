@@ -105,8 +105,19 @@ export interface ProjectReconciler {
   ): Promise<ProjectReconcileResult>
   liveWorkIds(): ReadonlySet<string>
   settledFailureWorkIds?(goalId: string, goalPackage?: GoalPackage): Promise<ReadonlySet<string>>
-  requestWorkRun?(goalId: string, workId: string): Promise<string>
+  requestWorkRun?(goalId: string, workId: string): Promise<WorkRunRequest>
   interruptRuns(goalId?: string, workId?: string): void
+}
+
+export interface WorkRunRequest {
+  runId: string
+  disposition: 'scheduled' | 'already_scheduled' | 'already_active'
+}
+
+interface WorkRunSlot {
+  runId: string
+  state: 'requested' | 'active'
+  controller: AbortController | null
 }
 
 export function createProjectReconciler(options: ProjectReconcilerOptions): ProjectReconciler {
@@ -157,9 +168,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       now,
       verifyCompletion: (goalId, goalPackage) => completion.verify(goalId, goalPackage),
     })
-  const live = new Set<string>()
-  const requestedRuns = new Map<string, string>()
-  const runControllers = new Map<string, AbortController>()
+  const runSlots = new Map<string, WorkRunSlot>()
   let projectInterruptionGeneration = 0
   const goalInterruptionGenerations = new Map<string, number>()
   let workInterruptionSequence = 0
@@ -168,31 +177,35 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     if (workId) {
       if (!goalId) throw new Error('A Work interruption requires its Goal ID')
       const liveKey = `${goalId}/${workId}`
-      requestedRuns.delete(liveKey)
+      const slot = runSlots.get(liveKey)
+      if (slot?.state === 'requested') runSlots.delete(liveKey)
       workInterruptionSequence += 1
       workInterruptionGenerations.set(liveKey, workInterruptionSequence)
-      runControllers.get(liveKey)?.abort()
+      slot?.controller?.abort()
       return
     }
-    const goalPrefix = goalId ? `${goalId}/` : null
     if (goalId) {
-      for (const key of requestedRuns.keys()) {
-        if (key.startsWith(`${goalId}/`)) requestedRuns.delete(key)
+      for (const [key, slot] of runSlots) {
+        if (!key.startsWith(`${goalId}/`)) continue
+        if (slot.state === 'requested') runSlots.delete(key)
+        else slot.controller?.abort()
       }
       goalInterruptionGenerations.set(goalId, (goalInterruptionGenerations.get(goalId) ?? 0) + 1)
     } else {
-      requestedRuns.clear()
+      for (const [key, slot] of runSlots) {
+        if (slot.state === 'requested') runSlots.delete(key)
+        else slot.controller?.abort()
+      }
       projectInterruptionGeneration += 1
-    }
-    for (const [key, controller] of runControllers) {
-      if (!goalPrefix || key.startsWith(goalPrefix)) controller.abort()
     }
   }
 
   return {
     interruptRuns,
     liveWorkIds() {
-      return new Set(live)
+      return new Set(
+        [...runSlots].filter(([, slot]) => slot.state === 'active').map(([key]) => key),
+      )
     },
     async settledFailureWorkIds(goalId, suppliedPackage) {
       const goalPackage = suppliedPackage ?? (await options.store.readPackage(goalId))
@@ -200,7 +213,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       return deriveSettledFailureWorkIds(
         goalPackage,
         snapshot.listGoal(options.projectId, goalId),
-        requestedWorkIds(requestedRuns, goalId),
+        requestedWorkIds(runSlots, goalId),
       )
     },
     async requestWorkRun(goalId, workId) {
@@ -210,11 +223,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         throw new Error(`Cannot retry missing or terminal Work: ${workId}`)
       }
       const key = `${goalId}/${workId}`
-      const existing = requestedRuns.get(key)
-      if (existing) return existing
+      const existing = runSlots.get(key)
+      if (existing) {
+        return {
+          runId: existing.runId,
+          disposition: existing.state === 'active' ? 'already_active' : 'already_scheduled',
+        }
+      }
       const runId = createRunId()
-      requestedRuns.set(key, runId)
-      return runId
+      runSlots.set(key, { runId, state: 'requested', controller: null })
+      return { runId, disposition: 'scheduled' }
     },
     async reconcileGoal(goalId, runtime = {}) {
       const interruptionGeneration = {
@@ -224,11 +242,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       }
       const goalPackage = await options.store.readPackage(goalId)
       const attemptSnapshot = await attempts.snapshot()
-      const requested = requestedWorkIds(requestedRuns, goalId)
+      const requested = requestedWorkIds(runSlots, goalId)
       const livePrefix = `${goalId}/`
-      const localLiveWorkIds = [...live]
-        .filter((key) => key.startsWith(livePrefix))
-        .map((key) => key.slice(livePrefix.length))
+      const localLiveWorkIds = [...runSlots]
+        .filter(([key, slot]) => key.startsWith(livePrefix) && slot.state === 'active')
+        .map(([key]) => key.slice(livePrefix.length))
       const facts: WorkRuntimeFacts = {
         projectEligible: runtime.projectEligible ?? true,
         liveRunWorkIds: new Set([...localLiveWorkIds, ...(runtime.liveRunWorkIds ?? [])]),
@@ -273,12 +291,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
 
       const { workId, responsibility } = decision
       const liveKey = `${goalId}/${workId}`
-      if (live.has(liveKey)) return { kind: 'wait', decision }
-      const runId = requestedRuns.get(liveKey) ?? createRunId()
-      requestedRuns.delete(liveKey)
-      live.add(liveKey)
+      const existingSlot = runSlots.get(liveKey)
+      if (existingSlot?.state === 'active') return { kind: 'wait', decision }
+      const runId = existingSlot?.runId ?? createRunId()
       const runController = new AbortController()
-      runControllers.set(liveKey, runController)
+      const runSlot: WorkRunSlot = {
+        runId,
+        state: 'active',
+        controller: runController,
+      }
+      runSlots.set(liveKey, runSlot)
       let attempt: RunAttemptRecorder | null = null
       try {
         if (
@@ -406,26 +428,32 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             responsibility,
           ),
         })
+        attempt = await attempts.start({
+          projectId: options.projectId,
+          goalId,
+          workId,
+          runId,
+          responsibility,
+          runRoot: context.runRoot,
+          workHash: sessionScope.assignmentHash,
+        })
         const preparation =
           responsibility === 'planner'
             ? null
-            : await prepareResponsibilityProject({
-                preparer,
-                timeoutMs: options.preparationTimeoutMs,
-                context,
-                primaryRepoId,
-              })
-        attempt = await attempts
-          .start({
-            projectId: options.projectId,
-            goalId,
-            workId,
-            runId,
-            responsibility,
-            runRoot: context.runRoot,
-            workHash: sessionScope.assignmentHash,
-          })
-          .catch(() => null)
+            : await (async () => {
+                await attempt?.record({
+                  kind: 'message',
+                  level: 'info',
+                  role: 'coordinator',
+                  content: 'Project preparation started.',
+                })
+                return prepareResponsibilityProject({
+                  preparer,
+                  timeoutMs: options.preparationTimeoutMs,
+                  context,
+                  primaryRepoId,
+                })
+              })()
         if (preparation) {
           await attempt?.record({
             kind: 'message',
@@ -746,8 +774,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           goalId,
           workId,
         ).catch(() => undefined)
-        live.delete(liveKey)
-        runControllers.delete(liveKey)
+        if (runSlots.get(liveKey) === runSlot) runSlots.delete(liveKey)
       }
     },
   }
@@ -772,6 +799,7 @@ async function prepareResponsibilityProject(input: {
   primaryRepoId: string
 }) {
   const runtimeDir = join(input.context.runRoot, 'project-prepare')
+  const startedAt = new Date()
   let result: ProjectPreparationResult
   try {
     result = await input.preparer.prepare({
@@ -791,10 +819,14 @@ async function prepareResponsibilityProject(input: {
     const logPath = join(runtimeDir, 'prepare.log')
     await mkdir(runtimeDir, { recursive: true })
     await Bun.write(logPath, `${logs}\n`)
+    const endedAt = new Date()
     result = {
       kind: 'failed',
       adapterPath: join(input.context.primaryRepoRoot, ...PROJECT_PREPARE_PATH.split('/')),
       exitCode: null,
+      startedAt: startedAt.toISOString(),
+      endedAt: endedAt.toISOString(),
+      durationMs: Math.max(0, endedAt.getTime() - startedAt.getTime()),
       logs,
       logPath,
       reposFile: input.context.reposFile,
@@ -809,6 +841,7 @@ async function prepareResponsibilityProject(input: {
     `- Status: ${result.kind}`,
     `- Adapter: ${result.adapterPath}`,
     `- Exit code: ${result.exitCode ?? 'none'}`,
+    `- Duration: ${result.durationMs} ms`,
     `- Repo manifest: ${result.reposFile}`,
     `- Log: ${result.logPath}`,
     `- Result: ${resultPath}`,
@@ -875,12 +908,12 @@ function latestResponsibilityAttempt(
     : undefined
 }
 
-function requestedWorkIds(requestedRuns: ReadonlyMap<string, string>, goalId: string) {
+function requestedWorkIds(runSlots: ReadonlyMap<string, WorkRunSlot>, goalId: string) {
   const prefix = `${goalId}/`
   return new Set(
-    [...requestedRuns.keys()]
-      .filter((key) => key.startsWith(prefix))
-      .map((key) => key.slice(prefix.length)),
+    [...runSlots]
+      .filter(([key, slot]) => key.startsWith(prefix) && slot.state === 'requested')
+      .map(([key]) => key.slice(prefix.length)),
   )
 }
 

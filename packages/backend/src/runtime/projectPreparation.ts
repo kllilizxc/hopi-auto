@@ -16,6 +16,9 @@ export interface ProjectPreparationResult {
   kind: ProjectPreparationKind
   adapterPath: string
   exitCode: number | null
+  startedAt: string
+  endedAt: string
+  durationMs: number
   logs: string
   logPath: string
   reposFile: string
@@ -41,6 +44,7 @@ export interface ProjectPreparer {
 export function createProjectPreparer(): ProjectPreparer {
   return {
     async prepare(input) {
+      const startedAt = new Date()
       const runtimeDir = resolve(input.runtimeDir)
       const cacheDir = resolve(input.cacheDir)
       const logPath = join(runtimeDir, 'prepare.log')
@@ -93,6 +97,7 @@ export function createProjectPreparer(): ProjectPreparer {
             reposFile,
           },
           logPath,
+          startedAt,
         )
       }
 
@@ -103,6 +108,7 @@ export function createProjectPreparer(): ProjectPreparer {
         runtimeDir,
         cacheDir,
         timeoutMs: input.timeoutMs,
+        startedAt,
       })
     },
   }
@@ -115,6 +121,7 @@ async function prepareProject(input: {
   runtimeDir: string
   cacheDir: string
   timeoutMs?: number
+  startedAt: Date
 }) {
   const adapterPath = join(input.projectRoot, ...PROJECT_PREPARE_PATH.split('/'))
   const logPath = join(input.runtimeDir, 'prepare.log')
@@ -131,6 +138,7 @@ async function prepareProject(input: {
         reposFile: input.reposFile,
       },
       logPath,
+      input.startedAt,
     )
   }
   const stats = await adapter.stat()
@@ -145,6 +153,7 @@ async function prepareProject(input: {
         reposFile: input.reposFile,
       },
       logPath,
+      input.startedAt,
     )
   }
 
@@ -207,6 +216,7 @@ async function prepareProject(input: {
         reposFile: input.reposFile,
       },
       logPath,
+      input.startedAt,
     )
   }
   return finishPreparation(
@@ -219,6 +229,7 @@ async function prepareProject(input: {
       reposFile: input.reposFile,
     },
     logPath,
+    input.startedAt,
   )
 }
 
@@ -242,12 +253,20 @@ function renderStatuses(entries: readonly (readonly [string, string])[]) {
 }
 
 async function finishPreparation(
-  result: ProjectPreparationResult,
+  result: Omit<ProjectPreparationResult, 'startedAt' | 'endedAt' | 'durationMs'>,
   logPath: string,
+  startedAt: Date,
 ): Promise<ProjectPreparationResult> {
+  const endedAt = new Date()
+  const completed = {
+    ...result,
+    startedAt: startedAt.toISOString(),
+    endedAt: endedAt.toISOString(),
+    durationMs: Math.max(0, endedAt.getTime() - startedAt.getTime()),
+  }
   await mkdir(dirname(logPath), { recursive: true })
-  await Bun.write(logPath, result.logs ? `${result.logs}\n` : '')
-  return result
+  await Bun.write(logPath, completed.logs ? `${completed.logs}\n` : '')
+  return completed
 }
 
 async function sourceStatus(cwd: string) {

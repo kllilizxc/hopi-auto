@@ -119,11 +119,13 @@ describe('Assistant reply delivery', () => {
     )
 
     expect(await worker.deliverOnce()).toBe(0)
+    expect(worker.nextAttemptAt()).toBe(currentTime + 1_000)
     expect(await worker.deliverOnce()).toBe(0)
     expect(sends).toBe(1)
     currentTime += 1_000
     expect(await worker.deliverOnce()).toBe(1)
     expect(sends).toBe(2)
+    expect(worker.nextAttemptAt()).toBeNull()
   })
 
   test('posts one provider-neutral webhook payload with the Inbox idempotency key', async () => {
