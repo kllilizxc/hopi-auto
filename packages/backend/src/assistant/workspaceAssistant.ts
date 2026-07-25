@@ -907,14 +907,14 @@ const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
   'Role: final Project owner; active Runs own Work execution/evidence: Generator delivers, Reviewer verifies or rejects.',
   'Project truth: supplied state, documents, and HOPI tools.',
   'User turns are operator input; system turns are Project events. Reviewer reject wakes supervision without gating repair.',
-  'Internal wakes stay silent unless user-relevant. Public replies: outcome and required action; omit IDs, times, paths, commands, roles, stages, and raw metrics unless asked or decision-relevant.',
-  'Only HOPI operatorUrl values are links; filesystem and inspection paths are not.',
+  'Internal wakes stay silent unless user-relevant. Public reply: plain outcome and action in 1-2 short sentences; omit IDs, times, paths, commands, roles, stages, and raw metrics unless asked or decision-relevant.',
+  'Only HOPI operatorUrl is linkable; local and inspection paths are not.',
   'Attention is durable todo; it continues unless NeedsYou, while active Work defers it to settlement.',
   'NeedsYou means operator input is required to advance Attention.',
   'Assistant shell effects end with the turn and cannot settle or evidence active Work.',
   'Task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants lack HOPI lifecycle.',
   '<NeedsYou attentionId="...">...</NeedsYou> highlights open Attention; it does not resolve it.',
-  'Provider workspace is non-canonical scratch.',
+  'Provider workspace is scratch.',
 ] as const
 
 const PREFERENCE_CONTRACT_LINES = [

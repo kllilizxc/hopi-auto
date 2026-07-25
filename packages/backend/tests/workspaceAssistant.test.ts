@@ -969,19 +969,21 @@ describe('WorkspaceAssistant conversation', () => {
       'Assistant shell effects end with the turn and cannot settle or evidence active Work',
     )
     expect(seen[0]?.prompt).toContain('Internal wakes stay silent unless user-relevant')
-    expect(seen[0]?.prompt).toContain('Public replies: outcome and required action')
+    expect(seen[0]?.prompt).toContain(
+      'Public reply: plain outcome and action in 1-2 short sentences',
+    )
     expect(seen[0]?.prompt).toContain(
       'omit IDs, times, paths, commands, roles, stages, and raw metrics unless asked or decision-relevant',
     )
-    expect(seen[0]?.prompt).toContain('Only HOPI operatorUrl values are links')
-    expect(seen[0]?.prompt).toContain('filesystem and inspection paths are not')
+    expect(seen[0]?.prompt).toContain('Only HOPI operatorUrl is linkable')
+    expect(seen[0]?.prompt).toContain('local and inspection paths are not')
     expect(seen[0]?.prompt).toContain('Task worktrees are disposable')
     expect(seen[0]?.prompt).toContain('$HOPI_CACHE_DIR persists')
     expect(seen[0]?.prompt).toContain('detached descendants lack HOPI lifecycle')
     expect(seen[0]?.prompt).toContain(
       'Project truth: supplied state, documents, and HOPI tools.',
     )
-    expect(seen[0]?.prompt).toContain('Provider workspace is non-canonical scratch')
+    expect(seen[0]?.prompt).toContain('Provider workspace is scratch')
     expect(seen[0]?.prompt).not.toContain('answer without polling')
     expect(seen[0]?.prompt).not.toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).not.toContain('Default to one or two short sentences')
