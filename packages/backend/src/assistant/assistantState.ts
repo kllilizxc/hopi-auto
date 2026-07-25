@@ -1,6 +1,7 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocuments'
 import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
@@ -82,6 +83,7 @@ export interface AssistantStateActiveRun {
 
 interface DigestWorkspaceAttention {
   reference: string
+  projectId: string | null
   id: string
   createdAt: string
   updatedAt: string
@@ -89,6 +91,19 @@ interface DigestWorkspaceAttention {
   refs: string[]
   body: string
   inspectionPath: string
+}
+
+interface DigestRuntime {
+  latestAttempt: { status: string } | null
+  recentAttempts: Array<{
+    runId: string
+    responsibility: string
+    status: string
+    result: string | null
+    application: string | null
+  }>
+  attemptCount: number
+  stale: boolean
 }
 
 interface DigestProject {
@@ -100,24 +115,15 @@ interface DigestProject {
     goal: { attributes: unknown }
     latestPlanningOutcome: {
       attributes: unknown
-      runtime: {
-        latestAttempt: { status: string } | null
-        recentAttempts: Array<{ status: string }>
-        attemptCount: number
-        stale: boolean
-      }
+      runtime: DigestRuntime
     } | null
     works: Array<{
       attributes: unknown
       candidateIntegration?: unknown
-      runtime: {
-        latestAttempt: { status: string } | null
-        recentAttempts: Array<{ status: string }>
-        attemptCount: number
-        stale: boolean
-      }
+      runtime: DigestRuntime
     }>
     attentions: Array<{ attributes: unknown }>
+    design: Array<{ canonicalPath: string; hash: string | null }>
   }>
 }
 
@@ -168,6 +174,7 @@ export function createAssistantStateReader(options: {
         } = attention.attributes
         return {
           reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
+          projectId: workspaceAttentionProjectId(attention),
           ...attributes,
           body: boundedText(attention.body, 1_200),
           inspectionPath: resolve(
@@ -335,12 +342,10 @@ export function createAssistantStateReader(options: {
                     }),
                   }
                 : null
-              const design = input.goalId
-                ? await options.publisher.snapshotTree(
-                    project.store.paths.publicationRoot,
-                    project.store.paths.designRoot(goalId),
-                  )
-                : null
+              const design = await options.publisher.snapshotTree(
+                project.store.paths.publicationRoot,
+                project.store.paths.designRoot(goalId),
+              )
 
               return {
                 goal: {
@@ -348,8 +353,21 @@ export function createAssistantStateReader(options: {
                   body: boundedText(goalPackage.goal.body, input.includeEvidence ? 4_000 : 800),
                   path: project.store.paths.absolute(project.store.paths.goalDocument(goalId)),
                 },
-                latestPlanningOutcome,
-                works,
+                design: design.files.flatMap((file) =>
+                  file.content
+                    ? [
+                        {
+                          canonicalPath: file.path,
+                          path: project.store.paths.absolute(file.path),
+                          hash: file.hash,
+                          excerpt: boundedText(
+                            new TextDecoder().decode(file.content),
+                            input.goalId ? 4_000 : 1_200,
+                          ),
+                        },
+                      ]
+                    : [],
+                ),
                 attentions: [...goalPackage.attentions.values()]
                   .filter((attention) => attention.attributes.resolvedAt === null)
                   .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
@@ -365,20 +383,8 @@ export function createAssistantStateReader(options: {
                       project.store.paths.attentionDocument(goalId, attention.attributes.id),
                     ),
                   })),
-                ...(design
-                  ? {
-                      design: design.files.flatMap((file) =>
-                        file.content
-                          ? [
-                              {
-                                canonicalPath: file.path,
-                                path: project.store.paths.absolute(file.path),
-                              },
-                            ]
-                          : [],
-                      ),
-                    }
-                  : {}),
+                latestPlanningOutcome,
+                works,
               }
             }),
           )
@@ -419,13 +425,8 @@ export function createAssistantStateReader(options: {
     )
 
     const projectIds = new Set(projects.map((project) => project.projectId))
-    const attentionProjectId = (attention: DigestWorkspaceAttention) => {
-      const projectId = attention.refs
-        .filter((reference) => reference.startsWith('project:'))
-        .map((reference) => reference.slice('project:'.length))
-        .find((candidate) => candidate && !candidate.includes('/'))
-      return projectId && projectIds.has(projectId) ? projectId : null
-    }
+    const attentionProjectId = (attention: DigestWorkspaceAttention) =>
+      attention.projectId && projectIds.has(attention.projectId) ? attention.projectId : null
     const [stateDigest, homeDigest, projectDigestEntries] = await Promise.all([
       semanticDigest(projects, workspaceAttentions),
       semanticDigest(
@@ -585,6 +586,7 @@ async function readWorkEvidence(input: {
             return {
               reference,
               available: true,
+              kind: artifact.kind,
               fileName: artifact.fileName,
               inspectionPath: artifact.path,
               operatorUrl: evidenceArtifactUrl({
@@ -661,12 +663,24 @@ async function readWorkRuntime(input: {
       input.observedAt.getTime() - new Date(lastActivityAt).getTime() >= input.staleAfterMs,
   )
   const worktreePath = join(resolve(input.projectRoot, '..'), 'work', input.goalId, input.workId)
+  const recentAttempts = await Promise.all(
+    attempts.slice(0, 3).map(async (attempt) => ({
+      ...compactAttemptIndex(attempt),
+      artifactPreservation: await readArtifactPreservation({
+        homeRoot: input.homeRoot,
+        projectId: input.projectId,
+        goalId: input.goalId,
+        workId: input.workId,
+        runId: attempt.runId,
+      }),
+    })),
+  )
 
   return {
     activeResponsibility: input.activeResponsibility,
     latestAttempt: latest ? boundedAttempt(latest) : null,
     attemptCount: attempts.length,
-    recentAttempts: attempts.slice(0, 3).map(compactAttemptIndex),
+    recentAttempts,
     lastActivityAt,
     stale,
     worktree: {
@@ -686,6 +700,7 @@ async function existingRunPaths(runRoot: string) {
     context: join(runRoot, 'context.md'),
     prompt: join(runRoot, 'prompt.md'),
     result: join(runRoot, 'result.json'),
+    artifacts: join(runRoot, 'artifacts.json'),
   }
   const entries = await Promise.all(
     Object.entries(candidates).map(
@@ -695,6 +710,42 @@ async function existingRunPaths(runRoot: string) {
   return Object.fromEntries(
     entries.filter(([, , exists]) => exists).map(([key, path]) => [key, path]),
   ) as Partial<Record<keyof typeof candidates, string>>
+}
+
+async function readArtifactPreservation(input: {
+  homeRoot: string
+  projectId: string
+  goalId: string
+  workId: string
+  runId: string
+}) {
+  const runRoot = await existingRunRoot(
+    input.homeRoot,
+    input.projectId,
+    input.goalId,
+    input.workId,
+    input.runId,
+  )
+  if (!runRoot) return null
+  const path = join(runRoot, 'artifacts.json')
+  const file = Bun.file(path)
+  if (!(await file.exists())) return null
+  try {
+    const value = await file.json()
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const manifest = value as Record<string, unknown>
+    const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : []
+    const unavailable = Array.isArray(manifest.unavailable) ? manifest.unavailable : []
+    return {
+      path,
+      preserved: artifacts.slice(0, 20),
+      preservedOmitted: Math.max(0, artifacts.length - 20),
+      unavailable: unavailable.slice(0, 20),
+      unavailableOmitted: Math.max(0, unavailable.length - 20),
+    }
+  } catch (error) {
+    return { path, error: errorMessage(error) }
+  }
 }
 
 async function existingRunRoot(
@@ -832,29 +883,37 @@ async function semanticDigest(
         latestPlanningOutcome: goal.latestPlanningOutcome
           ? {
               attributes: goal.latestPlanningOutcome.attributes,
-              terminalAttempt:
-                goal.latestPlanningOutcome.runtime.latestAttempt?.status === 'running'
-                  ? null
-                  : (goal.latestPlanningOutcome.runtime.latestAttempt ?? null),
+              terminalAttempt: latestTerminalAttempt(goal.latestPlanningOutcome.runtime),
               stale: goal.latestPlanningOutcome.runtime.stale,
             }
           : null,
         works: goal.works.map((work) => ({
           attributes: work.attributes,
           ...(work.candidateIntegration ? { candidateIntegration: work.candidateIntegration } : {}),
-          terminalAttempt:
-            work.runtime.latestAttempt?.status === 'running'
-              ? null
-              : (work.runtime.latestAttempt ?? null),
+          terminalAttempt: latestTerminalAttempt(work.runtime),
           stale: work.runtime.stale,
         })),
         attentions: goal.attentions.map((attention) => attention.attributes),
+        design: goal.design.map(({ canonicalPath, hash }) => ({ canonicalPath, hash })),
       })),
     })),
   }
   const bytes = new TextEncoder().encode(JSON.stringify(semantic))
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
   return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+function latestTerminalAttempt(runtime: DigestRuntime) {
+  if (runtime.latestAttempt?.status !== 'running') return runtime.latestAttempt
+  const settled = runtime.recentAttempts.find((attempt) => attempt.status !== 'running')
+  if (!settled) return null
+  return {
+    runId: settled.runId,
+    responsibility: settled.responsibility,
+    status: settled.status,
+    result: settled.result,
+    application: settled.application,
+  }
 }
 
 function responsibilityCounts(active: readonly RunAttemptSummary[]) {

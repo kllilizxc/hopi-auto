@@ -50,6 +50,7 @@ const NON_PRESENTABLE_STATUS_TELEMETRY = new Set([
   'thread.started',
   'turn.started',
   'turn.completed',
+  'context.compacted',
   'system.init',
   'system.thinking_tokens',
   'system.task_progress',

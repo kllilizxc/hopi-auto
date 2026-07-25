@@ -93,6 +93,8 @@ describe('WorkspaceAssistant conversation', () => {
     const binary = join(temporaryRoot, 'fake-claude')
     const argsFile = join(temporaryRoot, 'claude-args.json')
     const promptFile = join(temporaryRoot, 'claude-prompt.txt')
+    const cacheFile = join(temporaryRoot, 'claude-cache.txt')
+    const homeRoot = join(temporaryRoot, 'home')
     const finalReply = 'x'.repeat(800)
     await Bun.write(
       binary,
@@ -100,6 +102,7 @@ describe('WorkspaceAssistant conversation', () => {
         '#!/usr/bin/env bun',
         `await Bun.write(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)))`,
         `await Bun.write(${JSON.stringify(promptFile)}, await Bun.stdin.text())`,
+        `await Bun.write(${JSON.stringify(cacheFile)}, process.env.HOPI_CACHE_DIR ?? "")`,
         'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))',
         'console.log(JSON.stringify({type:"system",subtype:"thinking_tokens",estimated_tokens:42,session_id:"claude-session"}))',
         'console.log(JSON.stringify({type:"assistant",message:{id:"message-1",content:[{type:"thinking",thinking:"Checking the image."}]},session_id:"claude-session"}))',
@@ -115,6 +118,7 @@ describe('WorkspaceAssistant conversation', () => {
     const cwd = join(temporaryRoot, 'assistant-claude')
     const readableRoot = join(temporaryRoot, 'canonical')
     const runner = createConfiguredAssistantModelRunner({
+      homeRoot,
       resolveConfig: () => ({
         transport: 'claude',
         cwdMode: 'root',
@@ -170,6 +174,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).not.toContain('--add-dir')
     expect(mcpConfig.mcpServers.hopi.env.HOPI_TOOL_TOKEN).toBe('claude-token')
     expect(await Bun.file(promptFile).text()).toContain(imagePath)
+    expect(await Bun.file(cacheFile).text()).toBe(join(homeRoot, '.hopi', 'cache'))
     expect(await Bun.file(join(cwd, 'transcript.log')).text()).toContain('stdout: {"type":"result"')
     expect(events).toContainEqual({
       kind: 'transcript',
@@ -192,6 +197,62 @@ describe('WorkspaceAssistant conversation', () => {
     expect(events).not.toContainEqual(
       expect.objectContaining({ entryKind: 'tool_call', toolName: 'TaskCreate' }),
     )
+  })
+
+  test('redacts inherited secrets from Assistant diagnostics and public output', async () => {
+    const binary = join(temporaryRoot, 'fake-claude-secret-output')
+    const secret = 'assistant-secret-value'
+    await Bun.write(
+      binary,
+      [
+        '#!/usr/bin/env bun',
+        'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-session"}))',
+        'console.log(JSON.stringify({type:"assistant",message:{content:[{type:"text",text:process.env.HOPI_TEST_SECRET_TOKEN}]},session_id:"claude-session"}))',
+        'console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-session",result:process.env.HOPI_TEST_SECRET_TOKEN}))',
+        '',
+      ].join('\n'),
+    )
+    await chmod(binary, 0o755)
+    const previous = process.env.HOPI_TEST_SECRET_TOKEN
+    process.env.HOPI_TEST_SECRET_TOKEN = secret
+    try {
+      const cwd = join(temporaryRoot, 'assistant-secret')
+      const runner = createConfiguredAssistantModelRunner({
+        resolveConfig: () => ({
+          transport: 'claude',
+          cwdMode: 'root',
+          binary,
+          permissionMode: 'dontAsk',
+        }),
+        resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+      })
+      const events: AgentRuntimeEvent[] = []
+
+      const result = await runner.run(
+        {
+          eventId: 'EV-secret',
+          prompt: 'Report the environment.',
+          session: null,
+          cwd,
+          lastMessageFile: join(cwd, 'last-message.txt'),
+          transcriptFile: join(cwd, 'transcript.log'),
+          toolUrl: 'http://127.0.0.1:3000/api/internal/assistant-tool',
+          toolToken: 'assistant-tool-token',
+        },
+        {
+          onEvent: (event) => {
+            events.push(event)
+          },
+        },
+      )
+
+      expect(result.reply).toBe('[REDACTED_SECRET]')
+      expect(await Bun.file(join(cwd, 'last-message.txt')).text()).toBe('[REDACTED_SECRET]')
+      expect(await Bun.file(join(cwd, 'transcript.log')).text()).not.toContain(secret)
+      expect(JSON.stringify(events)).not.toContain(secret)
+    } finally {
+      restoreEnvironment('HOPI_TEST_SECRET_TOKEN', previous)
+    }
   })
 
   test('throws a Claude terminal provider error instead of accepting its synthetic reply', async () => {
@@ -803,6 +864,7 @@ describe('WorkspaceAssistant conversation', () => {
     const args = JSON.parse(await Bun.file(argsFile).text()) as string[]
     expect(args).toContain('model_provider="hopi_chatgpt_https"')
     expect(args).toContain('model_providers.hopi_chatgpt_https.supports_websockets=false')
+    expect(args).toContain('shell_environment_policy.inherit=all')
     expect(args).not.toContain('skills.include_instructions=false')
     expect(args).not.toContain('skills.bundled.enabled=false')
     expect(args).toContain('include_apps_instructions=false')
@@ -895,12 +957,26 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('[Current execution environment observation]')
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
     expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
-    expect(seen[0]?.prompt).toContain('Role: final owner and supervisor of the current Project.')
+    expect(seen[0]?.prompt).toContain('Role: final Project owner')
+    expect(seen[0]?.prompt).toContain('active Runs own Work execution and evidence')
+    expect(seen[0]?.prompt).toContain('Generator delivers')
     expect(seen[0]?.prompt).toContain(
-      'Finishing a turn does not preserve unfinished responsibility or schedule another wake',
+      'Reviewer reject wakes supervision without gating Generator repair',
     )
     expect(seen[0]?.prompt).toContain(
-      'Current Project facts and canonical effects come from supplied state, documents, and HOPI tools.',
+      'Unresolved Attention continues after settlement unless NeedsYou',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'NeedsYou means operator input is required before that Attention can advance',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'Assistant shell effects end with the turn and cannot settle or supply evidence for active Work',
+    )
+    expect(seen[0]?.prompt).toContain('Task worktrees are disposable')
+    expect(seen[0]?.prompt).toContain('$HOPI_CACHE_DIR persists across Attempts')
+    expect(seen[0]?.prompt).toContain('Detached shell descendants have no HOPI lifecycle')
+    expect(seen[0]?.prompt).toContain(
+      'Current Project truth comes from supplied state, documents, and HOPI tools.',
     )
     expect(seen[0]?.prompt).toContain('provider workspace is non-canonical scratch space')
     expect(seen[0]?.prompt).not.toContain('answer without polling')
@@ -954,7 +1030,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-2')
 
     expect(sessionIds).toEqual([null, 'thread-1'])
-    expect(prompts[0]).toContain('Role: final owner and supervisor of the current Project.')
+    expect(prompts[0]).toContain('Role: final Project owner')
     expect(prompts[1]).not.toContain('# HOPI Workspace Assistant')
     expect(prompts[1]).not.toContain('[Operator-facing reply contract]')
     expect(prompts[1]).not.toContain('[Current durable cross-Project user preferences]')

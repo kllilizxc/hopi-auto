@@ -52,6 +52,7 @@ interface OptimisticInboxSubmission extends OptimisticInboxMessage {
   images: DraftImage[]
   context: AssistantInboxContext | undefined
   replyAttentions: AttentionView[]
+  replyEventId: string | null
 }
 
 const MAX_DRAFT_IMAGES = 4
@@ -73,6 +74,7 @@ export function AssistantPanel({
   const [optimisticMessages, setOptimisticMessages] = useState<OptimisticInboxSubmission[]>([])
   const [imageError, setImageError] = useState<string | null>(null)
   const [replyAttentions, setReplyAttentions] = useState<AttentionView[]>([])
+  const [replyEventId, setReplyEventId] = useState<string | null>(null)
   const [showReflectionDebug, setShowReflectionDebug] = useState(false)
   const [assistantScrolling, setAssistantScrolling] = useState(false)
   const [messageFocus, setMessageFocus] = useState<{
@@ -109,6 +111,7 @@ export function AssistantPanel({
   useEffect(() => {
     if (focusRequest === 0) return
     setReplyAttentions(initialReply ? [initialReply] : [])
+    setReplyEventId(null)
     setShowReflectionDebug(false)
     setMessageFocus({
       source: 'external',
@@ -230,14 +233,22 @@ export function AssistantPanel({
     })
   }, [needsYouAttentions, replyAttentions.length, snapshot])
 
+  useEffect(() => {
+    if (replyAttentions.length === 0) setReplyEventId(null)
+  }, [replyAttentions.length])
+
   const replyToNeedsYouMessage = useCallback(
     (groupId: string) => {
       const attentions = needsYouAttentionsByGroupId.get(groupId)
       if (!attentions?.length) return
       setReplyAttentions(attentions)
+      setReplyEventId(
+        assistantStream.requests.find((request) => `inbox:${request.eventId}` === groupId)
+          ?.eventId ?? null,
+      )
       requestAnimationFrame(() => composerRef.current?.focus())
     },
-    [needsYouAttentionsByGroupId],
+    [assistantStream.requests, needsYouAttentionsByGroupId],
   )
   const replyToLatestNeedsYouMessage = useCallback(() => {
     const attentions = latestNeedsYouGroupId
@@ -246,12 +257,13 @@ export function AssistantPanel({
     if (!attentions?.length) return
     setShowReflectionDebug(false)
     setReplyAttentions(attentions)
+    setReplyEventId(latestNeedsYouRequest?.eventId ?? null)
     setMessageFocus({
       source: 'needs-you',
       request: ++messageFocusSequenceRef.current,
     })
     requestAnimationFrame(() => composerRef.current?.focus())
-  }, [latestNeedsYouGroupId, needsYouAttentionsByGroupId])
+  }, [latestNeedsYouGroupId, latestNeedsYouRequest?.eventId, needsYouAttentionsByGroupId])
 
   const sendMutation = useMutation({
     mutationFn: (submission: OptimisticInboxSubmission) =>
@@ -278,6 +290,7 @@ export function AssistantPanel({
       setInput((current) => (current.trim() ? `${submission.text}\n\n${current}` : submission.text))
       setDraftImages((current) => [...submission.images, ...current])
       setReplyAttentions((current) => (current.length > 0 ? current : submission.replyAttentions))
+      setReplyEventId((current) => current ?? submission.replyEventId)
     },
   })
 
@@ -297,14 +310,21 @@ export function AssistantPanel({
           url: image.url,
         })),
         images,
-        context: resolveAssistantInboxContext(scope, replyAttentions, snapshot?.home.homeId),
+        context: resolveAssistantInboxContext(
+          scope,
+          replyAttentions,
+          snapshot?.home.homeId,
+          replyEventId ?? undefined,
+        ),
         replyAttentions,
+        replyEventId,
       }
       setOptimisticMessages((current) => [...current, submission])
       setInput('')
       setDraftImages([])
       setImageError(null)
       setReplyAttentions([])
+      setReplyEventId(null)
       sendMutation.mutate(submission)
     }
   }
@@ -458,7 +478,10 @@ export function AssistantPanel({
                 <IconButton
                   className="composer-context__dismiss"
                   type="button"
-                  onClick={() => setReplyAttentions([])}
+                  onClick={() => {
+                    setReplyAttentions([])
+                    setReplyEventId(null)
+                  }}
                   aria-label="Clear reply context"
                   title="Clear reply context"
                 >

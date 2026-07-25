@@ -130,6 +130,46 @@ describe('Run artifacts', () => {
     )
   })
 
+  test('snapshots a declared Run-local directory as one durable artifact subtree', async () => {
+    const root = await temporaryRoot()
+    const runRoot = join(root, 'R-1')
+    const source = join(root, 'temporary-proof')
+    const resultFile = join(runRoot, 'result.json')
+    await mkdir(join(source, 'nested'), { recursive: true })
+    await Bun.write(join(source, 'ledger.json'), '{"phase":"validated"}\n')
+    await Bun.write(join(source, 'nested', 'proof.txt'), 'durable proof\n')
+    await mkdir(runRoot, { recursive: true })
+    await Bun.write(
+      resultFile,
+      `${JSON.stringify({ result: 'success', summary: 'proved', artifacts: [source] })}\n`,
+    )
+
+    const result = await preserveRunArtifacts({
+      runId: 'R-1',
+      runRoot,
+      artifacts: [source],
+      resultFile,
+    })
+
+    expect(result.references).toEqual(['artifact:R-1/001-temporary-proof'])
+    expect(result.unavailable).toEqual([])
+    expect(result.preserved).toMatchObject([
+      {
+        reference: 'artifact:R-1/001-temporary-proof',
+        kind: 'directory',
+        sizeBytes: expect.any(Number),
+      },
+    ])
+    expect(
+      await Bun.file(
+        join(runRoot, 'artifacts', '001-temporary-proof', 'nested', 'proof.txt'),
+      ).text(),
+    ).toBe('durable proof\n')
+    expect(await Bun.file(resultFile).json()).toMatchObject({
+      artifacts: ['artifact:R-1/001-temporary-proof'],
+    })
+  })
+
   test('keeps Planner proposal paths out of Evidence artifacts', async () => {
     const root = await temporaryRoot()
     const runRoot = join(root, 'R-1')
@@ -150,7 +190,7 @@ describe('Run artifacts', () => {
     expect(await Bun.file(join(runRoot, 'artifacts.json')).exists()).toBe(false)
   })
 
-  test('keeps a Project-relative artifact directory as supporting material', async () => {
+  test('keeps a Project-relative artifact directory as portable supporting material', async () => {
     const root = await temporaryRoot()
     const runRoot = join(root, 'R-1')
     const projectRoot = join(root, 'project')
@@ -166,12 +206,33 @@ describe('Run artifacts', () => {
     })
 
     expect(result.references).toEqual(['reports/bundle'])
-    expect(result.unavailable).toEqual([
-      {
-        reference: 'reports/bundle',
-        reason: 'Declared Run artifact is not a file.',
-      },
+    expect(result.unavailable).toEqual([])
+  })
+
+  test('retains a candidate-only Project-relative directory instead of publishing a broken path', async () => {
+    const root = await temporaryRoot()
+    const runRoot = join(root, 'run')
+    const candidateRoot = join(root, 'candidate')
+    const releaseRoot = join(root, 'release')
+    await Promise.all([
+      mkdir(join(candidateRoot, 'reports', 'bundle'), { recursive: true }),
+      mkdir(releaseRoot, { recursive: true }),
     ])
+    await Bun.write(join(candidateRoot, 'reports', 'bundle', 'manifest.json'), '{"ok":true}\n')
+
+    const result = await preserveRunArtifacts({
+      runId: 'R-candidate-directory',
+      runRoot,
+      artifacts: ['reports/bundle'],
+      sourceRoots: [candidateRoot],
+      portableRoots: [releaseRoot],
+    })
+
+    expect(result.references).toEqual(['artifact:R-candidate-directory/001-bundle'])
+    expect(result.preserved[0]).toMatchObject({ kind: 'directory' })
+    expect(await Bun.file(join(runRoot, 'artifacts', '001-bundle', 'manifest.json')).text()).toBe(
+      '{"ok":true}\n',
+    )
   })
 })
 

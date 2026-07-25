@@ -210,9 +210,13 @@ as environment and tool semantics rather than a prescribed call sequence.
 
 Only the explicit Reply action copies `replyTo` and exact Attention references into a user Inbox
 turn. Ordinary page context carries Project and Goal identity only; it does not attach every open
-blocker. A reply may leave an Attention open when its evidence does not clear the condition.
-Unrelated Attention is never settled as a page-scoped batch. Planner and Coordinator do not infer
-closure from prose or from a Goal revision because an environmental or external blocker may survive it.
+blocker. The canonical reference identifies the Attention while its owning Project selects the
+persistent Assistant conversation; a Workspace-stored Project Attention must not fall back to the
+Home conversation. `replyTo` may reference any handled public message in that same conversation; it
+is conversational provenance, not Attention authority. A reply may leave an Attention open when its
+evidence does not clear the condition. Unrelated Attention is never settled as a page-scoped batch.
+Planner and Coordinator do not infer closure from prose or from a Goal revision because an
+environmental or external blocker may survive it.
 
 Explicitly retrying a Work ensures that one current invocation exists in the existing lineage; it
 does not claim that the invocation succeeded and does not mutate Attention. If the Work already has
@@ -461,10 +465,13 @@ that result. The mere existence of Planning Work is not a semantic change.
 RoleRunner normalizes Codex, Claude, OpenCode, or process output into one runtime event shape.
 Coordinator appends those events to the owning Run directory and exposes them through the selected
 Work's Attempt history. The UI polls only while the modal is open, follows the live tail by default,
-and lets the operator inspect older Attempts. Before normalization, RoleRunner also appends every raw
+and lets the operator inspect older Attempts. Before normalization, RoleRunner also appends every
 stdout/stderr line to the Run's `transcript.log`; normalized summaries may be bounded for display but
-the diagnostic source is not discarded. These streams are diagnostics: a transcript never advances
-Work and cannot replace Evidence or a canonical gate.
+the diagnostic source is not discarded. The one exception is deterministic secret redaction: exact
+values inherited through secret-like environment names are replaced before transcript, normalized
+event, error-summary, or public-reply persistence. This boundary applies to every built-in role and
+does not otherwise classify or rewrite process output. These streams are diagnostics: a transcript
+never advances Work and cannot replace Evidence or a canonical gate.
 
 The durable Attempt manifest is the sole runtime authority for whether that Run is active. One
 Attempt begins before Project preparation and keeps the same Run ID through preparation, model
@@ -487,7 +494,8 @@ plan change twice. The reducer cache belongs to the exact vendor Session and Wor
 not to Work state, and is cleared whenever that Session is rebuilt or replaced. Raw task operations
 remain in `transcript.log`.
 
-Full raw output remains on disk, while process memory retains only bounded diagnostic tails needed
+Full diagnostic output remains on disk after the same secret redaction, while process memory retains
+only bounded diagnostic tails needed
 for an exit summary or Preview startup response. Responsibility and Assistant runners keep the most
 recent unclassified stderr lines rather than every line from a long process. Preview likewise keeps
 a bounded recent startup-log tail and the active surfaces while continuing to append the complete
@@ -505,12 +513,13 @@ process group has drained, and a later Attempt never treats it as retained Sessi
 Raw `stderr` is not itself a product error. A vendor adapter may recognize a narrowly identified,
 non-fatal vendor diagnostic and keep it only in `transcript.log`; such a line does not enter the
 default Activity stream or become the fallback summary for an otherwise unexplained process exit.
-This classification changes presentation, not truth: the original line remains available for
+This classification changes presentation, not truth: the diagnostic line remains available for
 debugging, while terminal vendor errors and all unclassified `stderr` retain their existing error
 semantics. When a vendor mirrors a completed command's structured output line-for-line on process
 `stderr`, the adapter emits the structured command result once and suppresses only those exact
 mirrored lines from normalized Activity. A bounded per-process cache performs this presentation
-deduplication; the raw lines remain losslessly recorded in `transcript.log`. The same adapter
+deduplication; the diagnostic lines remain losslessly recorded in `transcript.log` after secret
+redaction. The same adapter
 classification applies to responsibility Runs and Assistant turns.
 The same boundary applies to structured stdout telemetry that carries no operator-meaningful
 content. Normalization never manufactures a status row merely by humanizing an event type. Codex
@@ -552,8 +561,9 @@ Every built-in vendor adapter keeps its native automatic context compaction enab
 Generator, and Reviewer, including a disposable first invocation and every resumed responsibility
 Session. Compaction preserves the vendor Session identity and responsibility workspace. The Agent is
 not prompted to request or reason about it, and HOPI does not estimate tokens, produce a parallel
-summary, or add a lifecycle transition. Vendor-specific triggers and compact records remain at the
-adapter and raw-transcript boundary.
+summary, or add a lifecycle transition. HOPI records a provider compaction boundary as
+non-presentable runtime status while retaining its raw transport event. Vendor-specific triggers and
+compact records otherwise remain at the adapter and raw-transcript boundary.
 
 The vendor process working directory belongs to the responsibility Session rather than to an
 Attempt. Generator runs in the primary stable task worktree. Planner and Reviewer run in their
@@ -611,10 +621,15 @@ or verification strategy.
 
 Every HOPI-launched Codex process uses HOPI's explicit model, reasoning, sandbox, and provider
 configuration without loading the operator's global Codex configuration. Provider access is selected
-when each process starts. The default bounded mode uses the adapter's workspace and declared-root
-policy. A Project-local UI switch may opt newly started responsibility Runs and speaking Assistant
-turns with that Project context into the ordinary HOPI OS user's filesystem, subprocess, and network
-capabilities.
+when each process starts. Its shell environment explicitly inherits the environment passed to that
+Codex process rather than a provider default subset or a cached interactive-shell snapshot. The same
+adapter rule applies to Planner, Generator, Reviewer, and Assistant; a credential missing from the
+HOPI process remains missing everywhere, while a credential present there is not role-dependent.
+Project Assistant, responsibility Runs, and Preview also receive the same Home-level
+`HOPI_CACHE_DIR`; this names shared reusable runtime data rather than Work or conversation state.
+The default bounded mode uses the adapter's workspace and declared-root policy. A Project-local UI
+switch may opt newly started responsibility Runs and speaking Assistant turns with that Project
+context into the ordinary HOPI OS user's filesystem, subprocess, and network capabilities.
 The adapter also explicitly selects a ChatGPT-authenticated provider with WebSocket support disabled,
 so Codex uses HTTPS streaming directly instead of attempting WebSocket and falling back. Authentication
 remains available, but unrelated personal MCP servers, plugins, defaults, and transport preferences
@@ -666,7 +681,7 @@ operational cleanup failure when descendant cleanup cannot be guaranteed, and ne
 unobserved rejection that can terminate Coordinator. Each Run receives the
 current revision-scoped responsibility workspace through the compatible `$HOPI_RUN_SCRATCH` name.
 Reusable package and tool caches are redirected to the Assistant-home cache as an optimization, not
-as a permission boundary. Coordinator promotes only explicitly declared proof files into the Run
+as a permission boundary. Coordinator promotes only explicitly declared proof entries into the Run
 artifact store. It does
 not delete responsibility workspace files at an Attempt boundary.
 
@@ -863,14 +878,16 @@ advance it. Planning Work remains `plan` while clarification is required. After 
 proposal validates, Coordinator derives the Planning Work `done` gate from the current canonical
 document. These are fixed profile facts, not details Planner must rediscover from history.
 
-The Run prompt includes the compact frontmatter field shape for the new Engineering Work and
-Attention documents Planner is allowed to create. These are the existing canonical document
-schemas, not a plan DSL: identifiers, Markdown bodies, decomposition, dependencies, criteria, and
-whether any document is needed remain model judgments. Planner reads current documents from its
-immutable authority but never searches another Goal or historical Run merely to infer fixed control
-fields. Coordinator owns deterministic proposal schema and DAG validation. Planner performs semantic
-and proportionate content checks, but does not build an ad hoc validator that duplicates Coordinator;
-validation diagnostics, if any, drive the next Attempt.
+The Run's proposal-capabilities file contains the compact frontmatter field shape for every new
+Engineering Work and Attention document Planner may create. The execution boundary states that
+unlisted paths or field values are rejected at publication, so the deterministic contract does not
+need to be inferred from another Goal, a historical Run, or HOPI source code. These are the existing
+canonical document schemas, not a plan DSL: identifiers, Markdown bodies, decomposition,
+dependencies, criteria, and whether any document is needed remain model judgments. Coordinator owns
+deterministic proposal schema and DAG validation. Planner performs semantic and proportionate
+content checks, but does not build an ad hoc validator that duplicates Coordinator. A rejection
+diagnostic names the offending field and accepted value set so Assistant can repair or retry without
+reverse-engineering the parser.
 
 The accepted `goal.md` is immutable input to Planner. Planner records clarified implementation
 decisions in `design/**` and Work acceptance criteria, never edits the Goal contract, and always
@@ -989,18 +1006,24 @@ retry, Planning, cancellation, an informational question, or an operator action 
 by Agent-authored Attention.
 Generator success is deliberately local to implementation and Generator-owned proof. It advances
 the Work to the independent Reviewer; Reviewer acceptance is therefore never a prerequisite for a
-Generator `success`, even when the Work acceptance criteria require independent review.
+Generator `success`, even when the Work acceptance criteria require independent review. That local
+success still covers the complete accepted implementation outcome: every contract-required source
+change, durable artifact, generated dataset, report, or other deliverable that can be produced
+within Generator authority must already exist in the assigned writable roots. A smaller sample,
+checkpoint, or demonstration is evidence about the implementation, not a substitute for a larger
+accepted deliverable.
 
-A started long-running command remains active until it completes, fails, or is explicitly
-cancelled. The responsibility transport presents each shell invocation as one blocking operation,
-so delayed output cannot create a second model turn that starts an equivalent validation while the
-first is still running. A responsibility gives any command that may outlive the shell tool's default
-wait an explicit timeout sufficient for that command; it never splits or restarts valid work merely
-to fit a transport timeout. If a transport instead returns a live command session, the responsibility
-waits on that same session. The Codex responsibility adapter disables its asynchronous unified exec
-facility; other vendor adapters must provide the same observable command boundary. Independent
-responsibility Runs remain concurrent under the ordinary scheduler capacities. This is an adapter
-execution property, not another durable Run state, command classifier, lock, or scheduler concept.
+A started long-running command remains active until it completes, fails, is explicitly cancelled, or
+reaches its selected timeout. The Codex responsibility adapter presents a shell invocation as one
+blocking call and disables asynchronous unified exec, so delayed output cannot create a second model
+turn that starts equivalent work in parallel. A vendor adapter that returns a live command Session
+treats it as that same invocation until settlement or termination. Independent responsibility Runs
+remain concurrent under the ordinary scheduler capacities. This is an adapter execution property,
+not another durable Run state, command classifier, lock, or scheduler concept.
+HOPI observes descendant process groups while the responsibility invocation is alive and terminates
+the observed tree when that invocation settles or is interrupted. A descendant that deliberately
+escapes before it can be observed is not an independent Work Attempt, has no durable result owner,
+and is never treated as responsibility progress.
 
 The current assignment presents one bounded repair view after the stable Work authority: changed
 files relative to the release base and any candidate-inspection diagnostics. These are workspace
@@ -1080,6 +1103,13 @@ returns targeted `attention`, records the accepted proof in its Evidence, and le
 at `review`. This is the existing Attention pause, not a new phase or Work state. Reviewer success
 keeps the durable stage at `review` only while Coordinator immediately attempts deterministic
 integration under the same Work lease.
+
+Reviewer verifies the candidate as received. It may execute independent reproduction, recomputation,
+or inspection and retain those results as review evidence, but it does not create a missing
+contract-required Project deliverable or become the only Run that materializes one. Missing,
+incomplete, or defective deliverables within Generator authority are implementation defects and
+therefore `reject`. Attention is reserved for missing authority, an operator decision, invalid
+accepted design, or a required external action that neither Generator nor Reviewer can perform.
 
 Before every Reviewer Run, Coordinator discards and rematerializes the HOPI-managed task checkout
 from its stable task-branch checkpoint, even when `git status` reports clean. Git clean status does
@@ -1165,25 +1195,34 @@ Reviewer may return `success`, `reject`, `attention`, or `fail`: reject identifi
 defect against accepted criteria, attention identifies an invalid design or missing authority, and
 fail means the Run could not produce a valid review and therefore pauses unchanged automatic
 redispatch without creating Attention or returning the Goal to Planning. Every Run exposes one
-writable artifact output directory. Files placed there are retained automatically; a role may also
-list existing Project-relative proof paths in its result. Coordinator preserves readable files on a
-best-effort basis. A Project-relative source path remains portable as-is; a Run-local file is
-copied into the owning Run's durable `artifacts/` directory and replaced with
+writable artifact output directory. Entries placed there are retained automatically; a role may also
+list an existing Project-relative or Run-local filesystem entry in its result. An artifact is one
+retained filesystem subtree, not specifically a regular file. Coordinator snapshots a readable file
+or directory on a best-effort basis without requiring the Agent to pre-package a directory. A
+Project-relative source entry remains portable as-is; a Run-local entry is copied into the owning
+Run's durable `artifacts/` directory and replaced with
 `artifact:<runId>/<artifactName>`. Proposal paths are control output discovered independently from
 the proposal root and are never copied into Evidence artifacts. A missing or unreadable reference is
-reported in later Run context as unavailable supporting material. It does not prevent the Agent from
-reading Evidence or deciding whether the absent proof matters. Multiple declarations that resolve to
-the same retained file produce one stable Evidence reference.
+reported in current and later Run context as unavailable supporting material. It does not override
+the Agent's semantic result, but it remains visible to Reviewer and Assistant when they judge whether
+the absent proof matters. Multiple declarations that resolve to the same retained subtree produce
+one stable Evidence reference.
 
 Goal-scoped Assistant state projects these referenced artifacts with bounded Evidence context and a
 read-only URL addressed through the owning Evidence entry. The HTTP resolver revalidates canonical
-identity on every request, resolves preserved Run artifacts or a unique managed Project-relative
-file, and serves content inline with conservative media types. It never accepts an absolute local
-path from either the model or browser.
+identity on every request and resolves preserved Run artifacts or a unique managed Project-relative
+entry. Files are served inline with conservative media types; a directory opens as a bounded inert
+index while responsibility context receives a read-only directory projection. The resolver never
+accepts an absolute local path from either the model or browser.
 
 A Reviewer `reject` or deterministic pre-C1 integration rejection is retained in Attempt history.
 Either returns Work to `generate`, where Generator repairs the same task branch and Reviewer checks
-it again.
+it again. Each published Reviewer `reject` is also an immediate, recoverable Project Assistant wake
+condition. The next Generator does not wait for that Assistant turn; wake events coalesce while the
+Assistant is active, and the Assistant receives current Attempt history and live-Run state for
+supervision rather than becoming another review gate. The active responsibility Attempt remains the
+only owner of that Work's execution and Evidence. Concurrent Assistant shell effects are outside
+that Attempt and cannot substitute for its result.
 
 ### Coordinator integration
 
@@ -1284,6 +1323,13 @@ require no-op adapters in unrelated Repos, and does not convert setup availabili
 Work gate. A missing entrypoint is simply an environment fact; an Agent may create one when the
 accepted outcome actually needs that durable capability.
 
+A task worktree is a disposable source projection. Reviewer clean materialization and later recovery
+may replace it completely, including ignored and uncommitted runtime data. `HOPI_CACHE_DIR` is the
+existing shared persistence boundary for reusable or long-running runtime data across Assistant,
+Generator, Reviewer, retries, and worktree replacement. This distinction is an execution fact, not a
+new artifact class or workflow state; accepted deliverables still enter source or Evidence through
+the existing publication boundaries.
+
 Project Preview is deliberately Project-level. Before startup, Coordinator invokes every managed
 integration Repo's `scripts/hopi/prepare` in stable manifest order with the complete integration-root
 manifest and the Home cache. Each invocation receives its Repo identity and runs in its own checkout;
@@ -1380,25 +1426,17 @@ not consume a Work attempt or become a Goal-local Attention proposed by the resp
 Project validation, diagnostics, and Background Reflection own repair or escalation. Data-rescue
 patches and Git crash mechanics are implementation details, not workflow stages.
 
-A Project Attention is an Agent-managed recovery guard, not a second health-check state machine.
-After inspecting current state and applying the repair it judges sufficient, Assistant may resolve
-the exact Project Attention. Resolution makes the Project eligible again and wakes Coordinator; it
-does not pre-validate Git or C1 a second time. If that judgment is wrong, the next existing
-Coordinator, publication, or C1 boundary that observes the fault fails closed and creates a fresh
-Project Attention. Assistant may claim that the guard was removed only after the resolution tool
-itself succeeds.
+Safe deterministic repair is attempted at the failing boundary before the failure settles. The
+settled Attempt and Project event wake the Assistant, which may inspect, repair, retry, communicate,
+or preserve unfinished responsibility as Project Attention. Coordinator does not synthesize
+Attention or choose a recovery path.
 
-Safe deterministic repair is attempted at the failing boundary or startup validation before a
-Project Attention is created. Once the durable guard exists, Coordinator neither polls the reported
-condition nor resolves the Attention from a generic Project health check. A generic check cannot
-prove that every possible reported fault was repaired, and automatic resolution would race the
-Assistant and repeat work behind the operator's back.
-
-The guard prevents new responsibility admission; it does not retroactively erase a Run that was
-already admitted when the fault was observed. That Run may remain `working` while its result and
-lease settle. Once admitted Runs drain, the stable blocked projection is `waiting` with
-`project_ineligible`. Consumers and tests must distinguish this short transition from the stable
-Project-blocked state rather than introduce another lifecycle state.
+Project Attention is the Assistant's todo, not Project eligibility or a scheduling predicate.
+Creating, updating, or resolving it does not admit, stop, or retry Work. The exact execution fact
+continues to own readiness: for example, a checkpoint failure leaves the Work stopped by
+`failed_attempt` until an explicit retry or material Work change. A separately invalid Project
+runtime may still fail closed at its deterministic boundary, but its repair and validation are
+independent from Attention lifecycle.
 
 Likewise, a responsibility process that never returns a valid result is not evidence that the Work
 failed. Nonzero transport exit, provider quota, interrupted process, invalid result protocol, and a
@@ -1508,12 +1546,12 @@ The bounded HOPI state read is a current-state index, not a dump of the durable 
 Projects, Goals, scoped design, every Engineering Work, nonterminal Planning Work, open Attention,
 the latest finished Planning outcome per Goal, derived Kanban facts, and an explicit list of active
 Runs. Historical Planning, resolved Attention, and Evidence bodies remain canonical documents but
-are not inlined by default. Home and Project reads omit Goal bodies and detailed runtime paths while
-retaining the identities, readiness, latest outcomes, open Attention, and active Runs needed to
-choose an exact Goal. A Goal read expands its current runtime diagnostics; Goal-scoped
-`includeEvidence` additionally expands bounded Evidence bodies and artifacts only when the answer
-requires the deliverable itself. Scope is the only detail control, so this remains one state model
-without pagination or a query DSL.
+are not inlined by default. Home, Project, and Goal scope filter the same compact projection while
+retaining the identities, readiness, latest outcomes, open Attention, active Runs, and canonical
+paths needed to choose an exact record. A narrower scope does not implicitly expand Goal bodies or
+runtime history. Goal-scoped `includeEvidence` additionally expands bounded Evidence bodies and
+artifacts only when the answer requires the deliverable itself. This is one state model without
+pagination, a query DSL, or scope-dependent detail rules.
 
 For each Work visible in an exact Goal read, the state read returns a small runtime diagnostic descriptor: current
 projection, active responsibility when present, latest Attempt summary, last event time, stale

@@ -161,11 +161,17 @@ function normalizeProcessOutputLineWithState(
 }
 
 function normalizeCodexEvent(parsed: unknown): AgentRuntimeEvent[] {
-  const eventType =
-    stringValue(objectValue(parsed)?.type) ?? stringValue(objectValue(parsed)?.method)
-  const item =
-    objectValue(objectValue(parsed)?.item) ??
-    objectValue(objectValue(objectValue(parsed)?.params)?.item)
+  const value = objectValue(parsed)
+  const eventType = stringValue(value?.type) ?? stringValue(value?.method)
+  const payload = objectValue(value?.payload)
+  if (
+    isCompactionEventType(eventType) ||
+    isCompactionEventType(stringValue(payload?.type)) ||
+    isCompactionEventType(stringValue(objectValue(value?.params)?.type))
+  ) {
+    return [compactionEvent('codex')]
+  }
+  const item = objectValue(value?.item) ?? objectValue(objectValue(value?.params)?.item)
   const itemType = stringValue(item?.type)
 
   if (itemType === 'todo_list') {
@@ -614,6 +620,10 @@ function normalizeClaudeEvent(
   const message = objectValue(value?.message)
   const blocks = arrayValue(message?.content) ?? arrayValue(value?.content) ?? []
 
+  if (eventType === 'system' && isCompactionEventType(eventSubtype)) {
+    return [compactionEvent('claude')]
+  }
+
   if (eventType === 'assistant') {
     return normalizeContentBlocks('claude', eventType, blocks, 'assistant', {
       claudeTasks,
@@ -712,6 +722,10 @@ function normalizeOpencodeEvent(parsed: unknown): AgentRuntimeEvent[] {
     stringValue(value?.type) ?? stringValue(value?.event) ?? stringValue(value?.kind)
   const part = objectValue(value?.part)
   const blocks = arrayValue(value?.content) ?? arrayValue(value?.parts) ?? []
+
+  if (isCompactionEventType(eventType)) {
+    return [compactionEvent('opencode')]
+  }
 
   if (eventType?.includes('error')) {
     return [
@@ -1203,6 +1217,24 @@ function humanizeEventType(eventType: string) {
 
 function normalizeEventType(eventType: string | undefined) {
   return eventType?.trim().toLowerCase().replaceAll('/', '.')
+}
+
+function isCompactionEventType(eventType: string | undefined) {
+  const normalized = normalizeEventType(eventType)?.replaceAll('-', '_')
+  return (
+    normalized === 'compacted' ||
+    normalized === 'context_compacted' ||
+    normalized === 'compact_boundary' ||
+    normalized?.endsWith('.compacted') === true ||
+    normalized?.endsWith('.context_compacted') === true ||
+    normalized?.endsWith('.compact_boundary') === true
+  )
+}
+
+function compactionEvent(transport: AgentTranscriptTransport) {
+  return transcriptEvent(transport, 'status', 'Context compacted.', {
+    vendorEventType: 'context.compacted',
+  })
 }
 
 function shouldIgnoreCodexLifecycleStatus(eventType: string | undefined) {

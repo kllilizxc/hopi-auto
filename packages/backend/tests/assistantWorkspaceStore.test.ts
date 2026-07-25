@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { workspaceAttentionReference } from '../src/domain/attentionReference'
+import { inboxEventReference } from '../src/domain/inboxEventReference'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
@@ -127,6 +129,49 @@ describe('AssistantWorkspaceStore', () => {
       disposition: 'answered',
     })
     expect(handled.attributes.routeClaim).toBeUndefined()
+  })
+
+  test('accepts Reply provenance from any handled public turn in the same Project', async () => {
+    const fixture = await setup(true)
+    const timestamp = '2026-07-25T00:00:00.000Z'
+    await fixture.store.createAttention({
+      attributes: {
+        id: 'A-project',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        resolvedAt: null,
+        refs: ['project:P-1'],
+        target: 'project:P-1',
+        notifiedAt: null,
+        operatorRequest: null,
+      },
+      body: 'Confirm the Project decision.\n',
+    })
+    await fixture.store.receiveEvent({
+      eventId: 'EV-question',
+      content: 'What needs confirmation?',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.store.handleEvent('EV-question', {
+      reply: '<NeedsYou attentionId="A-project">Confirm the Project decision.</NeedsYou>',
+      disposition: 'answered',
+    })
+
+    const reply = await fixture.store.receiveEvent({
+      eventId: 'EV-reply',
+      content: 'Confirmed.',
+      context: {
+        projectId: 'P-1',
+        attentionRefs: [workspaceAttentionReference(fixture.homeId, 'A-project')],
+        replyTo: inboxEventReference(fixture.homeId, 'EV-question'),
+      },
+    })
+
+    expect(reply.attributes.context).toEqual({
+      projectId: 'P-1',
+      attentionRefs: [workspaceAttentionReference(fixture.homeId, 'A-project')],
+      replyTo: inboxEventReference(fixture.homeId, 'EV-question'),
+    })
   })
 
   test('rejects receipt content or page-context rewriting', async () => {

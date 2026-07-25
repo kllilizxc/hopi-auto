@@ -175,7 +175,7 @@ async function prepareProject(input: {
       },
       detached: true,
     })
-    const terminate = createProcessGroupTerminator(child.pid)
+    const terminate = createProcessGroupTerminator(child.pid, { trackDescendants: true })
     const streams = Promise.all([
       consume(child.stdout, (line) => lines.push(`stdout: ${line}`)),
       consume(child.stderr, (line) => lines.push(`stderr: ${line}`)),

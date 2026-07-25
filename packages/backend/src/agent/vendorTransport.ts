@@ -151,6 +151,10 @@ export function appendCodexHttpsOnlyConfig(command: string[]) {
   )
 }
 
+export function appendCodexShellEnvironmentConfig(command: string[]) {
+  command.push('-c', 'shell_environment_policy.inherit=all')
+}
+
 export interface ConfiguredTransportInvocation {
   goalKey: string
   runId: string
@@ -218,6 +222,7 @@ export async function resolveConfiguredTransportCommand(options: {
     await Bun.write(structuredOutcomeFile, '')
     const cmd = [options.config.binary ?? 'codex']
     appendCodexHttpsOnlyConfig(cmd)
+    appendCodexShellEnvironmentConfig(cmd)
     cmd.push('--disable', 'unified_exec')
     const sandbox = options.fullAccess
       ? 'danger-full-access'

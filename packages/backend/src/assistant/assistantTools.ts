@@ -1143,50 +1143,10 @@ function assistantToolStateProjection(
     ...publicSnapshot,
     workspaceAttentions: scope.projectId
       ? snapshot.workspaceAttentions.filter(
-          (attention) => isRecord(attention) && attention.target === `project:${scope.projectId}`,
+          (attention) => isRecord(attention) && attention.projectId === scope.projectId,
         )
       : snapshot.workspaceAttentions.map(compactWorkspaceAttentionIndex),
-    projects: scope.goalId
-      ? snapshot.projects.map(currentDiagnosticProjectState)
-      : snapshot.projects.map(compactProjectStateIndex),
-  }
-}
-
-function currentDiagnosticProjectState(value: unknown) {
-  if (!isRecord(value) || !Array.isArray(value.goals)) return value
-  return { ...value, goals: value.goals.map(currentDiagnosticGoalState) }
-}
-
-function currentDiagnosticGoalState(value: unknown) {
-  if (!isRecord(value)) return value
-  return {
-    ...value,
-    works: Array.isArray(value.works) ? value.works.map(currentDiagnosticWorkState) : value.works,
-    attentions: Array.isArray(value.attentions)
-      ? value.attentions.map(currentDiagnosticAttentionState)
-      : value.attentions,
-  }
-}
-
-function currentDiagnosticWorkState(value: unknown) {
-  if (!isRecord(value)) return value
-  const { candidateIntegration, projection, runtime, ...rest } = value
-  return {
-    ...rest,
-    ...(Array.isArray(candidateIntegration)
-      ? { currentCandidateIntegration: candidateIntegration }
-      : {}),
-    ...(projection !== undefined ? { projection } : {}),
-    ...(runtime !== undefined ? { runtime } : {}),
-  }
-}
-
-function currentDiagnosticAttentionState(value: unknown) {
-  if (!isRecord(value)) return value
-  const { body, ...rest } = value
-  return {
-    ...rest,
-    ...(typeof body === 'string' ? { creationRationale: body } : {}),
+    projects: snapshot.projects.map(compactProjectStateIndex),
   }
 }
 
@@ -1221,6 +1181,10 @@ function compactGoalStateIndex(value: unknown) {
   if (!isRecord(value)) return value
   return {
     goal: compactDocumentStateIndex(value.goal),
+    design: Array.isArray(value.design) ? value.design.map(compactDesignStateIndex) : [],
+    attentions: Array.isArray(value.attentions)
+      ? value.attentions.map(compactGoalAttentionStateIndex)
+      : [],
     latestPlanningOutcome:
       value.latestPlanningOutcome === null
         ? null
@@ -1228,9 +1192,18 @@ function compactGoalStateIndex(value: unknown) {
     works: Array.isArray(value.works)
       ? value.works.map((work) => compactWorkStateIndex(work, true))
       : [],
-    attentions: Array.isArray(value.attentions)
-      ? value.attentions.map(compactGoalAttentionStateIndex)
-      : [],
+  }
+}
+
+function compactDesignStateIndex(value: unknown) {
+  if (!isRecord(value)) return value
+  return {
+    ...(typeof value.canonicalPath === 'string' ? { canonicalPath: value.canonicalPath } : {}),
+    ...(typeof value.path === 'string' ? { path: value.path } : {}),
+    ...(typeof value.hash === 'string' || value.hash === null ? { hash: value.hash } : {}),
+    ...(typeof value.excerpt === 'string'
+      ? { excerpt: boundedStateText(value.excerpt, 4_000) }
+      : {}),
   }
 }
 
@@ -1262,6 +1235,9 @@ function compactWorkStateIndex(value: unknown, includeSummary: boolean) {
     ...(isRecord(value.projection) ? { projection: value.projection } : {}),
     ...(Array.isArray(value.candidateIntegration)
       ? { currentCandidateIntegration: value.candidateIntegration }
+      : {}),
+    ...(isRecord(value.evidence) || Array.isArray(value.evidence)
+      ? { evidence: value.evidence }
       : {}),
     ...(isRecord(value.runtime)
       ? { runtime: compactRuntimeStateIndex(value.runtime, includeSummary) }
@@ -1345,6 +1321,9 @@ function compactRuntimeStateIndex(value: Record<string, unknown>, includeSummary
             ...(includeSummary && typeof attempt.summary === 'string'
               ? { summary: boundedStateText(attempt.summary, 240) }
               : {}),
+            ...(isRecord(attempt.artifactPreservation)
+              ? { artifactPreservation: attempt.artifactPreservation }
+              : { artifactPreservation: null }),
           }
         })
       : [],

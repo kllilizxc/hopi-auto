@@ -5,6 +5,7 @@ import type { ProjectCodingReasoningEffort } from '../domain/projectCodingDefaul
 import { BoundedLineTail } from '../runtime/boundedLineTail'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
+import { createEnvironmentSecretRedactor } from './environmentSecretRedactor'
 import {
   type PersistentProcessTranscriptNormalizer,
   createPersistentProcessTranscriptNormalizer,
@@ -275,7 +276,7 @@ export function roleSessionCompatibilityKey(
         ? 'workspace-write'
         : config.sandbox
     return JSON.stringify({
-      version: 4,
+      version: 5,
       transport: config.transport,
       binary: config.binary ?? 'codex',
       cwdMode: config.cwdMode,
@@ -599,25 +600,27 @@ async function executeProcessWithTempDir(
     stateFile: normalizerStateFile,
     resumeState: resumeNormalizerState,
   })
+  const processEnvironment = withNativeCompactionEnabled(command.sessionTransport, {
+    ...process.env,
+    TMPDIR: tempDir,
+    TMP: tempDir,
+    TEMP: tempDir,
+    BUN_TMPDIR: tempDir,
+    XDG_CACHE_HOME: cacheDir,
+    npm_config_cache: join(cacheDir, 'npm'),
+    PIP_CACHE_DIR: join(cacheDir, 'pip'),
+    ...command.env,
+  })
+  const redact = createEnvironmentSecretRedactor(processEnvironment)
   const child = Bun.spawn(command.cmd, {
     cwd: input.cwd,
     stdout: 'pipe',
     stderr: 'pipe',
     stdin: command.stdin === undefined ? 'ignore' : 'pipe',
-    env: withNativeCompactionEnabled(command.sessionTransport, {
-      ...process.env,
-      TMPDIR: tempDir,
-      TMP: tempDir,
-      TEMP: tempDir,
-      BUN_TMPDIR: tempDir,
-      XDG_CACHE_HOME: cacheDir,
-      npm_config_cache: join(cacheDir, 'npm'),
-      PIP_CACHE_DIR: join(cacheDir, 'pip'),
-      ...command.env,
-    }),
+    env: processEnvironment,
     detached: true,
   })
-  const terminate = createProcessGroupTerminator(child.pid)
+  const terminate = createProcessGroupTerminator(child.pid, { trackDescendants: true })
   const abort = () => void terminate()
   input.signal?.addEventListener('abort', abort, { once: true })
   if (input.signal?.aborted) abort()
@@ -636,7 +639,9 @@ async function executeProcessWithTempDir(
   let interactiveTool: string | null = null
   let transcriptTail: Promise<void> = Promise.resolve()
   const recordLine = (stream: 'stdout' | 'stderr', line: string) => {
-    transcriptTail = transcriptTail.then(() => appendFile(transcriptFile, `${stream}: ${line}\n`))
+    transcriptTail = transcriptTail.then(() =>
+      appendFile(transcriptFile, `${stream}: ${redact(line)}\n`),
+    )
     return transcriptTail
   }
 
@@ -648,9 +653,9 @@ async function executeProcessWithTempDir(
           await terminate()
         } catch (error) {
           const line = `Process-group cleanup failed: ${errorMessage(error)}`
-          stderr.push(line)
+          stderr.push(redact(line))
           await recordLine('stderr', line)
-          await emitLine(observer, transcriptNormalizer, format, 'stderr', input, line)
+          await emitLine(observer, transcriptNormalizer, format, 'stderr', input, redact(line))
           throw error
         }
         return exitCode
@@ -678,13 +683,15 @@ async function executeProcessWithTempDir(
           if (output.assistantText) finalText = output.assistantText
           if (output.interactiveTool) interactiveTool = output.interactiveTool
         }
-        await emitLine(observer, transcriptNormalizer, format, 'stdout', input, line)
+        await emitLine(observer, transcriptNormalizer, format, 'stdout', input, redact(line))
       }),
       consumeLines(child.stderr as ReadableStream<Uint8Array>, async (line) => {
         await recordLine('stderr', line)
-        if (!isNonFatalProcessDiagnostic({ format, stream: 'stderr', line })) stderr.push(line)
+        if (!isNonFatalProcessDiagnostic({ format, stream: 'stderr', line })) {
+          stderr.push(redact(line))
+        }
         if (session && isExplicitSessionFailure(line)) sessionInvalid = true
-        await emitLine(observer, transcriptNormalizer, format, 'stderr', input, line)
+        await emitLine(observer, transcriptNormalizer, format, 'stderr', input, redact(line))
       }),
     ])
     await transcriptTail

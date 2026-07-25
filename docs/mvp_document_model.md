@@ -186,8 +186,8 @@ reports that session missing or incompatible. Provider, quota, authentication, m
 failures do not imply session incompatibility and therefore do not rebuild conversation history.
 The legacy global cache is discarded because its conversation scope cannot be recovered without
 guessing. Per-turn `events.jsonl` stores normalized live
-Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves raw process
-output for debugging.
+Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves process
+output for debugging after exact inherited secret values are redacted.
 
 Every runtime `events.jsonl` uses newline as its record durability boundary. A concurrent reader
 omits the sole non-newline-terminated tail and sees it on a later read after append completes. A
@@ -345,8 +345,9 @@ captures this identity before launching the process, so a later Home role model 
 history. Older or non-model Attempts may have no execution identity, and an older identity may retain
 its model without a recorded reasoning effort; the UI reports those absences instead of substituting
 current configuration. `events.jsonl` is an append-only stream of normalized
-model messages and tool events used by the Work-detail UI. `transcript.log` preserves each raw
-stdout/stderr line before vendor normalization or display truncation. These files are runtime
+model messages and tool events used by the Work-detail UI. `transcript.log` preserves each
+stdout/stderr line before vendor normalization or display truncation, except that exact values from
+secret-like inherited environment variables are replaced before persistence. These files are runtime
 observability, not canonical authority.
 The Goal/Work execution-cost view is computed from these records at read time. Vendor-reported usage
 remains vendor-reported, paired tool-event timestamps support observed tool duration, and the
@@ -356,13 +357,17 @@ written back into Goal, Work, Evidence, or retry state.
 tools and short-lived local services operate inside the existing Run capability without granting
 another source root; it is never source, Evidence, or Preview state. Reusable tool caches live at
 `<hopi-home>/.hopi/cache/`, outside every Run. Before applying a valid result, Coordinator keeps a
-verified Project-relative source path portable as-is. Every file in the Run artifact output
-directory is retained automatically; an explicitly declared Run-local proof file is handled the
-same way. Retained files are copied into the Run's `artifacts/`, their original diagnostic locations
-are recorded in `artifacts.json`, and their references become
-`artifact:<runId>/<artifactName>`. Proposal files are discovered only from `proposal/` and never
+Project-relative source entry portable as-is only when it already exists in the current managed
+release. A candidate-only or ignored entry is not assumed to survive C1 and is retained like any
+other Run output. Every file in the Run artifact output directory is retained automatically; an
+explicitly declared Run-local file or directory is handled as one artifact subtree. Retained entries
+are copied into the Run's `artifacts/`, their shape and original diagnostic locations are recorded in
+`artifacts.json`, and their references become
+`artifact:<runId>/<artifactName>`. Proposal entries are discovered only from `proposal/` and never
 become Evidence artifacts. Evidence may contain either portable form but never an absolute local
-path. Once the responsibility process is gone and its proof is preserved, Coordinator
+path. Preservation diagnostics remain runtime facts available to later responsibility and Assistant
+turns; they do not create a second Evidence-validity state machine. Once the responsibility process
+is gone and its proof is preserved, Coordinator
 removes `scratch/`; terminal scratch left by a process crash is removed during restart recovery.
 On restart, a manifest still marked `running` becomes `interrupted`; Coordinator never reattaches its
 child. The former `<projectId>/<goalId>/<workId>/<runId>` layout remains read-only compatible during
@@ -414,8 +419,11 @@ Kanban semantics.
 - objective, constraints, and non-goals
 - success criteria
 
-It does not store current focus, a workflow status, or completion prose. Current focus is derived
-from nonterminal Work and open Attention. Final Planning Evidence records completion detail.
+It does not store current focus, a workflow status, or completion prose. Current focus is a read-only
+projection derived from nonterminal Work, open Attention, and live Attempts: operator Attention
+comes first, followed by Assistant management, a currently running responsibility, then remaining
+Work. This ordering changes only presentation and never eligibility or scheduling. Final Planning
+Evidence records completion detail.
 
 Material changes to objective, deliverable scope, constraints, non-goals, success criteria, or a
 decision that changes expected behavior increment `contractRevision`. Explicit reopen also

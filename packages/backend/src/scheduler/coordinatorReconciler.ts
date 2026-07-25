@@ -124,22 +124,34 @@ export function createCoordinatorReconciler(
       scheduleWake()
     },
     async waitForIdle() {
-      while (
-        reconciling ||
-        reservations.size > 0 ||
-        assistantActive.size > 0 ||
-        wakePending ||
-        wakeTimer
-      ) {
-        const work = [
-          ...(reconciling ? [reconciling] : []),
-          ...[...reservations.values()].map((entry) => entry.promise),
-          ...[...assistantActive.values()].map((entry) => entry.promise),
-        ]
-        if (work.length > 0) await Promise.allSettled(work)
-        else await Bun.sleep(0)
+      while (true) {
+        while (
+          reconciling ||
+          reservations.size > 0 ||
+          assistantActive.size > 0 ||
+          wakePending ||
+          wakeTimer
+        ) {
+          const work = [
+            ...(reconciling ? [reconciling] : []),
+            ...[...reservations.values()].map((entry) => entry.promise),
+            ...[...assistantActive.values()].map((entry) => entry.promise),
+          ]
+          if (work.length > 0) await Promise.allSettled(work)
+          else await Bun.sleep(0)
+        }
+        await options.reflection?.waitForIdle()
+        if (
+          !reconciling &&
+          reservations.size === 0 &&
+          assistantActive.size === 0 &&
+          !wakePending &&
+          !wakeTimer &&
+          !options.reflection?.isActive()
+        ) {
+          return
+        }
       }
-      await options.reflection?.waitForIdle()
     },
     async runDirectAssistantCommand(operation) {
       directAssistantCommands += 1
@@ -219,7 +231,9 @@ export function createCoordinatorReconciler(
           if (
             !stopped &&
             epoch === reconcileEpoch &&
-            (result.kind === 'deterministic_action' || result.kind === 'delivery')
+            (result.kind === 'assistant_started' ||
+              result.kind === 'deterministic_action' ||
+              result.kind === 'delivery')
           ) {
             wakePending = true
           }

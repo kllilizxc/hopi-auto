@@ -1,7 +1,7 @@
 # HOPI MVP Assistant
 
 Status: forward Assistant authority
-Last updated: 2026-07-24
+Last updated: 2026-07-25
 
 > [Project Owner And Attention](./mvp_project_owner.md) supersedes this document wherever it
 > describes a separate Reflection Agent, Attention targets/owners/waiting states, operator-request
@@ -47,6 +47,18 @@ scope explicitly; message text is never classified to choose or migrate a sessio
 submit more messages while a turn is running, and durable pending turns wait in one Home-wide receipt
 order. One Assistant turn runs at a time across all scopes. Goal responsibility Runs and the internal
 Reflection loop remain independent and may run concurrently.
+
+The current Reflection implementation is the deterministic wake recorder defined by
+[Project Owner And Attention](./mvp_project_owner.md), not the legacy read-only model described later
+in this document. At an idle boundary it coalesces material state changes into a durable internal
+turn. It also continues unresolved Attention after a settled turn unless the current reply presents
+that Attention through `NeedsYou`, another turn already covers the conversation, or an active Work
+Attempt will provide the next settlement edge. The continuation reuses Inbox, Attention, and the same
+Project session; it adds no waiting state, owner field, timer, or second Agent.
+
+`NeedsYou` has one operational effect in addition to presentation: it declares that no available
+Assistant or Project action can advance the referenced Attention before an operator response. An
+optional accelerator does not satisfy that condition and therefore does not pause continuation.
 
 Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
 continue changing without advancing the selected Project's cursor; otherwise a cached Project feed
@@ -218,11 +230,11 @@ inlines open Attention and each visible Work's latest Attempt while representing
 design documents with compact current facts plus canonical paths. The default Work projection omits
 cumulative Evidence-reference arrays and returns only their count and latest reference. It also
 returns the latest finished Planning outcome once per Goal, so an empty Planning handoff is visible
-without restaging historical Planning or scanning every Evidence document. Home- and Project-scoped
-reads are navigation and control indexes: they omit Goal bodies, detailed Attempt paths, and other
-payload that belongs to an exact Goal read. A Goal-scoped read expands those current details, and
-exact bodies remain readable from returned paths when the current question requires them. This scope
-progression keeps one tool result directly consumable without adding pagination or a query language.
+without restaging historical Planning or scanning every Evidence document. Home, Project, and Goal
+scope filter the same compact navigation and control projection: selecting a Goal does not
+implicitly expand bodies, historical arrays, or detailed Attempt paths. Exact bodies remain readable
+from returned canonical and diagnostic paths when the current question requires them. This keeps one
+directly consumable state shape without adding pagination or a query language.
 Every open Attention projection includes its complete canonical `reference`. Tools copy that value
 verbatim; models never reconstruct a reference from an Attention ID, target, or surrounding Project
 state. Current diagnostic projections are observations computed at the response's `observedAt`.
@@ -334,8 +346,11 @@ The same adapter keeps vendor-native automatic context compaction enabled for th
 Assistant, internal handoff turns, and disposable Reflection runs. Compaction continues the same
 vendor Session when one exists and is invisible to the model-facing HOPI contract: no Assistant
 tool, prompt rule, Inbox item, or canonical summary represents it. The vendor owns the trigger and
-summary format; raw provider output remains the diagnostic record. This MVP does not add a separate
-post-compaction quality check or rebuild policy.
+summary format. HOPI normalizes a provider compaction boundary into non-presentable runtime status
+and retains the raw provider event in the ordinary transcript, so diagnostics can distinguish
+compaction from an ever-growing un-compacted Session. This observation does not create semantic
+state or expose the vendor summary to the model. This MVP does not add a custom threshold, summary,
+post-compaction quality check, or rebuild policy.
 
 A vendor session must also remain attached to the stable HOPI Assistant workspace and adapter
 runtime contract under which HOPI created it. The session manifest therefore stores a runtime digest
@@ -353,10 +368,12 @@ Long-lived decisions belong in Project, Goal, design, Input, Work, Evidence, or 
 rather than an unbounded vendor thread transcript.
 
 For each speaking turn, normalized Assistant messages, tool calls, tool results, status, and errors
-append to runtime `events.jsonl`; raw process output appends to `transcript.log`. Reflection keeps the
-same diagnostics in its own runtime directory. The UI may poll or stream public turn events while a
-turn is pending. The final Assistant message is copied into the Inbox turn before it becomes handled.
-Runtime events improve observability but never authorize a Goal or Work transition.
+append to runtime `events.jsonl`; process output appends to `transcript.log`. Before either stream or
+the final public reply is persisted, exact values inherited through secret-like environment names
+are replaced with one redaction marker. Reflection and responsibility Runs use the same boundary.
+The UI may poll or stream public turn events while a turn is pending. The final Assistant message is
+copied into the Inbox turn before it becomes handled. Runtime events improve observability but never
+authorize a Goal or Work transition.
 
 The configured vendor owns transient retry inside one invocation. HOPI treats the vendor's
 structured terminal result as authoritative: a terminal error is recorded as the turn failure and
@@ -367,8 +384,8 @@ classifying the failure. A session identity reported only by a terminal error is
 `system` is only a transport envelope;
 initialization and retry telemetry remain nonterminal. HOPI rebuilds durable conversation history
 exactly once only when the adapter explicitly reports that the cached session itself is missing or
-incompatible. Raw vendor output remains diagnostic truth in `transcript.log`, while the conversation
-shows a bounded, safe error summary and at most the latest retry status.
+incompatible. Redacted vendor output remains diagnostic truth in `transcript.log`, while the
+conversation shows a bounded, safe error summary and at most the latest retry status.
 
 ## Assistant Execution Boundary
 
@@ -382,6 +399,11 @@ not product authority: canonical mutations are accepted only through HOPI tools 
 is accepted only through Engineering Work publication. The runtime root remains provider scratch
 space: its paths are neither canonical nor operator-addressable. Canonical Evidence with an
 available `operatorUrl` is operator-addressable.
+The Assistant receives the same Home-owned `HOPI_CACHE_DIR` as responsibility Runs. It persists
+reusable runtime data across turns, retries, and replacement of disposable task worktrees; ignored or
+uncommitted data inside a task worktree does not have that durability. HOPI terminates observed shell
+descendant groups with their invocation; a descendant that escapes observation has no independent
+HOPI lifecycle or durable outcome even if the operating system keeps it alive.
 The server-selected MCP mode determines which HOPI mutations are available in the current turn.
 
 The Assistant execution envelope describes only the current conversation process. Accepted Work
@@ -729,9 +751,12 @@ Mutation tools follow these rules:
 - reject stale, invalid, or unauthorized requests without partially advancing a control gate
 
 Each Goal or Work control is one atomic operation, not a required pair of model calls. A Work retry
-reserves one invocation against unchanged Work and does not rewrite Work or Attention. Cancellation
-settles only Attention for the Work it makes terminal. Deferral changes scheduling time only. No
-control operation closes a Goal, Project, or unrelated Work Attention.
+reserves the current responsibility's next independent Attempt against unchanged Work and does not
+rewrite Work or Attention. That Attempt is not a child of the speaking turn; its settlement produces
+the normal Project state edge. Conversely, shell processes started directly inside an Assistant turn
+end with that turn. Cancellation settles only Attention for the Work it makes terminal. Deferral
+changes scheduling time only. No control operation closes a Goal, Project, or unrelated Work
+Attention.
 
 The Assistant chooses ordinary operations from the verified state: it creates Engineering Work for
 a bounded direct change; writes design and creates Planning Work when authority or decomposition changes;

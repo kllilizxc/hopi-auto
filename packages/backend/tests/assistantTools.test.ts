@@ -1078,6 +1078,30 @@ describe('Assistant HOPI tools', () => {
         ),
       ).exists(),
     ).toBe(false)
+
+    const state = (
+      await fixture.tools.executeForEvent('EV-1', 'hopi_read_state', { projectId: 'P-1' })
+    ).value as {
+      projects: Array<{
+        goals: Array<{
+          design: Array<{
+            canonicalPath: string
+            path: string
+            hash: string | null
+            excerpt: string
+          }>
+        }>
+      }>
+    }
+    expect(state.projects[0]?.goals[0]?.design).toEqual([
+      expect.objectContaining({
+        canonicalPath: fixture.goalStore.paths.designIndex('G-1'),
+        hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        excerpt: '# Current Design\n',
+      }),
+    ])
+    const serializedGoal = JSON.stringify(state.projects[0]?.goals[0])
+    expect(serializedGoal.indexOf('"design"')).toBeLessThan(serializedGoal.indexOf('"works"'))
   })
 
   test('applies Goal controls without direct Kanban transitions', async () => {
@@ -1993,12 +2017,16 @@ describe('Assistant HOPI tools', () => {
     const workspaceAttention = await createWorkspaceAttentionController(
       fixture.workspace,
     ).ensureEventAttention('EV-blocked', `Inspect the failed event. ${'x'.repeat(2_000)}`)
+    const projectAttention = await createWorkspaceAttentionController(
+      fixture.workspace,
+    ).ensureProjectAttention('P-1', 'Inspect this Project condition.')
     await fixture.workspace.receiveEvent({ eventId: 'EV-read-refs', content: 'Inspect Attention.' })
 
     const homeState = (await fixture.tools.executeForEvent('EV-read-refs', 'hopi_read_state', {}))
       .value as {
       workspaceAttentions: Array<{
         id: string
+        projectId: string | null
         reference: string
         creationRationale: string
         inspectionPath: string
@@ -2020,10 +2048,10 @@ describe('Assistant HOPI tools', () => {
         goalId: 'G-1',
       })
     ).value as {
-      workspaceAttentions: Array<{ id: string; reference: string }>
+      workspaceAttentions: Array<{ id: string; projectId: string | null; reference: string }>
       projects: Array<{
         goals: Array<{
-          goal: { attributes: { id: string }; body: string }
+          goal: { attributes: { id: string }; body?: string }
           attentions: Array<{
             reference: string
             attributes: { id: string }
@@ -2040,8 +2068,11 @@ describe('Assistant HOPI tools', () => {
         reference: workspaceAttentionReference(homeId, workspaceAttention.attributes.id),
       }),
     )
-    expect(homeState.workspaceAttentions[0]?.creationRationale.length).toBeLessThanOrEqual(323)
-    expect(homeState.workspaceAttentions[0]?.inspectionPath).toBe(
+    const eventAttentionState = homeState.workspaceAttentions.find(
+      (attention) => attention.id === workspaceAttention.attributes.id,
+    )
+    expect(eventAttentionState?.creationRationale.length).toBeLessThanOrEqual(323)
+    expect(eventAttentionState?.inspectionPath).toBe(
       join(fixture.homeRoot, fixture.workspace.paths.attention(workspaceAttention.attributes.id)),
     )
     expect(homeState.projects[0]?.goals[0]?.goal).not.toHaveProperty('body')
@@ -2052,8 +2083,14 @@ describe('Assistant HOPI tools', () => {
         creationRationale: expect.stringContaining('Choose recovery.'),
       }),
     )
-    expect(goalState.workspaceAttentions).toEqual([])
-    expect(goalState.projects[0]?.goals[0]?.goal.body).toContain('Ship it.')
+    expect(goalState.workspaceAttentions).toEqual([
+      expect.objectContaining({
+        id: projectAttention.attributes.id,
+        projectId: 'P-1',
+        reference: workspaceAttentionReference(homeId, projectAttention.attributes.id),
+      }),
+    ])
+    expect(goalState.projects[0]?.goals[0]?.goal).not.toHaveProperty('body')
     expect(goalState.projects[0]?.goals[0]?.attentions).toContainEqual(
       expect.objectContaining({
         reference: goalAttentionReference('P-1', 'G-1', goalAttention.attributes.id),
@@ -2172,6 +2209,7 @@ describe('Assistant HOPI tools', () => {
               artifacts: Array<{
                 reference: string
                 available: boolean
+                kind?: 'file' | 'directory'
                 fileName?: string
                 inspectionPath?: string
                 operatorUrl?: string
@@ -2189,6 +2227,7 @@ describe('Assistant HOPI tools', () => {
       {
         reference: 'artifact:R-report/001-report.md',
         available: true,
+        kind: 'file',
         fileName: '001-report.md',
         inspectionPath: runReportPath,
         operatorUrl: '/api/projects/P-1/goals/G-1/evidence/E-report/artifacts/0',
@@ -2196,6 +2235,7 @@ describe('Assistant HOPI tools', () => {
       {
         reference: 'reports/stage-report.md',
         available: true,
+        kind: 'file',
         fileName: 'stage-report.md',
         inspectionPath: projectReportPath,
         operatorUrl: '/api/projects/P-1/goals/G-1/evidence/E-report/artifacts/1',
@@ -2268,6 +2308,20 @@ describe('Assistant HOPI tools', () => {
     await Bun.write(join(runRoot, 'prompt.md'), '# Prompt\n')
     await Bun.write(join(runRoot, 'result.json'), '{}\n')
     await Bun.write(join(runRoot, 'transcript.log'), 'stdout: full raw detail\n')
+    await Bun.write(
+      join(runRoot, 'artifacts.json'),
+      `${JSON.stringify({
+        version: 1,
+        runId: 'R-1',
+        artifacts: [],
+        unavailable: [
+          {
+            reference: '/tmp/proof-bundle',
+            reason: 'Declared Run artifact could not be retained.',
+          },
+        ],
+      })}\n`,
+    )
     await attempt.finish({
       outcome: { result: 'fail', summary: 'Planner failed.', exitCode: 1 },
       application: 'failed',
@@ -2286,8 +2340,15 @@ describe('Assistant HOPI tools', () => {
             runtime: {
               latestAttempt: { runId: string; status: string } | null
               attemptCount: number
-              recentAttempts: Array<{ runId: string; result: string | null }>
-              paths: { transcript?: string; events?: string }
+              recentAttempts: Array<{
+                runId: string
+                result: string | null
+                artifactPreservation: {
+                  path: string
+                  unavailable: Array<{ reference: string; reason: string }>
+                } | null
+              }>
+              paths: { transcript?: string; events?: string; artifacts?: string }
             }
           }>
         }>
@@ -2299,10 +2360,23 @@ describe('Assistant HOPI tools', () => {
     expect(runtime.latestAttempt).toMatchObject({ runId: 'R-1', status: 'finished' })
     expect(runtime.attemptCount).toBe(1)
     expect(runtime.recentAttempts).toEqual([
-      expect.objectContaining({ runId: 'R-1', result: 'fail' }),
+      expect.objectContaining({
+        runId: 'R-1',
+        result: 'fail',
+        artifactPreservation: expect.objectContaining({
+          path: join(runRoot, 'artifacts.json'),
+          unavailable: [
+            {
+              reference: '/tmp/proof-bundle',
+              reason: 'Declared Run artifact could not be retained.',
+            },
+          ],
+        }),
+      }),
     ])
     expect(runtime.paths.transcript).toBe(join(runRoot, 'transcript.log'))
     expect(runtime.paths.events).toBe(join(runRoot, 'events.jsonl'))
+    expect(runtime.paths.artifacts).toBe(join(runRoot, 'artifacts.json'))
     expect(fixture.attemptReads).toEqual({ snapshots: 1, lists: 0, eventReads: 0 })
 
     await Bun.write(join(runRoot, 'transcript.log'), 'stdout: changed raw diagnostics only\n')
@@ -2312,6 +2386,61 @@ describe('Assistant HOPI tools', () => {
     })
     expect((second.value as { stateDigest: string }).stateDigest).toBe(snapshot.stateDigest)
     expect(fixture.attemptReads).toEqual({ snapshots: 2, lists: 0, eventReads: 0 })
+  })
+
+  test('keeps the latest settled Attempt in the semantic digest while the next Run is active', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await finishInitialPlanning(fixture.goalStore, 'G-1')
+    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-1')
+
+    const startAttempt = async (runId: string, responsibility: 'generator' | 'reviewer') => {
+      const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', runId)
+      await mkdir(runRoot, { recursive: true })
+      return fixture.attempts.start({
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'W-1',
+        runId,
+        responsibility,
+        runRoot,
+      })
+    }
+
+    const firstReview = await startAttempt('R-review-1', 'reviewer')
+    await firstReview.finish({
+      outcome: { result: 'reject', summary: 'Missing required report.', exitCode: 0 },
+      application: 'published',
+    })
+    await Bun.sleep(2)
+    const firstRepair = await startAttempt('R-generator-2', 'generator')
+    const first = await fixture.state.readForReflection?.()
+    if (!first) throw new Error('Expected first Assistant state')
+
+    await firstRepair.finish({
+      outcome: { result: 'success', summary: 'Added the report.', exitCode: 0 },
+      application: 'published',
+    })
+    await Bun.sleep(2)
+    const secondReview = await startAttempt('R-review-2', 'reviewer')
+    await secondReview.finish({
+      outcome: { result: 'reject', summary: 'Report is incomplete.', exitCode: 0 },
+      application: 'published',
+    })
+    await Bun.sleep(2)
+    await startAttempt('R-generator-3', 'generator')
+    const second = await fixture.state.readForReflection?.()
+    if (!second) throw new Error('Expected second Assistant state')
+
+    expect(first.activeRuns).toEqual([
+      expect.objectContaining({ runId: 'R-generator-2', responsibility: 'generator' }),
+    ])
+    expect(second.activeRuns).toEqual([
+      expect.objectContaining({ runId: 'R-generator-3', responsibility: 'generator' }),
+    ])
+    expect(second.conversationDigests.projects['P-1']).not.toBe(
+      first.conversationDigests.projects['P-1'],
+    )
   })
 
   test('reuses an unchanged settled Reflection state and invalidates it after an Attempt transition', async () => {

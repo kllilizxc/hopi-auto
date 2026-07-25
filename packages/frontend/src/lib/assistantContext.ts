@@ -51,6 +51,7 @@ export function resolveAssistantInboxContext(
   pageScope: AssistantPageScope | null,
   replyAttention: AttentionView | AttentionView[] | null,
   homeId?: string,
+  replyEventId?: string,
 ): AssistantInboxContext | undefined {
   const replyAttentions = Array.isArray(replyAttention)
     ? replyAttention
@@ -68,25 +69,39 @@ export function resolveAssistantInboxContext(
     ]
     if (references.length === 0) return undefined
     const first = replyAttentions[0]
-    const replyTo =
+    const legacyReplyTo =
       first?.operatorRequest &&
       replyAttentions.every((attention) => attention.operatorRequest === first.operatorRequest)
         ? first.operatorRequest
         : undefined
+    const replyTo =
+      homeId && replyEventId ? `home:${homeId}/event:${replyEventId}` : legacyReplyTo
+    const sharedProjectId =
+      first?.projectId &&
+      replyAttentions.every((attention) => attention.projectId === first.projectId)
+        ? first.projectId
+        : undefined
     const sharedGoal =
       first?.scope === 'goal' &&
-      first.projectId &&
+      sharedProjectId &&
       first.goalId &&
       replyAttentions.every(
         (attention) =>
           attention.scope === 'goal' &&
-          attention.projectId === first.projectId &&
+          attention.projectId === sharedProjectId &&
           attention.goalId === first.goalId,
       )
     if (sharedGoal && first) {
       return {
-        projectId: first.projectId,
+        projectId: sharedProjectId,
         goalId: first.goalId,
+        attentionRefs: references,
+        ...(replyTo ? { replyTo } : {}),
+      }
+    }
+    if (sharedProjectId) {
+      return {
+        projectId: sharedProjectId,
         attentionRefs: references,
         ...(replyTo ? { replyTo } : {}),
       }

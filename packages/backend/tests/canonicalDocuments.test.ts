@@ -175,6 +175,23 @@ Body
     ).toThrow('references must be unique')
   })
 
+  test('reports the exact invalid Work field instead of a union-level error', () => {
+    expect(() =>
+      parseWorkDocument(`---
+id: W-1
+title: Build
+kind: engineering
+stage: implementation
+notBefore: null
+dependsOn: []
+contractRevision: 1
+evidenceRefs: []
+---
+Body
+`),
+    ).toThrow('stage: Invalid enum value')
+  })
+
   test('requires exactly one Evidence producer authority', () => {
     const source = `---
 id: E-1

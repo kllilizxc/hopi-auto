@@ -339,7 +339,7 @@ not arbitrary sleeps. Model freedom ends at durable authority, safety, and verif
 | `INV-01` | Canonical documents and validated publication gates are the only workflow authority.                                          |
 | `INV-02` | No object has duplicate active Runs, and active Work never precedes an incomplete dependency.                                 |
 | `INV-03` | A `done` Goal has no nonterminal Work, active Goal Run, unresolved targeted Attention, or inconsistent completion gate.       |
-| `INV-04` | Targeted Attention is the only durable unattended-progress blocker; a silent spinner is never a blocker state.                |
+| `INV-04` | A responsibility-targeted Attention is an explicit Work blocker; Project Attention is an Assistant todo, never hidden scheduling state. |
 | `INV-05` | User-selected checkouts retain their branch, HEAD, index, and working tree; only HOPI-managed refs and worktrees advance.       |
 | `INV-06` | Generator changes remain isolated until successful Reviewer evidence and C1 publication.                                      |
 | `INV-07` | Reviewer may write owned scratch and cache but is read-only across every candidate Repo in its assigned workspace.                    |
@@ -421,6 +421,7 @@ variant of `022`, and dependency Evidence handoff; earlier terminal evidence rem
 | `HOPI-E2E-032` | Durable cross-Project preference judgment                 | P1       | Live Assistant and Contract | Covered; focused Live judgment canary passed                     |
 | `HOPI-E2E-033` | Dependency Evidence and artifact handoff                  | P0       | Contract                   | Covered; production Coordinator handoff passed                    |
 | `HOPI-E2E-034` | Idempotent retry during Prepare and edge-triggered idle   | P0       | Contract                    | Covered; production race and deadline wakes passed                |
+| `HOPI-E2E-035` | Durable Attention continuation and NeedsYou handoff       | P0       | Contract                    | Covered; same-session drain and Work deferral passed               |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
@@ -457,6 +458,7 @@ is the only intentional execution exclusion.
 | `HOPI-E2E-032` | `tests/assistantWorkspaceStore.test.ts`, `tests/workspaceAssistant.test.ts`, `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts` |
 | `HOPI-E2E-033` | `tests/contract/dependencyEvidenceHandoff.test.ts`, `tests/roleContextStager.test.ts`                                      |
 | `HOPI-E2E-034` | `tests/projectReconciler.test.ts`, `tests/coordinatorReconciler.test.ts`, `tests/assistantTools.test.ts`                       |
+| `HOPI-E2E-035` | `tests/assistantReflection.test.ts`, `tests/assistantAttentionE2E.test.ts`, `tests/coordinatorReconciler.test.ts`             |
 
 ## Detailed Cases
 
@@ -884,39 +886,44 @@ Primary invariants: `INV-04`, `INV-05`, `INV-10`, `INV-11`, `INV-14`.
 
 | Field   | Value                                                                                                 |
 | ------- | ----------------------------------------------------------------------------------------------------- |
-| Risk    | Reflection wakes on noise, speaks directly, duplicates handoffs, delays a new public user message, or lets one failed historical handoff silence later Attention. |
-| Reality | Real Reflection and persistent speaking Assistant with controlled semantic state transitions.         |
-| Fixture | One normal progressing Goal, one deterministic transition to Assistant-owned targeted Attention, and a variant with an older Reflection turn blocked by event-target Attention. |
+| Risk    | Wake-up runs on noise, misses a rejection loop, duplicates Assistant turns, delays a new public user message, or lets one failed historical turn silence later Attention. |
+| Reality | Deterministic Project wake-up and the persistent Project Assistant with controlled semantic state transitions. |
+| Fixture | One normal progressing Goal, one Reviewer rejection followed by active repair, one deterministic transition to Assistant-owned Attention, and a variant with an older internal turn blocked by event-target Attention. |
 | Cost    | Medium to high depending on the number of semantic digests.                                           |
 
 Actions:
 
 1. Observe normal Planning through delivery progress without injecting user messages.
-2. Confirm ordinary intermediate state coalesces until a settled boundary.
-3. Create a real Assistant-owned targeted Attention through product behavior.
-4. While its internal speaking handoff is running, submit a new public user message.
-5. Let the public turn finish, then allow current-state revalidation and Attention notification.
-6. Run one focused configured-provider turn that returns an informational final response without a
+2. Confirm transient logs and an ordinary Generator-to-Reviewer handoff do not wake the Assistant.
+3. Reject one candidate and confirm the same Work immediately returns to Generator while the
+   Project Assistant receives the durable rejection state without waiting for Project idle.
+4. Create a real Assistant-owned targeted Attention through product behavior.
+5. While its internal speaking handoff is running, submit a new public user message.
+6. Let the public turn finish, then allow current-state revalidation and Attention notification.
+7. Run one focused configured-provider turn that returns an informational final response without a
    delivery tool; confirm the message records delivery but remains **Waiting for Assistant** and
    receives a correction turn rather than becoming **Needs you**.
-7. Run the actionable variant with `hopi_request_user({ attentionRefs })` followed by the complete
+8. Run the actionable variant with `hopi_request_user({ attentionRefs })` followed by the complete
    question as its final response; confirm its public message is
    independently understandable from the visible conversation, including the material cause,
    blocking consequence, exact decision, non-obvious alternative effects, and recommendation when
    one exists. Confirm **Needs you** points at that exact public event. Send an unrelated Goal message
    and confirm it does not clear the request, then use its Reply control and confirm only that
    correlated response returns ownership to Assistant.
-8. In the poisoned-history variant, retain one older blocked internal turn, create an independent
+9. In the poisoned-history variant, retain one older blocked internal turn, create an independent
    Assistant-owned Goal Attention, restart at one boundary, and let the system converge.
 
 Pass conditions:
 
-- Raw log appends and automatic intermediate progress do not create one Reflection per event.
-- Reflection is read-only and either ends silently or creates one internal brief.
-- An eligible pending internal brief suppresses duplicate Reflection handoffs; an event-blocked
-  brief suppresses only its own retry and does not silence newer Goal or Project Attention.
-- Public input receives speaking priority without cancelling the read-only Reflection model process.
-- A stale handoff is discarded before publication.
+- Raw log appends and automatic intermediate progress do not create one Assistant turn per event.
+- Every published Reviewer rejection remains observable while the repair Generator is active;
+  repeated rejection edges coalesce only while one Assistant invocation is already running.
+- Assistant observation does not delay the next Generator, and an Assistant intervention makes a
+  superseded active assignment unable to publish stale authority.
+- Wake-up is deterministic and invokes no separate Reflection model.
+- An eligible pending internal turn suppresses a duplicate wake for its conversation; a blocked
+  historical turn does not silence a newer Goal or Project event.
+- Public input receives speaking priority over pending internal turns.
 - The final direct operator message corresponds to current unresolved Attention and appears once.
 - A direct operator request contains enough causal context to decide without exposing the internal
   Reflection brief; it is not only a choice list or bare question.
@@ -1229,40 +1236,53 @@ Pass conditions:
 
 Primary invariants: `INV-01`, `INV-05`, `INV-06`, `INV-11`, `INV-14`.
 
-### HOPI-E2E-028: Agent-Led Project Attention Recovery And Reblocking
+### HOPI-E2E-028: Agent-Led Project Attention Recovery And Failure Handoff
 
 | Field   | Value                                                                                                             |
 | ------- | ----------------------------------------------------------------------------------------------------------------- |
-| Risk    | Assistant claims recovery but Project remains ineligible, or a wrong judgment leaves Kanban silently stuck.       |
+| Risk    | A Project Attention Reply falls into Assistant Home, or Attention is accidentally treated as a scheduling gate.   |
 | Reality | Production Server, Coordinator, Assistant tool boundary, real Browser Harness, Git worktree, and task checkpoint. |
-| Fixture | One active Goal covered by Project Attention; the post-resolve Generator reaches a failing checkpoint boundary.   |
+| Fixture | One active Goal with Project Attention; its independent Work later reaches a failing task checkpoint boundary.    |
 | Cost    | Zero provider calls for Browser coverage; low for the separate real-Assistant canary.                             |
 
 Actions:
 
-1. Open the Goal Board with one Project Attention.
-2. Verify the Project banner and ordinary waiting Work projection.
-3. Ask Assistant to resolve the Project Attention through its normal tool boundary.
-4. Hold the resumed Planner long enough to observe the unblocked working state.
-5. Let Planning publish an Engineering Work whose next real task checkpoint fails closed.
-6. Observe the replacement Project Attention and blocked Board state.
+1. Open the Goal Board with one canonical Project Attention.
+2. Verify the Board has no blocker banner and Work remains independently queued or working.
+3. Let Assistant publish a `Needs you` message, reply from the Goal Board, and inspect the
+   resulting Inbox event.
+4. Ask Assistant to resolve the Project Attention through its normal tool boundary.
+5. Hold Planner long enough to observe that execution did not depend on Attention resolution.
+6. Let Planning publish an Engineering Work whose next real task checkpoint fails closed.
+7. Observe Reflection wake the same Project Assistant, which creates a replacement Attention and
+   publishes the current request.
 
 Pass conditions:
 
-- Project Attention reason and creation time appear in the banner and Current Focus.
-- Covered Work has `project_ineligible` and `waiting`, never an invented `Needs you` badge.
-- Only a successful `hopi_resolve_attention` closes the original Attention, restores eligibility,
-  and wakes a Planner Attempt.
-- While Planner runs, the Project banner is absent and the Planning card is visibly working.
-- A later execution-boundary failure creates a new Project Attention with a different identity and
-  current reason; the original remains resolved as history.
-- Reblocking does not create Goal- or Work-target Attention or perform destructive checkout mutation.
+- Canonical Project Attention does not create a Board blocker banner; user-facing action belongs to
+  an Assistant `Needs you` message.
+- Open Project Attention does not add `project_ineligible`, change Work readiness, or invent a
+  `Needs you` Work badge.
+- Reply preserves the exact canonical Attention reference and is processed by the owning Project
+  Assistant Session, not Assistant Home.
+- A Project- or Goal-scoped state read includes that Project Attention; a Home-only Attention is not
+  misclassified as Project-owned.
+- Only a successful `hopi_manage_attention` resolve closes the original Attention; resolving it
+  does not create a scheduling transition.
+- Planner can be visibly working before the Attention is resolved and continues afterward.
+- A later execution-boundary failure settles `failed_attempt` and wakes the same Project Assistant;
+  Coordinator does not synthesize Attention.
+- Assistant creates a new Project Attention with a different identity and current reason. The
+  Attention does not add `project_ineligible`; the Work remains stopped by its own `failed_attempt`
+  fact and the original Attention remains resolved as history.
+- Failure handoff does not create Goal- or Work-target Attention or perform destructive checkout
+  mutation.
 
 Primary invariants: `INV-01`, `INV-04`, `INV-05`, `INV-10`, `INV-14`.
 
 Current Browser implementation: `packages/backend/tests/browser/projectAttentionRecovery.browser.ts`
 (`bun run e2e:browser:028`). It uses deterministic model seams but production orchestration, UI,
-Git worktrees, tool execution, and checkpoint failure. The configured-provider canary is
+Git worktrees, Inbox routing, tool execution, and checkpoint failure. The configured-provider canary is
 `packages/backend/tests/live/projectAttentionRecovery.live.ts` (`bun run e2e:live:028`); it verifies
 that a real Assistant inspects already-applied external repair evidence, receives a successful
 resolve tool result, and wakes a real Planner. It does not claim the read-only Assistant performed
@@ -1389,13 +1409,14 @@ Current Live implementation: `packages/backend/tests/live/preferenceJudgment.liv
 | ------- | ------------------------------------------------------------------------------------------------------------------ |
 | Risk    | A dependent Work starts too early, repeats predecessor discovery, or cannot resolve accepted Run artifacts.       |
 | Reality | Production Coordinator, RoleContextStager, durable Goal documents, immutable Run artifacts, real Git, and C1.     |
-| Fixture | One Planning Work and two Engineering Works where the second transitively depends on the first accepted artifact. |
+| Fixture | One Planning Work and two Engineering Works where the second transitively depends on the first accepted artifact subtree. |
 | Cost    | Zero provider calls; deterministic roles inspect the exact context that a configured Agent receives.              |
 
 Actions:
 
 1. Let Planner publish one sparse `W-produce -> W-consume` dependency chain.
-2. Have the first Generator change source and emit one artifact outside canonical Project documents.
+2. Have the first Generator change source and emit one nested directory artifact outside canonical
+   Project documents.
 3. Accept and integrate that Work through Reviewer and C1.
 4. Observe the Coordinator dispatch the dependent Generator only after the predecessor is done.
 5. Read the predecessor Work, Evidence, and artifact manifest from the dependent Run context, then
@@ -1406,9 +1427,9 @@ Pass conditions:
 - `W-consume` never dispatches before `W-produce` is terminal and accepted.
 - The dependent immutable authority includes the transitive predecessor Works and their referenced
   Evidence, but does not widen to unrelated terminal Works or historical Runs.
-- `evidence-artifacts.json` maps portable `artifact:<run>/<path>` references to current-Run read-only
-  copies, names the owning Evidence documents, and is read-only; canonical Evidence retains the
-  immutable source reference.
+- `evidence-artifacts.json` maps the portable `artifact:<run>/<path>` directory reference to one
+  current-Run read-only subtree, names the owning Evidence documents, and is read-only; canonical
+  Evidence retains the immutable source reference.
 - The dependent Agent can consume the artifact through its staged context without a Run lookup API,
   Assistant-home path, user checkout path, or model-memory handoff.
 - Both Works retain their own Evidence, C1 reaches one clean release head, the selected delivery
@@ -1453,6 +1474,36 @@ Pass conditions:
 - Assistant effects do not create an empty self-wake, while an external event arriving during the
   turn remains pending.
 - Prepare duration and complete logs remain attached to the same Attempt that runs the Agent.
+
+### HOPI-E2E-035: Durable Attention Continuation And NeedsYou Handoff
+
+| Field   | Value                                                                                                             |
+| ------- | ----------------------------------------------------------------------------------------------------------------- |
+| Risk    | Assistant ends one turn with unfinished Attention and is never awakened again, or loops while waiting externally. |
+| Reality | Production Inbox, deterministic wake recorder, scoped Assistant session, Coordinator, and Work Run projection.    |
+| Fixture | One Project Attention, ordinary internal reply, `NeedsYou` reply, and an active independent Work Attempt.          |
+| Cost    | Zero provider calls; deterministic model seam with production orchestration.                                      |
+
+Actions:
+
+1. Create one unresolved Project Attention and let its state edge wake the Project Assistant.
+2. End the first turn without resolving it or publishing `NeedsYou`.
+3. Observe one durable internal continuation in the same Project session.
+4. Publish `NeedsYou` from the continuation and reconcile again.
+5. Repeat the unfinished-turn boundary while an independent Work Attempt is active, then settle it.
+
+Pass conditions:
+
+- One unfinished turn produces exactly one idempotent continuation event with the canonical
+  Attention reference.
+- The continuation resumes the same Project provider session and receives current state plus all
+  unresolved Attention.
+- A current valid `NeedsYou` block suppresses immediate continuation without mutating Attention.
+- A pending same-scope Inbox turn is used instead of creating a duplicate continuation.
+- A non-stale active Work Attempt defers continuation until its own settlement edge; a stale Run can
+  still wake supervision.
+- Restart or repeated reconciliation cannot duplicate the deterministic continuation.
+- `waitForIdle()` includes wake work queued by a completing Reflection record.
 
 ## Harness Self-Verification
 

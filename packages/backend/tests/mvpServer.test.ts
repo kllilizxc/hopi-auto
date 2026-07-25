@@ -14,6 +14,7 @@ import type { GoalPackage } from '../src/domain/goalPackage'
 import {
   createServer,
   deriveAssistantFeedActivity,
+  deriveGoalSummaries,
   deriveWorkCompletedAt,
   latestAgentPlan,
   presentAttempt,
@@ -121,6 +122,86 @@ describe('MVP server', () => {
         reflectionRunning: false,
       }),
     ).toEqual({ phase: 'waiting' })
+  })
+
+  test('presents a live responsibility before a blocked downstream Work', () => {
+    const goalPackage = {
+      goal: {
+        attributes: {
+          id: 'G-1',
+          title: 'Goal',
+          lifecycle: 'active',
+          priority: 0,
+          contractRevision: 1,
+          completionAttentionId: null,
+        },
+        body: 'Goal.\n',
+      },
+      works: new Map([
+        [
+          'W-review',
+          {
+            attributes: {
+              id: 'W-review',
+              title: 'Review current evidence',
+              kind: 'engineering',
+              stage: 'review',
+              notBefore: null,
+              dependsOn: [],
+              contractRevision: 1,
+              evidenceRefs: [],
+            },
+            body: 'Review.\n',
+          },
+        ],
+        [
+          'W-build',
+          {
+            attributes: {
+              id: 'W-build',
+              title: 'Build downstream result',
+              kind: 'engineering',
+              stage: 'generate',
+              notBefore: null,
+              dependsOn: ['W-review'],
+              contractRevision: 1,
+              evidenceRefs: [],
+            },
+            body: 'Build.\n',
+          },
+        ],
+      ]),
+      attentions: new Map(),
+      evidence: new Map(),
+      inputs: [],
+      design: new Map(),
+    } as GoalPackage
+
+    expect(
+      deriveGoalSummaries(goalPackage, [
+        {
+          workId: 'W-build',
+          column: 'Build',
+          cancelled: false,
+          ready: false,
+          responsibility: 'generator',
+          primaryBadge: 'waiting',
+          failedPredicates: ['dependency_incomplete'],
+        },
+        {
+          workId: 'W-review',
+          column: 'Review',
+          cancelled: false,
+          ready: false,
+          responsibility: 'reviewer',
+          primaryBadge: 'working',
+          failedPredicates: ['live_run'],
+        },
+      ]),
+    ).toEqual({
+      currentSummary: 'Review: Review current evidence',
+      nextSummary: 'working · reviewer',
+    })
   })
 
   test('preserves an explicit stale Attempt diagnosis when Evidence is unconsumed', () => {
@@ -1350,6 +1431,7 @@ describe('MVP server', () => {
       eventId: 'EV-choice',
       content: 'The release window needs an operator decision.',
       context: { projectId: 'P-1' },
+      receivedAt: new Date(timestamp),
     })
     await workspace.handleEvent(event.attributes.id, {
       reply: '<NeedsYou attentionId="A-choice">Choose today or tomorrow.</NeedsYou>',
@@ -1381,6 +1463,32 @@ describe('MVP server', () => {
       `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(String(feed.syncCursor))}`,
     )
     expect(changes.requests).toEqual(feed.requests)
+
+    await workspace.updateAttention('A-choice', {
+      body: 'Choose the corrected release window.',
+      updatedAt: new Date('2026-07-16T08:02:00.000Z'),
+    })
+    const correctedEvent = await workspace.receiveSystemEvent({
+      eventId: 'EV-choice-corrected',
+      content: 'The corrected release window still needs an operator decision.',
+      context: { projectId: 'P-1' },
+      receivedAt: new Date('2026-07-16T08:03:00.000Z'),
+    })
+    await workspace.handleEvent(correctedEvent.attributes.id, {
+      reply: '<NeedsYou attentionId="A-choice">Choose Friday or Monday.</NeedsYou>',
+      disposition: 'notified',
+      expose: true,
+      handledAt: new Date('2026-07-16T08:04:00.000Z'),
+    })
+    expect((await workspace.readEvent('EV-choice'))?.attributes.reply).toContain(
+      'Choose today or tomorrow.',
+    )
+    expect((await request(base, '/api/assistant/feed?projectId=P-1&limit=2')).requests).toEqual([
+      {
+        eventId: 'EV-choice-corrected',
+        attentions: [expect.objectContaining({ id: 'A-choice' })],
+      },
+    ])
 
     await workspace.resolveAttention('A-choice', 'Tomorrow was selected.')
     const resolved = await request(
@@ -1446,6 +1554,46 @@ describe('MVP server', () => {
     expect((goal as { works: Array<{ blockedBy?: string }> }).works[0]?.blockedBy).not.toBe(
       'Project',
     )
+  })
+
+  test('projects a Goal-referenced Project Attention onto that Goal without duplicating Project count', async () => {
+    const homeRoot = join(temporaryRoot, 'goal-referenced-attention-home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'goal-referenced-attention-repo'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    await createGoalPackageStore(linked.integrationRoot, 'P-1', publisher).createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+    })
+    const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+    const createdAt = '2026-07-25T08:57:03.938Z'
+    await workspace.createAttention({
+      attributes: {
+        id: 'A-goal-proof',
+        createdAt,
+        updatedAt: createdAt,
+        resolvedAt: null,
+        refs: ['project:P-1', 'G-1', 'plan-initial'],
+        target: 'project:P-1',
+        notifiedAt: null,
+        operatorRequest: null,
+      },
+      body: 'The current Goal proof needs inspection.\n',
+    })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+
+    expect(await request(`http://127.0.0.1:${server.port}`, '/api/state')).toMatchObject({
+      projects: [
+        {
+          projectId: 'P-1',
+          openAttentionCount: 1,
+          goals: [{ id: 'G-1', openAttentionCount: 1 }],
+        },
+      ],
+    })
   })
 
   test('records a factual system event when Rebind replaces a Repo with nonterminal Work', async () => {
@@ -1719,6 +1867,12 @@ describe('MVP server', () => {
     await mkdir(join(runRoot, 'artifacts'), { recursive: true })
     await Bun.write(join(runRoot, 'artifacts', '001-report.md'), '# Run report\n')
     await Bun.write(join(runRoot, 'artifacts', '002-preview.apng'), pngBytes())
+    await mkdir(join(runRoot, 'artifacts', '003-snapshot', 'pages'), { recursive: true })
+    await Bun.write(
+      join(runRoot, 'artifacts', '003-snapshot', 'ledger.json'),
+      '{"phase":"validated"}\n',
+    )
+    await Bun.write(join(runRoot, 'artifacts', '003-snapshot', 'pages', 'one.json'), '{}\n')
     const workPath = store.paths.workDocument('G-1', 'W-report')
     const workSource = await Bun.file(store.paths.absolute(workPath)).text()
     const work = parseWorkDocument(workSource)
@@ -1740,6 +1894,7 @@ describe('MVP server', () => {
                 'artifact:R-report/001-report.md',
                 'reports/stage-report.md',
                 'artifact:R-report/002-preview.apng',
+                'artifact:R-report/003-snapshot',
               ],
             },
             body: 'The reports are attached.\n',
@@ -1772,7 +1927,20 @@ describe('MVP server', () => {
     expect(animationArtifact.status).toBe(200)
     expect(animationArtifact.headers.get('content-type')).toBe('image/apng')
     expect(new Uint8Array(await animationArtifact.arrayBuffer())).toEqual(pngBytes())
-    expect((await fetch(`${artifactBase}/3`)).status).toBe(404)
+
+    const directoryArtifact = await fetch(`${artifactBase}/3`)
+    expect(directoryArtifact.status).toBe(200)
+    expect(await directoryArtifact.json()).toEqual({
+      kind: 'directory',
+      name: '003-snapshot',
+      entries: [
+        { path: 'ledger.json', kind: 'file', sizeBytes: expect.any(Number) },
+        { path: 'pages', kind: 'directory', sizeBytes: null },
+        { path: 'pages/one.json', kind: 'file', sizeBytes: expect.any(Number) },
+      ],
+      omitted: 0,
+    })
+    expect((await fetch(`${artifactBase}/4`)).status).toBe(404)
   })
 
   test('correlates repeated local completion IDs by canonical Goal identity', async () => {

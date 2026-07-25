@@ -72,7 +72,7 @@ server.registerTool(
   'hopi_write_design',
   {
     description:
-      'Write Goal-local design Markdown or adopt current Inbox attachments into Goal-local assets. This does not start Planning.',
+      'Write or replace Goal-local design Markdown, or adopt current Inbox attachments into Goal-local assets. The resulting design is supplied as authority to later responsibilities and future Assistant state; this does not start Planning.',
     inputSchema: assistantMcpToolSchemas.hopi_write_design,
   },
   (args) => callTool('hopi_write_design', args),
@@ -92,7 +92,7 @@ server.registerTool(
   'hopi_control_work',
   {
     description:
-      'Retry, defer, change dependencies, append a Project Owner message, or cancel one Work. A message changes the canonical Work document, interrupts an active Run, and resumes the same responsibility lineage. Cancellation includes nonterminal dependents and preserves history.',
+      "Retry, defer, change dependencies, append a Project Owner message, or cancel one Work. Retry reserves the current responsibility's next independent Attempt in the current environment; its settlement produces a Project event. A message changes the canonical Work document, interrupts an active Run, and resumes the same responsibility lineage. Cancellation includes nonterminal dependents and preserves history.",
     inputSchema: assistantMcpToolSchemas.hopi_control_work,
   },
   (args) => callTool('hopi_control_work', args),

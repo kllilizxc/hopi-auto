@@ -28,6 +28,7 @@ interface StateView {
 interface HandoffObservation {
   artifactReference: string
   artifactPath: string
+  artifactKind: 'file' | 'directory'
   evidencePaths: string[]
   manifestPath: string
   predecessorStage: string
@@ -109,10 +110,11 @@ test('hands accepted dependency Evidence and immutable Run artifacts to downstre
     ])
     expect(roles.handoff).not.toBeNull()
     expect(roles.handoff?.predecessorStage).toBe('done')
-    expect(roles.handoff?.artifactReference).toMatch(/^artifact:R-[^/]+\/001-proof\.txt$/)
-    expect(await Bun.file(roles.handoff?.artifactPath ?? '').text()).toBe(
-      'accepted predecessor value: 41\n',
-    )
+    expect(roles.handoff?.artifactReference).toMatch(/^artifact:R-[^/]+\/001-proof-bundle$/)
+    expect(roles.handoff?.artifactKind).toBe('directory')
+    expect(
+      await Bun.file(join(roles.handoff?.artifactPath ?? '', 'nested', 'proof.txt')).text(),
+    ).toBe('accepted predecessor value: 41\n')
     expect((await stat(roles.handoff?.manifestPath ?? '')).mode & 0o222).toBe(0)
     expect(roles.handoff?.evidencePaths).toHaveLength(2)
 
@@ -153,9 +155,10 @@ function createHandoffRoles(): RoleRunner & {
       if (input.responsibility === 'generator' && input.workId === PRODUCE_WORK) {
         await mkdir(join(input.cwd, 'src'), { recursive: true })
         await Bun.write(join(input.cwd, 'src', 'producer.ts'), 'export const produced = 41\n')
-        const proof = join(input.context.runtimeScratchDir, 'proof.txt')
-        await Bun.write(proof, 'accepted predecessor value: 41\n')
-        return success('Produced source plus one immutable handoff proof.', [proof])
+        const proof = join(input.context.runtimeScratchDir, 'proof-bundle')
+        await mkdir(join(proof, 'nested'), { recursive: true })
+        await Bun.write(join(proof, 'nested', 'proof.txt'), 'accepted predecessor value: 41\n')
+        return success('Produced source plus one immutable handoff proof subtree.', [proof])
       }
       if (input.responsibility === 'reviewer' && input.workId === PRODUCE_WORK) {
         expect(await Bun.file(join(primarySourceRoot(input), 'src', 'producer.ts')).text()).toBe(
@@ -165,7 +168,11 @@ function createHandoffRoles(): RoleRunner & {
       }
       if (input.responsibility === 'generator' && input.workId === CONSUME_WORK) {
         roles.handoff = await inspectHandoff(input)
-        const value = Number((await Bun.file(roles.handoff.artifactPath).text()).match(/\d+/)?.[0])
+        const value = Number(
+          (await Bun.file(join(roles.handoff.artifactPath, 'nested', 'proof.txt')).text()).match(
+            /\d+/,
+          )?.[0],
+        )
         await Bun.write(
           join(input.cwd, 'src', 'consumer.ts'),
           `export const consumed = ${value + 1}\n`,
@@ -200,6 +207,7 @@ async function inspectHandoff(input: RoleRunInput): Promise<HandoffObservation> 
     artifacts: Array<{
       reference: string
       path: string
+      kind: 'file' | 'directory'
       evidence: string[]
     }>
   }
@@ -207,7 +215,10 @@ async function inspectHandoff(input: RoleRunInput): Promise<HandoffObservation> 
   expect(manifest.artifacts).toHaveLength(1)
   const artifact = manifest.artifacts[0]
   if (!artifact) throw new Error('Dependent Work received an empty artifact manifest')
-  expect(await Bun.file(artifact.path).text()).toBe('accepted predecessor value: 41\n')
+  expect(artifact.kind).toBe('directory')
+  expect(await Bun.file(join(artifact.path, 'nested', 'proof.txt')).text()).toBe(
+    'accepted predecessor value: 41\n',
+  )
 
   const authorityGoalRoot = join(
     input.context.contextRoot,
@@ -235,6 +246,7 @@ async function inspectHandoff(input: RoleRunInput): Promise<HandoffObservation> 
   return {
     artifactReference: artifact.reference,
     artifactPath: artifact.path,
+    artifactKind: artifact.kind,
     evidencePaths: predecessor.attributes.evidenceRefs.map((evidenceId) =>
       join(authorityGoalRoot, 'evidence', `${evidenceId}.md`),
     ),

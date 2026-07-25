@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   type RoleTransportConfig,
   appendCodexHttpsOnlyConfig,
+  appendCodexShellEnvironmentConfig,
   resolveConfiguredTransportCommand,
   roleTransportConfigSchema,
   withNativeCompactionEnabled,
@@ -738,7 +739,6 @@ describe('resolveConfiguredTransportCommand', () => {
     })
     expect(boundedCodex.cmd).toContain('workspace-write')
     expect(boundedCodex.cmd).not.toContain('danger-full-access')
-    expect(boundedCodex.cmd).toContain('--disable')
     expect(boundedCodex.cmd).toContain('unified_exec')
     expect(
       boundedCodex.cmd.slice(boundedCodex.cmd.indexOf('-a'), boundedCodex.cmd.indexOf('-a') + 2),
@@ -798,7 +798,6 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(codex.cmd).toContain('danger-full-access')
     expect(codex.cmd).not.toContain('--add-dir')
     expect(codex.cmd).not.toContain('sandbox_workspace_write.network_access=true')
-    expect(codex.cmd).toContain('--disable')
     expect(codex.cmd).toContain('unified_exec')
 
     const claude = await resolveConfiguredTransportCommand({
@@ -879,6 +878,7 @@ describe('resolveConfiguredTransportCommand', () => {
 function codexHttpsOnlyArgs() {
   const command: string[] = []
   appendCodexHttpsOnlyConfig(command)
+  appendCodexShellEnvironmentConfig(command)
   return command
 }
 

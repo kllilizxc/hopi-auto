@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { isPresentableAgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import {
   createProcessTranscriptNormalizer,
   normalizeProcessOutputLine,
@@ -109,6 +110,61 @@ describe('normalizeProcessOutputLine', () => {
           line: JSON.stringify(line),
         }),
       ).toEqual([])
+    }
+  })
+
+  test('records native compaction boundaries without exposing provider summaries', () => {
+    const cases = [
+      {
+        format: 'codex_jsonl' as const,
+        transport: 'codex' as const,
+        line: {
+          type: 'compacted',
+          payload: { message: 'large provider-owned summary that must remain raw' },
+        },
+      },
+      {
+        format: 'codex_jsonl' as const,
+        transport: 'codex' as const,
+        line: { type: 'event_msg', payload: { type: 'context_compacted' } },
+      },
+      {
+        format: 'claude_stream_json' as const,
+        transport: 'claude' as const,
+        line: {
+          type: 'system',
+          subtype: 'compact_boundary',
+          compact_metadata: { summary: 'provider-owned summary' },
+        },
+      },
+      {
+        format: 'opencode_json' as const,
+        transport: 'opencode' as const,
+        line: {
+          type: 'session.compacted',
+          summary: 'provider-owned summary',
+        },
+      },
+    ]
+
+    for (const candidate of cases) {
+      const events = normalizeProcessOutputLine({
+        format: candidate.format,
+        stream: 'stdout',
+        role: 'assistant',
+        line: JSON.stringify(candidate.line),
+      })
+      expect(events).toEqual([
+        {
+          kind: 'transcript',
+          transport: candidate.transport,
+          entryKind: 'status',
+          summary: 'Context compacted.',
+          vendorEventType: 'context.compacted',
+        },
+      ])
+      expect(events.every((event) => !isPresentableAgentRuntimeEvent(event))).toBeTrue()
+      expect(JSON.stringify(events)).not.toContain('provider-owned summary')
     }
   })
 

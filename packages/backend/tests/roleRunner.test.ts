@@ -40,6 +40,33 @@ describe('ConfiguredRoleRunner', () => {
     expect(transcript).toContain('stderr: raw-error-detail')
   })
 
+  test('redacts inherited secrets from responsibility diagnostics', async () => {
+    const fixture = await createFixture()
+    const secret = 'responsibility-secret-value'
+    const previous = process.env.HOPI_TEST_SECRET_TOKEN
+    process.env.HOPI_TEST_SECRET_TOKEN = secret
+    try {
+      const runner = processRunner(
+        'console.log(JSON.stringify({secret:process.env.HOPI_TEST_SECRET_TOKEN})); console.error(process.env.HOPI_TEST_SECRET_TOKEN); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"planned",artifacts:[]}))',
+      )
+      const events: AgentRuntimeEvent[] = []
+
+      await runner.run(fixture.input('planner', fixture.proposalRoot), {
+        onEvent: (event) => {
+          events.push(event)
+        },
+      })
+
+      const transcript = await Bun.file(join(fixture.runRoot, 'transcript.log')).text()
+      expect(transcript).not.toContain(secret)
+      expect(transcript).toContain('[REDACTED_SECRET]')
+      expect(JSON.stringify(events)).not.toContain(secret)
+    } finally {
+      if (previous === undefined) process.env.HOPI_TEST_SECRET_TOKEN = undefined
+      else process.env.HOPI_TEST_SECRET_TOKEN = previous
+    }
+  })
+
   test('keeps only a bounded stderr tail in memory while preserving the raw transcript', async () => {
     const fixture = await createFixture()
     const runner = processRunner(
@@ -150,7 +177,7 @@ describe('ConfiguredRoleRunner', () => {
     const fixture = await createFixture()
     const pidFile = join(fixture.runRoot, 'child.pid')
     const runner = processRunner(
-      `const child = Bun.spawn(["bun", "-e", "setInterval(() => {}, 1000)"], {stdout:"ignore", stderr:"ignore"}); child.unref(); await Bun.write(${JSON.stringify(pidFile)}, String(child.pid)); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"planned",artifacts:[]}))`,
+      `const child = Bun.spawn(["bun", "-e", "setInterval(() => {}, 1000)"], {stdin:"ignore",stdout:"ignore",stderr:"ignore",detached:true}); child.unref(); await Bun.write(${JSON.stringify(pidFile)}, String(child.pid)); await Bun.sleep(200); await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"planned",artifacts:[]}))`,
     )
 
     const result = await runner.run(fixture.input('planner', fixture.proposalRoot))

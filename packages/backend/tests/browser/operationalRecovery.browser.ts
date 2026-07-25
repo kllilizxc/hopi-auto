@@ -131,7 +131,7 @@ try {
       value.works.some(
         (work) =>
           work.id === 'plan-initial' &&
-          work.projection.primaryBadge === 'waiting' &&
+          work.projection.primaryBadge === 'Waiting for Assistant' &&
           work.projection.failedPredicates.includes('failed_attempt'),
       ) && value.attentions.every((attention) => attention.target === null),
     { timeoutMs: 60_000, description: 'settled operational failure without synthetic Attention' },

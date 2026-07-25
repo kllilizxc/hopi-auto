@@ -396,9 +396,9 @@ function validateReferences(
         !parsedReply ||
         parsedReply.homeId !== homeId ||
         !repliedEvent ||
-        repliedEvent.attributes.source !== 'reflection' ||
         repliedEvent.attributes.visibility !== 'public' ||
-        repliedEvent.attributes.status !== 'handled'
+        repliedEvent.attributes.status !== 'handled' ||
+        (repliedEvent.attributes.context?.projectId ?? null) !== (context.projectId ?? null)
       ) {
         throw invalid(`Inbox event ${event.attributes.id} replies to an invalid Assistant request`)
       }

@@ -572,6 +572,9 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
 
         try {
+          const releasedRepoRoots = runRepos.map((repo) =>
+            resolveProjectPath(repo.integrationRoot, repo.projectPath),
+          )
           outcome = await preserveOutcomeArtifacts(
             outcome,
             runId,
@@ -582,7 +585,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               context.runtimeScratchDir,
               ...roleRepoRoots.map((repo) => repo.path),
             ],
-            roleRepoRoots.map((repo) => repo.path),
+            releasedRepoRoots,
             [context.proposalRoot],
           )
         } catch (error) {

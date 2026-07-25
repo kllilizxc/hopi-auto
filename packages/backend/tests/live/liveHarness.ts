@@ -545,7 +545,12 @@ export async function waitForGoalQuiescence(
 export async function sendAssistantMessage(
   harness: BrowserHarnessContext,
   content: string,
-  options: { evidencePrefix?: string; pagePath?: string; imagePaths?: string[] } = {},
+  options: {
+    evidencePrefix?: string
+    pagePath?: string
+    imagePaths?: string[]
+    replyToLatestNeedsYou?: boolean
+  } = {},
 ) {
   const url = `${harness.baseUrl}${options.pagePath ?? '/projects'}`
   const contentExpression = browserUtf8Expression(content)
@@ -589,6 +594,24 @@ export async function sendAssistantMessage(
     '  return { filled: true }',
     '})()',
   ].join('\n')
+  const replyExpression = [
+    '(() => {',
+    '  const buttons = [...document.querySelectorAll(\'button[aria-label="Reply to this request"]\')]',
+    '  const button = buttons.at(-1)',
+    "  if (!button) return { selected: false, reason: 'missing Needs you Reply button' }",
+    '  button.click()',
+    '  return { selected: true }',
+    '})()',
+  ].join('\n')
+  const replyLines = options.replyToLatestNeedsYou
+    ? [
+        'reply = None',
+        'for _ in range(80):',
+        `    reply = js(${JSON.stringify(replyExpression)})`,
+        '    if reply.get("selected"): break',
+        '    time.sleep(0.25)',
+      ]
+    : ['reply = {"selected": False, "skipped": True}']
   const sendExpression = [
     '(() => {',
     '  const button = document.querySelector(\'button[aria-label="Send message"]\')',
@@ -620,6 +643,7 @@ export async function sendAssistantMessage(
     `opened = js(${JSON.stringify(openExpression)})`,
     'time.sleep(0.25)',
     captureScreenshotLine(screenshots.assistantOpen),
+    ...replyLines,
     `filled = js(${JSON.stringify(fillExpression)})`,
     'time.sleep(0.25)',
     captureScreenshotLine(screenshots.composerFilled),
@@ -632,7 +656,7 @@ export async function sendAssistantMessage(
     '    if visible: break',
     '    time.sleep(0.25)',
     captureScreenshotLine(screenshots.messageSubmitted),
-    'print("HOPI_E2E_SEND=" + json.dumps({"opened": opened, "filled": filled, "attached": attached, "sent": sent, "visible": visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
+    'print("HOPI_E2E_SEND=" + json.dumps({"opened": opened, "reply": reply, "filled": filled, "attached": attached, "sent": sent, "visible": visible, "audit": hopi_audit_status(), "verify": hopi_audit_verify()}, sort_keys=True))',
   ].join('\n')
   const evidence = (await runBrowserHarness(
     harness,
@@ -641,6 +665,7 @@ export async function sendAssistantMessage(
     script,
   )) as {
     opened?: { opened?: boolean; reason?: string }
+    reply?: { selected?: boolean; skipped?: boolean; reason?: string }
     filled?: { filled?: boolean; reason?: string }
     attached?: number
     sent?: { sent?: boolean; reason?: string }
@@ -650,6 +675,9 @@ export async function sendAssistantMessage(
   }
   if (!evidence.opened?.opened || !evidence.filled?.filled || !evidence.sent?.sent) {
     throw new Error(`Assistant composer submission failed: ${safeJson(evidence)}`)
+  }
+  if (options.replyToLatestNeedsYou && !evidence.reply?.selected) {
+    throw new Error(`Needs you Reply selection failed: ${safeJson(evidence)}`)
   }
   if (evidence.attached !== imagePaths.length) {
     throw new Error(`Assistant image attachment failed: ${safeJson(evidence)}`)
@@ -664,6 +692,7 @@ export async function sendAssistantMessage(
   )
   await recordAction(harness, 'assistant_message_submitted', {
     images: imagePaths.length,
+    repliedToNeedsYou: evidence.reply?.selected === true,
     auditHeadHash: evidence.audit?.head_hash,
     browserAuditMode: auditMode,
   })

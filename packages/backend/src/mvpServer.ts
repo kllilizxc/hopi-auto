@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import type { RoleRunner } from './agent/RoleRunner'
@@ -12,6 +13,7 @@ import {
   assistantConversationScopeKey,
   assistantEventBelongsToScope,
 } from './assistant/assistantConversationScope'
+import { needsYouAttentionIds } from './assistant/assistantNeedsYou'
 import { AssistantToolRequestError } from './assistant/assistantToolRequestError'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
@@ -649,6 +651,13 @@ export function createServer(options: ServerOptions = {}): MvpServer {
               project,
               reference,
             })
+            if (artifact.kind === 'directory') {
+              return json({
+                kind: 'directory',
+                name: artifact.fileName,
+                ...(await directoryArtifactIndex(artifact.path)),
+              })
+            }
             return new Response(Bun.file(artifact.path), {
               headers: {
                 'cache-control': 'private, no-store',
@@ -867,6 +876,35 @@ export function createServer(options: ServerOptions = {}): MvpServer {
   })
 }
 
+async function directoryArtifactIndex(root: string, limit = 1_000) {
+  const entries: Array<{ path: string; kind: 'file' | 'directory'; sizeBytes: number | null }> = []
+  let omitted = 0
+  for await (const path of new Bun.Glob('**/*').scan({ cwd: root, onlyFiles: false })) {
+    if (entries.length >= limit) {
+      omitted += 1
+      continue
+    }
+    const metadata = await stat(join(root, path)).catch(() => null)
+    if (!metadata || (!metadata.isFile() && !metadata.isDirectory())) continue
+    entries.push({
+      path,
+      kind: metadata.isDirectory() ? 'directory' : 'file',
+      sizeBytes: metadata.isFile() ? metadata.size : null,
+    })
+  }
+  entries.sort((left, right) => left.path.localeCompare(right.path))
+  return { entries, omitted }
+}
+
+function attentionReferencesGoal(refs: readonly string[], goalId: string) {
+  return refs.some(
+    (reference) =>
+      reference === goalId ||
+      reference.split('/').includes(`goal:${goalId}`) ||
+      reference.includes(`/goals/${goalId}/`),
+  )
+}
+
 async function presentState(runtime: MvpRuntime, options: { includeAttentions?: boolean } = {}) {
   const includeAttentions = options.includeAttentions ?? true
   const [home, workspace, agentRoleSettingEntries, attemptSnapshot] = await Promise.all([
@@ -904,6 +942,9 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       }
     } catch {}
     for (const { goalId, goalPackage } of readableGoalPackages) {
+      const relatedProjectAttentions = projectAttentions.filter((attention) =>
+        attentionReferencesGoal(attention.attributes.refs, goalId),
+      )
       const liveWorkIds = new Set(
         runningAttempts
           .filter((attempt) => attempt.projectId === project.projectId && attempt.goalId === goalId)
@@ -917,11 +958,12 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
         passCapacity: { planner: true, generator: true, reviewer: true },
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
-      const openAttentionCount = [...goalPackage.attentions.values()].filter(
+      const goalAttentionCount = [...goalPackage.attentions.values()].filter(
         (attention) =>
           attention.attributes.target !== null && attention.attributes.resolvedAt === null,
       ).length
-      goalOpenAttentionCount += openAttentionCount
+      const openAttentionCount = goalAttentionCount + relatedProjectAttentions.length
+      goalOpenAttentionCount += goalAttentionCount
       goals.push({
         id: goalId,
         title: goalPackage.goal.attributes.title,
@@ -1335,16 +1377,6 @@ function projectAssistantOpenRequests(
     }))
 }
 
-function needsYouAttentionIds(reply: string) {
-  const ids = new Set<string>()
-  const pattern = /<NeedsYou\s+attentionId=(?:"([^"]+)"|'([^']+)')\s*>[\s\S]*?<\/NeedsYou>/giu
-  for (const match of reply.matchAll(pattern)) {
-    const attentionId = match[1] ?? match[2]
-    if (attentionId && stableIdSchema.safeParse(attentionId).success) ids.add(attentionId)
-  }
-  return [...ids]
-}
-
 type AssistantFeedRuntimeStatus = 'queued' | 'running' | 'interrupted' | 'completed' | 'failed'
 
 export function deriveAssistantFeedActivity(input: {
@@ -1403,7 +1435,7 @@ function maxTimestamp(...values: Array<string | null | undefined>) {
   )
 }
 
-function deriveGoalSummaries(
+export function deriveGoalSummaries(
   goalPackage: Awaited<ReturnType<MvpProjectRuntime['store']['readPackage']>>,
   projections: ReturnType<typeof deriveGoalWorkProjections>,
 ) {
@@ -1423,6 +1455,7 @@ function deriveGoalSummaries(
   const focus =
     ordered.find((projection) => projection.primaryBadge === 'Needs you') ??
     ordered.find((projection) => projection.primaryBadge === 'Waiting for Assistant') ??
+    ordered.find((projection) => projection.primaryBadge === 'working') ??
     ordered[0]
   if (lifecycle === 'paused') {
     return {

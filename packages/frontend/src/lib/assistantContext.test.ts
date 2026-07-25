@@ -47,14 +47,29 @@ describe('Assistant automatic context', () => {
     })
   })
 
-  test('keeps a Workspace Attention at Workspace scope', () => {
+  test('routes a Project Attention through its Project while preserving its Workspace reference', () => {
     expect(
       resolveAssistantInboxContext(
         { projectId: 'P-1', goalId: 'G-current' },
-        attention({ scope: 'workspace', id: 'A-workspace' }),
+        attention({ scope: 'workspace', projectId: 'P-1', id: 'A-workspace' }),
+        'H-1',
+        'EV-request',
+      ),
+    ).toEqual({
+      projectId: 'P-1',
+      attentionRefs: ['home:H-1/attention:A-workspace'],
+      replyTo: 'home:H-1/event:EV-request',
+    })
+  })
+
+  test('keeps a genuine Home Attention in the Home conversation', () => {
+    expect(
+      resolveAssistantInboxContext(
+        { projectId: 'P-1', goalId: 'G-current' },
+        attention({ scope: 'workspace', projectId: undefined, id: 'A-home' }),
         'H-1',
       ),
-    ).toEqual({ attentionRefs: ['home:H-1/attention:A-workspace'] })
+    ).toEqual({ attentionRefs: ['home:H-1/attention:A-home'] })
   })
 
   test('uses Workspace scope when no Goal page is selected', () => {
@@ -70,20 +85,23 @@ describe('Assistant automatic context', () => {
 
   test('keeps every open reference from one Assistant question in its reply context', () => {
     expect(
-      resolveAssistantInboxContext({ projectId: 'P-1', goalId: 'G-current' }, [
-        attention({
-          projectId: 'P-2',
-          goalId: 'G-attention',
-          id: 'A-1',
-          operatorRequest: 'home:H-1/event:EV-question',
-        }),
-        attention({
-          projectId: 'P-2',
-          goalId: 'G-attention',
-          id: 'A-2',
-          operatorRequest: 'home:H-1/event:EV-question',
-        }),
-      ]),
+      resolveAssistantInboxContext(
+        { projectId: 'P-1', goalId: 'G-current' },
+        [
+          attention({
+            projectId: 'P-2',
+            goalId: 'G-attention',
+            id: 'A-1',
+          }),
+          attention({
+            projectId: 'P-2',
+            goalId: 'G-attention',
+            id: 'A-2',
+          }),
+        ],
+        'H-1',
+        'EV-question',
+      ),
     ).toEqual({
       projectId: 'P-2',
       goalId: 'G-attention',

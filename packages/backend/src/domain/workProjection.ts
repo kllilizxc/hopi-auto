@@ -82,7 +82,8 @@ export function deriveWorkProjection(
   }
   const scheduled = work.notBefore !== null && Date.parse(work.notBefore) > now.getTime()
   if (scheduled) failedPredicates.push('not_before')
-  if (runtime.settledFailureWorkIds?.has(work.id)) failedPredicates.push('failed_attempt')
+  const failedAttempt = runtime.settledFailureWorkIds?.has(work.id) ?? false
+  if (failedAttempt) failedPredicates.push('failed_attempt')
   const working = runtime.liveRunWorkIds.has(work.id)
   if (working) failedPredicates.push('live_run')
   if (responsibility && runtime.passCapacity[responsibility] === false) {
@@ -103,9 +104,11 @@ export function deriveWorkProjection(
         ? 'working'
         : scheduled
           ? 'scheduled'
-          : ready
-            ? 'queued'
-            : 'waiting',
+          : failedAttempt
+            ? 'Waiting for Assistant'
+            : ready
+              ? 'queued'
+              : 'waiting',
     failedPredicates,
   }
 }

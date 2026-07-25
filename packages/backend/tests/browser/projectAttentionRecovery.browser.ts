@@ -5,6 +5,7 @@ import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/Ro
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
 import { workspaceAttentionReference } from '../../src/domain/attentionReference'
 import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
+import { inboxEventReference } from '../../src/domain/inboxEventReference'
 import { createServer } from '../../src/mvpServer'
 import { PublicationCoordinator } from '../../src/publication/publisher'
 import { createWorkspaceAttentionController } from '../../src/runtime/workspaceAttentionController'
@@ -30,15 +31,26 @@ const SCENARIO = 'project-attention-recovery-browser'
 const PROJECT_ID = 'P-project-attention'
 const GOAL_ID = 'G-project-attention'
 const WORK_ID = 'W-after-project-recovery'
-const USER_MESSAGE = '我已经检查过项目环境，请解除 Project blocker 并继续。'
-const ASSISTANT_REPLY = 'Project Attention 已解除，Coordinator 已恢复执行。'
+const STATUS_MESSAGE = '请告诉我现在需要确认什么。'
+const USER_MESSAGE = '我已经检查过项目环境，请把这个 Project Attention 标为已处理。'
+const NEEDS_YOU_MESSAGE = '请确认项目环境已经恢复。'
+const ASSISTANT_REPLY = '这个 Project Attention 已处理；当前 Planner 继续运行。'
+const CHECKPOINT_ATTENTION_ID = 'A-checkpoint-follow-up'
+const CHECKPOINT_ATTENTION_BODY =
+  'Task checkpoint failed. The Project owner must inspect the task worktree before retrying.'
+const CHECKPOINT_NEEDS_YOU_MESSAGE = '任务 checkpoint 失败，需要确认是否允许重建任务工作树。'
 const testRun = await startTestRun(SCENARIO, 'browser')
 const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
 const repoRoot = join(artifactRoot, 'repo')
 const recoveryBlocker = join(repoRoot, 'local-recovery-blocker.txt')
 const roleRuns: Array<{ runId: string; responsibility: string; status: string }> = []
-const assistantToolResults: Array<{ attentionId: string; changed: boolean }> = []
+const assistantToolResults: Array<{
+  kind: 'create' | 'resolve'
+  attentionId: string
+  changed: boolean
+}> = []
+const assistantTurns: Array<{ eventId: string; projectId: string | null }> = []
 let attentionToResolve = ''
 let assistantHomeId = ''
 let releasePlanner: (() => void) | undefined
@@ -65,7 +77,7 @@ const roleRunner: RoleRunner = {
       await Bun.write(join(input.cwd, 'src', 'delivery.ts'), 'export const delivered = true\n')
       await rm(join(input.cwd, '.git'), { force: true })
       record.status = 'finished'
-      return success('Generator produced source after an incorrect Project recovery judgment.')
+      return success('Generator produced source before its task checkpoint failed closed.')
     }
     throw new Error('Reviewer must not run after the task checkpoint failure')
   },
@@ -74,19 +86,52 @@ const roleRunner: RoleRunner = {
 const assistantRunner: AssistantModelRunner = {
   async run(input, observer) {
     const mode = input.toolMode ?? 'main'
+    assistantTurns.push({ eventId: input.eventId, projectId: input.projectId ?? null })
+    if (mode === 'main' && input.prompt.includes(STATUS_MESSAGE)) {
+      return assistantResult(
+        `<NeedsYou attentionId="${attentionToResolve}">${NEEDS_YOU_MESSAGE}</NeedsYou>`,
+        mode,
+      )
+    }
     if (mode === 'main' && input.prompt.includes(USER_MESSAGE)) {
       await rm(recoveryBlocker, { force: true })
-      const response = await callAssistantTool(input, observer, 'hopi_resolve_attention', {
-        attentionRef: workspaceAttentionReference(assistantHomeId, attentionToResolve),
-        resolution: USER_MESSAGE,
+      const response = await callAssistantTool(input, observer, 'hopi_manage_attention', {
+        projectId: PROJECT_ID,
+        change: {
+          kind: 'resolve',
+          attentionId: attentionToResolve,
+          resolution: USER_MESSAGE,
+        },
       })
       assistantToolResults.push({
+        kind: 'resolve',
         attentionId: attentionToResolve,
         changed: response.changed === true,
       })
       return assistantResult(ASSISTANT_REPLY, mode)
     }
-    return assistantResult('Project is blocked.', mode)
+    if (mode === 'internal' && input.prompt.includes('Task checkpoint failed')) {
+      const response = await callAssistantTool(input, observer, 'hopi_manage_attention', {
+        projectId: PROJECT_ID,
+        change: {
+          kind: 'create',
+          attentionId: CHECKPOINT_ATTENTION_ID,
+          body: CHECKPOINT_ATTENTION_BODY,
+          refs: [`project:${PROJECT_ID}/goal:${GOAL_ID}/work:${WORK_ID}`],
+        },
+      })
+      assistantToolResults.push({
+        kind: 'create',
+        attentionId: CHECKPOINT_ATTENTION_ID,
+        changed: response.changed === true,
+      })
+      return assistantResult(
+        `<NeedsYou attentionId="${CHECKPOINT_ATTENTION_ID}">${CHECKPOINT_NEEDS_YOU_MESSAGE}</NeedsYou>`,
+        mode,
+      )
+    }
+    if (mode === 'internal') return assistantResult('', mode)
+    throw new Error(`Unexpected public Assistant turn: ${input.eventId}`)
   },
 }
 
@@ -94,7 +139,7 @@ const context = { scenario: SCENARIO, artifactRoot, baseUrl: '' }
 let server: ReturnType<typeof createServer> | null = null
 let initial: GoalView | null = null
 let resumed: GoalView | null = null
-let reblocked: GoalView | null = null
+let afterFailure: GoalView | null = null
 
 try {
   await initializeRepo(repoRoot)
@@ -128,23 +173,36 @@ try {
     (value) => value.projectAttention?.id === original.attributes.id,
     { timeoutMs: 30_000, description: 'the original Project Attention on GoalDetail' },
   )
-  assertWorkIsProjectBlocked(initial)
+  assertAttentionDoesNotBlockWork(initial)
   const initialBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
     evidencePrefix: 'project-blocked',
   })
-  assert.equal(initialBrowser.view?.projectBlocked, true)
-  assert.match(initialBrowser.view?.projectAttentionBody ?? '', /needs Agent inspection/)
+  assert.equal(initialBrowser.view?.projectBlocked, false)
+  assert.equal(initialBrowser.view?.projectAttentionBody, null)
+
+  const needsYouSubmission = await sendAssistantMessage(context, STATUS_MESSAGE, {
+    evidencePrefix: 'project-question',
+    pagePath: `/projects/${PROJECT_ID}/board/${GOAL_ID}`,
+  })
+  const needsYouBrowser = await captureAssistantReply(context, NEEDS_YOU_MESSAGE, {
+    evidencePrefix: 'project-question',
+    pagePath: `/projects/${PROJECT_ID}/board/${GOAL_ID}`,
+  })
 
   const assistantBrowser = await sendAssistantMessage(context, USER_MESSAGE, {
     evidencePrefix: 'project-resolve',
     pagePath: `/projects/${PROJECT_ID}/board/${GOAL_ID}`,
+    replyToLatestNeedsYou: true,
   })
   resumed = await waitForValue(
     () => requestJson<GoalView>(context.baseUrl, goalPath()),
     (value) =>
       value.projectAttention === null &&
       roleRuns.some((run) => run.responsibility === 'planner' && run.status === 'started'),
-    { timeoutMs: 30_000, description: 'Project eligibility restoration and Planner dispatch' },
+    {
+      timeoutMs: 30_000,
+      description: 'Attention resolution while independent Planner remains active',
+    },
   )
   assert.equal(
     resumed.works.find((work) => work.id === 'plan-initial')?.projection.primaryBadge,
@@ -155,41 +213,77 @@ try {
   })
   assert.equal(resumedBrowser.view?.projectBlocked, false)
   assert.equal(resumedBrowser.view?.projectAttentionBody, null)
-  const assistantReplyBrowser = await captureAssistantReply(context, ASSISTANT_REPLY)
+  const assistantReplyBrowser = await captureAssistantReply(context, ASSISTANT_REPLY, {
+    evidencePrefix: 'project-resolve',
+    pagePath: `/projects/${PROJECT_ID}/board/${GOAL_ID}`,
+  })
+  const inbox = await workspace.readWorkspace()
+  const questionEvent = [...inbox.events.values()].find(
+    (event) => event.body.trim() === STATUS_MESSAGE,
+  )
+  const replyEvent = [...inbox.events.values()].find((event) => event.body.trim() === USER_MESSAGE)
+  assert.ok(questionEvent, 'The Needs you source event must remain canonical')
+  assert.ok(replyEvent, 'The explicit reply event must remain canonical')
+  assert.equal(replyEvent.attributes.context?.projectId, PROJECT_ID)
+  assert.deepEqual(replyEvent.attributes.context?.attentionRefs, [
+    workspaceAttentionReference(assistantHomeId, original.attributes.id),
+  ])
+  assert.equal(
+    replyEvent.attributes.context?.replyTo,
+    inboxEventReference(assistantHomeId, questionEvent.attributes.id),
+  )
+  assert.equal(
+    assistantTurns.find((turn) => turn.eventId === replyEvent.attributes.id)?.projectId,
+    PROJECT_ID,
+    'Explicit Project Attention Reply must use the Project Assistant Session',
+  )
 
   releasePlanner?.()
-  reblocked = await waitForValue(
+  afterFailure = await waitForValue(
     () => requestJson<GoalView>(context.baseUrl, goalPath()),
     (value) => {
       const work = value.works.find((candidate) => candidate.id === WORK_ID)
       return (
-        value.projectAttention !== null &&
-        value.projectAttention.id !== original.attributes.id &&
-        value.projectAttention.body.includes('Task checkpoint failed') &&
-        work?.projection.primaryBadge === 'waiting' &&
-        work.projection.failedPredicates.length === 1 &&
-        work.projection.failedPredicates[0] === 'project_ineligible'
+        value.projectAttention?.id === CHECKPOINT_ATTENTION_ID &&
+        value.projectAttention.body.includes(CHECKPOINT_ATTENTION_BODY) &&
+        work?.projection.primaryBadge === 'Waiting for Assistant' &&
+        work.projection.failedPredicates.includes('failed_attempt') &&
+        !work.projection.failedPredicates.includes('project_ineligible')
       )
     },
     {
       timeoutMs: 60_000,
-      description: 'the stable Project-blocked state after the admitted Generator Run drains',
+      description: 'Assistant Attention handoff after the admitted Generator Run drains',
     },
   )
-  assertWorkIsProjectBlocked(reblocked)
+  assertProjectAttentionDoesNotGateWork(afterFailure)
   assert.equal(
-    reblocked.attentions.filter(
+    afterFailure.attentions.filter(
       (attention) => attention.target !== null && attention.resolvedAt === null,
     ).length,
     0,
     'Project failure must not be projected as Goal or Work Needs you',
   )
-  const reblockedBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
-    evidencePrefix: 'project-reblocked',
+  const afterFailureBrowser = await inspectKanban(context, PROJECT_ID, GOAL_ID, {
+    evidencePrefix: 'project-failure',
   })
-  assert.equal(reblockedBrowser.view?.projectBlocked, true)
-  assert.match(reblockedBrowser.view?.projectAttentionBody ?? '', /Task checkpoint failed/)
-  assert.deepEqual(assistantToolResults, [{ attentionId: original.attributes.id, changed: true }])
+  assert.equal(afterFailureBrowser.view?.projectBlocked, false)
+  assert.equal(afterFailureBrowser.view?.projectAttentionBody, null)
+  const checkpointNeedsYouBrowser = await captureAssistantReply(
+    context,
+    CHECKPOINT_NEEDS_YOU_MESSAGE,
+    {
+      evidencePrefix: 'project-failure',
+      pagePath: `/projects/${PROJECT_ID}/board/${GOAL_ID}`,
+    },
+  )
+  assert.deepEqual(assistantToolResults, [
+    { kind: 'resolve', attentionId: original.attributes.id, changed: true },
+    { kind: 'create', attentionId: CHECKPOINT_ATTENTION_ID, changed: true },
+  ])
+  const finalWorkspace = await workspace.readWorkspace()
+  assert.ok(finalWorkspace.attentions.get(original.attributes.id)?.attributes.resolvedAt)
+  assert.equal(finalWorkspace.attentions.get(CHECKPOINT_ATTENTION_ID)?.attributes.resolvedAt, null)
   assert.deepEqual(
     await checkoutSnapshot(repoRoot),
     checkoutBefore,
@@ -200,18 +294,22 @@ try {
     status: 'passed',
     startedAt,
     originalAttentionId: original.attributes.id,
-    replacementAttentionId: reblocked.projectAttention?.id,
+    replacementAttentionId: afterFailure.projectAttention?.id,
     roleRuns,
     assistantToolResults,
+    assistantTurns,
     initial,
     resumed,
-    reblocked,
+    afterFailure,
     browser: {
       initialBrowser,
+      needsYouSubmission,
+      needsYouBrowser,
       assistantBrowser,
       assistantReplyBrowser,
       resumedBrowser,
-      reblockedBrowser,
+      afterFailureBrowser,
+      checkpointNeedsYouBrowser,
     },
   }
   await Bun.write(
@@ -232,9 +330,10 @@ try {
     error: errorMessage(error),
     roleRuns,
     assistantToolResults,
+    assistantTurns,
     initial,
     resumed,
-    reblocked,
+    afterFailure,
   }
   await Bun.write(
     join(artifactRoot, 'browser-contract.json'),
@@ -254,12 +353,26 @@ try {
   await server?.shutdown()
 }
 
-function assertWorkIsProjectBlocked(goal: GoalView) {
-  const blockedWork = goal.works.find((work) => work.stage !== 'done' && work.stage !== 'cancelled')
-  assert.ok(blockedWork, 'A nonterminal Work must remain visible while Project is blocked')
-  assert.equal(blockedWork.projection.primaryBadge, 'waiting')
-  assert.deepEqual(blockedWork.projection.failedPredicates, ['project_ineligible'])
-  assert.notEqual(blockedWork.projection.primaryBadge, 'Needs you')
+function assertAttentionDoesNotBlockWork(goal: GoalView) {
+  const work = goal.works.find(
+    (candidate) => candidate.stage !== 'done' && candidate.stage !== 'cancelled',
+  )
+  assert.ok(work, 'A nonterminal Work must remain visible with Project Attention')
+  assert.ok(
+    work.projection.primaryBadge === 'queued' || work.projection.primaryBadge === 'working',
+    `Project Attention must not stop ready Work: ${work.projection.primaryBadge}`,
+  )
+  assertProjectAttentionDoesNotGateWork(goal)
+}
+
+function assertProjectAttentionDoesNotGateWork(goal: GoalView) {
+  for (const work of goal.works) {
+    assert.ok(
+      !work.projection.failedPredicates.includes('project_ineligible'),
+      'Project Attention must not add a scheduling predicate',
+    )
+    assert.notEqual(work.projection.primaryBadge, 'Needs you')
+  }
 }
 
 async function stageEngineeringWork(input: RoleRunInput) {
@@ -306,7 +419,7 @@ async function stageEngineeringWork(input: RoleRunInput) {
 async function callAssistantTool(
   input: Parameters<AssistantModelRunner['run']>[0],
   observer: Parameters<AssistantModelRunner['run']>[1],
-  name: 'hopi_resolve_attention',
+  name: 'hopi_manage_attention',
   args: Record<string, unknown>,
 ) {
   await observer?.onEvent?.({

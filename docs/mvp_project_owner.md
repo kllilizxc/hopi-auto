@@ -1,7 +1,7 @@
 # Project Owner And Attention
 
 Status: authoritative MVP design
-Last updated: 2026-07-24
+Last updated: 2026-07-25
 
 This document owns the Project Assistant, wake-up, Attention, and operator-notification model. It
 supersedes conflicting Reflection, Attention-target, notification-ownership, and Assistant-policy
@@ -31,6 +31,13 @@ Generator -> implement one Engineering Work in its persistent lineage
 Reviewer  -> independently verify that Engineering Work
 Assistant -> own the Project outcome and correct exceptions across these passes
 ```
+
+Generator owns the complete accepted Engineering Work in writable Project roots, including every
+contract-required durable deliverable and the execution needed to materialize it. Reviewer judges
+whether that candidate is already complete. Reviewer may independently reproduce behavior and
+retain review evidence, but it does not become the sole producer of a missing Work deliverable.
+A missing or defective contract-required deliverable is a Reviewer `reject`; missing authority,
+an operator decision, or an external action outside both responsibility boundaries is Attention.
 
 Reconciler schedules valid ready work and wakes the Assistant. It does not interpret failures,
 select recovery strategies, or decide what the operator should do.
@@ -64,24 +71,53 @@ On a wake, one Assistant invocation receives:
 - the current operator message, when one exists
 - Project events newer than its durable observed cursor
 - every unresolved Project Attention
-- compact derived Project health with canonical source paths
+- compact derived Project health, current Goal-design excerpts, recent Attempt artifact diagnostics,
+  and canonical source paths
 - the ordinary Project tool surface
 
 The invocation may respond, act, update Attention, or finish silently. These are model judgments, not
 workflow branches.
 
+Design freshness is not another state machine or a fixed post-Run workflow. Material Run settlement
+already wakes the Assistant. The supplied state places the latest observed result and preservation
+diagnostics beside the current design excerpts and their canonical paths. `hopi_write_design` changes
+those same documents. This gives the Project owner enough observable fact and capability to reconcile
+new evidence with stale design without a semantic diff rule, mandatory design-review pass, or a new
+Agent role.
+
 Wake-up is edge-triggered:
 
 - new operator input wakes the Assistant
-- new material Project events wake the Assistant
-- explicit runtime liveness recovery may wake the Assistant
-- unresolved Attention by itself does not repeatedly wake the Assistant
+- every published Reviewer `reject` is a material Project event
+- settled failure, Attention, Goal completion or cancellation, Project availability changes, and
+  explicit runtime liveness recovery are material Project events
+- settling an Assistant turn with unresolved Attention may create one durable continuation edge
+
+Transient logs, command output, running progress, and the ordinary Generator-to-Reviewer handoff do
+not wake the Assistant by themselves. Material events are derived from durable Project and Attempt
+truth, so a process restart can recover an unobserved event without a second event store.
+
+Wake-up does not gate responsibility scheduling. A Reviewer `reject` returns the Work to `generate`,
+and the next Generator may start while the Project Assistant observes the rejection and current
+aggregate state. Concurrent observation does not transfer execution ownership: the active
+responsibility Attempt owns that Work's execution and Evidence, while Assistant shell effects remain
+outside the Attempt and cannot settle it. The Assistant may finish silently. If it changes the
+affected Work or Goal, the ordinary Assistant effect barrier invalidates or interrupts execution
+based on the superseded authority; the Assistant is neither another approval stage nor an implicit
+replacement for Generator or Reviewer.
 
 Events coalesce while an invocation is running. Advancing the observed cursor and persisting any
 Assistant effects is crash-safe. An interrupted invocation does not acknowledge unseen events.
-Effects produced by the current Assistant turn are acknowledged with that turn and do not wake the
-same Assistant again. A different operator or runtime event that arrives while the turn is active
-remains newer than the turn and causes the next wake.
+Effects produced by the current Assistant turn are acknowledged with that turn and do not create a
+second state-change wake. A different operator or runtime event that arrives while the turn is active
+remains newer than the turn and causes the next wake. If no such event is pending, turn settlement
+creates one idempotent internal continuation when at least one unresolved Attention was not presented
+through `NeedsYou` in that turn. Restart recovery derives the same continuation from the settled turn,
+so no separate queue cursor or waiting state is needed.
+
+An existing turn for that conversation already carries the current Attention set, so it suppresses a
+redundant continuation. A running Work Attempt also supplies its own later settlement event; the
+continuation waits for that event rather than polling while delegated work is active.
 
 New operator input interrupts an internal Assistant invocation so the persistent session can receive
 the new turn. Interruption does not itself create or modify Attention. The Assistant may persist
@@ -108,9 +144,11 @@ body: |
   Natural-language fact, question, or unfinished responsibility.
 ```
 
-`refs` are traceability links, not routing targets. Responsibility is always the Project Assistant.
-There is no owner, target, kind, priority, waiting, working, notification, retry, or operator-request
-state.
+`refs` are canonical identity and traceability links, not session-routing targets. Responsibility is
+always the Project Assistant, and the owning Project selects that Assistant's persistent
+conversation. A Project Attention keeps its canonical Home reference when copied into an Inbox
+turn; routing it through the owning Project does not rewrite that reference. There is no owner,
+target, kind, priority, waiting, working, notification, retry, or operator-request state.
 
 The Assistant may create, edit, merge, or resolve Attention. An operator message is not
 automatically converted into Attention, and an operator reply never automatically resolves one.
@@ -134,9 +172,17 @@ errors rather than `resolved: false`.
 All unresolved Attention is supplied together on each wake. The model may consider their
 relationships and current Project facts rather than consuming them as a strict FIFO.
 
-Finishing an Assistant turn publishes its effects and optional reply, but does not itself preserve
-unfinished responsibility or schedule another wake. Attention is the durable representation for
-responsibility that must remain available to a later turn.
+Finishing an Assistant turn publishes its effects and optional reply. Unresolved Attention preserves
+unfinished responsibility. Unless the current reply presents that Attention through `NeedsYou`, HOPI
+continues the same Project conversation at the next idle boundary. Resolving the Attention ends that
+continuation; delegating work to an active Attempt defers it to the Attempt's settlement event.
+
+The Assistant provider process tree has the same turn lifetime. A shell child still running when the
+turn ends is terminated with that turn; it is not a background job. A Work Attempt has an independent
+RoleRunner process lifetime, and its settlement changes Project state and therefore produces the
+ordinary supervision wake. `retry` reserves that Work's next current responsibility Attempt without
+rewriting its contract. This uses the existing Work and Attention concepts rather than adding an
+Assistant job queue, timer, or waiting state.
 
 ## Needs You
 
@@ -148,17 +194,34 @@ The Assistant can associate part of a public reply with one unresolved Attention
 </NeedsYou>
 ```
 
-This annotation changes message presentation only:
+This annotation changes message presentation and records that the current turn has handed that
+Attention to the operator:
 
 - while the referenced Attention is unresolved, the block renders as `Needs you`
 - resolving the Attention makes the same historical block render as ordinary Markdown
-- Reply records `replyToAttentionId` as conversation context
+- Reply records the message ID and exact canonical Attention reference as conversation context
+- Reply stays in the Attention's owning Project conversation even when the canonical reference is
+  stored under Assistant Home
+- the referenced message may originate from any handled public turn in that same conversation;
+  `replyTo` is provenance while the Attention reference is mutation authority
 - Reply does not mutate the Attention
+- an unresolved Attention referenced by the current turn does not cause an immediate internal
+  continuation; a later operator or Project event can wake the same Assistant again
 - a missing or invalid reference renders as ordinary Markdown and records a diagnostic
+
+Using `NeedsYou` declares that no currently available Assistant or Project action can advance that
+Attention until the operator responds. Because the declaration pauses automatic continuation, an
+optional shortcut or useful extra input that does not prevent continued work remains ordinary reply
+text rather than `NeedsYou`.
 
 Only this allowlisted tag is interpreted. It does not enable arbitrary HTML, scripts, or nested
 control markup. The header count is the number of distinct unresolved Attention IDs referenced by
 visible Assistant messages.
+
+Published message text is immutable. Updating an Attention wakes its Project Assistant, but does not
+rewrite an older `Needs you` block with the new canonical body. When the Assistant publishes a newer
+message for the same unresolved Attention, that newest message is the Reply target; resolving the
+Attention changes every historical block for that identity back to ordinary Markdown.
 
 The Assistant's ordinary final text is already public communication. There is no separate
 `inform`, `notify`, or delivery decision for in-app replies. Optional external delivery mirrors an
@@ -182,7 +245,9 @@ or reject an otherwise valid Agent judgment because a parallel revision changed.
 
 Failure to prepare a task worktree is recorded as a settled operational Attempt against the current
 Work assignment. The unchanged Work is not dispatched in a loop; the resulting state change wakes
-the Assistant. No Attention is synthesized by Coordinator.
+the Assistant. No Attention is synthesized by Coordinator. If responsibility must survive that
+Assistant turn, the Assistant may create or update Project Attention; doing so records a todo and
+does not change Work readiness.
 
 ## Work Intervention
 

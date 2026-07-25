@@ -47,21 +47,16 @@ const workBaseSchema = z.object({
   evidenceRefs: uniqueStableIdsSchema,
 })
 
-export const planningWorkAttributesSchema = workBaseSchema
+const planningWorkAttributesObjectSchema = workBaseSchema
   .extend({
     kind: z.literal('planning'),
     stage: z.enum(PLANNING_STAGES),
   })
   .strict()
-  .superRefine((work, context) => {
-    if (work.dependsOn.length > 0) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['dependsOn'],
-        message: 'Planning Work never participates in dependsOn',
-      })
-    }
-  })
+
+export const planningWorkAttributesSchema = planningWorkAttributesObjectSchema.superRefine(
+  validatePlanningWorkDependencies,
+)
 
 export const engineeringWorkAttributesSchema = workBaseSchema
   .extend({
@@ -71,10 +66,13 @@ export const engineeringWorkAttributesSchema = workBaseSchema
   })
   .strict()
 
-export const workAttributesSchema = z.preprocess(
-  stripLegacyWorkFields,
-  z.union([planningWorkAttributesSchema, engineeringWorkAttributesSchema]),
-)
+const workAttributesByKindSchema = z
+  .discriminatedUnion('kind', [planningWorkAttributesObjectSchema, engineeringWorkAttributesSchema])
+  .superRefine((work, context) => {
+    if (work.kind === 'planning') validatePlanningWorkDependencies(work, context)
+  })
+
+export const workAttributesSchema = z.preprocess(stripLegacyWorkFields, workAttributesByKindSchema)
 
 export const attentionAttributesSchema = z.preprocess(
   stripLegacyAttentionFields,
@@ -200,6 +198,18 @@ function stripLegacyWorkFields(value: unknown) {
   }
   const { repos: _legacyRepos, ...current } = withoutAttempts
   return current
+}
+
+function validatePlanningWorkDependencies(
+  work: { dependsOn: readonly string[] },
+  context: z.RefinementCtx,
+) {
+  if (work.dependsOn.length === 0) return
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ['dependsOn'],
+    message: 'Planning Work never participates in dependsOn',
+  })
 }
 
 function stripLegacyAttentionFields(value: unknown) {

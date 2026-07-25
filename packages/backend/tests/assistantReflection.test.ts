@@ -3,6 +3,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createAssistantWake } from '../src/assistant/assistantReflection'
 import type { AssistantStateSnapshot } from '../src/assistant/assistantState'
+import type { WorkspaceAttentionDocument } from '../src/domain/assistantWorkspaceDocuments'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
@@ -67,22 +68,12 @@ describe('Assistant wake trigger', () => {
     expect(projectIds).toEqual(['P-1', 'P-2'])
   })
 
-  test('an unresolved Project Attention wakes once and stays durable without polling', async () => {
+  test('continues unresolved Project Attention until the Assistant presents NeedsYou', async () => {
     const fixture = await setup(['P-1'])
+    await fixture.workspace.createAttention(attention('A-1', 'P-1'))
     fixture.setSnapshot(
       snapshot(['P-1'], {
-        workspaceAttentions: [
-          {
-            reference: 'home:H-1/attention:A-1',
-            id: 'A-1',
-            createdAt: '2026-07-25T00:00:00.000Z',
-            updatedAt: '2026-07-25T00:00:00.000Z',
-            resolvedAt: null,
-            refs: ['project:P-1'],
-            body: 'Inspect the repeated failure.',
-            inspectionPath: '/tmp/A-1.md',
-          },
-        ],
+        workspaceAttentions: [snapshotAttention('A-1', 'P-1')],
       }),
     )
 
@@ -96,8 +87,80 @@ describe('Assistant wake trigger', () => {
       reply: 'No public update.',
       disposition: 'silent',
     })
-    expect(await fixture.wake.observe({ settled: false })).toBe('unchanged')
+    const recoveredWake = fixture.recreateWake()
+    expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
+    expect(await recoveredWake.observe({ settled: true })).toBe('started')
+    await recoveredWake.waitForIdle()
+
+    const continuation = [...(await fixture.workspace.readWorkspace()).events.values()].find(
+      (candidate) => candidate.attributes.id !== event.attributes.id,
+    )
+    if (!continuation) throw new Error('Expected Attention continuation')
+    const homeId = (await fixture.workspace.readWorkspace()).homeId
+    expect(continuation.attributes).toMatchObject({
+      source: 'system',
+      status: 'pending',
+      context: {
+        projectId: 'P-1',
+        attentionRefs: [`home:${homeId}/attention:A-1`],
+      },
+    })
+    expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
+    await fixture.workspace.handleEvent(continuation.attributes.id, {
+      reply: '<NeedsYou attentionId="A-1">Choose the source.</NeedsYou>',
+      disposition: 'notified',
+      expose: true,
+    })
+    expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
+    expect((await recoveredWake.listRuns()).length).toBe(2)
+  })
+
+  test('lets an active Work Attempt provide the next Attention wake edge', async () => {
+    const fixture = await setup(['P-1'])
+    await fixture.workspace.createAttention(attention('A-1', 'P-1'))
+    const current = snapshot(['P-1'], {
+      workspaceAttentions: [snapshotAttention('A-1', 'P-1')],
+    })
+    fixture.setSnapshot(current)
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+
+    const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
+    if (!event) throw new Error('Expected wake event')
+    await fixture.workspace.handleEvent(event.attributes.id, {
+      reply: 'Started independent Work.',
+      disposition: 'tools-used',
+    })
+    fixture.setSnapshot({
+      ...current,
+      conversationDigests: {
+        ...current.conversationDigests,
+        projects: { 'P-1': '9'.repeat(64) },
+      },
+      activeRuns: [
+        {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          workId: 'W-1',
+          responsibility: 'generator',
+          runId: 'R-1',
+        },
+      ],
+    })
+
+    expect(await fixture.wake.observe({ settled: false })).toBe('deferred')
     expect((await fixture.wake.listRuns()).length).toBe(1)
+
+    fixture.setSnapshot({
+      ...current,
+      conversationDigests: {
+        ...current.conversationDigests,
+        projects: { 'P-1': '9'.repeat(64) },
+      },
+    })
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
+    expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
   test('defers an ordinary unsettled change but preserves it for the settled edge', async () => {
@@ -109,6 +172,30 @@ describe('Assistant wake trigger', () => {
     expect(await fixture.wake.observe({ settled: true })).toBe('started')
     await fixture.wake.waitForIdle()
     expect((await fixture.wake.listRuns()).length).toBe(1)
+  })
+
+  test('wakes for each published Reviewer reject while the repair Generator is active', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+
+    fixture.setSnapshot(reviewerRejectSnapshot('R-review-1', 'R-generator-2', '6'))
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+
+    fixture.setSnapshot(reviewerRejectSnapshot('R-review-2', 'R-generator-3', '7'))
+    expect(await fixture.wake.observe({ settled: false })).toBe('deferred')
+    expect((await fixture.wake.listRuns()).length).toBe(1)
+
+    const firstEvent = [...(await fixture.workspace.readWorkspace()).events.values()][0]
+    if (!firstEvent) throw new Error('Expected first Reviewer reject wake')
+    await fixture.workspace.handleEvent(firstEvent.attributes.id, {
+      reply: 'Observed.',
+      disposition: 'silent',
+    })
+
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+    expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
   test('acknowledges the current Assistant effect without consuming a later state edge', async () => {
@@ -149,6 +236,9 @@ async function setup(projectIds: string[]) {
     setSnapshot(next: AssistantStateSnapshot) {
       current = next
     },
+    recreateWake() {
+      return createAssistantWake({ homeRoot, workspace, state })
+    },
   }
 }
 
@@ -180,6 +270,99 @@ function snapshot(
       releaseHead: 'release',
       goals: [],
     })),
+  }
+}
+
+function attention(id: string, projectId: string): WorkspaceAttentionDocument {
+  const timestamp = '2026-07-25T00:00:00.000Z'
+  return {
+    attributes: {
+      id,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      resolvedAt: null,
+      refs: [`project:${projectId}`],
+      target: `project:${projectId}`,
+      notifiedAt: null,
+      operatorRequest: null,
+    },
+    body: 'Inspect the repeated failure.\n',
+  }
+}
+
+function snapshotAttention(id: string, projectId: string) {
+  return {
+    reference: `home:H-1/attention:${id}`,
+    projectId,
+    id,
+    createdAt: '2026-07-25T00:00:00.000Z',
+    updatedAt: '2026-07-25T00:00:00.000Z',
+    resolvedAt: null,
+    refs: [`project:${projectId}`],
+    body: 'Inspect the repeated failure.',
+    inspectionPath: `/tmp/${id}.md`,
+  }
+}
+
+function reviewerRejectSnapshot(
+  reviewerRunId: string,
+  generatorRunId: string,
+  digestCharacter: string,
+): AssistantStateSnapshot {
+  const current = snapshot(['P-1'], {
+    projectDigests: { 'P-1': digestCharacter.repeat(64) },
+  })
+  return {
+    ...current,
+    activeRuns: [
+      {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'W-1',
+        responsibility: 'generator',
+        runId: generatorRunId,
+      },
+    ],
+    projects: [
+      {
+        projectId: 'P-1',
+        available: true,
+        releaseHead: 'release',
+        goals: [
+          {
+            works: [
+              {
+                runtime: {
+                  recentAttempts: [
+                    {
+                      runId: generatorRunId,
+                      responsibility: 'generator',
+                      status: 'running',
+                      result: null,
+                      application: null,
+                    },
+                    {
+                      runId: `${generatorRunId}-interrupted`,
+                      responsibility: 'generator',
+                      status: 'interrupted',
+                      result: null,
+                      application: null,
+                    },
+                    {
+                      runId: reviewerRunId,
+                      responsibility: 'reviewer',
+                      status: 'finished',
+                      result: 'reject',
+                      application: 'published',
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
   }
 }
 

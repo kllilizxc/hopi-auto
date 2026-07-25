@@ -15,11 +15,47 @@ async function terminateProcessGroup(pid: number) {
   }
 }
 
-export function createProcessGroupTerminator(pid: number) {
+export interface ProcessGroupTerminatorOptions {
+  trackDescendants?: boolean
+  descendantPollMs?: number
+}
+
+export function createProcessGroupTerminator(
+  pid: number,
+  options: ProcessGroupTerminatorOptions = {},
+) {
+  assertValidProcessGroupPid(pid)
   let termination: Promise<void> | undefined
+  const observedGroups = new Set([pid])
+  let observation = Promise.resolve()
+  const observe = () => {
+    observation = observation
+      .then(async () => {
+        for (const group of await descendantProcessGroups(pid)) observedGroups.add(group)
+      })
+      .catch(() => undefined)
+  }
+  let interval: ReturnType<typeof setInterval> | undefined
+  if (options.trackDescendants) {
+    observe()
+    interval = setInterval(observe, options.descendantPollMs ?? 100)
+    interval.unref?.()
+  }
+
   return () => {
     if (!termination) {
-      termination = terminateProcessGroup(pid)
+      if (interval) clearInterval(interval)
+      termination = (async () => {
+        if (options.trackDescendants) observe()
+        await observation
+        const groups = [...observedGroups].filter((group) => group !== pid)
+        groups.push(pid)
+        const results = await Promise.allSettled(groups.map(terminateProcessGroup))
+        const failed = results.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected',
+        )
+        if (failed) throw failed.reason
+      })()
       void termination.catch(() => {})
     }
     return termination
@@ -55,6 +91,44 @@ function assertValidProcessGroupPid(pid: number) {
   if (!Number.isSafeInteger(pid) || pid <= 0) {
     throw new RangeError(`Process-group leader PID must be a positive integer, received ${pid}`)
   }
+}
+
+async function descendantProcessGroups(rootPid: number) {
+  if (process.platform === 'win32') return []
+  const child = Bun.spawn(['ps', '-axo', 'pid=,ppid=,pgid='], {
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'ignore',
+  })
+  const [source, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited])
+  if (exitCode !== 0) return []
+
+  const children = new Map<number, Array<{ pid: number; group: number }>>()
+  for (const line of source.split(/\r?\n/)) {
+    const [pidText, parentText, groupText] = line.trim().split(/\s+/)
+    const pid = Number(pidText)
+    const parent = Number(parentText)
+    const group = Number(groupText)
+    if (![pid, parent, group].every(Number.isSafeInteger) || pid <= 0 || group <= 0) continue
+    const siblings = children.get(parent) ?? []
+    siblings.push({ pid, group })
+    children.set(parent, siblings)
+  }
+
+  const groups = new Set<number>()
+  const visited = new Set([rootPid])
+  const pending = [rootPid]
+  while (pending.length > 0) {
+    const parent = pending.pop()
+    if (parent === undefined) break
+    for (const descendant of children.get(parent) ?? []) {
+      if (visited.has(descendant.pid)) continue
+      visited.add(descendant.pid)
+      pending.push(descendant.pid)
+      groups.add(descendant.group)
+    }
+  }
+  return [...groups]
 }
 
 function isMissingProcess(error: unknown) {

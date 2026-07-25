@@ -93,6 +93,22 @@ describe('derived Work projection', () => {
     })
   })
 
+  test('shows a settled failed Attempt as responsibility waiting for the Assistant', () => {
+    const goalPackage = packageWith([work('W-1', 'engineering', 'review')])
+
+    expect(
+      deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
+        ...runtime(),
+        settledFailureWorkIds: new Set(['W-1']),
+      })[0],
+    ).toMatchObject({
+      ready: false,
+      responsibility: 'reviewer',
+      primaryBadge: 'Waiting for Assistant',
+      failedPredicates: ['failed_attempt'],
+    })
+  })
+
   test('represents a Project blocker only as project ineligibility on each Work', () => {
     const goalPackage = packageWith([work('P-1', 'planning', 'plan')])
 

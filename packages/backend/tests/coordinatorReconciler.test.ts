@@ -222,6 +222,76 @@ describe('CoordinatorReconciler', () => {
     expect(dispatched).toEqual(['G-2', 'G-1'])
   })
 
+  test('lets a Project wake supervise the same Goal while its repair Run continues', async () => {
+    const fixture = await workspaceFixture()
+    await Bun.write(
+      fixture.home.paths.projectLinksPath,
+      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+    )
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-reviewer-reject',
+      content: 'Reviewer rejected the current candidate.',
+      context: { projectId: 'P-1' },
+    })
+    const goalPackage = engineeringPackage('G-1')
+    let finishAssistant: (() => void) | undefined
+    const assistantGate = new Promise<void>((resolve) => {
+      finishAssistant = resolve
+    })
+    let dispatches = 0
+    let markDispatched: (() => void) | undefined
+    const dispatched = new Promise<void>((resolve) => {
+      markDispatched = resolve
+    })
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process(eventId) {
+          await assistantGate
+          await fixture.workspace.handleEvent(eventId, {
+            reply: '',
+            disposition: 'silent',
+          })
+          return { kind: 'answered' as const, eventId }
+        },
+      },
+      attentions: fixture.attentions,
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            listGoalIds: async () => ['G-1'],
+            readPackage: async () => goalPackage,
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+            async reconcileGoal() {
+              dispatches += 1
+              markDispatched?.()
+              goalPackage.goal.attributes.lifecycle = 'paused'
+              return {
+                kind: 'pass_finished' as const,
+                workId: 'W-1',
+                runId: 'R-generator-repair',
+                result: 'success',
+                application: 'published',
+              }
+            },
+          },
+        },
+      ],
+    })
+
+    coordinator.start()
+    await dispatched
+    expect(dispatches).toBe(1)
+
+    finishAssistant?.()
+    await coordinator.waitForIdle()
+    await coordinator.stop()
+  })
+
   test('rechecks a dynamically protected Goal after candidate scanning', async () => {
     const fixture = await workspaceFixture()
     const packages = new Map(['G-1', 'G-2'].map((goalId) => [goalId, engineeringPackage(goalId)]))

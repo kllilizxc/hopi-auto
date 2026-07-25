@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, rm, stat } from 'node:fs/promises'
+import { chmod, cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
 import { EXECUTION_ENVELOPE_MARKER } from '../agent/executionEnvelope'
 import type { TransportContextBundle } from '../agent/vendorTransport'
@@ -532,7 +532,15 @@ async function resolveEvidenceArtifacts(
   goalId: string,
 ) {
   const evidenceRoot = `${paths.evidenceRoot(goalId)}/`
-  const artifacts = new Map<string, { reference: string; path: string; evidence: Set<string> }>()
+  const artifacts = new Map<
+    string,
+    {
+      reference: string
+      path: string
+      kind: 'file' | 'directory'
+      evidence: Set<string>
+    }
+  >()
   const unavailable = new Map<
     string,
     { reference: string; evidence: Set<string>; reason: string }
@@ -560,7 +568,12 @@ async function resolveEvidenceArtifacts(
         ...parsed.artifactPath.split('/'),
       )
       const metadata = await stat(path).catch(() => null)
-      if (!metadata?.isFile()) {
+      const kind = metadata?.isFile()
+        ? ('file' as const)
+        : metadata?.isDirectory()
+          ? ('directory' as const)
+          : null
+      if (!kind) {
         const current = unavailable.get(reference)
         if (current) current.evidence.add(file.path)
         else {
@@ -576,7 +589,7 @@ async function resolveEvidenceArtifacts(
       if (existing) {
         existing.evidence.add(file.path)
       } else {
-        artifacts.set(reference, { reference, path, evidence: new Set([file.path]) })
+        artifacts.set(reference, { reference, path, kind, evidence: new Set([file.path]) })
       }
     }
   }
@@ -593,6 +606,7 @@ async function resolveEvidenceArtifacts(
 interface ProjectedEvidenceArtifact {
   reference: string
   path: string
+  kind: 'file' | 'directory'
   evidence: string[]
 }
 
@@ -616,11 +630,27 @@ async function projectEvidenceArtifacts(
         projectionRoot,
         `${String(index + 1).padStart(3, '0')}-${basename || 'artifact'}`,
       )
-      await copyFile(artifact.path, path)
-      await chmod(path, 0o444)
-      return { reference: artifact.reference, path, evidence: artifact.evidence }
+      await cp(artifact.path, path, { recursive: true, dereference: true })
+      await makeReadOnly(path)
+      return {
+        reference: artifact.reference,
+        path,
+        kind: artifact.kind,
+        evidence: artifact.evidence,
+      }
     }),
   )
+}
+
+async function makeReadOnly(path: string): Promise<void> {
+  const metadata = await stat(path)
+  if (!metadata.isDirectory()) {
+    await chmod(path, 0o444)
+    return
+  }
+  const entries = await readdir(path)
+  await Promise.all(entries.map((entry) => makeReadOnly(join(path, entry))))
+  await chmod(path, 0o755)
 }
 
 interface CandidateInspection {
@@ -1229,6 +1259,9 @@ function renderResponsibilityPrompt(
     'Repo roots and release heads: $HOPI_REPOS_FILE',
     'Run scratch: $HOPI_RUN_SCRATCH',
     'Shared cache: $HOPI_CACHE_DIR',
+    'Task worktrees are disposable source projections; ignored or uncommitted runtime data may disappear when they are rematerialized.',
+    '$HOPI_CACHE_DIR persists across responsibility Attempts and task-worktree replacement.',
+    'A detached shell descendant is not an independent Work Attempt and has no durable HOPI result owner.',
     ...(paths.artifactManifestFile ? ['Evidence artifacts: $HOPI_EVIDENCE_ARTIFACTS_FILE'] : []),
     `Project guidance: ${paths.agentsPath}`,
     `Primary Repo: ${paths.primaryRepoId}`,
@@ -1242,9 +1275,10 @@ function renderResponsibilityPrompt(
     ...(paths.apiOrigin ? ['HOPI API: $HOPI_API_ORIGIN'] : []),
     '',
     'Authority and evidence are immutable. Proposal is a sparse overlay: an absent path is unchanged; deletion is unsupported.',
+    'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published; any other proposal is rejected.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
     '$HOPI_REPOS_FILE is the complete Project source-root map. Source outside those roots and another Work runtime is outside this assignment.',
-    'Shell tools commonly default to a 60-second observation timeout. Set the tool timeout above the expected command duration or wait on its returned live session; never restart equivalent work merely because observation timed out.',
+    'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
     ...(paths.hasImages
       ? ['Attached images are Goal assets with their authority-defined purpose.']
       : []),
@@ -1476,6 +1510,7 @@ function generatorPrompt() {
     '## Generator',
     '',
     'Owned outcome: implement the complete Engineering Work and return observed evidence.',
+    'Success means every contract-required source change and durable deliverable within Generator authority already exists in the assigned writable roots; a sample or checkpoint is not the complete accepted outcome.',
     'Generator success advances the Work to Reviewer; it does not require prior Reviewer acceptance.',
     'The Project source roots are writable. Canonical .hopi state and HOPI-managed Git metadata are Coordinator-owned and immutable.',
     'The staged authority is current for this Run; Public Preview, when present, observes the integrated release rather than this candidate.',
@@ -1489,7 +1524,9 @@ function reviewerPrompt(projectId: string) {
     '## Reviewer',
     '',
     'Owned outcome: independently determine whether the Engineering Work satisfies its accepted contract and material integrity and safety obligations.',
-    'Success is terminal for the complete Work, not a phase or checkpoint; remaining required action or proof returns targeted Attention.',
+    'Success is terminal for the complete Work, not a phase or checkpoint.',
+    'Reviewer verifies the candidate as received; it may reproduce checks but does not create a missing contract-required deliverable or become its sole producer.',
+    'A missing or defective deliverable within Generator authority returns reject. Missing authority, an operator decision, invalid accepted design, or an external action outside both responsibility boundaries returns targeted Attention.',
     `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
     'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview, when present, observes the integrated release rather than this candidate.',

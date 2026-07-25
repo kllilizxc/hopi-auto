@@ -16,6 +16,7 @@ export interface EvidenceArtifactProject {
 export interface ResolvedEvidenceArtifact {
   path: string
   fileName: string
+  kind: 'file' | 'directory'
 }
 
 export class EvidenceArtifactResolutionError extends Error {
@@ -57,13 +58,14 @@ export async function resolveEvidenceArtifact(input: {
       'artifacts',
       ...portable.artifactPath.split('/'),
     )
-    if (!(await isFile(path))) {
+    const kind = await artifactEntryKind(path)
+    if (!kind) {
       throw new EvidenceArtifactResolutionError(
         'missing',
         `Evidence artifact is missing: ${input.reference}`,
       )
     }
-    return { path, fileName: basename(path) }
+    return { path, fileName: basename(path), kind }
   }
   if (portable || !isSafeProjectRelativePath(input.reference)) {
     throw new EvidenceArtifactResolutionError(
@@ -72,7 +74,7 @@ export async function resolveEvidenceArtifact(input: {
     )
   }
 
-  const candidates = await uniqueExistingProjectFiles(input.project, input.reference)
+  const candidates = await uniqueExistingProjectEntries(input.project, input.reference)
   if (candidates.length === 0) {
     throw new EvidenceArtifactResolutionError(
       'missing',
@@ -87,7 +89,9 @@ export async function resolveEvidenceArtifact(input: {
   }
   const path = candidates[0]
   if (!path) throw new EvidenceArtifactResolutionError('missing', input.reference)
-  return { path, fileName: basename(path) }
+  const kind = await artifactEntryKind(path)
+  if (!kind) throw new EvidenceArtifactResolutionError('missing', input.reference)
+  return { path, fileName: basename(path), kind }
 }
 
 export function inlineArtifactMediaType(fileName: string) {
@@ -126,17 +130,20 @@ export function inlineArtifactMediaType(fileName: string) {
   }
 }
 
-async function uniqueExistingProjectFiles(project: EvidenceArtifactProject, artifactPath: string) {
+async function uniqueExistingProjectEntries(
+  project: EvidenceArtifactProject,
+  artifactPath: string,
+) {
   const roots = project.repos?.length
     ? project.repos.map((repo) => resolveProjectPath(repo.integrationRoot, repo.projectPath))
     : [project.sourceRoot ?? project.projectRoot]
   const candidates = await Promise.all(
-    roots.map((root) => containedExistingFile(root, artifactPath)),
+    roots.map((root) => containedExistingEntry(root, artifactPath)),
   )
   return [...new Set(candidates.filter((path): path is string => path !== null))]
 }
 
-async function containedExistingFile(root: string, artifactPath: string) {
+async function containedExistingEntry(root: string, artifactPath: string) {
   const absoluteRoot = resolve(root)
   const candidate = resolve(absoluteRoot, artifactPath)
   const lexicalRelative = relative(absoluteRoot, candidate)
@@ -148,7 +155,7 @@ async function containedExistingFile(root: string, artifactPath: string) {
   ) {
     return null
   }
-  if (!(await isFile(candidate))) return null
+  if (!(await artifactEntryKind(candidate))) return null
   const [realRoot, realCandidate] = await Promise.all([realpath(absoluteRoot), realpath(candidate)])
   const realRelative = relative(realRoot, realCandidate)
   if (
@@ -173,6 +180,9 @@ function isSafeProjectRelativePath(path: string) {
   )
 }
 
-async function isFile(path: string) {
-  return Boolean((await stat(path).catch(() => null))?.isFile())
+async function artifactEntryKind(path: string): Promise<'file' | 'directory' | null> {
+  const metadata = await stat(path).catch(() => null)
+  if (metadata?.isFile()) return 'file'
+  if (metadata?.isDirectory()) return 'directory'
+  return null
 }

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { readClaudeProviderEnvironment } from '../agent/claudeSettingsEnvironment'
+import { createEnvironmentSecretRedactor } from '../agent/environmentSecretRedactor'
 import { type ExecutionEnvelope, unreportedExecutionEnvelope } from '../agent/executionEnvelope'
 import { createPersistentProcessTranscriptNormalizer } from '../agent/persistentTranscriptNormalizer'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
@@ -17,6 +18,7 @@ import {
   type RoleTransportConfig,
   appendClaudeNonInteractivePermission,
   appendCodexHttpsOnlyConfig,
+  appendCodexShellEnvironmentConfig,
   withNativeCompactionEnabled,
 } from '../agent/vendorTransport'
 import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
@@ -35,6 +37,7 @@ import {
   resolveBrowserHarnessBackendCommand,
 } from '../runtime/browserEnvironment'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
+import { runtimeCacheRoot } from '../runtime/runPaths'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import {
   assistantConversationScopeForEvent,
@@ -198,34 +201,37 @@ export function createConfiguredAssistantModelRunner(options: {
       const command = buildAssistantCommand(config, invocation)
       const providerEnvironment =
         transport === 'claude' ? await readClaudeProviderEnvironment() : {}
+      const processEnvironment = withNativeCompactionEnabled(transport, {
+        ...process.env,
+        ...providerEnvironment,
+        ...(options.homeRoot ? { HOPI_CACHE_DIR: runtimeCacheRoot(options.homeRoot) } : {}),
+        ...(invocation.browserEnvironment
+          ? {
+              ...browserAdapterEnvironment(
+                invocation.browserEnvironment.homeRoot,
+                invocation.browserEnvironment.backendCommand,
+              ),
+              HOPI_BROWSER_HARNESS_COMMAND: invocation.browserEnvironment.command,
+              HOPI_BROWSER_TARGETS_FILE: invocation.browserEnvironment.targetsFile,
+            }
+          : {}),
+        ...(transport === 'opencode'
+          ? {
+              OPENCODE_CONFIG: assistantOpencodeConfigPath(input.cwd),
+              PWD: input.cwd,
+            }
+          : {}),
+      })
+      const redact = createEnvironmentSecretRedactor(processEnvironment)
       const child = Bun.spawn(command, {
         cwd: input.cwd,
         stdout: 'pipe',
         stderr: 'pipe',
         stdin: 'pipe',
-        env: withNativeCompactionEnabled(transport, {
-          ...process.env,
-          ...providerEnvironment,
-          ...(invocation.browserEnvironment
-            ? {
-                ...browserAdapterEnvironment(
-                  invocation.browserEnvironment.homeRoot,
-                  invocation.browserEnvironment.backendCommand,
-                ),
-                HOPI_BROWSER_HARNESS_COMMAND: invocation.browserEnvironment.command,
-                HOPI_BROWSER_TARGETS_FILE: invocation.browserEnvironment.targetsFile,
-              }
-            : {}),
-          ...(transport === 'opencode'
-            ? {
-                OPENCODE_CONFIG: assistantOpencodeConfigPath(input.cwd),
-                PWD: input.cwd,
-              }
-            : {}),
-        }),
+        env: processEnvironment,
         detached: true,
       })
-      const terminate = createProcessGroupTerminator(child.pid)
+      const terminate = createProcessGroupTerminator(child.pid, { trackDescendants: true })
       const abort = () => void terminate()
       input.signal?.addEventListener('abort', abort, { once: true })
       if (typeof child.stdin !== 'number' && child.stdin) {
@@ -245,9 +251,10 @@ export function createConfiguredAssistantModelRunner(options: {
       })
 
       const consume = async (stream: 'stdout' | 'stderr', line: string) => {
-        await appendFile(input.transcriptFile, `${stream}: ${line}\n`)
+        const diagnosticLine = redact(line)
+        await appendFile(input.transcriptFile, `${stream}: ${diagnosticLine}\n`)
         if (stream === 'stdout') {
-          const output = parseVendorAssistantOutput(transport, line)
+          const output = parseVendorAssistantOutput(transport, diagnosticLine)
           if (output.terminalError) {
             terminalError = output.terminalError
           } else {
@@ -268,14 +275,14 @@ export function createConfiguredAssistantModelRunner(options: {
             }
           }
         } else if (!isNonFatalProcessDiagnostic({ format: transcriptFormat, stream, line })) {
-          stderr.push(line)
+          stderr.push(diagnosticLine)
         }
 
         for (const event of await transcriptNormalizer.normalize({
           format: transcriptFormat,
           stream,
           role: 'assistant',
-          line,
+          line: diagnosticLine,
         })) {
           await observer?.onEvent?.(event)
         }
@@ -332,7 +339,10 @@ export function createConfiguredAssistantModelRunner(options: {
       if (!(await file.exists())) {
         throw new WorkspaceAssistantError(`${transport} did not produce a final Assistant message`)
       }
-      const reply = (await file.text()).trim()
+      const persistedReply = await file.text()
+      const redactedReply = redact(persistedReply)
+      if (redactedReply !== persistedReply) await Bun.write(input.lastMessageFile, redactedReply)
+      const reply = redactedReply.trim()
       if (!reply && (input.toolMode ?? 'main') !== 'internal')
         throw new WorkspaceAssistantError(`${transport} produced an empty Assistant message`)
       return { reply, session: { transport, sessionId: observedSessionId } }
@@ -833,6 +843,7 @@ function assistantCodexCommand(
 ) {
   const command = [config.binary ?? 'codex']
   appendCodexHttpsOnlyConfig(command)
+  appendCodexShellEnvironmentConfig(command)
   appendCodexAssistantProviderConfig(command)
   const sandbox = input.fullAccess ? 'danger-full-access' : 'workspace-write'
   command.push('-a', NON_INTERACTIVE_CODEX_APPROVAL_POLICY)
@@ -893,10 +904,15 @@ function appendCodexAssistantProviderConfig(command: string[]) {
 }
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'Role: final owner and supervisor of the current Project.',
-  'Current Project facts and canonical effects come from supplied state, documents, and HOPI tools.',
-  'A user turn is operator input. A system turn is a durable Project event for the same Assistant session.',
-  'Finishing a turn does not preserve unfinished responsibility or schedule another wake; Project Attention is the durable todo available to later turns.',
+  'Role: final Project owner supervising specialist Runs; active Runs own Work execution and evidence, Generator delivers, and Reviewer verifies or rejects.',
+  'Current Project truth comes from supplied state, documents, and HOPI tools.',
+  'A user turn is operator input; a system turn is a durable Project event. Reviewer reject wakes supervision without gating Generator repair.',
+  'Project Attention is durable todo state.',
+  'Unresolved Attention continues after settlement unless NeedsYou; active Work defers it to settlement.',
+  'NeedsYou means operator input is required before that Attention can advance.',
+  'Assistant shell effects end with the turn and cannot settle or supply evidence for active Work.',
+  'Task worktrees are disposable; $HOPI_CACHE_DIR persists across Attempts.',
+  'Detached shell descendants have no HOPI lifecycle or durable result.',
   'A <NeedsYou attentionId="...">...</NeedsYou> reply block is highlighted while that Project Attention remains unresolved; the tag does not mutate Attention.',
   'The provider workspace is non-canonical scratch space.',
 ] as const
@@ -920,7 +936,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 8
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 12
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')

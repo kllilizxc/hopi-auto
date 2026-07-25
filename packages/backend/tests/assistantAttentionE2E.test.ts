@@ -19,6 +19,46 @@ afterEach(async () => {
 })
 
 describe('Project Assistant wake and Attention E2E', () => {
+  test('drains unresolved Attention through the same Project session until NeedsYou', async () => {
+    const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
+    const runtime = await setupRuntime({
+      async run(input) {
+        calls.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
+        return {
+          reply:
+            calls.length === 1
+              ? 'The Project todo remains in progress.'
+              : '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>',
+          session: codexSession('project-session'),
+        }
+      },
+    })
+
+    try {
+      await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
+      runtime.coordinator.start()
+      await runtime.coordinator.waitForIdle()
+
+      expect(calls).toEqual([
+        { mode: 'internal', sessionId: null },
+        { mode: 'internal', sessionId: 'project-session' },
+      ])
+      const events = [...(await runtime.workspace.readWorkspace()).events.values()].toSorted(
+        (left, right) => left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
+      )
+      expect(events).toHaveLength(2)
+      expect(events.every((event) => event.attributes.status === 'handled')).toBe(true)
+      expect(events[1]?.attributes.context?.attentionRefs).toHaveLength(1)
+
+      runtime.coordinator.wake()
+      await runtime.coordinator.waitForIdle()
+      expect(calls).toHaveLength(2)
+    } finally {
+      await runtime.coordinator.stop()
+      await runtime.preview.stopAll()
+    }
+  })
+
   test('uses one persistent Project session for user speech and internal supervision', async () => {
     const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
     const runner: AssistantModelRunner = {

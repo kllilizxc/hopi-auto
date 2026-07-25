@@ -68,6 +68,9 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Goal authority and source are read-only')
     expect(prompt).toContain('Authority and evidence are immutable')
     expect(prompt).toContain('Proposal is a sparse overlay')
+    expect(prompt).toContain(
+      'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published',
+    )
     expect(prompt).toContain('an absent path is unchanged')
     expect(prompt).toContain('smallest complete Engineering DAG')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
@@ -499,6 +502,11 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('__HOPI_EXECUTION_ENVELOPE__')
     expect(generatorPrompt).toContain('HOPI-managed Git metadata are Coordinator-owned')
     expect(generatorPrompt).toContain('Run scratch: $HOPI_RUN_SCRATCH')
+    expect(generatorPrompt).toContain('Task worktrees are disposable source projections')
+    expect(generatorPrompt).toContain('$HOPI_CACHE_DIR persists across responsibility Attempts')
+    expect(generatorPrompt).toContain(
+      'A detached shell descendant is not an independent Work Attempt',
+    )
     expect(generatorPrompt).toContain(
       'External effects require explicit Work or operator authority',
     )
@@ -528,9 +536,7 @@ describe('RoleContextStager', () => {
       expect(prompt).not.toContain('Retry only')
       expect(prompt).not.toContain('choose the available browser client')
       expect(prompt).not.toContain('Do not enter a vendor plan-approval mode')
-      expect(prompt).toContain('60-second observation timeout')
-      expect(prompt).toContain('wait on its returned live session')
-      expect(prompt).toContain('never restart equivalent work')
+      expect(prompt).toContain('ends on completion, failure, termination, or its selected timeout')
       expect(prompt.length).toBeLessThan(5_000)
     }
     expect(await Bun.file(generator.proposalCapabilitiesFile).json()).toMatchObject({
@@ -543,6 +549,10 @@ describe('RoleContextStager', () => {
     })
     expect(generatorPrompt).toContain('implement the complete Engineering Work')
     expect(generatorPrompt).toContain(
+      'every contract-required source change and durable deliverable',
+    )
+    expect(generatorPrompt).toContain('a sample or checkpoint is not the complete accepted outcome')
+    expect(generatorPrompt).toContain(
       'Public Preview, when present, observes the integrated release',
     )
     expect(reviewerPrompt).toContain(
@@ -551,7 +561,13 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('does not require prior Reviewer acceptance')
     expect(reviewerPrompt).toContain('Success is terminal for the complete Work')
     expect(reviewerPrompt).toContain(
-      'remaining required action or proof returns targeted Attention',
+      'does not create a missing contract-required deliverable or become its sole producer',
+    )
+    expect(reviewerPrompt).toContain(
+      'A missing or defective deliverable within Generator authority returns reject',
+    )
+    expect(reviewerPrompt).toContain(
+      'an external action outside both responsibility boundaries returns targeted Attention',
     )
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('Source, Project documents, canonical .hopi state')
@@ -630,6 +646,49 @@ describe('RoleContextStager', () => {
     expect(prompt).not.toContain('Observed execution commands')
   })
 
+  test('projects a retained directory artifact as a read-only subtree', async () => {
+    const fixture = await createFixture(true)
+    const artifactReference = 'artifact:R-review/snapshot-proof'
+    const artifactPath = join(
+      runStoragePath(fixture.homeRoot, 'R-review'),
+      'artifacts',
+      'snapshot-proof',
+    )
+    await mkdir(join(artifactPath, 'pages'), { recursive: true })
+    await Bun.write(join(artifactPath, 'ledger.json'), '{"phase":"validated"}\n')
+    await Bun.write(join(artifactPath, 'pages', 'trade-cal.json'), '{}\n')
+    await publishEngineeringWork(
+      fixture,
+      '## Acceptance Criteria\n\n- The retained snapshot can be inspected.\n',
+      [artifactReference],
+    )
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-directory-evidence',
+      responsibility: 'reviewer',
+    })
+    const projectedPath = join(bundle.contextRoot, 'evidence-artifacts', '001-snapshot-proof')
+
+    expect(await Bun.file(join(projectedPath, 'ledger.json')).text()).toContain('validated')
+    expect(await Bun.file(join(projectedPath, 'pages', 'trade-cal.json')).text()).toBe('{}\n')
+    expect((await stat(join(projectedPath, 'ledger.json'))).mode & 0o222).toBe(0)
+    expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
+      version: 1,
+      artifacts: [
+        {
+          reference: artifactReference,
+          path: projectedPath,
+          kind: 'directory',
+          evidence: [fixture.store.paths.evidenceDocument('goal-1', 'E-latest')],
+        },
+      ],
+    })
+  })
+
   test('lets the Agent judge Evidence with unavailable artifact references', async () => {
     const fixture = await createFixture(true)
     const missingReference = 'artifact:R-mixed/missing-proof.txt'
@@ -671,6 +730,7 @@ describe('RoleContextStager', () => {
         {
           reference: availableReference,
           path: projectedPath,
+          kind: 'file',
           evidence: [fixture.store.paths.evidenceDocument('goal-1', 'E-latest')],
         },
       ],
@@ -872,6 +932,7 @@ describe('RoleContextStager', () => {
         {
           reference: artifactReference,
           path: projectedArtifactPath,
+          kind: 'file',
           evidence: [fixture.store.paths.evidenceDocument('goal-1', 'E-base')],
         },
       ],

@@ -68,6 +68,7 @@ docs/*
 !docs/e2e_test_cases.md
 !docs/e2e_test_issues.md
 !docs/local_runtime_problem_catalog.md
+!docs/runtime_observation_*.md
 !docs/unified_design.md
 .playwright*
 artifacts

@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rename, rm, stat } from 'node:fs/promises'
+import { copyFile, cp, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -9,6 +9,7 @@ export interface PreservedRunArtifact {
   reference: string
   path: string
   source: string
+  kind: 'file' | 'directory'
   sizeBytes: number
 }
 
@@ -78,11 +79,16 @@ export async function preserveRunArtifacts(input: {
     }
 
     const sourceStat = await stat(source).catch(() => null)
-    if (!sourceStat?.isFile()) {
+    const kind = sourceStat?.isFile()
+      ? ('file' as const)
+      : sourceStat?.isDirectory()
+        ? ('directory' as const)
+        : null
+    if (!sourceStat || !kind) {
       unavailable.push({
         reference: artifact,
         reason: sourceStat
-          ? 'Declared Run artifact is not a file.'
+          ? 'Declared Run artifact is not a file or directory.'
           : 'Declared Run artifact is unavailable.',
       })
       if (isSafeRelativePath(artifact)) addReference(artifact)
@@ -93,10 +99,24 @@ export async function preserveRunArtifacts(input: {
     const relativePath = `artifacts/${name}`
     const destination = join(artifactRoot, name)
     await mkdir(artifactRoot, { recursive: true })
-    if (resolve(source) !== resolve(destination)) {
-      const temporary = `${destination}.tmp.${crypto.randomUUID()}`
-      await copyFile(source, temporary)
-      await rename(temporary, destination)
+    try {
+      if (resolve(source) !== resolve(destination)) {
+        const temporary = `${destination}.tmp.${crypto.randomUUID()}`
+        try {
+          if (kind === 'file') await copyFile(source, temporary)
+          else await cp(source, temporary, { recursive: true })
+          await rename(temporary, destination)
+        } finally {
+          await rm(temporary, { recursive: true, force: true })
+        }
+      }
+    } catch (error) {
+      unavailable.push({
+        reference: artifact,
+        reason: `Declared Run artifact could not be retained: ${errorMessage(error)}`,
+      })
+      if (isSafeRelativePath(artifact)) addReference(artifact)
+      continue
     }
     const reference = `artifact:${input.runId}/${name}`
     preservedSources.set(source, reference)
@@ -106,7 +126,8 @@ export async function preserveRunArtifacts(input: {
       reference,
       path: relativePath,
       source: artifact,
-      sizeBytes: sourceStat.size,
+      kind,
+      sizeBytes: kind === 'file' ? sourceStat.size : await directorySize(source),
     })
   }
 
@@ -191,9 +212,9 @@ async function isPortableProjectArtifact(
   portableRoots: readonly string[] | undefined,
 ) {
   if (!isSafeRelativePath(artifact)) return false
-  if ((await stat(resolve(runRoot, artifact)).catch(() => null))?.isFile()) return false
+  if (isArtifactEntry(await stat(resolve(runRoot, artifact)).catch(() => null))) return false
   for (const portableRoot of portableRoots ?? []) {
-    if ((await stat(resolve(portableRoot, artifact)).catch(() => null))?.isFile()) return true
+    if (isArtifactEntry(await stat(resolve(portableRoot, artifact)).catch(() => null))) return true
   }
   return false
 }
@@ -245,6 +266,26 @@ function safeArtifactName(value: string) {
     .replace(/^[._-]+|[._-]+$/g, '')
     .slice(-120)
   return safe || 'artifact'
+}
+
+function isArtifactEntry(metadata: Awaited<ReturnType<typeof stat>> | null) {
+  return Boolean(metadata?.isFile() || metadata?.isDirectory())
+}
+
+async function directorySize(root: string) {
+  let size = 0
+  for await (const path of new Bun.Glob('**/*').scan({
+    cwd: root,
+    absolute: true,
+    onlyFiles: true,
+  })) {
+    size += (await stat(path)).size
+  }
+  return size
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 async function rewriteResultArtifacts(path: string, artifacts: readonly string[]) {
