@@ -141,7 +141,9 @@ export const assistantToolSchemas = {
       goalId: stableIdSchema.describe('Goal ID; omit for the current scope.').optional(),
       includeEvidence: z
         .boolean()
-        .describe('Include bounded Evidence bodies and resolved artifact locations.')
+        .describe(
+          'Include bounded Evidence and resolved artifacts. operatorUrl is user-addressable; inspectionPath is diagnostic only.',
+        )
         .optional(),
     })
     .strict(),

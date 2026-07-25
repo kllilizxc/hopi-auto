@@ -10,7 +10,7 @@ server.registerTool(
   'hopi_read_state',
   {
     description:
-      'Read current Home, Project, or Goal state. Goal state includes Work diagnostics, the current C1 candidate-integration preflight, and canonical Attention references. Evidence bodies and resolved artifacts are optional.',
+      'Read current Home, Project, or Goal state. Goal state includes Work diagnostics, the current C1 candidate-integration preflight, and canonical Attention references. Optional resolved Evidence artifacts expose operatorUrl for user links; inspectionPath is diagnostic only.',
     inputSchema: assistantMcpToolSchemas.hopi_read_state,
     annotations: { readOnlyHint: true, idempotentHint: true },
   },

@@ -958,27 +958,30 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
     expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
     expect(seen[0]?.prompt).toContain('Role: final Project owner')
-    expect(seen[0]?.prompt).toContain('active Runs own Work execution and evidence')
+    expect(seen[0]?.prompt).toContain('active Runs own Work execution/evidence')
     expect(seen[0]?.prompt).toContain('Generator delivers')
+    expect(seen[0]?.prompt).toContain('Reviewer reject wakes supervision without gating repair')
+    expect(seen[0]?.prompt).toContain('Attention is durable todo; it continues unless NeedsYou')
     expect(seen[0]?.prompt).toContain(
-      'Reviewer reject wakes supervision without gating Generator repair',
+      'NeedsYou means operator input is required to advance Attention',
     )
     expect(seen[0]?.prompt).toContain(
-      'Unresolved Attention continues after settlement unless NeedsYou',
+      'Assistant shell effects end with the turn and cannot settle or evidence active Work',
     )
+    expect(seen[0]?.prompt).toContain('Internal wakes stay silent unless user-relevant')
+    expect(seen[0]?.prompt).toContain('Public replies: outcome and required action')
     expect(seen[0]?.prompt).toContain(
-      'NeedsYou means operator input is required before that Attention can advance',
+      'omit IDs, times, paths, commands, roles, stages, and raw metrics unless asked or decision-relevant',
     )
-    expect(seen[0]?.prompt).toContain(
-      'Assistant shell effects end with the turn and cannot settle or supply evidence for active Work',
-    )
+    expect(seen[0]?.prompt).toContain('Only HOPI operatorUrl values are links')
+    expect(seen[0]?.prompt).toContain('filesystem and inspection paths are not')
     expect(seen[0]?.prompt).toContain('Task worktrees are disposable')
-    expect(seen[0]?.prompt).toContain('$HOPI_CACHE_DIR persists across Attempts')
-    expect(seen[0]?.prompt).toContain('Detached shell descendants have no HOPI lifecycle')
+    expect(seen[0]?.prompt).toContain('$HOPI_CACHE_DIR persists')
+    expect(seen[0]?.prompt).toContain('detached descendants lack HOPI lifecycle')
     expect(seen[0]?.prompt).toContain(
-      'Current Project truth comes from supplied state, documents, and HOPI tools.',
+      'Project truth: supplied state, documents, and HOPI tools.',
     )
-    expect(seen[0]?.prompt).toContain('provider workspace is non-canonical scratch space')
+    expect(seen[0]?.prompt).toContain('Provider workspace is non-canonical scratch')
     expect(seen[0]?.prompt).not.toContain('answer without polling')
     expect(seen[0]?.prompt).not.toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).not.toContain('Default to one or two short sentences')

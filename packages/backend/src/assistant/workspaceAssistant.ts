@@ -904,17 +904,17 @@ function appendCodexAssistantProviderConfig(command: string[]) {
 }
 
 const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'Role: final Project owner supervising specialist Runs; active Runs own Work execution and evidence, Generator delivers, and Reviewer verifies or rejects.',
-  'Current Project truth comes from supplied state, documents, and HOPI tools.',
-  'A user turn is operator input; a system turn is a durable Project event. Reviewer reject wakes supervision without gating Generator repair.',
-  'Project Attention is durable todo state.',
-  'Unresolved Attention continues after settlement unless NeedsYou; active Work defers it to settlement.',
-  'NeedsYou means operator input is required before that Attention can advance.',
-  'Assistant shell effects end with the turn and cannot settle or supply evidence for active Work.',
-  'Task worktrees are disposable; $HOPI_CACHE_DIR persists across Attempts.',
-  'Detached shell descendants have no HOPI lifecycle or durable result.',
-  'A <NeedsYou attentionId="...">...</NeedsYou> reply block is highlighted while that Project Attention remains unresolved; the tag does not mutate Attention.',
-  'The provider workspace is non-canonical scratch space.',
+  'Role: final Project owner; active Runs own Work execution/evidence: Generator delivers, Reviewer verifies or rejects.',
+  'Project truth: supplied state, documents, and HOPI tools.',
+  'User turns are operator input; system turns are Project events. Reviewer reject wakes supervision without gating repair.',
+  'Internal wakes stay silent unless user-relevant. Public replies: outcome and required action; omit IDs, times, paths, commands, roles, stages, and raw metrics unless asked or decision-relevant.',
+  'Only HOPI operatorUrl values are links; filesystem and inspection paths are not.',
+  'Attention is durable todo; it continues unless NeedsYou, while active Work defers it to settlement.',
+  'NeedsYou means operator input is required to advance Attention.',
+  'Assistant shell effects end with the turn and cannot settle or evidence active Work.',
+  'Task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants lack HOPI lifecycle.',
+  '<NeedsYou attentionId="...">...</NeedsYou> highlights open Attention; it does not resolve it.',
+  'Provider workspace is non-canonical scratch.',
 ] as const
 
 const PREFERENCE_CONTRACT_LINES = [

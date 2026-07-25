@@ -86,6 +86,9 @@ do anything?
   delivery notification or UI state.
 - A recoverable internal problem remains silent unless its user-visible delay or consequence is
   itself useful information. HOPI reports exhausted recovery as a direct blocker and action.
+- A link uses an operator-addressable URL supplied by HOPI. Local filesystem and diagnostic
+  inspection paths are never presented as links. If an active candidate has not yet published an
+  operator URL, the Assistant states the useful result without fabricating one.
 
 This is a communication policy, not a response schema. HOPI does not parse replies, impose a hard
 character limit, run a summarizer, or require fixed headings. Technical evidence remains available

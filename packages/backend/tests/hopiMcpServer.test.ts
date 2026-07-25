@@ -94,7 +94,10 @@ describe('HOPI MCP server', () => {
       'current C1 candidate-integration preflight',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
-      'Evidence bodies and resolved artifacts are optional',
+      'operatorUrl for user links',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
+      'inspectionPath is diagnostic only',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_write_design')?.description).toContain(
       'Goal-local design Markdown',
