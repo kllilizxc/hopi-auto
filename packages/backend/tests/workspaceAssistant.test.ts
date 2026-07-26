@@ -169,6 +169,10 @@ describe('WorkspaceAssistant conversation', () => {
       expect(args).toContain(expected)
     }
     expect(args).toContain('--dangerously-skip-permissions')
+    const systemPrompt = args[args.indexOf('--append-system-prompt') + 1]
+    expect(systemPrompt).toContain('Role: HOPI Project owner')
+    expect(systemPrompt).toContain('Each Engineering Work receives every Repo binding')
+    expect(systemPrompt).toContain('do not create or replace Goal or Engineering Work delivery')
     expect(args).not.toContain('--allowedTools')
     expect(settings).toEqual({ sandbox: { enabled: false } })
     expect(args).not.toContain('--add-dir')
@@ -558,6 +562,13 @@ describe('WorkspaceAssistant conversation', () => {
     }
     expect(config.mcp.hopi.environment.HOPI_TOOL_TOKEN).toBe('opencode-token')
     expect(config.compaction).toEqual({ auto: true })
+    expect(config.instructions).toEqual([join(cwd, 'hopi-assistant-instructions.md')])
+    const opencodeInstructions = await Bun.file(config.instructions[0]).text()
+    expect(opencodeInstructions).toContain('Role: HOPI Project owner')
+    expect(opencodeInstructions).toContain('Each Engineering Work receives every Repo binding')
+    expect(opencodeInstructions).toContain(
+      'do not create or replace Goal or Engineering Work delivery',
+    )
     expect(config.permission).toEqual({ '*': 'allow' })
     expect(await Bun.file(configPathFile).text()).toBe(join(cwd, 'opencode.json'))
     expect(await Bun.file(pwdFile).text()).toBe(cwd)
@@ -871,7 +882,12 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).toContain('agents.enabled=false')
     expect(args[args.indexOf('agents.enabled=false') - 1]).toBe('-c')
     expect(args).not.toContain('include_collaboration_mode_instructions=false')
-    expect(args.some((arg) => arg.startsWith('developer_instructions='))).toBe(false)
+    const developerInstructions = args.find((arg) => arg.startsWith('developer_instructions='))
+    expect(developerInstructions).toContain('Role: HOPI Project owner')
+    expect(developerInstructions).toContain('Each Engineering Work receives every Repo binding')
+    expect(developerInstructions).toContain(
+      'do not create or replace Goal or Engineering Work delivery',
+    )
     for (const feature of ['apps', 'goals', 'memories', 'plugins']) {
       expect(args).toContain(feature)
       expect(args[args.indexOf(feature) - 1]).toBe('--disable')
@@ -962,20 +978,11 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('[Current execution environment observation]')
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
     expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
-    expect(seen[0]?.prompt).toContain('Role: final Project owner')
-    expect(seen[0]?.prompt).toContain(
-      'Assistant owns conversation, orchestration, incidental operations',
-    )
-    expect(seen[0]?.prompt).toContain('Engineering Work owns implementation, Evidence, review')
-    expect(seen[0]?.prompt).toContain('Generator delivers; Reviewer verifies')
-    expect(seen[0]?.prompt).toContain('A settled contract may start as Engineering Work')
-    expect(seen[0]?.prompt).toContain('Planning shapes unsettled contracts')
+    expect(seen[0]?.prompt).not.toContain('Role: HOPI Project owner')
+    expect(seen[0]?.prompt).not.toContain('Each Engineering Work receives every Repo binding')
     expect(seen[0]?.prompt).toContain('rejection wakes supervision without blocking repair')
     expect(seen[0]?.prompt).toContain('Attention is durable; active Work defers it')
     expect(seen[0]?.prompt).toContain('NeedsYou means operator input is required')
-    expect(seen[0]?.prompt).toContain('Direct shell effects may persist but have no HOPI Work')
-    expect(seen[0]?.prompt).toContain('no HOPI Work, Evidence, review, retry, recovery')
-    expect(seen[0]?.prompt).toContain('Unrestricted access changes capability, not responsibility')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
     expect(seen[0]?.prompt).toContain('omit internals unless asked or decision-relevant')
@@ -983,7 +990,6 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('task worktrees are disposable')
     expect(seen[0]?.prompt).toContain('$HOPI_CACHE_DIR persists')
     expect(seen[0]?.prompt).toContain('detached descendants have no HOPI lifecycle')
-    expect(seen[0]?.prompt).toContain('Truth: HOPI state, documents, and tools.')
     expect(seen[0]?.prompt).toContain('Provider workspace and task worktrees are disposable')
     expect(seen[0]?.prompt).not.toContain('answer without polling')
     expect(seen[0]?.prompt).not.toContain('[Operator-facing reply contract]')
@@ -1036,7 +1042,8 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-2')
 
     expect(sessionIds).toEqual([null, 'thread-1'])
-    expect(prompts[0]).toContain('Role: final Project owner')
+    expect(prompts[0]).not.toContain('Role: HOPI Project owner')
+    expect(prompts[0]).toContain('rejection wakes supervision without blocking repair')
     expect(prompts[1]).not.toContain('# HOPI Workspace Assistant')
     expect(prompts[1]).not.toContain('[Operator-facing reply contract]')
     expect(prompts[1]).not.toContain('[Current durable cross-Project user preferences]')

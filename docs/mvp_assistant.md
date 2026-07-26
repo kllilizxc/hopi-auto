@@ -402,8 +402,14 @@ conversation shows a bounded, safe error summary and at most the latest retry st
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
 managed project root. Each invocation resolves one exact execution envelope from the transport,
 Project access preference, mode, roots, and network policy, then uses it to configure the provider
-process. The prompt does not repeat that envelope: the model observes the actual native capabilities
-and HOPI tool surface instead of a second, potentially stale description. Project-local
+process. Every built-in provider injects the same small ownership contract at its system or
+developer-instruction boundary before the model chooses a skill or tool: Assistant owns Project
+conversation and orchestration; Engineering Work owns linked-source implementation, verification,
+Evidence, and recovery across every Repo bound to that Project; provider-native execution remains an
+inspection or incidental-operation surface rather than an alternative delivery path. The ordinary
+turn prompt contains conversation, current state, preferences, and the current Inbox event, not a
+second copy of that role contract. The model observes the actual native capabilities and HOPI tool
+surface instead of a potentially stale execution-envelope description. Project-local
 unrestricted access defaults off, and Reflection remains read-only. This is execution capability,
 not product authority: canonical mutations are accepted only through HOPI tools and source delivery
 is accepted only through Engineering Work publication. The runtime root remains provider scratch

@@ -643,11 +643,16 @@ async function prepareAssistantWorkspace(
   }
 
   await Bun.write(
+    assistantOpencodeInstructionsPath(input.cwd),
+    `${workspaceAssistantDeveloperInstructions()}\n`,
+  )
+  await Bun.write(
     assistantOpencodeConfigPath(input.cwd),
     `${JSON.stringify(
       {
         $schema: 'https://opencode.ai/config.json',
         compaction: { auto: true },
+        instructions: [assistantOpencodeInstructionsPath(input.cwd)],
         mcp: {
           hopi: {
             type: 'local',
@@ -751,6 +756,8 @@ function assistantClaudeCommand(
   appendClaudeNonInteractivePermission(command)
   if (config.model) command.push('--model', config.model)
   command.push(
+    '--append-system-prompt',
+    workspaceAssistantDeveloperInstructions(),
     '--mcp-config',
     assistantClaudeMcpConfigPath(input.cwd),
     '--strict-mcp-config',
@@ -807,6 +814,10 @@ function assistantClaudeSettingsPath(cwd: string) {
 
 function assistantOpencodeConfigPath(cwd: string) {
   return join(cwd, 'opencode.json')
+}
+
+function assistantOpencodeInstructionsPath(cwd: string) {
+  return join(cwd, 'hopi-assistant-instructions.md')
 }
 
 function stripAnsi(value: string) {
@@ -886,19 +897,30 @@ function assistantCodexCommand(
 const CODEX_ASSISTANT_DISABLED_PRODUCT_FEATURES = ['apps', 'goals', 'memories', 'plugins'] as const
 
 function appendCodexAssistantProviderConfig(command: string[]) {
-  command.push('-c', 'include_apps_instructions=false', '-c', 'agents.enabled=false')
+  command.push(
+    '-c',
+    `developer_instructions=${JSON.stringify(workspaceAssistantDeveloperInstructions())}`,
+    '-c',
+    'include_apps_instructions=false',
+    '-c',
+    'agents.enabled=false',
+  )
   for (const feature of CODEX_ASSISTANT_DISABLED_PRODUCT_FEATURES) {
     command.push('--disable', feature)
   }
 }
 
-const WORKSPACE_ASSISTANT_CONTRACT_LINES = [
-  'Role: final Project owner. Assistant owns conversation, orchestration, incidental operations, and publishing accepted results. Engineering Work owns implementation, Evidence, review, and recovery.',
-  'Generator delivers; Reviewer verifies or rejects. A settled contract may start as Engineering Work; Planning shapes unsettled contracts.',
-  'Truth: HOPI state, documents, and tools. User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
+const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
+  'Role: HOPI Project owner. Assistant owns operator conversation, judgment, orchestration, incidental self-contained operations, and publication of accepted results.',
+  'Durable linked-source implementation, tests, Evidence, review, and recovery belong to Engineering Work. Each Engineering Work receives every Repo binding of its Project; Generator delivers and Reviewer verifies or rejects.',
+  'HOPI state, documents, and mutation tools are canonical product authority. Provider-native shell, browser, skills, and plans may inspect or support incidental operations, but they do not create or replace Goal or Engineering Work delivery.',
+  'A settled contract may enter Engineering Work directly. Planning shapes unsettled authority or decomposition. Unrestricted access changes capability, not ownership.',
+] as const
+
+const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
+  'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
   'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
   'Attention is durable; active Work defers it. NeedsYou means operator input is required; <NeedsYou attentionId="...">...</NeedsYou> only highlights it.',
-  'Direct shell effects may persist but have no HOPI Work, Evidence, review, retry, recovery, or supervision. Unrestricted access changes capability, not responsibility.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
 ] as const
 
@@ -907,8 +929,21 @@ const PREFERENCE_CONTRACT_LINES = [
 ] as const
 
 export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
-  .update([...WORKSPACE_ASSISTANT_CONTRACT_LINES, ...PREFERENCE_CONTRACT_LINES].join('\n'))
+  .update(
+    [
+      ...WORKSPACE_ASSISTANT_AUTHORITY_LINES,
+      ...WORKSPACE_ASSISTANT_CONTEXT_LINES,
+      ...PREFERENCE_CONTRACT_LINES,
+    ].join('\n'),
+  )
   .digest('hex')
+
+function workspaceAssistantDeveloperInstructions() {
+  return [
+    'HOPI Workspace Assistant authority:',
+    ...WORKSPACE_ASSISTANT_AUTHORITY_LINES.map((line) => `- ${line}`),
+  ].join('\n')
+}
 
 export function workspaceAssistantContextDigest(preferenceDigest: string) {
   return createHash('sha256')
@@ -921,7 +956,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 13
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 14
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
@@ -952,7 +987,7 @@ function renderNewConversation(
   return [
     '# HOPI Workspace Assistant',
     '',
-    ...WORKSPACE_ASSISTANT_CONTRACT_LINES,
+    ...WORKSPACE_ASSISTANT_CONTEXT_LINES,
     '',
     renderPreference(preference),
     '',

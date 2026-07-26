@@ -640,11 +640,13 @@ The adapter also explicitly selects a ChatGPT-authenticated provider with WebSoc
 so Codex uses HTTPS streaming directly instead of attempting WebSocket and falling back. Authentication
 remains available, but unrelated personal MCP servers, plugins, defaults, and transport preferences
 cannot delay or fail delivery. The speaking Assistant may load provider skills, while HOPI injects
-semantic ownership and durable-delivery rules as developer instructions before it chooses any skill
-or tool. Reflection suppresses automatic skills and host execution features. Responsibility Agents
-keep the execution capabilities available inside their accepted Work; Project source instructions
-and capabilities explicitly assigned by HOPI remain available. Other vendors provide the equivalent
-authority ordering at their adapter boundary.
+the same compact semantic-ownership and durable-delivery contract at each provider's system or
+developer-instruction boundary before it chooses any skill or tool. That contract defines ownership
+and environment consequences rather than message keywords or a tool-selection procedure. Reflection
+suppresses automatic skills and host execution features. Responsibility Agents keep the execution
+capabilities available inside their accepted Work; Project source instructions and capabilities
+explicitly assigned by HOPI remain available. Other vendors provide the equivalent authority
+ordering at their adapter boundary.
 
 Goal reference images are passed only through a transport with an explicit image-input contract.
 If a selected responsibility transport cannot accept them, RoleRunner fails visibly before the
