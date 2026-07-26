@@ -357,6 +357,10 @@ Pass result values are:
 derived readiness blockers.
 Reviewer `reject` returns the Work to Generator with the observed findings. There is no
 Coordinator-owned semantic retry budget; immutable Attempt history records every repair pass.
+Generator success remains a claim about the whole accepted Work after every repair; the latest
+rejection does not narrow the contract. Reviewer continues the reasonably available audit after
+finding a reject-worthy defect and reports the material defects found across that pass together; the
+first blocker alone is not a reason to stop reviewing.
 Design ambiguity, missing information, or external authority is represented by staged targeted
 Attention documents. Coordinator validates those documents rather than parsing pass prose or
 requiring a second matching control label.
@@ -554,8 +558,10 @@ After Reviewer or deterministic integration rejection returns a Work to Generato
 Generator Session receives the complete current assignment rather than a delta. The rejection and
 current authority supersede every prior completion claim, while the retained conversation and
 workspace remain useful implementation context. Generator must reassess the complete Work and reread
-its referenced design authority before claiming success. Current facts always supersede remembered
-conversation without replaying an unchanged contract during ordinary recovery.
+its referenced design authority before claiming success. It reconciles the repaired candidate and
+its evidence against every accepted criterion rather than treating the latest findings as the new
+scope. Current facts always supersede remembered conversation without replaying an unchanged
+contract during ordinary recovery.
 
 Every built-in vendor adapter keeps its native automatic context compaction enabled for Planner,
 Generator, and Reviewer, including a disposable first invocation and every resumed responsibility
