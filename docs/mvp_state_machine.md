@@ -344,9 +344,9 @@ the contract. Reopen always increments it and ensures new Planning Work.
 
 The initial Work is either one Planning Work or one Assistant-dispatched Engineering Work at
 `generate`. The latter is allowed only when the accepted Input already defines one cohesive Work;
-it is an admission shortcut, not a completion claim. Manual Goal creation continues to choose
-Planning. One accepted Inbox Input may directly publish at most one Engineering Work across the
-Home, while Planner remains the only responsibility that may publish a multi-Work plan.
+it is an admission shortcut, not a completion claim. The compatibility Goal-creation API continues
+to choose Planning. One accepted Inbox Input may directly publish at most one Engineering Work
+across the Home, while Planner remains the only responsibility that may publish a multi-Work plan.
 
 Goal lifecycle is both an admission guard and a Run-lease guard. Once a Goal leaves `active`,
 Coordinator aborts every live Run for that Goal before doing more Goal work; Runs owned by other

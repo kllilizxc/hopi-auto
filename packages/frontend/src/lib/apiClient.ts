@@ -241,16 +241,6 @@ export function readProjectAgentAccess(projectId: string) {
   )
 }
 
-export function createGoal(
-  projectId: string,
-  input: { goalId?: string; title: string; objective: string; priority?: number },
-) {
-  return apiRequest<GoalDetail>(`/api/projects/${encodeURIComponent(projectId)}/goals`, {
-    method: 'POST',
-    body: input,
-  })
-}
-
 export function sendInboxMessage(input: {
   content: string
   images?: File[]

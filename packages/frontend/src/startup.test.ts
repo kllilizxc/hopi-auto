@@ -27,15 +27,19 @@ test('product surfaces and compact Assistant load behind explicit boundaries', a
   ).text()
   const build = await Bun.file(new URL('../build.ts', import.meta.url)).text()
 
-  for (const page of ['BoardView', 'GoalDocsPage', 'GoalCreatePage', 'ProjectHomePage']) {
+  for (const page of ['BoardView', 'GoalDocsPage', 'ProjectHomePage']) {
     expect(app).toContain(`const ${page} = lazy(`)
     expect(app).not.toContain(`import { ${page} }`)
   }
+  expect(app).not.toContain('GoalCreatePage')
+  expect(app).toContain('<Route path="projects/:projectId" element={null} />')
   expect(app).toContain('<Suspense fallback={<RouteLoading />}>')
   expect(app).toContain('<AppLoadingNotice')
   expect(layout).toContain("const AssistantPanel = lazy(() =>")
   expect(layout).not.toContain("import { AssistantPanel } from './AssistantPanel'")
-  expect(layout).toContain('const shouldRenderAssistant = assistantDocked || assistantActivated')
+  expect(layout).toContain(
+    'const shouldRenderAssistant = projectOnlyRoute || assistantDocked || assistantActivated',
+  )
   expect(layout).toContain('setAssistantActivated(true)')
   expect(assistant).toContain("const ReflectionDebugPanel = lazy(() =>")
   expect(assistant).toContain("import('./ReflectionDebugPanel')")
@@ -51,7 +55,6 @@ test('route preloads follow user intent instead of competing with startup', asyn
   for (const route of [
     'BoardView',
     'GoalDocsPage',
-    'GoalCreatePage',
     'ProjectHomePage',
     'AssistantPanel',
   ]) {
@@ -62,7 +65,7 @@ test('route preloads follow user intent instead of competing with startup', asyn
   expect(layout).toContain("onFocus={() => warmGoalSurface(routeScope, 'docs')}")
   expect(layout).toContain('onPointerDown={preloadAssistantPanel}')
   expect(projectHome).toContain('onPointerEnter={preloadBoardView}')
-  expect(projectHome).toContain('onFocus={preloadGoalCreatePage}')
+  expect(projectHome).toContain('onFocus={preloadAssistantPanel}')
   expect(startupSources).not.toContain('requestIdleCallback')
 })
 
@@ -76,6 +79,30 @@ test('routine Goal navigation warms data without replacing the current surface',
   expect(layout).toContain('const request = ++goalNavigationRequest.current')
   expect(layout).toContain('if (request === goalNavigationRequest.current)')
   expect(layout).toContain('navigateToGoalSurface(routeScope, nextSurface)')
+})
+
+test('an empty Project centers the same Assistant that later docks beside its first Goal', async () => {
+  const app = await Bun.file(new URL('./App.tsx', import.meta.url)).text()
+  const layout = await Bun.file(new URL('./components/Layout.tsx', import.meta.url)).text()
+  const styles = await Bun.file(new URL('./index.css', import.meta.url)).text()
+
+  expect(app).toContain('<Route path="projects/:projectId" element={null} />')
+  expect(app).toContain('path="projects/:projectId/goals/new"')
+  expect(app).toContain('<Navigate to="../.." relative="path" replace />')
+  expect(layout).toContain('const projectOnlyRoute = Boolean(assistantScope && !routeScope)')
+  expect(layout).toContain("projectOnlyRoute && 'goal-workspace--project-only'")
+  expect(layout).toContain('docked={assistantDockedForRoute}')
+  expect(layout).toContain('scope={assistantScope}')
+  expect(layout).toContain(
+    'refetchInterval: projectOnlyRoute ? CANONICAL_POLL_INTERVAL_MS : shellPollInterval',
+  )
+  expect(layout).toContain('if (projectRouteGoalId) {')
+  expect(layout).toContain(
+    'navigateToGoalSurface({ projectId: routeProjectId, goalId: projectRouteGoalId }, surface)',
+  )
+  expect(styles).toContain('.goal-workspace--project-only > .assistant-drawer.docked')
+  expect(styles).toContain('justify-self: center')
+  expect(styles).toContain('grid-template-columns: clamp(410px, 27vw, 480px) minmax(0, 1fr)')
 })
 
 function readBootStyle(html: string) {

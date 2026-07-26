@@ -32,9 +32,13 @@ const RECENT_PROJECT_KEY = 'hopi.navigation.recent-project'
 const RECENT_GOAL_KEY_PREFIX = 'hopi.navigation.recent-goal.'
 const GOAL_VIEW_STATE_KEY_PREFIX = 'hopi.view.goal.'
 
+export function buildProjectRoute(projectId: string) {
+  return `/projects/${encodeURIComponent(projectId)}`
+}
+
 export function buildGoalRoute(scope: GoalScope | null, surface: GoalSurface) {
   if (!scope) return '/projects'
-  return `/projects/${encodeURIComponent(scope.projectId)}/${surface}/${encodeURIComponent(scope.goalId)}`
+  return `${buildProjectRoute(scope.projectId)}/${surface}/${encodeURIComponent(scope.goalId)}`
 }
 
 export function readGoalRouteState(pathname: string): GoalScope | null {

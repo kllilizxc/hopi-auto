@@ -6,7 +6,6 @@ import { AppLoadingNotice } from './components/ui'
 import { initializeMessageStreamCache } from './lib/messageStreamCache'
 import {
   loadBoardView,
-  loadGoalCreatePage,
   loadGoalDocsPage,
   loadProjectHomePage,
 } from './routeModules'
@@ -19,9 +18,6 @@ const BoardView = lazy(() =>
 )
 const GoalDocsPage = lazy(() =>
   loadGoalDocsPage().then((module) => ({ default: module.GoalDocsPage })),
-)
-const GoalCreatePage = lazy(() =>
-  loadGoalCreatePage().then((module) => ({ default: module.GoalCreatePage })),
 )
 const ProjectHomePage = lazy(() =>
   loadProjectHomePage().then((module) => ({ default: module.ProjectHomePage })),
@@ -46,9 +42,10 @@ function App() {
           <Route path="/" element={<Layout />}>
             <Route index element={<Navigate to="/projects" replace />} />
             <Route path="projects" element={<RouteBoundary><ProjectHomePage /></RouteBoundary>} />
+            <Route path="projects/:projectId" element={null} />
             <Route
               path="projects/:projectId/goals/new"
-              element={<RouteBoundary><GoalCreatePage /></RouteBoundary>}
+              element={<Navigate to="../.." relative="path" replace />}
             />
             <Route
               path="projects/:projectId/board/:goalId"

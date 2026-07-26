@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   AppAlert,
   AppButton,
@@ -56,13 +57,14 @@ import {
   updateAgentRoleSettings,
   updateProjectAgentAccess,
 } from '../lib/api'
-import { buildGoalRoute } from '../lib/goalScope'
+import { buildGoalRoute, buildProjectRoute } from '../lib/goalScope'
 import { readProjectAgentFullAccess, writeProjectAgentFullAccess } from '../lib/projectAgentAccess'
 import { shellPollInterval, STABLE_QUERY_NOTIFY_PROPS } from '../lib/queryPerformance'
-import { preloadBoardView, preloadGoalCreatePage } from '../routeModules'
+import { preloadAssistantPanel, preloadBoardView } from '../routeModules'
 import { excerpt, projectDisplayName } from '../lib/utils'
 
 export function ProjectHomePage() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [repoDrafts, setRepoDrafts] = useState<ProjectRepoDraft[]>([])
   const [directoryNotice, setDirectoryNotice] = useState<string | null>(null)
@@ -74,11 +76,22 @@ export function ProjectHomePage() {
     notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
   const createMutation = useMutation({
-    mutationFn: createProject,
-    onSuccess: async () => {
+    mutationFn: async (input: Parameters<typeof createProject>[0]) => {
+      const existingProjectIds = new Set(
+        snapshotQuery.data?.projects.map((project) => project.projectId) ?? [],
+      )
+      const snapshot = await createProject(input)
+      const project = snapshot.projects.find(
+        (candidate) => !existingProjectIds.has(candidate.projectId),
+      )
+      if (!project) throw new Error('Project was linked but its workspace could not be identified.')
+      return { projectId: project.projectId, snapshot }
+    },
+    onSuccess: ({ projectId, snapshot }) => {
       setRepoDrafts([])
       setDirectoryNotice(null)
-      await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
+      queryClient.setQueryData(['mvp-state'], snapshot)
+      navigate(buildProjectRoute(projectId))
     },
   })
   const pickerMutation = useMutation({
@@ -111,6 +124,7 @@ export function ProjectHomePage() {
   })
   const primaryRepo = repoDrafts.find((repo) => repo.primary)
   const canCreate =
+    Boolean(snapshotQuery.data) &&
     Boolean(primaryRepo) &&
     repoDrafts.length > 0 &&
     repoDrafts.every((repo) => Boolean(repo.repoId.trim()))
@@ -269,6 +283,9 @@ export function ProjectHomePage() {
                 <AppButton
                   className="primary-button"
                   type="submit"
+                  onFocus={preloadAssistantPanel}
+                  onPointerDown={preloadAssistantPanel}
+                  onPointerEnter={preloadAssistantPanel}
                   disabled={
                     !canCreate ||
                     createMutation.isPending ||
@@ -490,7 +507,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   )
   const [agentAccessError, setAgentAccessError] = useState<string | null>(null)
   const [agentAccessPending, setAgentAccessPending] = useState(false)
-  const firstGoal = project.goals[0]
+  const preloadWorkspace = project.goals.length ? preloadBoardView : preloadAssistantPanel
   const linkRepoMutation = useMutation({
     mutationFn: () =>
       linkProjectRepo(project.projectId, {
@@ -776,7 +793,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
             </AppRouterLink>
           ))
         ) : (
-          <p>No Goals yet.</p>
+          <p>Describe the first outcome in Project Assistant.</p>
         )}
       </div>
 
@@ -811,22 +828,14 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           {showRepoManager ? 'Close repositories' : `Manage ${project.repos.length} repos`}
         </AppButton>
         <AppRouterLink
-          className="secondary-button"
-          to={`/projects/${encodeURIComponent(project.projectId)}/goals/new`}
-          onFocus={preloadGoalCreatePage}
-          onPointerDown={preloadGoalCreatePage}
-          onPointerEnter={preloadGoalCreatePage}
+          className="primary-button compact"
+          to={buildProjectRoute(project.projectId)}
+          onFocus={preloadWorkspace}
+          onPointerDown={preloadWorkspace}
+          onPointerEnter={preloadWorkspace}
         >
-          <Plus /> New Goal
+          {project.goals.length ? 'Open' : 'Open Assistant'} <ArrowRight />
         </AppRouterLink>
-        {firstGoal && (
-          <AppRouterLink
-            className="primary-button compact"
-            to={buildGoalRoute({ projectId: project.projectId, goalId: firstGoal.id }, 'board')}
-          >
-            Open <ArrowRight />
-          </AppRouterLink>
-        )}
       </div>
     </AppCard>
   )

@@ -9,14 +9,15 @@ import {
 describe('Assistant automatic context', () => {
   test('derives Home, Project, and Project plus Goal scope only from the page', () => {
     expect(readAssistantPageScope('/projects')).toBeNull()
-    expect(readAssistantPageScope('/projects/P-1/goals/new')).toEqual({ projectId: 'P-1' })
+    expect(readAssistantPageScope('/projects/P-1')).toEqual({ projectId: 'P-1' })
+    expect(readAssistantPageScope('/projects/P-1/goals/new')).toBeNull()
     expect(readAssistantPageScope('/projects/P-1/board/G-1')).toEqual({
       projectId: 'P-1',
       goalId: 'G-1',
     })
   })
 
-  test('uses the current Project as context while a Goal is being created', () => {
+  test('uses the current Project as context before a Goal exists', () => {
     expect(resolveAssistantInboxContext({ projectId: 'P-1' }, null)).toEqual({
       projectId: 'P-1',
     })

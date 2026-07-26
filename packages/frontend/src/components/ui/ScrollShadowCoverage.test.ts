@@ -36,10 +36,6 @@ const scrollSurfaceChecks = [
     patterns: [/<AppScrollShadow className="page-scroll"/],
   },
   {
-    file: '../../pages/GoalCreatePage.tsx',
-    patterns: [/<AppScrollShadow className="page-scroll"/],
-  },
-  {
     file: './SelectField.tsx',
     patterns: [/<AppScrollShadow className="app-select__scroll"/],
   },

@@ -205,9 +205,11 @@ test('compact Goal workspaces keep the active surface full-height and open Assis
   const layout = await Bun.file(new URL('../components/Layout.tsx', import.meta.url)).text()
 
   expect(layout).toContain("const COMPACT_WORKSPACE_QUERY = '(max-width: 1280px)'")
-  expect(layout).toContain('const shouldRenderAssistant = assistantDocked || assistantActivated')
-  expect(layout).toContain('docked={assistantDocked}')
-  expect(layout).toContain('isOpen={assistantDocked || assistantOpen}')
+  expect(layout).toContain(
+    'const shouldRenderAssistant = projectOnlyRoute || assistantDocked || assistantActivated',
+  )
+  expect(layout).toContain('docked={assistantDockedForRoute}')
+  expect(layout).toContain('isOpen={projectOnlyRoute || assistantDocked || assistantOpen}')
   expect(layout).toContain('className="workspace-assistant-button"')
   expect(styles).toMatch(
     /@media \(max-width: 1280px\)[\s\S]*?\.goal-workspace\s*\{[\s\S]*?height:\s*100dvh;/,
@@ -264,7 +266,7 @@ test('stream virtualization is the only authority for variable row height', asyn
 
 test('a docked Assistant remains structural without stacked boundary effects', async () => {
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
-  const dockedRules = [...styles.matchAll(/\.assistant-drawer\.docked\s*\{([^}]*)\}/g)]
+  const dockedRules = [...styles.matchAll(/^\.assistant-drawer\.docked\s*\{([^}]*)\}/gm)]
   const workspaceRules = [...styles.matchAll(/\.workspace-main\s*\{([^}]*)\}/g)]
 
   expect(dockedRules).toHaveLength(1)

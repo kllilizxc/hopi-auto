@@ -15,6 +15,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { readGoalBoard, readGoalDocs, readShellState, type AttentionView } from '../lib/api'
 import { readAssistantPageScope } from '../lib/assistantContext'
 import {
+  buildProjectRoute,
   buildGoalRoute,
   findNewestUnseenGoal,
   orderProjectsByRecency,
@@ -27,7 +28,11 @@ import {
   type GoalSurface,
 } from '../lib/goalScope'
 import { goalBoardQueryKey, goalDocsQueryKey } from '../lib/queryKeys'
-import { shellPollInterval, STABLE_QUERY_NOTIFY_PROPS } from '../lib/queryPerformance'
+import {
+  CANONICAL_POLL_INTERVAL_MS,
+  shellPollInterval,
+  STABLE_QUERY_NOTIFY_PROPS,
+} from '../lib/queryPerformance'
 import {
   loadAssistantPanel,
   loadBoardView,
@@ -83,6 +88,7 @@ export function Layout() {
   const queryClient = useQueryClient()
   const routeScope = readGoalRouteState(location.pathname)
   const assistantScope = readAssistantPageScope(location.pathname)
+  const projectOnlyRoute = Boolean(assistantScope && !routeScope)
   const assistantScopeKey = assistantScope?.projectId ?? 'home'
   const [assistantReply, setAssistantReply] = useState<AttentionView | null>(null)
   const [assistantRequest, setAssistantRequest] = useState(0)
@@ -93,26 +99,30 @@ export function Layout() {
   const goalNavigationRequest = useRef(0)
   const compactWorkspace = useCompactWorkspace()
   const assistantDocked = !compactWorkspace
-  const shouldRenderAssistant = assistantDocked || assistantActivated
+  const assistantDockedForRoute = projectOnlyRoute || assistantDocked
+  const shouldRenderAssistant = projectOnlyRoute || assistantDocked || assistantActivated
   const snapshotQuery = useQuery({
     queryKey: ['mvp-state'],
     queryFn: readShellState,
-    refetchInterval: shellPollInterval,
+    refetchInterval: projectOnlyRoute ? CANONICAL_POLL_INTERVAL_MS : shellPollInterval,
     notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
   const snapshot = snapshotQuery.data
-  const routeProjectId = routeScope?.projectId
+  const snapshotReady = Boolean(snapshot)
+  const routeProjectId = routeScope?.projectId ?? assistantScope?.projectId
   const routeGoalId = routeScope?.goalId
   const project = snapshot?.projects.find((item) => item.projectId === routeProjectId)
+  const routeProjectExists = Boolean(project)
   const routeGoalExists = Boolean(project?.goals.some((goal) => goal.id === routeGoalId))
 
   useEffect(() => {
-    if (routeProjectId && routeGoalId && routeGoalExists) {
-      const visitedAt = new Date()
-      rememberRecentProject(routeProjectId, undefined, visitedAt)
+    if (!routeProjectId || !routeProjectExists) return
+    const visitedAt = new Date()
+    rememberRecentProject(routeProjectId, undefined, visitedAt)
+    if (routeGoalId && routeGoalExists) {
       rememberRecentGoal(routeProjectId, routeGoalId, undefined, visitedAt)
     }
-  }, [routeGoalExists, routeGoalId, routeProjectId])
+  }, [routeGoalExists, routeGoalId, routeProjectExists, routeProjectId])
 
   useEffect(() => {
     if (!snapshot) return
@@ -221,7 +231,7 @@ export function Layout() {
         return
       }
       goalNavigationRequest.current += 1
-      navigate(`/projects/${encodeURIComponent(projectId)}/goals/new`)
+      navigate(buildProjectRoute(projectId))
     },
     [goalForProject, navigate, navigateToGoalSurface, surface],
   )
@@ -239,13 +249,33 @@ export function Layout() {
     },
     [navigateToGoalSurface, routeGoalId, routeProjectId, surface],
   )
+  const projectRouteGoalId =
+    projectOnlyRoute && routeProjectId ? goalForProject(routeProjectId) : null
+  useEffect(() => {
+    if (!projectOnlyRoute || !snapshotReady || !routeProjectId) return
+    if (!routeProjectExists) {
+      navigate('/projects', { replace: true })
+      return
+    }
+    if (projectRouteGoalId) {
+      navigateToGoalSurface({ projectId: routeProjectId, goalId: projectRouteGoalId }, surface)
+    }
+  }, [
+    navigate,
+    navigateToGoalSurface,
+    projectOnlyRoute,
+    projectRouteGoalId,
+    routeProjectExists,
+    routeProjectId,
+    snapshotReady,
+    surface,
+  ])
   const shellContext = useMemo(
     () => ({ openAssistant, selectGoal, warmGoal }),
     [openAssistant, selectGoal, warmGoal],
   )
 
-  if (!routeScope) {
-    const pageLabel = location.pathname.endsWith('/goals/new') ? 'New Goal' : 'Projects'
+  if (!routeProjectId) {
     return (
       <ShellContext.Provider value={shellContext}>
         <div className="standalone-shell">
@@ -258,7 +288,7 @@ export function Layout() {
               </span>
             </AppRouterLink>
             <div className="standalone-header-actions">
-              <span>{pageLabel}</span>
+              <span>Projects</span>
               <IconButton
                 className="global-assistant-button"
                 type="button"
@@ -307,36 +337,37 @@ export function Layout() {
 
   return (
     <ShellContext.Provider value={shellContext}>
-      <div className="goal-workspace">
+      <div className={cn('goal-workspace', projectOnlyRoute && 'goal-workspace--project-only')}>
         {shouldRenderAssistant && (
           <Suspense
             fallback={
               <AssistantLoading
-                docked={assistantDocked}
-                open={assistantDocked || assistantOpen}
+                docked={assistantDockedForRoute}
+                open={projectOnlyRoute || assistantDocked || assistantOpen}
                 onClose={() => setAssistantOpen(false)}
               />
             }
           >
             <AssistantPanel
               key={assistantScopeKey}
-              docked={assistantDocked}
+              docked={assistantDockedForRoute}
               focusRequest={assistantRequest}
               initialReply={assistantReply}
-              isOpen={assistantDocked || assistantOpen}
-              scope={routeScope}
+              isOpen={projectOnlyRoute || assistantDocked || assistantOpen}
+              scope={assistantScope}
               snapshot={snapshot}
               onClose={() => setAssistantOpen(false)}
             />
           </Suspense>
         )}
 
-        <section
-          className={cn(
-            'goal-workspace-surface',
-            surface === 'board' && 'goal-workspace-surface--board',
-          )}
-        >
+        {routeScope ? (
+          <section
+            className={cn(
+              'goal-workspace-surface',
+              surface === 'board' && 'goal-workspace-surface--board',
+            )}
+          >
           <header className="workspace-topbar">
             <div className="workspace-switchers">
               <PeerSwitcher
@@ -415,7 +446,45 @@ export function Layout() {
             )}
             <Outlet />
           </main>
-        </section>
+          </section>
+        ) : (
+          <>
+            <header className="workspace-topbar project-assistant-topbar">
+              <div className="workspace-switchers">
+                <PeerSwitcher
+                  ariaLabel="Recent Projects"
+                  items={orderedProjects.map((item) => ({
+                    id: item.projectId,
+                    label: projectDisplayName(item),
+                  }))}
+                  label="Project"
+                  moreAriaLabel="More Projects"
+                  onSelectionChange={navigateToProject}
+                  onWarm={warmProject}
+                  placeholder={snapshot ? 'No Projects' : 'Loading…'}
+                  selectedKey={routeProjectId}
+                />
+              </div>
+              <div className="workspace-topbar-actions">
+                <AppRouterLink
+                  aria-label="Projects"
+                  className="workspace-projects-link"
+                  to="/projects"
+                  onFocus={preloadProjectHomePage}
+                  onPointerDown={preloadProjectHomePage}
+                  onPointerEnter={preloadProjectHomePage}
+                >
+                  <FolderOpen /> <span>Projects</span>
+                </AppRouterLink>
+              </div>
+            </header>
+            {snapshotQuery.isError && (
+              <AppAlert className="global-error project-assistant-global-error">
+                {(snapshotQuery.error as Error).message}
+              </AppAlert>
+            )}
+          </>
+        )}
       </div>
     </ShellContext.Provider>
   )

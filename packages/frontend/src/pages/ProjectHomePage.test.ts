@@ -75,10 +75,15 @@ test('empty Project folders use the same create operation without a confirmation
   expect(api).not.toContain('/api/system/initialize-repository')
 })
 
-test('Goal creation leaves readable identity generation to the backend', async () => {
-  const source = await Bun.file(new URL('./GoalCreatePage.tsx', import.meta.url)).text()
+test('Project linking enters Assistant without a separate Goal creation surface', async () => {
+  const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+  const app = await Bun.file(new URL('../App.tsx', import.meta.url)).text()
+  const api = await Bun.file(new URL('../lib/apiClient.ts', import.meta.url)).text()
 
-  expect(source).not.toContain('Goal ID')
-  expect(source).not.toContain('setGoalId')
-  expect(source).not.toContain('Generated when omitted')
+  expect(source).toContain('navigate(buildProjectRoute(projectId))')
+  expect(source).toContain('Boolean(snapshotQuery.data)')
+  expect(source).toContain("project.goals.length ? 'Open' : 'Open Assistant'")
+  expect(source).not.toContain('New Goal')
+  expect(app).not.toContain('GoalCreatePage')
+  expect(api).not.toContain('export function createGoal(')
 })

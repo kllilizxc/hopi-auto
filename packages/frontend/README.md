@@ -15,17 +15,20 @@ and visual language while presenting only the current MVP model.
 
 ## Product Surfaces
 
-- `ProjectHomePage`: bind or rebind Repos, configure Project responsibility models, and enter Goals.
-- `GoalCreatePage`: capture an outcome and create the initial Planning Work; Coordinator derives the
-  readable Goal identity from its title.
+- `ProjectHomePage`: bind or rebind Repos, configure Project responsibility models, and enter a
+  Project.
+- Project Assistant workspace: the canonical empty-Project surface and the conversational Goal
+  creation entry. It reuses the same Project conversation later docked beside Goal surfaces.
 - `BoardView`: read-only four-column Work projection, Goal controls, Attention, per-Work Attempt
   message streams, and Preview.
 - `GoalDocsPage`: Goal contract, design documents, and Evidence.
 - `AssistantPanel`: one workspace conversation with optional Goal context and Attention replies.
 
 Project and Goal switchers are local navigation state. The browser remembers the last valid Goal
-visited in each Project and restores it when that Project is selected; if it no longer exists, the
-first projected Goal (or New Goal for an empty Project) remains the fallback.
+visited in each Project and restores it when that Project is selected; if no valid Goal exists, the
+centered Project Assistant is the fallback. Linking a Project navigates there immediately. The first
+Goal created through that conversation moves the same Assistant to the left and opens the Goal on
+the right; no Goal creation form or draft state exists.
 
 Kanban cards are compact navigation and status surfaces, not abbreviated documents. They show the
 Work title, the real Attempt count, and a single `Blocked by …` reference only when a blocking Work

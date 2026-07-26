@@ -277,11 +277,11 @@ Home-unique identity from the primary selected Project folder; that identity is 
 never re-derived from a later path or folder rename. Explicit IDs remain available at the API
 boundary for migration and deterministic automation.
 
-The ordinary Goal form likewise does not expose `goalId`. New Goals derive a Project-local,
-readable `G-<title>` identity from the Goal title. Unicode letters and numbers remain readable,
-spacing and punctuation normalize to `-`, and a same-name collision receives the smallest free
-numeric suffix (`-2`, `-3`, ...). Existing identities are never renamed; explicit IDs remain an API
-compatibility boundary.
+The ordinary Assistant Create Goal operation does not expose `goalId` to the operator. New Goals
+derive a Project-local, readable `G-<title>` identity from the Goal title. Unicode letters and
+numbers remain readable, spacing and punctuation normalize to `-`, and a same-name collision
+receives the smallest free numeric suffix (`-2`, `-3`, ...). Existing identities are never renamed;
+explicit IDs remain an API compatibility boundary.
 
 Local IDs may repeat outside their owning package. Integration, delivery, receipts, references,
 and migration use the complete canonical identity rather than a bare local ID.

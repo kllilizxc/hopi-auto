@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   buildGoalRoute,
+  buildProjectRoute,
   findNewestUnseenGoal,
   orderGoalsByRecency,
   orderProjectsByRecency,
@@ -21,6 +22,7 @@ describe('Goal routes', () => {
   test('builds board and design routes from stable scoped identity', () => {
     const scope = { projectId: 'project alpha', goalId: 'goal/1' }
 
+    expect(buildProjectRoute(scope.projectId)).toBe('/projects/project%20alpha')
     expect(buildGoalRoute(scope, 'board')).toBe('/projects/project%20alpha/board/goal%2F1')
     expect(buildGoalRoute(scope, 'docs')).toBe('/projects/project%20alpha/docs/goal%2F1')
     expect(buildGoalRoute(null, 'board')).toBe('/projects')

@@ -11,7 +11,7 @@ export function readAssistantPageScope(pathname: string): AssistantPageScope | n
   if (goal?.[1] && goal[2]) {
     return { projectId: decodeURIComponent(goal[1]), goalId: decodeURIComponent(goal[2]) }
   }
-  const project = /^\/projects\/([^/]+)\/goals\/new$/.exec(pathname)
+  const project = /^\/projects\/([^/]+)$/.exec(pathname)
   return project?.[1] ? { projectId: decodeURIComponent(project[1]) } : null
 }
 

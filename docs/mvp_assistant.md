@@ -870,14 +870,20 @@ an indefinite loading indicator.
 
 ## UI Behavior
 
-The Assistant drawer follows page scope without a manual switcher. Projects is Home; Goal creation is
-its Project; Goal Board and docs are that Project with a Goal observation. Cross-Project navigation
-changes the conversation and discards any unsent draft, while navigation between Goals in one
-Project preserves the shared Project conversation. Feed history, incremental updates, activity,
-completion, Needs-you, and browser cache are projected only for that scope. Home includes Workspace
-Attention and global Reflection activity; a Project includes only its own events and Goal Attention.
-The synchronization cursor still advances across global updates so an unrelated Project cannot trap
-a scoped client on an old cursor.
+The Assistant follows page scope without a manual switcher. Projects is Home; the canonical Project
+route is that Project's Assistant; Goal Board and docs are the same Project conversation with a Goal
+observation. Linking a Project enters its Assistant immediately. A Project with no Goal centers that
+conversation as the complete working surface: there is no Goal form, draft Goal, or second creation
+workflow. The operator describes the desired outcome and Assistant uses the ordinary Create Goal
+operation. When the Project projection gains a Goal, the same Assistant moves to the left and the
+Goal surface appears on the right. An existing Project route resolves to its most recent valid Goal.
+
+Cross-Project navigation changes the conversation and discards any unsent draft, while navigation
+between Goals in one Project preserves the shared Project conversation. Feed history, incremental
+updates, activity, completion, Needs-you, and browser cache are projected only for that scope. Home
+includes Workspace Attention and global Reflection activity; a Project includes only its own events
+and Goal Attention. The synchronization cursor still advances across global updates so an unrelated
+Project cannot trap a scoped client on an old cursor.
 
 The scoped Feed projection is the single Assistant read model. Each history and incremental response
 includes the complete current set of unresolved operator requests, already joined server-side from
