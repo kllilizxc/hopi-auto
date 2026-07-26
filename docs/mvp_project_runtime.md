@@ -135,3 +135,33 @@ HOPI preserves the candidate delta and exposes task heads, release heads, paths,
 Generator or Project Assistant can repair the existing lineage, change dependencies, cancel Work, or
 create different Work. Coordinator does not discard the delta, invent semantic ownership, or
 automatically route the conflict through Planner.
+
+## Offline Project Reset
+
+Project reset is an explicit operator maintenance operation for starting one linked Project again
+without recreating its topology. It is not a Goal transition, an Assistant tool, or a Coordinator
+recovery rule.
+
+A reset removes:
+
+- every canonical Goal package in the Project
+- every Assistant Inbox turn whose conversation scope is that Project
+- Project-scoped workspace Attention
+- the Project Assistant vendor session, scratch workspace, turn records, Reflection records, Runs,
+  responsibility sessions, Preview records, task worktrees, and Work refs
+
+It preserves the Assistant Home, Project link, Repo bindings, preferences, Project release source,
+and every user checkout. When Goal packages are tracked by the primary Project release ref, reset
+advances that ref with a commit containing only their deletion. It never rewrites or checks out a
+user branch.
+
+The maintenance command is dry-run by default. Mutation requires the exact Project ID as explicit
+confirmation and exclusive ownership of the Coordinator instance lock, so the running HOPI service
+must be stopped first. The command validates the complete reset plan before changing state. An
+Attention that refers to both the target Project and another Project makes the plan ambiguous and
+must be resolved before reset.
+
+This boundary is intentionally outside ordinary publication validation: historical deletion would
+be invalid during normal product operation, while reset is a deliberate offline replacement of that
+history. The command records a reset manifest under Assistant runtime storage for audit, but active
+state contains no archived copy and cannot silently restore it.

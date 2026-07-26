@@ -49,6 +49,21 @@ active responsibility Run. It serves the frontend bundle through a backend-local
 Bun roots emitted assets correctly. Use `bun run dev:backend:watch` only for isolated backend
 development when no Goal is executing.
 
+To restart one linked Project from an empty Goal and Assistant conversation state, stop HOPI and
+preview the offline reset:
+
+```sh
+bun run reset:project -- <projectId>
+```
+
+The preview is read-only. Apply exactly that Project scope with:
+
+```sh
+bun run reset:project -- <projectId> --apply --confirm <projectId>
+```
+
+Set `HOPI_HOME` or pass `--home <directory>` when the Assistant Home is not the default.
+
 Run all production checks with:
 
 ```sh

@@ -9,6 +9,7 @@
     "dev:backend:watch": "cd packages/backend && bun dev",
     "dev:frontend": "cd packages/frontend && bun dev",
     "remote:frontend": "cd packages/frontend && bun run remote",
+    "reset:project": "bun run scripts/reset-project.ts",
     "dev": "bun run verify:runtime && bun run dev:backend",
     "test:contract": "cd packages/backend && bun test tests/contract",
     "e2e:contract": "cd packages/backend && bun test tests/contract tests/workspaceAssistant.test.ts tests/assistantAttentionE2E.test.ts tests/coordinatorReconciler.test.ts tests/assistantTools.test.ts tests/projectReconciler.test.ts tests/passOutcomeCoordinator.test.ts tests/runAttemptStore.test.ts tests/coordinatorBootstrap.test.ts tests/multiRepoC1.test.ts tests/assistantReflection.test.ts tests/mvpServer.test.ts tests/adapterConfig.test.ts tests/previewManager.test.ts tests/goalController.test.ts tests/vendorTransport.test.ts tests/attentionDelivery.test.ts tests/roleContextStager.test.ts tests/browserEnvironment.test.ts",
