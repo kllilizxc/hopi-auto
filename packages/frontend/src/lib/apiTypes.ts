@@ -191,6 +191,14 @@ export interface AttentionView {
 
 export type AttentionSummaryView = Omit<AttentionView, 'body'>
 
+export interface GoalCompletionView {
+  projectId: string
+  goalId: string
+  evidenceId: string
+  completedAt: string
+  body: string
+}
+
 export type AssistantFeedEntry =
   | {
       kind: 'event'
@@ -204,6 +212,12 @@ export type AssistantFeedEntry =
       id: string
       occurredAt: string
       attention: AttentionView
+    }
+  | {
+      kind: 'goal_completion'
+      id: string
+      occurredAt: string
+      completion: GoalCompletionView
     }
 
 export interface AssistantFeedActivity {

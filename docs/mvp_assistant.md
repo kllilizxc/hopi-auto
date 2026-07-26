@@ -854,7 +854,10 @@ Assistant ambiguity is handled conversationally whenever an ordinary answer is e
 Attention is reserved for a durable condition that blocks unattended progress or for repeated
 Assistant/tool failure that cannot be completed safely.
 
-Needs-you and Goal completion updates appear in the same Assistant thread as system updates. Replying
+Needs-you and Goal completion updates appear in the same Assistant thread as system updates. A new
+Goal completion update is a read projection of the `done` Goal and its final Planning Evidence; it
+does not require a targetless Attention or prescribed Assistant wording. Legacy targetless
+completion Attention remains readable through the same visual surface. Replying
 with that message's explicit `Reply` action sends a normal user turn with `replyTo` and the exact
 Attention references in context. An ordinary composer submission carries only selected Project and
 Goal context and never guesses Attention references from currently open blockers. Assistant may read

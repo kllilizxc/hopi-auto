@@ -94,6 +94,35 @@ describe('unified message feed adapters', () => {
     })
   })
 
+  test('renders final Planning Evidence as the same Completed system update', () => {
+    const items = assistantFeedEntriesToMessageFeed([
+      {
+        kind: 'goal_completion',
+        id: 'goal-completion:project:P-1/goal:G-1/evidence:E-final',
+        occurredAt: '2026-07-26T11:32:06.638Z',
+        completion: {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          evidenceId: 'E-final',
+          completedAt: '2026-07-26T11:32:06.638Z',
+          body: '## Ship the Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
+        },
+      },
+    ])
+
+    expect(items).toEqual([
+      {
+        id: 'goal-completion:P-1:G-1:E-final',
+        createdAt: '2026-07-26T11:32:06.638Z',
+        kind: 'system_update',
+        role: 'system',
+        text: 'Ship the Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
+        label: 'Completed',
+        groupId: 'goal-completion:P-1:G-1',
+      },
+    ])
+  })
+
   test('does not collide when two Goals reuse the same local completion ID', () => {
     const first = completionAttention()
     const second = completionAttention({

@@ -1703,7 +1703,9 @@ delivered a user-facing question. An unresolved Attention with `notifiedAt` set 
 you**. Both are projections of the same Attention document, not additional state. Raw Attention is
 handled through Reflection and the speaking Assistant rather than exposed directly inside
 conversation and Goal views. Goal completion appears from the Goal transition and final Planning
-Evidence; legacy targetless completion Attention remains readable.
+Evidence as a deterministic **Completed** conversation update; it is presentation of canonical
+completion, not another notification document or required model phrase. Legacy targetless
+completion Attention remains readable through the same presentation.
 An eligible Reflection handoff binds exact canonical Goal-local or workspace Attention references
 in ordinary Inbox context. The speaking turn either returns an empty final response and remains
 hidden, returns a non-empty informational final response, or first calls `request_user` with exact

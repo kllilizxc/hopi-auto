@@ -1,4 +1,10 @@
-import type { AssistantFeedEntry, AttentionView, InboxEventView, RunAttemptEvent } from './apiTypes'
+import type {
+  AssistantFeedEntry,
+  AttentionView,
+  GoalCompletionView,
+  InboxEventView,
+  RunAttemptEvent,
+} from './apiTypes'
 import { goalAttentionReference, normalizeAttentionReferences } from './attentionReference'
 
 export interface MessageFeedAttachment {
@@ -265,6 +271,7 @@ export function assistantFeedEntriesToMessageFeed(
   return [
     ...entries.flatMap((entry) => {
       if (entry.kind === 'completion') return [completionAttentionItem(entry.attention)]
+      if (entry.kind === 'goal_completion') return [goalCompletionItem(entry.completion)]
       const items = inboxEventToMessageFeed(entry.event, { assistantPresentation: true })
       return entry.completion ? applyCompletion(items, entry.completion) : items
     }),
@@ -660,6 +667,18 @@ function completionAttentionItem(attention: AttentionView): MessageFeedItem {
     text: readableCompletionBody(attention.body),
     label: 'Completed',
     groupId: `completion:${attention.scope}:${attention.id}`,
+  }
+}
+
+function goalCompletionItem(completion: GoalCompletionView): MessageFeedItem {
+  return {
+    id: `goal-completion:${completion.projectId}:${completion.goalId}:${completion.evidenceId}`,
+    createdAt: completion.completedAt,
+    kind: 'system_update',
+    role: 'system',
+    text: readableCompletionBody(completion.body),
+    label: 'Completed',
+    groupId: `goal-completion:${completion.projectId}:${completion.goalId}`,
   }
 }
 

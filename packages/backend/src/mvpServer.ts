@@ -30,7 +30,7 @@ import {
   workspaceAttentionReference,
 } from './domain/attentionReference'
 import { workAttentionTarget } from './domain/attentionTarget'
-import type { WorkDocument } from './domain/canonicalDocuments'
+import { type WorkDocument, isPlanningWork } from './domain/canonicalDocuments'
 import { type GoalPackage, GoalPackageNotFoundError } from './domain/goalPackage'
 import { inboxEventReferenceSchema } from './domain/inboxEventReference'
 import {
@@ -95,6 +95,8 @@ export interface ServerOptions {
 export type MvpServer = Bun.Server<undefined> & {
   shutdown(): Promise<void>
 }
+
+const ASSISTANT_FEED_PROJECTION_VERSION = 2
 
 const projectIdentitySchema = z.object({
   projectId: stableIdSchema.optional(),
@@ -1112,7 +1114,11 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
     runtime.workspace.readWorkspace(),
     readAssistantConversationEpoch(runtime.homeRoot, scope),
   ])
-  const attentions = await readScopedAssistantAttentions(runtime, scope, workspace)
+  const { attentions, goalCompletions } = await readScopedAssistantProjection(
+    runtime,
+    scope,
+    workspace,
+  )
   const completions = attentions.filter((attention) => attention.target === null)
   const requests = projectAssistantOpenRequests(workspace.homeId, workspace.events, attentions)
   const completionByReference = new Map(
@@ -1219,6 +1225,13 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
   ]
   const allEntries = [
     ...eventEntries,
+    ...goalCompletions.map((completion) => ({
+      kind: 'goal_completion' as const,
+      id: `goal-completion:project:${completion.projectId}/goal:${completion.goalId}/evidence:${completion.evidenceId}`,
+      occurredAt: completion.completedAt,
+      updatedAt: completion.completedAt,
+      completion,
+    })),
     ...completions
       .filter((attention) =>
         attention.scope === 'goal'
@@ -1266,7 +1279,7 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
         !latest || Date.parse(timestamp) > Date.parse(latest) ? timestamp : latest,
       null,
     ),
-    streamId: conversationEpoch.streamId,
+    streamId: `${conversationEpoch.streamId}:projection:${ASSISTANT_FEED_PROJECTION_VERSION}`,
   }
 }
 
@@ -1291,20 +1304,74 @@ type ScopedAssistantAttention =
       goalId: string
     })
 
-async function readScopedAssistantAttentions(
+interface ScopedGoalCompletion {
+  projectId: string
+  goalId: string
+  evidenceId: string
+  completedAt: string
+  body: string
+}
+
+export function goalCompletionProjection(
+  projectId: string,
+  goalId: string,
+  goalPackage: GoalPackage,
+): ScopedGoalCompletion | null {
+  const goal = goalPackage.goal.attributes
+  if (goal.lifecycle !== 'done' || goal.completionAttentionId !== null) return null
+
+  const evidence = [...goalPackage.works.values()]
+    .filter(
+      (work) =>
+        isPlanningWork(work.attributes) &&
+        work.attributes.stage === 'done' &&
+        work.attributes.contractRevision === goal.contractRevision,
+    )
+    .flatMap((work) =>
+      work.attributes.evidenceRefs.flatMap((evidenceId) => {
+        const candidate = goalPackage.evidence.get(evidenceId)
+        return candidate && /^- Result: success$/m.test(candidate.body) ? [candidate] : []
+      }),
+    )
+    .toSorted(
+      (left, right) =>
+        left.attributes.createdAt.localeCompare(right.attributes.createdAt) ||
+        left.attributes.id.localeCompare(right.attributes.id),
+    )
+    .at(-1)
+  if (!evidence) return null
+
+  const summary = evidence.body.match(/^## Summary\s*\n+([\s\S]+)$/m)?.[1]?.trim()
+  if (!summary) return null
+  return {
+    projectId,
+    goalId,
+    evidenceId: evidence.attributes.id,
+    completedAt: evidence.attributes.createdAt,
+    body: `## ${goal.title}\n\n${summary}`,
+  }
+}
+
+async function readScopedAssistantProjection(
   runtime: MvpRuntime,
   scope: AssistantConversationScope,
   workspace: Awaited<ReturnType<MvpRuntime['workspace']['readWorkspace']>>,
-): Promise<ScopedAssistantAttention[]> {
+): Promise<{
+  attentions: ScopedAssistantAttention[]
+  goalCompletions: ScopedGoalCompletion[]
+}> {
   if (scope.kind === 'home') {
-    return [...workspace.attentions.values()]
-      .filter((attention) => workspaceAttentionProjectId(attention) === null)
-      .map((attention) => ({
-        scope: 'workspace' as const,
-        ...attention.attributes,
-        operatorRequest: attention.attributes.operatorRequest ?? null,
-        body: attention.body,
-      }))
+    return {
+      attentions: [...workspace.attentions.values()]
+        .filter((attention) => workspaceAttentionProjectId(attention) === null)
+        .map((attention) => ({
+          scope: 'workspace' as const,
+          ...attention.attributes,
+          operatorRequest: attention.attributes.operatorRequest ?? null,
+          body: attention.body,
+        })),
+      goalCompletions: [],
+    }
   }
 
   const project = requireProject(runtime.projects, scope.projectId)
@@ -1317,24 +1384,27 @@ async function readScopedAssistantAttentions(
       operatorRequest: attention.attributes.operatorRequest ?? null,
       body: attention.body,
     }))
+  const goalCompletions: ScopedGoalCompletion[] = []
   for (const goalId of await project.store.listGoalIds()) {
     try {
+      const goalPackage = await project.store.readPackage(goalId)
       attentions.push(
-        ...presentGoalAttentions(
-          project.projectId,
-          goalId,
-          await project.store.readPackage(goalId),
-        ).map((attention) => ({ scope: 'goal' as const, ...attention })),
+        ...presentGoalAttentions(project.projectId, goalId, goalPackage).map((attention) => ({
+          scope: 'goal' as const,
+          ...attention,
+        })),
       )
+      const completion = goalCompletionProjection(project.projectId, goalId, goalPackage)
+      if (completion) goalCompletions.push(completion)
     } catch {}
   }
-  return attentions
+  return { attentions, goalCompletions }
 }
 
 function projectAssistantOpenRequests(
   _homeId: string,
   events: ReadonlyMap<string, InboxEventDocument>,
-  attentions: Awaited<ReturnType<typeof readScopedAssistantAttentions>>,
+  attentions: Awaited<ReturnType<typeof readScopedAssistantProjection>>['attentions'],
 ) {
   const openById = new Map<string, (typeof attentions)[number] | null>()
   for (const attention of attentions) {
@@ -1420,6 +1490,14 @@ type AssistantFeedProjectionEntry = Awaited<
 >['entries'][number]
 
 async function presentAssistantFeedEntry(runtime: MvpRuntime, entry: AssistantFeedProjectionEntry) {
+  if (entry.kind === 'goal_completion') {
+    return {
+      kind: entry.kind,
+      id: entry.id,
+      occurredAt: entry.occurredAt,
+      completion: entry.completion,
+    }
+  }
   if (entry.kind === 'completion') {
     return {
       kind: entry.kind,

@@ -6,9 +6,11 @@ import { resetProjectAssistantConversationEpoch } from '../src/assistant/assista
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
 import {
+  parseGoalDocument,
   parseWorkDocument,
   renderAttentionDocument,
   renderEvidenceDocument,
+  renderGoalDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
@@ -2042,6 +2044,46 @@ describe('MVP server', () => {
     )
   })
 
+  test('projects a new Goal completion from final Planning Evidence without Attention', async () => {
+    const homeRoot = join(temporaryRoot, 'modern-completion-home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'modern-completion-repo'))
+    const publisher = new PublicationCoordinator()
+    const linked = await createAssistantHomeStore(homeRoot, publisher).linkProject({
+      projectId: 'P-1',
+      repoPath: repoRoot,
+    })
+    const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
+    await createEvidenceCompletedGoal(store, 'G-modern')
+
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const feed = await request(
+      `http://127.0.0.1:${server.port}`,
+      '/api/assistant/feed?projectId=P-1',
+    )
+
+    expect(feed.items).toEqual([
+      {
+        kind: 'goal_completion',
+        id: 'goal-completion:project:P-1/goal:G-modern/evidence:E-final',
+        occurredAt: '2026-07-26T11:32:06.638Z',
+        completion: {
+          projectId: 'P-1',
+          goalId: 'G-modern',
+          evidenceId: 'E-final',
+          completedAt: '2026-07-26T11:32:06.638Z',
+          body: '## Modern Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
+        },
+      },
+    ])
+    expect(feed.streamId).toBe('initial:project:P-1:projection:2')
+    const replay = await request(
+      `http://127.0.0.1:${server.port}`,
+      '/api/assistant/feed/changes?projectId=P-1&cursor=2026-07-26T12%3A00%3A00.000Z&streamId=initial%3Aproject%3AP-1',
+    )
+    expect(replay.items).toEqual(feed.items)
+  })
+
   test('synchronizes an older mutable Assistant turn independently from chronological history', async () => {
     const homeRoot = join(temporaryRoot, 'assistant-feed-home')
     const publisher = new PublicationCoordinator()
@@ -2452,6 +2494,65 @@ async function createCompletedGoal(
   await createGoalController(store, {
     verifyCompletion: () => true,
   }).completeGoal(goalId, attentionId)
+}
+
+async function createEvidenceCompletedGoal(
+  store: ReturnType<typeof createGoalPackageStore>,
+  goalId: string,
+) {
+  await store.createGoal({
+    goalId,
+    title: 'Modern Goal',
+    objective: 'Complete the modern Goal.',
+  })
+  const goalPath = store.paths.goalDocument(goalId)
+  const goalSource = await Bun.file(store.paths.absolute(goalPath)).text()
+  const goal = parseGoalDocument(goalSource)
+  goal.attributes.lifecycle = 'done'
+  const workPath = store.paths.workDocument(goalId, 'plan-initial')
+  const workSource = await Bun.file(store.paths.absolute(workPath)).text()
+  const work = parseWorkDocument(workSource)
+  work.attributes.stage = 'done'
+  work.attributes.evidenceRefs = ['E-final']
+  await store.publishGoal(goalId, {
+    supportingWrites: [
+      {
+        path: store.paths.evidenceDocument(goalId, 'E-final'),
+        expectedHash: null,
+        content: renderEvidenceDocument({
+          attributes: {
+            id: 'E-final',
+            createdAt: '2026-07-26T11:32:06.638Z',
+            producerRun: `project:P-1/goal:${goalId}/work:plan-initial/run:R-final`,
+            coordinatorCheck: null,
+            owner: `project:P-1/goal:${goalId}/work:plan-initial`,
+            artifacts: [],
+          },
+          body: [
+            '## Responsibility Result',
+            '',
+            '- Responsibility: planner',
+            '- Result: success',
+            '',
+            '## Summary',
+            '',
+            'The reviewed outcome satisfies every accepted criterion.',
+            '',
+          ].join('\n'),
+        }),
+      },
+      {
+        path: workPath,
+        expectedHash: await hashBytes(new TextEncoder().encode(workSource)),
+        content: renderWorkDocument(work),
+      },
+    ],
+    gateWrite: {
+      path: goalPath,
+      expectedHash: await hashBytes(new TextEncoder().encode(goalSource)),
+      content: renderGoalDocument(goal),
+    },
+  })
 }
 
 async function waitForHttp(url: string, child: ReturnType<typeof Bun.spawn>, timeoutMs = 10_000) {
