@@ -1512,6 +1512,10 @@ while a different or second direct admission fails before publication. Goal-scop
 keep Generator admission behind the final Assistant reply. Direct Work follows the ordinary
 Generator, Reviewer, and C1 profile and does not change final Planner assessment.
 
+A Work run requested by the speaking Assistant is therefore only admitted after that turn settles.
+The returned scheduled reservation and the resulting queued Work are the durable handoff facts
+visible inside the same turn; an active Run cannot appear until the speaking barrier is released.
+
 The MCP tool descriptions and JSON schemas injected into the Assistant turn are the only authority
 for tool arguments. Assistant calls those tools directly and never searches Project files,
 `.hopi/runtime`, transcripts, or HOPI source to guess a schema. It reads an exact canonical or

@@ -985,6 +985,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('Role: HOPI Project owner')
     expect(seen[0]?.prompt).not.toContain('Each Engineering Work receives every Repo binding')
     expect(seen[0]?.prompt).toContain('rejection wakes supervision without blocking repair')
+    expect(seen[0]?.prompt).toContain(
+      'A Work requested in this turn can start only after the turn settles',
+    )
     expect(seen[0]?.prompt).toContain('Attention is durable; active Work defers it')
     expect(seen[0]?.prompt).toContain('NeedsYou means operator input is required')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')

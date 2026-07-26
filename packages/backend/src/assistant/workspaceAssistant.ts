@@ -919,6 +919,7 @@ const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
 
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
+  'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
   'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
   'Attention is durable; active Work defers it. NeedsYou means operator input is required; <NeedsYou attentionId="...">...</NeedsYou> only highlights it.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
