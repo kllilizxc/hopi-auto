@@ -45,7 +45,7 @@ import {
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
-import type { AssistantTools } from './assistantTools'
+import { assistantStateProjection, type AssistantTools } from './assistantTools'
 
 export interface AssistantModelInput {
   eventId: string
@@ -1091,12 +1091,11 @@ function renderHistoryEvent(event: InboxEventDocument) {
 
 function renderCurrentState(state: AssistantStateSnapshot | undefined) {
   if (!state) return ''
-  const encoded = JSON.stringify(state, null, 2)
-  const bounded = encoded.length > 30_000 ? `${encoded.slice(0, 30_000)}\n... truncated` : encoded
+  const encoded = JSON.stringify(assistantStateProjection(state), null, 2)
   return [
     '[Current Project state and unresolved Attention; canonical paths inside this snapshot remain the source references.]',
     '```json',
-    bounded,
+    encoded,
     '```',
   ].join('\n')
 }

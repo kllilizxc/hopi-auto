@@ -309,7 +309,7 @@ export function createAssistantTools(options: {
               ...(goalId ? { goalId } : {}),
               ...(args.includeEvidence ? { includeEvidence: true } : {}),
             })
-            state = assistantToolStateProjection(snapshot, { projectId, goalId })
+            state = assistantStateProjection(snapshot, { projectId, goalId })
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error)
             const pageContext = context?.projectId
@@ -1281,9 +1281,9 @@ export function createAssistantTools(options: {
   }
 }
 
-function assistantToolStateProjection(
+export function assistantStateProjection(
   snapshot: AssistantStateSnapshot,
-  scope: { projectId?: string; goalId?: string },
+  scope: { projectId?: string; goalId?: string } = {},
 ): Omit<AssistantStateSnapshot, 'conversationDigests'> {
   const { conversationDigests: _conversationDigests, ...publicSnapshot } = snapshot
   return {

@@ -1562,6 +1562,12 @@ runtime history. Goal-scoped `includeEvidence` additionally expands bounded Evid
 artifacts only when the answer requires the deliverable itself. This is one state model without
 pagination, a query DSL, or scope-dependent detail rules.
 
+The speaking Assistant receives that same compact index for the current conversation scope. Field
+bounding removes archive bodies while retaining every current Goal and Work; the prompt never slices
+serialized JSON by character position. Consequently a later-sorted failed Work cannot disappear
+from a Project event, the embedded JSON remains valid, and every omitted body remains reachable
+through the retained canonical path.
+
 For each Work visible in an exact Goal read, the state read returns a small runtime diagnostic descriptor: current
 projection, active responsibility when present, latest Attempt summary, last event time, stale
 observation, stable worktree path, and paths to `attempt.json`, `events.jsonl`, `transcript.log`,

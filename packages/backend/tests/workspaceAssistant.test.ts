@@ -5,7 +5,11 @@ import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
 import { HOME_ASSISTANT_CONVERSATION_SCOPE } from '../src/assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
-import { createAssistantStateReader } from '../src/assistant/assistantState'
+import {
+  type AssistantStateReader,
+  type AssistantStateSnapshot,
+  createAssistantStateReader,
+} from '../src/assistant/assistantState'
 import { createAssistantTools } from '../src/assistant/assistantTools'
 import {
   type AssistantModelRunner,
@@ -1425,6 +1429,116 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
+  test('supplies a complete compact state index instead of slicing away later failed Work', async () => {
+    const prompts: string[] = []
+    const stateReads: Array<{ projectId?: string; goalId?: string }> = []
+    const oversizedArchiveBody = `archive-${'x'.repeat(40_000)}-archive-end`
+    const snapshot = {
+      observedAt: '2026-07-26T15:09:24.000Z',
+      stateDigest: 'a'.repeat(64),
+      conversationDigests: {
+        home: 'b'.repeat(64),
+        projects: { 'P-1': 'c'.repeat(64) },
+      },
+      activeRuns: [],
+      workspaceAttentions: [],
+      projects: [
+        {
+          projectId: 'P-1',
+          projectRoot: '/canonical/project',
+          available: true,
+          releaseHead: 'release-head',
+          goals: [
+            {
+              goal: {
+                attributes: { id: 'G-1', lifecycle: 'active' },
+                body: oversizedArchiveBody,
+                path: '/canonical/G-1/goal.md',
+              },
+              design: [],
+              attentions: [],
+              latestPlanningOutcome: null,
+              works: [
+                {
+                  attributes: { id: 'W-a', stage: 'generate' },
+                  body: oversizedArchiveBody,
+                  path: '/canonical/G-1/works/W-a.md',
+                  projection: { failedPredicates: [] },
+                  runtime: {
+                    activeResponsibility: null,
+                    latestAttempt: null,
+                    attemptCount: 0,
+                    recentAttempts: [],
+                  },
+                },
+                {
+                  attributes: { id: 'W-z-failed', stage: 'review' },
+                  path: '/canonical/G-1/works/W-z-failed.md',
+                  projection: { failedPredicates: ['failed_attempt'] },
+                  runtime: {
+                    activeResponsibility: null,
+                    latestAttempt: {
+                      runId: 'R-failed',
+                      responsibility: 'reviewer',
+                      status: 'finished',
+                      result: 'fail',
+                      application: 'operational_failure',
+                      summary: 'stream disconnected before completion',
+                    },
+                    attemptCount: 1,
+                    recentAttempts: [],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as unknown as AssistantStateSnapshot
+    const fixture = await setup(
+      () => ({
+        async run(input, observer) {
+          prompts.push(input.prompt)
+          await observer?.onSession?.(codexSession('thread-complete-state'))
+          return { reply: '', session: codexSession('thread-complete-state') }
+        },
+      }),
+      {
+        assistantState: {
+          async read(input = {}) {
+            stateReads.push(input)
+            return snapshot
+          },
+        },
+      },
+    )
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-complete-state',
+      content: 'Revalidate current Project state.',
+      context: { projectId: 'P-1' },
+    })
+
+    await fixture.assistant.process('EV-complete-state')
+
+    expect(stateReads).toEqual([{ projectId: 'P-1' }])
+    const encoded = prompts[0]?.match(/```json\n([\s\S]*?)\n```/)?.[1]
+    expect(encoded).toBeDefined()
+    const current = JSON.parse(encoded ?? '{}')
+    expect(current.projects[0].goals[0].works).toHaveLength(2)
+    expect(current.projects[0].goals[0].works[1]).toMatchObject({
+      path: '/canonical/G-1/works/W-z-failed.md',
+      projection: { failedPredicates: ['failed_attempt'] },
+      runtime: {
+        latestAttempt: {
+          runId: 'R-failed',
+          result: 'fail',
+        },
+      },
+    })
+    expect(prompts[0]).not.toContain('archive-end')
+    expect(prompts[0]).not.toContain('... truncated')
+  })
+
   test('accepts a transient retry-only internal handoff without a second model call', async () => {
     let calls = 0
     const fixture = await setup((tools) => ({
@@ -1473,6 +1587,7 @@ describe('WorkspaceAssistant conversation', () => {
 
 async function setup(
   buildRunner: (tools: ReturnType<typeof createAssistantTools>) => AssistantModelRunner,
+  options: { assistantState?: AssistantStateReader } = {},
 ) {
   const repoRoot = join(temporaryRoot, 'repo')
   await mkdir(repoRoot, { recursive: true })
@@ -1531,6 +1646,7 @@ async function setup(
     workspace,
     conversation,
     tools,
+    ...(options.assistantState ? { state: options.assistantState } : {}),
     runner: buildRunner(tools),
     resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     now: () => new Date('2026-07-11T00:00:00Z'),
