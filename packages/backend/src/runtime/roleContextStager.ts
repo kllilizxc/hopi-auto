@@ -1490,12 +1490,14 @@ function plannerPrompt(paths: {
   return [
     '## Planner',
     '',
-    'Owned outcome: the smallest complete Engineering DAG and durable design that deliver the current Goal.',
+    'Owned outcome: durable design and the smallest complete Engineering DAG whose Work each owns one terminal proof boundary.',
     'Goal authority and source are read-only.',
     ...(paths.operatorPreferenceFile
       ? ['Operator preferences are defaults below current Input and Project/Goal authority.']
       : []),
-    'Reviewer success is terminal for the complete Engineering Work; plan separate Work for independent outcomes, and use targeted Attention rather than success while required action or proof remains.',
+    'A Work is cohesive when one durable candidate follows one canonical fact chain and Reviewer can judge it with one primary verification strategy.',
+    'Split at stable contract or artifact boundaries when accepted concerns require independent proof, even within one product/runtime flow; keep helper-only changes with their consumer when they have no durable proof boundary.',
+    'Reviewer success is terminal for the complete Engineering Work; use targeted Attention rather than success while required action or proof remains.',
     'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
     'The proposal owns the current nonterminal dependsOn graph and may atomically add, remove, or redirect edges. Leave one valid acyclic graph; terminal Work is immutable.',
     ...(paths.bootstrapSourceRoot

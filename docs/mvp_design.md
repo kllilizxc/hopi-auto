@@ -139,12 +139,17 @@ Evidence documents. Different facts remain searchable and do not accumulate in o
 ### 3. The Work DAG is sparse and incremental
 
 Assistant may admit one complete Engineering Work directly from one accepted Input. It uses this
-bounded path only when current Goal authority already defines one cohesive, independently
-verifiable delivery and no existing Work or durable design contract must be revised. One Input can
-directly admit at most one Engineering Work across the Home. When more than one new Work, contract
-revision, design judgment, or graph rewrite is needed, Planner creates Work only when it is
-independently schedulable, independently verifiable, or expected to outlive one
-responsibility-pass Run. The whole graph need not exist up front.
+bounded path only when current Goal authority already defines one cohesive terminal proof boundary
+and no existing Work or durable design contract must be revised. One Input can directly admit at
+most one Engineering Work across the Home. When more than one new Work, contract revision, design
+judgment, or graph rewrite is needed, Planner creates the smallest complete Engineering Work set.
+Each Work owns one durable candidate that follows one canonical fact chain and can receive one
+terminal Reviewer judgment through one primary verification strategy. A product or runtime flow may
+therefore span ordered Work. The whole graph need not exist up front.
+
+Planner splits at a stable contract or artifact boundary when accepted concerns require independent
+proof. A helper-only change without its own durable proof boundary remains with its consumer. Sparse
+means omitting ceremonial Work, not merging distinct proof boundaries.
 
 Before publishing runnable Work, Planner records every known causal or conflict-avoidance order
 in `dependsOn`. Independent Work remains as dependency-free roots when both can start from the

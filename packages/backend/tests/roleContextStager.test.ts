@@ -72,7 +72,18 @@ describe('RoleContextStager', () => {
       'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published',
     )
     expect(prompt).toContain('an absent path is unchanged')
-    expect(prompt).toContain('smallest complete Engineering DAG')
+    expect(prompt).toContain(
+      'smallest complete Engineering DAG whose Work each owns one terminal proof boundary',
+    )
+    expect(prompt).toContain('one durable candidate follows one canonical fact chain')
+    expect(prompt).toContain(
+      'Split at stable contract or artifact boundaries when accepted concerns require independent proof',
+    )
+    expect(prompt).toContain('even within one product/runtime flow')
+    expect(prompt).toContain(
+      'keep helper-only changes with their consumer when they have no durable proof boundary',
+    )
+    expect(prompt).not.toContain('plan separate Work for independent outcomes')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
     const proposalCapabilities = await Bun.file(bundle.proposalCapabilitiesFile).json()

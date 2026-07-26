@@ -822,24 +822,30 @@ material ambiguity with the grill-me protocol: inspect code and authority before
 dependent decisions in order, group only currently independent material questions, and include a
 recommendation, alternatives, trade-offs, and downstream impact for each. It updates the relevant
 `design/**` document plus `design/decisions.md` with established decisions, then proposes the
-smallest independently schedulable engineering Work set, complete
-acceptance criteria, all known ordering edges, and current contract revisions. It proposes targeted
+smallest complete Engineering Work set, complete acceptance criteria, all known ordering edges, and
+current contract revisions. Each Work owns one terminal proof boundary. It proposes targeted
 Attention when an answer may materially change that output or when it cannot safely infer operator
 authority; it does not ask merely to satisfy a fixed interview ritual. Design documents record
 durable decisions and contracts, not the current runner's transient environment or a one-Run
 feasibility observation.
 
-Independently testable code is not automatically independent Work. Planner keeps a prerequisite and
-its only consumer together when they share the same primary source surface and the prerequisite has
-no separately useful operator outcome. A helper-only extraction that exists solely to enable one
-panel rewrite therefore receives one Generator, Reviewer, and C1 cycle rather than a ceremonial
-dependency edge. Planner splits Work only for real ordering, isolation, or independently valuable
-delivery. When two resulting Work units can each start from the current integrated release, have
-independently useful outcomes, and do not require one another's publication, write overlapping
-source, or contend for the same exclusive external resource, Planner leaves both dependency-free so
-capacity may run them concurrently. Shared read-only context, broad semantic relation, or an
-anticipated integration order does not create `dependsOn`. Planner does not split a cohesive Work
-merely to fill available capacity.
+Work cohesion is judged by proof boundary, not product label, shared user story, or runtime process.
+A Work is cohesive when one durable candidate follows one canonical fact chain and Reviewer can
+assess it through one primary verification strategy. Planner splits at a stable contract or artifact
+boundary when accepted concerns require independent proof, even when the ordered Work serves one
+product or runtime flow. A validated prerequisite is a durable outcome for its dependents even when
+it is not directly operator-facing.
+
+Independently testable code alone is not a Work boundary. A helper or refactor whose only useful
+effect remains inside its consumer receives the same Generator, Reviewer, and C1 cycle. Sparse means
+omitting such ceremonial Work, not merging distinct terminal proof boundaries. Planner does not
+split a cohesive Work merely to fill available capacity.
+
+When two resulting Work units can each start from the current integrated release and do not require
+one another's publication, write overlapping source, or contend for the same exclusive external
+resource, Planner leaves both dependency-free so capacity may run them concurrently. Shared
+read-only context, broad semantic relation, or an anticipated integration order does not create
+`dependsOn`.
 
 When Planner rewrites existing nonterminal Engineering Work, it owns the current `dependsOn` graph:
 it may add, remove, or redirect edges as one atomic proposal when its semantic plan changes.
@@ -848,13 +854,6 @@ Input narrows or relaxes delivery, Planner likewise removes superseded objective
 proof clauses instead of carrying an obsolete contract into review. Stable identity, append-only
 Evidence references, and still-authoritative safety or persistence requirements remain. Terminal
 Work remains immutable, including its accepted dependency edges.
-
-Work cohesion is judged by proof boundary, not only by product label or shared user story. A Work is
-normally cohesive when its outcome follows one canonical fact chain and can be assessed with one
-primary verification strategy. Planner splits at a stable contract boundary when otherwise
-independent proof strategies would form one flat cross-product of acceptance concerns, such as a
-persisted loader/schema boundary followed by a UI projection. It does not split a helper or
-prerequisite whose only useful outcome is still its consumer.
 
 When one fact is repeated across artifacts, Planner records its single owner and one-way derivation
 in design, then makes Work acceptance prove that chain. Different facts may have different owners;

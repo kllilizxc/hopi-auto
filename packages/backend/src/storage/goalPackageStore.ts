@@ -343,10 +343,11 @@ function createInitialPlanningWork(
   const contract = input.firstPlanningWork ?? {
     title: 'Clarify and plan the Goal',
     objective:
-      'Clarify the current Goal contract and accepted Inputs, then update design and the sparse Engineering Work DAG.',
+      'Clarify the current Goal contract and accepted Inputs, then update design and the smallest complete Engineering Work DAG.',
     acceptanceCriteria: [
       'Material ambiguity is resolved or raised through targeted Attention.',
-      'The design documents and sparse Engineering Work DAG are current.',
+      'The design documents and smallest complete Engineering Work DAG are current.',
+      'Each Engineering Work owns one terminal proof boundary.',
     ],
   }
   return {

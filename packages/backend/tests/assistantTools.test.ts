@@ -317,7 +317,10 @@ describe('Assistant HOPI tools', () => {
       'Clarify the current Goal contract and accepted Inputs',
     )
     expect(goalPackage.works.get('plan-initial')?.body).toContain(
-      'The design documents and sparse Engineering Work DAG are current.',
+      'The design documents and smallest complete Engineering Work DAG are current.',
+    )
+    expect(goalPackage.works.get('plan-initial')?.body).toContain(
+      'Each Engineering Work owns one terminal proof boundary.',
     )
   })
 
