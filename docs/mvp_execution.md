@@ -1,7 +1,7 @@
 # HOPI MVP Execution
 
 Status: forward execution authority
-Last updated: 2026-07-24
+Last updated: 2026-07-26
 
 > [Project Owner And Attention](./mvp_project_owner.md) supersedes semantic
 > Coordinator/Reflection and targeted-Attention recovery rules.
@@ -1228,7 +1228,9 @@ condition. The next Generator does not wait for that Assistant turn; wake events
 Assistant is active, and the Assistant receives current Attempt history and live-Run state for
 supervision rather than becoming another review gate. The active responsibility Attempt remains the
 only owner of that Work's execution and Evidence. Concurrent Assistant shell effects are outside
-that Attempt and cannot substitute for its result.
+that Attempt even when they persist on the host or a remote system. They gain no managed task
+lineage, Evidence, independent review, retry, recovery, or supervision and cannot substitute for its
+result. Unrestricted execution access changes available capability, not responsibility ownership.
 
 ### Coordinator integration
 

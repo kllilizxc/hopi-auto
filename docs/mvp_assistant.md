@@ -1,7 +1,7 @@
 # HOPI MVP Assistant
 
 Status: forward Assistant authority
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 
 > [Project Owner And Attention](./mvp_project_owner.md) supersedes this document wherever it
 > describes a separate Reflection Agent, Attention targets/owners/waiting states, operator-request
@@ -40,6 +40,13 @@ future idea, or reference that should not change current delivery remains ordina
 is still available in conversation history, but creates no Goal Input, Planning Work, or separate
 `Note` state. The model judges the requested effect from meaning; HOPI adds no suggestion classifier
 or trigger vocabulary.
+
+Assistant owns conversation, orchestration, incidental self-contained Project operations, and
+publication of already accepted results. Engineering Work owns managed implementation: Generator
+delivers it and Reviewer verifies it with durable Evidence and recovery history. A settled contract
+may enter that lifecycle directly as the Goal's first Engineering Work; Planning exists to shape or
+revise a contract whose engineering work is not yet settled. These are available responsibility
+surfaces, not a deterministic intent classifier or a mandatory workflow decision tree.
 
 The MVP has one operator-facing Assistant identity with one Home conversation and one conversation
 per linked Project. Goal surfaces in the same Project share its conversation. The page selects the
@@ -402,6 +409,11 @@ not product authority: canonical mutations are accepted only through HOPI tools 
 is accepted only through Engineering Work publication. The runtime root remains provider scratch
 space: its paths are neither canonical nor operator-addressable. Canonical Evidence with an
 available `operatorUrl` is operator-addressable.
+An Assistant shell effect may outlive its turn in an external checkout, Git ref, remote system, or
+host process. It remains an Assistant-owned effect outside the HOPI Work lifecycle: it has no managed
+task lineage, Evidence, Reviewer judgment, retry, recovery, or supervision merely because the shell
+command succeeded. Unrestricted access changes the capabilities available to the model; it does not
+transfer Engineering Work ownership to Assistant.
 The Assistant receives the same Home-owned `HOPI_CACHE_DIR` as responsibility Runs. It persists
 reusable runtime data across turns, retries, and replacement of disposable task worktrees; ignored or
 uncommitted data inside a task worktree does not have that durability. HOPI terminates observed shell

@@ -1,7 +1,7 @@
 # Project Owner And Attention
 
 Status: authoritative MVP design
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 
 This document owns the Project Assistant, wake-up, Attention, and operator-notification model. It
 supersedes conflicting Reflection, Attention-target, notification-ownership, and Assistant-policy
@@ -32,6 +32,13 @@ Reviewer  -> independently verify that Engineering Work
 Assistant -> own the Project outcome and correct exceptions across these passes
 ```
 
+Assistant may perform incidental self-contained Project operations and publish results that have
+already been accepted. Those direct effects remain Assistant-owned. They do not acquire managed
+implementation, Evidence, independent review, retry, recovery, or supervision by existing outside a
+Work. Engineering Work is the responsibility surface for those properties, and an already settled
+contract may begin there without a Planning pass. Planning exists to shape or revise an unsettled
+contract, not as a mandatory prelude to every Engineering Work.
+
 Generator owns the complete accepted Engineering Work in writable Project roots, including every
 contract-required durable deliverable and the execution needed to materialize it. Reviewer judges
 whether that candidate is already complete. Reviewer may independently reproduce behavior and
@@ -60,6 +67,7 @@ without creating another product actor.
 
 The Assistant has the Project's configured execution access. A provider transport may still enforce
 its physical boundary, but HOPI adds no smaller semantic command allowlist for the Assistant.
+Unrestricted access changes available capability, not responsibility ownership.
 
 ## Wake-Up
 
@@ -101,7 +109,9 @@ Wake-up does not gate responsibility scheduling. A Reviewer `reject` returns the
 and the next Generator may start while the Project Assistant observes the rejection and current
 aggregate state. Concurrent observation does not transfer execution ownership: the active
 responsibility Attempt owns that Work's execution and Evidence, while Assistant shell effects remain
-outside the Attempt and cannot settle it. The Assistant may finish silently. If it changes the
+outside the Attempt even when they persist on the host or a remote system; they have no Work Evidence,
+review, retry, recovery, or supervision and cannot settle the Attempt. The Assistant may finish
+silently. If it changes the
 affected Work or Goal, the ordinary Assistant effect barrier invalidates or interrupts execution
 based on the superseded authority; the Assistant is neither another approval stage nor an implicit
 replacement for Generator or Reviewer.

@@ -71,7 +71,10 @@ describe('HOPI MCP server', () => {
       'sleeping or polling',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'atomically create its first Planning or Engineering Work',
+      'Engineering starts managed Generator delivery',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
+      'without a Planning pass',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
       'Choose planning',
@@ -85,7 +88,7 @@ describe('HOPI MCP server', () => {
       },
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'Planning or Engineering Work',
+      'managed Generator, Reviewer, Evidence, and recovery lifecycle',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
       'normalized contract change',

@@ -958,32 +958,28 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
     expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
     expect(seen[0]?.prompt).toContain('Role: final Project owner')
-    expect(seen[0]?.prompt).toContain('active Runs own Work execution/evidence')
-    expect(seen[0]?.prompt).toContain('Generator delivers')
-    expect(seen[0]?.prompt).toContain('Reviewer reject wakes supervision without gating repair')
-    expect(seen[0]?.prompt).toContain('Attention is durable todo; it continues unless NeedsYou')
     expect(seen[0]?.prompt).toContain(
-      'NeedsYou means operator input is required to advance Attention',
+      'Assistant owns conversation, orchestration, incidental operations',
     )
-    expect(seen[0]?.prompt).toContain(
-      'Assistant shell effects end with the turn and cannot settle or evidence active Work',
-    )
-    expect(seen[0]?.prompt).toContain('Internal wakes stay silent unless user-relevant')
-    expect(seen[0]?.prompt).toContain(
-      'Public reply: plain outcome and action in 1-2 short sentences',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'omit IDs, times, paths, commands, roles, stages, and raw metrics unless asked or decision-relevant',
-    )
+    expect(seen[0]?.prompt).toContain('Engineering Work owns implementation, Evidence, review')
+    expect(seen[0]?.prompt).toContain('Generator delivers; Reviewer verifies')
+    expect(seen[0]?.prompt).toContain('A settled contract may start as Engineering Work')
+    expect(seen[0]?.prompt).toContain('Planning shapes unsettled contracts')
+    expect(seen[0]?.prompt).toContain('rejection wakes supervision without blocking repair')
+    expect(seen[0]?.prompt).toContain('Attention is durable; active Work defers it')
+    expect(seen[0]?.prompt).toContain('NeedsYou means operator input is required')
+    expect(seen[0]?.prompt).toContain('Direct shell effects may persist but have no HOPI Work')
+    expect(seen[0]?.prompt).toContain('no HOPI Work, Evidence, review, retry, recovery')
+    expect(seen[0]?.prompt).toContain('Unrestricted access changes capability, not responsibility')
+    expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
+    expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
+    expect(seen[0]?.prompt).toContain('omit internals unless asked or decision-relevant')
     expect(seen[0]?.prompt).toContain('Only HOPI operatorUrl is linkable')
-    expect(seen[0]?.prompt).toContain('local and inspection paths are not')
-    expect(seen[0]?.prompt).toContain('Task worktrees are disposable')
+    expect(seen[0]?.prompt).toContain('task worktrees are disposable')
     expect(seen[0]?.prompt).toContain('$HOPI_CACHE_DIR persists')
-    expect(seen[0]?.prompt).toContain('detached descendants lack HOPI lifecycle')
-    expect(seen[0]?.prompt).toContain(
-      'Project truth: supplied state, documents, and HOPI tools.',
-    )
-    expect(seen[0]?.prompt).toContain('Provider workspace is scratch')
+    expect(seen[0]?.prompt).toContain('detached descendants have no HOPI lifecycle')
+    expect(seen[0]?.prompt).toContain('Truth: HOPI state, documents, and tools.')
+    expect(seen[0]?.prompt).toContain('Provider workspace and task worktrees are disposable')
     expect(seen[0]?.prompt).not.toContain('answer without polling')
     expect(seen[0]?.prompt).not.toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).not.toContain('Default to one or two short sentences')
