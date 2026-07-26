@@ -452,6 +452,13 @@ accepted Work. The MCP process has only a single-turn capability token, and the 
 token when the turn ends. Every built-in vendor adapter disables its interactive approval layer: Codex
 uses `never`, Claude bypasses permission prompts, and OpenCode uses deterministic `allow` or `deny`
 rules. This removes an impossible unattended UI prompt without becoming the authorization boundary.
+The speaking Assistant has one orchestration surface: HOPI. A provider's native subagent or workflow
+namespace is excluded from the Assistant environment rather than discouraged through prompt text.
+For Codex, the adapter disables multi-agent tools through its native `agents.enabled=false`
+configuration. If the configured Codex binary cannot represent that environment, its invocation
+fails through the normal provider error path; HOPI does not resume with a competing orchestration
+surface. Changing this provider boundary advances the adapter runtime revision, so sessions created
+with a different tool surface are rebuilt from durable scoped conversation history.
 Server-side capability validation, canonical target validation,
 responsibility result validation, controllers, and the publisher form a blacklist of effects HOPI
 will reject. Provider sandboxing enforces the resolved envelope; these product boundaries do not

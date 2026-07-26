@@ -868,12 +868,17 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).not.toContain('skills.include_instructions=false')
     expect(args).not.toContain('skills.bundled.enabled=false')
     expect(args).toContain('include_apps_instructions=false')
-    expect(args).toContain('include_collaboration_mode_instructions=false')
+    expect(args).toContain('agents.enabled=false')
+    expect(args[args.indexOf('agents.enabled=false') - 1]).toBe('-c')
+    expect(args).not.toContain('include_collaboration_mode_instructions=false')
     expect(args.some((arg) => arg.startsWith('developer_instructions='))).toBe(false)
-    for (const feature of ['apps', 'goals', 'memories', 'multi_agent', 'plugins']) {
+    for (const feature of ['apps', 'goals', 'memories', 'plugins']) {
       expect(args).toContain(feature)
       expect(args[args.indexOf(feature) - 1]).toBe('--disable')
     }
+    expect(
+      args.findIndex((arg, index) => arg === 'multi_agent' && args[index - 1] === '--disable'),
+    ).toBe(-1)
     for (const feature of [
       'browser_use',
       'computer_use',
