@@ -96,10 +96,9 @@ const assistantRunner: AssistantModelRunner = {
     if (mode === 'main' && input.prompt.includes(USER_MESSAGE)) {
       await rm(recoveryBlocker, { force: true })
       const response = await callAssistantTool(input, observer, 'hopi_manage_attention', {
-        projectId: PROJECT_ID,
         change: {
           kind: 'resolve',
-          attentionId: attentionToResolve,
+          attentionRef: workspaceAttentionReference(assistantHomeId, attentionToResolve),
           resolution: USER_MESSAGE,
         },
       })
@@ -112,12 +111,11 @@ const assistantRunner: AssistantModelRunner = {
     }
     if (mode === 'internal' && input.prompt.includes('Task checkpoint failed')) {
       const response = await callAssistantTool(input, observer, 'hopi_manage_attention', {
-        projectId: PROJECT_ID,
         change: {
           kind: 'create',
+          target: `project:${PROJECT_ID}`,
           attentionId: CHECKPOINT_ATTENTION_ID,
           body: CHECKPOINT_ATTENTION_BODY,
-          refs: [`project:${PROJECT_ID}/goal:${GOAL_ID}/work:${WORK_ID}`],
         },
       })
       assistantToolResults.push({

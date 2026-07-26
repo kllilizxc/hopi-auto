@@ -119,7 +119,13 @@ describe('HOPI MCP server', () => {
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.description,
-    ).toContain('does not gate Work or Preview')
+    ).toContain('canonical reference returned from state')
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.inputSchema,
+    ).toMatchObject({
+      required: ['change'],
+      properties: { change: expect.any(Object) },
+    })
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema,
     ).toMatchObject({

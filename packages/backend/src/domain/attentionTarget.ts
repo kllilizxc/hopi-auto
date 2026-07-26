@@ -1,6 +1,10 @@
 import { STABLE_ID_SOURCE } from './stableId'
 
 const projectTargetPattern = new RegExp(`^project:(${STABLE_ID_SOURCE})$`, 'u')
+const goalTargetPattern = new RegExp(
+  `^project:(${STABLE_ID_SOURCE})/goal:(${STABLE_ID_SOURCE})$`,
+  'u',
+)
 const workTargetPattern = new RegExp(
   `^project:(${STABLE_ID_SOURCE})/goal:(${STABLE_ID_SOURCE})/work:(${STABLE_ID_SOURCE})$`,
   'u',
@@ -20,6 +24,12 @@ export function parseProjectAttentionTarget(target: string) {
 
 export function goalAttentionTarget(projectId: string, goalId: string) {
   return `${projectAttentionTarget(projectId)}/goal:${goalId}`
+}
+
+export function parseGoalAttentionTarget(target: string) {
+  const match = goalTargetPattern.exec(target)
+  if (!match?.[1] || !match[2]) return null
+  return { projectId: match[1], goalId: match[2] }
 }
 
 export function workAttentionTarget(projectId: string, goalId: string, workId: string) {

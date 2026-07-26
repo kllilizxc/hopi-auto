@@ -248,6 +248,10 @@ directly consumable state shape without adding pagination or a query language.
 Every open Attention projection includes its complete canonical `reference`. Tools copy that value
 verbatim; models never reconstruct a reference from an Attention ID, target, or surrounding Project
 state. Current diagnostic projections are observations computed at the response's `observedAt`.
+`hopi_manage_attention` uses the same identity everywhere: creation names one canonical Project,
+Goal, or Work target, while edit and resolution name the canonical Attention reference returned by
+state. Project-target Attention is stored in Assistant Home; Goal- and Work-target Attention is
+stored with its Goal. Storage location is not part of the model-facing operation.
 An Attention body is the immutable rationale recorded when that Attention was created; keeping the
 Attention open means it has not yet been resolved, not that every diagnostic claim in that rationale
 is still current. The Assistant compares the current observations with that historical rationale and
@@ -792,6 +796,12 @@ uses Goal or Work Control for lifecycle changes; and resolves Attention only aft
 actually cleared. An explicit user reply is evidence for that judgment, never a forced
 `continue`/`retry`/`revise`/`cancel` classification. There is no stored continuation object:
 ordinary reconciliation derives the next responsibility from canonical Work facts.
+
+Attention resolution is its own Assistant judgment. Resolving a Goal-local Attention through
+`hopi_manage_attention` publishes the current Inbox turn as Goal Input and appends the resolution in
+the same Goal publication whose final gate is `resolvedAt`. A Project Attention resolution remains
+an Assistant-home publication. Tool calls do not infer resolution from reply wording, call order,
+an Attention ID, or a Planner summary.
 
 An open targeted Attention is the scheduling gate for its target. Resolving it publishes
 `resolvedAt` immediately, removes that gate, and may make the target eligible for dispatch; a later

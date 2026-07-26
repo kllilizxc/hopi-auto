@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   goalAttentionTarget,
   matchGoalAttentionTarget,
+  parseGoalAttentionTarget,
   parseProjectAttentionTarget,
   parseWorkAttentionTarget,
   projectAttentionTarget,
@@ -13,6 +14,10 @@ describe('canonical Attention targets', () => {
     expect(projectAttentionTarget('P-1')).toBe('project:P-1')
     expect(parseProjectAttentionTarget('project:P-1')).toEqual({ projectId: 'P-1' })
     expect(goalAttentionTarget('P-1', 'G-1')).toBe('project:P-1/goal:G-1')
+    expect(parseGoalAttentionTarget('project:P-1/goal:G-1')).toEqual({
+      projectId: 'P-1',
+      goalId: 'G-1',
+    })
     const workTarget = workAttentionTarget('P-1', 'G-1', 'plan-initial')
     expect(workTarget).toBe('project:P-1/goal:G-1/work:plan-initial')
     expect(parseWorkAttentionTarget(workTarget)).toEqual({
@@ -29,6 +34,7 @@ describe('canonical Attention targets', () => {
   test('does not treat a canonical document path as an Attention target', () => {
     const path = '.hopi/docs/goals/G-1/work/plan-initial.md'
     expect(parseWorkAttentionTarget(path)).toBeNull()
+    expect(parseGoalAttentionTarget(path)).toBeNull()
     expect(parseProjectAttentionTarget(path)).toBeNull()
     expect(parseProjectAttentionTarget('project:P-1/goal:G-1')).toBeNull()
     expect(matchGoalAttentionTarget('P-1', 'G-1', path)).toBeNull()

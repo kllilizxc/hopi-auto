@@ -102,7 +102,7 @@ server.registerTool(
   'hopi_manage_attention',
   {
     description:
-      'Create, edit, or resolve one Project Attention todo. Attention is supplied to later Assistant turns and does not gate Work or Preview.',
+      'Create an Attention for one canonical Project, Goal, or Work target; edit an Assistant-home Attention; or resolve an exact Project/Goal Attention by the canonical reference returned from state. Goal resolution records the current Inbox turn as Input.',
     inputSchema: assistantMcpToolSchemas.hopi_manage_attention,
   },
   (args) => callTool('hopi_manage_attention', args),

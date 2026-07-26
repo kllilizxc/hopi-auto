@@ -1515,10 +1515,12 @@ describe('Assistant HOPI tools', () => {
       effect: { kind: 'planning_created', mode: 'new_contract_revision' },
     })
     await fixture.tools.executeForEvent('EV-revise', 'hopi_manage_attention', {
-      projectId: 'P-1',
       change: {
         kind: 'resolve',
-        attentionId: attention.attributes.id,
+        attentionRef: workspaceAttentionReference(
+          (await fixture.workspace.readWorkspace()).homeId,
+          attention.attributes.id,
+        ),
         resolution: 'The accepted material revision is now represented by Planning.',
       },
     })
@@ -1544,12 +1546,11 @@ describe('Assistant HOPI tools', () => {
       'EV-project-repaired',
       'hopi_manage_attention',
       {
-        projectId: 'P-1',
         change: {
           kind: 'create',
+          target: 'project:P-1',
           attentionId,
           body: 'The managed integration root is invalid.',
-          refs: ['goal:G-1'],
         },
       },
     )
@@ -1557,10 +1558,9 @@ describe('Assistant HOPI tools', () => {
       'EV-project-repaired',
       'hopi_manage_attention',
       {
-        projectId: 'P-1',
         change: {
           kind: 'update',
-          attentionId,
+          attentionRef: workspaceAttentionReference(homeId, attentionId),
           body: 'The managed integration root must be verified.',
         },
       },
@@ -1570,10 +1570,9 @@ describe('Assistant HOPI tools', () => {
       'EV-project-repaired',
       'hopi_manage_attention',
       {
-        projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionId,
+          attentionRef: workspaceAttentionReference(homeId, attentionId),
           resolution,
         },
       },
@@ -1582,10 +1581,9 @@ describe('Assistant HOPI tools', () => {
       'EV-project-repaired',
       'hopi_manage_attention',
       {
-        projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionId,
+          attentionRef: workspaceAttentionReference(homeId, attentionId),
           resolution,
         },
       },
@@ -1623,7 +1621,7 @@ describe('Assistant HOPI tools', () => {
     ])
   })
 
-  test('does not route a Goal-local Attention through the Project Attention tool', async () => {
+  test('resolves a Goal-local Attention by canonical reference with Inbox Input provenance', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
@@ -1638,21 +1636,84 @@ describe('Assistant HOPI tools', () => {
       content: 'Resolve the old Goal Attention.',
     })
 
-    await expect(
-      fixture.tools.executeForEvent('EV-goal-attention', 'hopi_manage_attention', {
-        projectId: 'P-1',
+    const attentionRef = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
+    const result = await fixture.tools.executeForEvent(
+      'EV-goal-attention',
+      'hopi_manage_attention',
+      {
         change: {
           kind: 'resolve',
-          goalId: 'G-1',
-          attentionId: attention.attributes.id,
-          resolution: 'Resolved.',
+          attentionRef,
+          resolution: 'The accepted direction now clears the old condition.',
         },
-      }),
-    ).rejects.toThrow()
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
-        ?.attributes.resolvedAt,
-    ).toBeNull()
+      },
+    )
+    const repeated = await fixture.tools.executeForEvent(
+      'EV-goal-attention',
+      'hopi_manage_attention',
+      {
+        change: {
+          kind: 'resolve',
+          attentionRef,
+          resolution: 'The accepted direction now clears the old condition.',
+        },
+      },
+    )
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    const resolved = goalPackage.attentions.get(attention.attributes.id)
+    expect(result).toMatchObject({
+      changed: true,
+      value: {
+        attentionId: attention.attributes.id,
+        attentionRef,
+        resolved: true,
+      },
+    })
+    expect(resolved?.attributes.resolvedAt).not.toBeNull()
+    expect(resolved?.attributes.resolutionInput).toContain('EV-goal-attention.md')
+    expect(resolved?.body).toContain('The accepted direction now clears the old condition.')
+    expect(goalPackage.inputs).toHaveLength(1)
+    expect(repeated).toMatchObject({
+      changed: false,
+      value: {
+        attentionId: attention.attributes.id,
+        attentionRef,
+        resolved: true,
+        resolutionInput: resolved?.attributes.resolutionInput,
+      },
+    })
+  })
+
+  test('creates Goal-local Attention from one canonical Work target', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.workspace.receiveReflectionEvent({
+      eventId: 'EV-create-goal-attention',
+      content: 'The current Planning condition needs Assistant judgment.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+    const attentionId = 'A-planning-judgment'
+    const target = 'project:P-1/goal:G-1/work:plan-initial'
+    const attentionRef = goalAttentionReference('P-1', 'G-1', attentionId)
+
+    const created = await fixture.tools.executeForEvent(
+      'EV-create-goal-attention',
+      'hopi_manage_attention',
+      {
+        change: {
+          kind: 'create',
+          target,
+          attentionId,
+          body: 'Choose whether the current Planning contract remains valid.',
+        },
+      },
+    )
+    const attention = (await fixture.goalStore.readPackage('G-1')).attentions.get(attentionId)
+    expect(created).toMatchObject({
+      changed: true,
+      value: { attentionId, attentionRef, target, resolved: false },
+    })
+    expect(attention?.attributes).toMatchObject({ id: attentionId, target, resolvedAt: null })
   })
 
   test('explicitly requests deterministic Project recovery', async () => {
@@ -1698,10 +1759,12 @@ describe('Assistant HOPI tools', () => {
     })
 
     await fixture.tools.execute(token, 'hopi_manage_attention', {
-      projectId: 'P-1',
       change: {
         kind: 'resolve',
-        attentionId: attention.attributes.id,
+        attentionRef: workspaceAttentionReference(
+          (await fixture.workspace.readWorkspace()).homeId,
+          attention.attributes.id,
+        ),
         resolution: 'The new Planning run now represents the blocker.',
       },
     })

@@ -758,6 +758,10 @@ reference because local IDs may repeat across Goals or homes. The operator-visib
 payload is immutable from creation. Resolution may append its answering Input or clearing Evidence
 in the Markdown resolution section without changing the delivered notification. A materially
 different operator message resolves the old Attention as superseded and creates a new ID.
+Assistant mutation uses these canonical identities directly: create names a canonical Project,
+Goal, or Work target; edit or resolution names the complete canonical Attention reference. The tool
+locates Assistant-home versus Goal-package storage from that identity rather than exposing separate
+Attention APIs.
 
 Resolving targeted Attention and applying its effects uses one publication when `resolvedAt` is its
 only gate; it installs supporting effects first and the resolution last. Any additional gate is a

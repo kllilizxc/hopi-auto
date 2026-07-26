@@ -3,10 +3,20 @@ import {
   type InboxEventDocument,
   type WorkspaceAttentionDocument,
   isInternalInboxSource,
+  workspaceAttentionProjectId,
 } from '../domain/assistantWorkspaceDocuments'
-import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
-import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
+  goalAttentionReference,
+  parseAttentionReference,
+  workspaceAttentionReference,
+} from '../domain/attentionReference'
+import {
+  parseGoalAttentionTarget,
+  parseProjectAttentionTarget,
+  parseWorkAttentionTarget,
+} from '../domain/attentionTarget'
+import {
+  type AttentionDocument,
   type WorkDocument,
   isEngineeringWork,
   isPlanningWork,
@@ -992,96 +1002,233 @@ export function createAssistantTools(options: {
         }
         case 'hopi_manage_attention': {
           const args = parseAssistantToolArguments(name, input)
-          const project = requireProject(options.projects, args.projectId)
-          options.onProjectDispatchEffect?.(eventId, project.projectId)
           const change = args.change
-          const state = await options.workspace.readWorkspace()
-          const target = `project:${project.projectId}`
           if (change.kind === 'create') {
             const attentionId = change.attentionId ?? `A-${crypto.randomUUID()}`
-            const existing = state.attentions.get(attentionId)
+            const projectTarget = parseProjectAttentionTarget(change.target)
+            if (projectTarget) {
+              const project = requireProject(options.projects, projectTarget.projectId)
+              options.onProjectDispatchEffect?.(eventId, project.projectId)
+              const state = await options.workspace.readWorkspace()
+              const existing = state.attentions.get(attentionId)
+              if (existing) {
+                if (
+                  existing.attributes.target === change.target &&
+                  existing.attributes.resolvedAt === null &&
+                  existing.body.trim() === change.body.trim()
+                ) {
+                  return {
+                    summary: `Attention ${attentionId} was already current.`,
+                    changed: false,
+                    value: {
+                      attentionId,
+                      target: change.target,
+                      resolved: false,
+                      attentionRef: workspaceAttentionReference(state.homeId, attentionId),
+                    },
+                  }
+                }
+                throw new AssistantToolRequestError(`Attention already exists: ${attentionId}`)
+              }
+              const timestamp = now().toISOString()
+              const attention: WorkspaceAttentionDocument = {
+                attributes: {
+                  id: attentionId,
+                  target: change.target,
+                  createdAt: timestamp,
+                  updatedAt: timestamp,
+                  resolvedAt: null,
+                  refs: [change.target],
+                  notifiedAt: null,
+                  operatorRequest: null,
+                },
+                body: `${change.body.trim()}\n`,
+              }
+              await options.workspace.createAttention(attention)
+              return {
+                summary: `Created Attention ${attentionId}.`,
+                changed: true,
+                value: {
+                  attentionId,
+                  target: change.target,
+                  resolved: false,
+                  attentionRef: workspaceAttentionReference(state.homeId, attentionId),
+                },
+              }
+            }
+
+            const location = goalAttentionTargetLocation(change.target)
+            if (!location) {
+              throw new AssistantToolRequestError(`Unsupported Attention target: ${change.target}`)
+            }
+            const project = requireProject(options.projects, location.projectId)
+            options.onGoalEffect?.(eventId, project.projectId, location.goalId)
+            const goalPackage = await project.store.readPackage(location.goalId)
+            const existing = goalPackage.attentions.get(attentionId)
             if (existing) {
               if (
-                existing.attributes.target === target &&
+                existing.attributes.target === change.target &&
                 existing.attributes.resolvedAt === null &&
                 existing.body.trim() === change.body.trim()
               ) {
                 return {
-                  summary: `Project Attention ${attentionId} was already current.`,
+                  summary: `Attention ${attentionId} was already current.`,
                   changed: false,
                   value: {
                     attentionId,
+                    target: change.target,
                     resolved: false,
-                    attentionRef: workspaceAttentionReference(state.homeId, attentionId),
+                    attentionRef: goalAttentionReference(
+                      project.projectId,
+                      location.goalId,
+                      attentionId,
+                    ),
                   },
                 }
               }
               throw new AssistantToolRequestError(`Attention already exists: ${attentionId}`)
             }
             const timestamp = now().toISOString()
-            const attention: WorkspaceAttentionDocument = {
+            const attention: AttentionDocument = {
               attributes: {
                 id: attentionId,
-                target,
+                target: change.target,
                 createdAt: timestamp,
-                updatedAt: timestamp,
                 resolvedAt: null,
-                refs: [...new Set([target, ...change.refs])],
                 notifiedAt: null,
                 operatorRequest: null,
               },
               body: `${change.body.trim()}\n`,
             }
-            await options.workspace.createAttention(attention)
+            await project.store.publishGoal(location.goalId, {
+              supportingWrites: [],
+              gateWrite: {
+                path: project.store.paths.attentionDocument(location.goalId, attentionId),
+                expectedHash: null,
+                content: renderAttentionDocument(attention),
+              },
+            })
             return {
-              summary: `Created Project Attention ${attentionId}.`,
+              summary: `Created Attention ${attentionId}.`,
               changed: true,
               value: {
                 attentionId,
+                target: change.target,
                 resolved: false,
-                attentionRef: workspaceAttentionReference(state.homeId, attentionId),
+                attentionRef: goalAttentionReference(
+                  project.projectId,
+                  location.goalId,
+                  attentionId,
+                ),
               },
             }
           }
-          const attention = state.attentions.get(change.attentionId)
-          if (!attention || attention.attributes.target !== target) {
+
+          const parsedReference = parseAttentionReference(change.attentionRef)
+          if (!parsedReference) {
             throw new AssistantToolRequestError(
-              `Project Attention not found: ${change.attentionId}`,
+              `Invalid canonical Attention reference: ${change.attentionRef}`,
             )
           }
-          if (change.kind === 'update') {
-            if (change.body === undefined && change.refs === undefined) {
-              throw new AssistantToolRequestError('Attention update requires body or refs')
+          if (parsedReference.scope === 'workspace') {
+            const state = await options.workspace.readWorkspace()
+            if (parsedReference.homeId !== state.homeId) {
+              throw new AssistantToolRequestError(
+                `Attention belongs to another Assistant Home: ${change.attentionRef}`,
+              )
             }
-            const updated = await options.workspace.updateAttention(change.attentionId, {
-              ...(change.body !== undefined ? { body: change.body } : {}),
-              ...(change.refs !== undefined
-                ? { refs: [...new Set([target, ...change.refs])] }
-                : {}),
-              updatedAt: now(),
-            })
+            const attention = state.attentions.get(parsedReference.attentionId)
+            if (!attention) {
+              throw new AssistantToolRequestError(`Attention not found: ${change.attentionRef}`)
+            }
+            const projectId = workspaceAttentionProjectId(attention)
+            if (projectId) {
+              requireProject(options.projects, projectId)
+              options.onProjectDispatchEffect?.(eventId, projectId)
+            }
+            if (change.kind === 'update') {
+              const updated = await options.workspace.updateAttention(parsedReference.attentionId, {
+                body: change.body,
+                updatedAt: now(),
+              })
+              return {
+                summary: `Updated Attention ${parsedReference.attentionId}.`,
+                changed: true,
+                value: {
+                  attentionId: parsedReference.attentionId,
+                  target: updated.attributes.target,
+                  resolved: updated.attributes.resolvedAt !== null,
+                  attentionRef: change.attentionRef,
+                  updatedAt: updated.attributes.updatedAt,
+                },
+              }
+            }
+            const changed = attention.attributes.resolvedAt === null
+            if (changed) {
+              await options.workspace.resolveAttention(
+                parsedReference.attentionId,
+                change.resolution,
+                now(),
+              )
+            }
             return {
-              summary: `Updated Project Attention ${change.attentionId}.`,
-              changed: true,
+              summary: `Resolved Attention ${parsedReference.attentionId}.`,
+              changed,
               value: {
-                attentionId: change.attentionId,
-                resolved: updated.attributes.resolvedAt !== null,
-                attentionRef: workspaceAttentionReference(state.homeId, change.attentionId),
-                updatedAt: updated.attributes.updatedAt,
+                attentionId: parsedReference.attentionId,
+                target: attention.attributes.target,
+                resolved: true,
+                attentionRef: change.attentionRef,
               },
             }
           }
-          const changed = attention.attributes.resolvedAt === null
-          if (changed) {
-            await options.workspace.resolveAttention(change.attentionId, change.resolution, now())
+
+          if (change.kind === 'update') {
+            throw new AssistantToolRequestError('Goal Attention rationale is immutable')
           }
+          const project = requireProject(options.projects, parsedReference.projectId)
+          options.onGoalEffect?.(eventId, project.projectId, parsedReference.goalId)
+          const goalPackage = await project.store.readPackage(parsedReference.goalId)
+          const attention = goalPackage.attentions.get(parsedReference.attentionId)
+          if (!attention) {
+            throw new AssistantToolRequestError(`Attention not found: ${change.attentionRef}`)
+          }
+          if (attention.attributes.resolvedAt !== null) {
+            return {
+              summary: `Attention ${parsedReference.attentionId} was already resolved.`,
+              changed: false,
+              value: {
+                attentionId: parsedReference.attentionId,
+                target: attention.attributes.target,
+                resolved: true,
+                attentionRef: change.attentionRef,
+                resolutionInput: attention.attributes.resolutionInput ?? null,
+              },
+            }
+          }
+          const admission = await goalInputAdmission(
+            options.workspace,
+            project.store,
+            parsedReference.goalId,
+            event,
+          )
+          const changed = await resolveGoalAttention(
+            project.store,
+            parsedReference.goalId,
+            parsedReference.attentionId,
+            change.resolution,
+            admission,
+            now(),
+          )
           return {
-            summary: `Resolved Project Attention ${change.attentionId}.`,
+            summary: `Resolved Attention ${parsedReference.attentionId}.`,
             changed,
             value: {
-              attentionId: change.attentionId,
+              attentionId: parsedReference.attentionId,
+              target: attention.attributes.target,
               resolved: true,
-              attentionRef: workspaceAttentionReference(state.homeId, change.attentionId),
+              attentionRef: change.attentionRef,
+              resolutionInput: admission.path,
             },
           }
         }
@@ -1591,6 +1738,13 @@ async function resolveGoalAttention(
     },
   })
   return true
+}
+
+function goalAttentionTargetLocation(target: string) {
+  const goal = parseGoalAttentionTarget(target)
+  if (goal) return goal
+  const work = parseWorkAttentionTarget(target)
+  return work ? { projectId: work.projectId, goalId: work.goalId } : null
 }
 
 function requireProject(projects: ReadonlyMap<string, AssistantToolProject>, projectId: string) {

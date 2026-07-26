@@ -1,4 +1,10 @@
 import { z } from 'zod'
+import { parseAttentionReference } from '../domain/attentionReference'
+import {
+  parseGoalAttentionTarget,
+  parseProjectAttentionTarget,
+  parseWorkAttentionTarget,
+} from '../domain/attentionTarget'
 import { isNormalizedProjectPath } from '../domain/projectPath'
 import { stableIdSchema } from '../domain/stableId'
 
@@ -61,6 +67,30 @@ const projectRepoSchema = z
     projectPath: z.string().refine(isNormalizedProjectPath).optional(),
   })
   .strict()
+
+const attentionTargetSchema = z
+  .string()
+  .refine(
+    (target) =>
+      Boolean(
+        parseProjectAttentionTarget(target) ||
+          parseGoalAttentionTarget(target) ||
+          parseWorkAttentionTarget(target),
+      ),
+    'Attention target must be one canonical Project, Goal, or Work reference',
+  )
+
+const attentionReferenceSchema = z
+  .string()
+  .refine(
+    (reference) => parseAttentionReference(reference) !== null,
+    'attentionRef must be canonical',
+  )
+
+const workspaceAttentionReferenceSchema = attentionReferenceSchema.refine(
+  (reference) => parseAttentionReference(reference)?.scope === 'workspace',
+  'Only Assistant-home Attention can be edited',
+)
 
 const planningWorkSchema = z.discriminatedUnion('mode', [
   z.object({ kind: z.literal('planning'), mode: z.literal('same_contract') }).strict(),
@@ -258,28 +288,26 @@ export const assistantToolSchemas = {
     .strict(),
   hopi_manage_attention: z
     .object({
-      projectId: stableIdSchema,
       change: z.discriminatedUnion('kind', [
         z
           .object({
             kind: z.literal('create'),
+            target: attentionTargetSchema,
             attentionId: stableIdSchema.optional(),
             body: z.string().trim().min(1).max(16_000),
-            refs: z.array(z.string().trim().min(1)).default([]),
           })
           .strict(),
         z
           .object({
             kind: z.literal('update'),
-            attentionId: stableIdSchema,
-            body: z.string().trim().min(1).max(16_000).optional(),
-            refs: z.array(z.string().trim().min(1)).optional(),
+            attentionRef: workspaceAttentionReferenceSchema,
+            body: z.string().trim().min(1).max(16_000),
           })
           .strict(),
         z
           .object({
             kind: z.literal('resolve'),
-            attentionId: stableIdSchema,
+            attentionRef: attentionReferenceSchema,
             resolution: z.string().trim().min(1).max(2_000),
           })
           .strict(),

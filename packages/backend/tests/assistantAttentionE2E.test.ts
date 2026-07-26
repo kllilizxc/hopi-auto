@@ -3,6 +3,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
 import type { WorkspaceAttentionDocument } from '../src/domain/assistantWorkspaceDocuments'
+import { workspaceAttentionReference } from '../src/domain/attentionReference'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { type MvpRuntime, createMvpRuntime } from '../src/runtime/mvpRuntime'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -138,10 +139,9 @@ describe('Project Assistant wake and Attention E2E', () => {
         context: { projectId: 'P-1' },
       })
       await runtime.assistantTools.executeForEvent('EV-settle', 'hopi_manage_attention', {
-        projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionId: 'A-choice',
+          attentionRef: workspaceAttentionReference(homeId, 'A-choice'),
           resolution: 'Choice B was applied.',
         },
       })
