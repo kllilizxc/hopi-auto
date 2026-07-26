@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { stringify } from 'yaml'
+import { readAssistantConversationEpoch } from '../src/assistant/assistantConversationEpoch'
 import {
   inboxSourceDigest,
   renderInboxEventDocument,
@@ -96,6 +97,15 @@ describe('Project reset maintenance', () => {
       true,
     )
     expect(await exists(result.manifestPath)).toBe(true)
+    expect(
+      await readAssistantConversationEpoch(fixture.homeRoot, {
+        kind: 'project',
+        projectId: 'P-1',
+      }),
+    ).toMatchObject({
+      streamId: result.conversationStreamId,
+      removedFeedEntryIds: ['event:EV-P1'],
+    })
     expect(await Bun.file(join(fixture.homeRoot, '.hopi/projects.yml')).text()).toContain(
       'projectId: P-1',
     )
@@ -108,6 +118,15 @@ describe('Project reset maintenance', () => {
     expect(repeated.releaseCommit).toBeNull()
     expect(repeated.plan.goals.ids).toEqual([])
     expect(repeated.plan.assistant.eventIds).toEqual([])
+    expect(
+      await readAssistantConversationEpoch(fixture.homeRoot, {
+        kind: 'project',
+        projectId: 'P-1',
+      }),
+    ).toMatchObject({
+      streamId: repeated.conversationStreamId,
+      removedFeedEntryIds: ['event:EV-P1'],
+    })
   })
 
   test('blocks an Attention that belongs to more than one Project before mutation', async () => {

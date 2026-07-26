@@ -161,6 +161,11 @@ must be stopped first. The command validates the complete reset plan before chan
 Attention that refers to both the target Project and another Project makes the plan ambiguous and
 must be resolved before reset.
 
+Each Assistant conversation feed carries a persistent stream generation. Reset replaces the target
+Project generation after removing its history. A client polling with an older generation receives
+the complete current baseline and atomically replaces its cached history; operators do not need to
+reload a tab or clear browser storage.
+
 This boundary is intentionally outside ordinary publication validation: historical deletion would
 be invalid during normal product operation, while reset is a deliberate offline replacement of that
 history. The command records a reset manifest under Assistant runtime storage for audit, but active

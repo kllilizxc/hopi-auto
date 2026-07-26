@@ -34,6 +34,7 @@ export interface AssistantFeedSyncState {
   removedIds: string[]
   requests: AssistantOpenRequest[]
   activity: AssistantFeedActivity | null
+  streamId: string | null
 }
 
 export function useAssistantFeedStream({
@@ -54,6 +55,7 @@ export function useAssistantFeedStream({
     [historySnapshotKey],
   )
   const cursorRef = useRef<string | null | undefined>(undefined)
+  const streamIdRef = useRef<string | null>(null)
   const initializedScopeRef = useRef<string | null>(null)
   const [syncState, setSyncState] = useState<AssistantFeedSyncState>(() =>
     emptyAssistantFeedSyncState(scopeKey),
@@ -87,6 +89,7 @@ export function useAssistantFeedStream({
     if (!initialPage || initializedScopeRef.current === scopeKey) return
     initializedScopeRef.current = scopeKey
     cursorRef.current = initialPage.syncCursor ?? null
+    streamIdRef.current = initialPage.streamId ?? null
     setSyncState({
       scopeKey,
       initialized: true,
@@ -94,12 +97,14 @@ export function useAssistantFeedStream({
       removedIds: [],
       requests: initialPage.requests ?? [],
       activity: initialPage.activity,
+      streamId: initialPage.streamId ?? null,
     })
   }, [initialPage, scopeKey])
 
   const changesQuery = useQuery({
     queryKey: ['assistant-feed', scopeKey, 'changes'],
-    queryFn: () => readAssistantFeedChanges(cursorRef.current ?? null, projectId),
+    queryFn: () =>
+      readAssistantFeedChanges(cursorRef.current ?? null, projectId, streamIdRef.current),
     enabled: enabled && currentSyncState.initialized,
     refetchInterval: enabled ? refetchInterval : false,
     notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
@@ -109,27 +114,32 @@ export function useAssistantFeedStream({
     const changes = changesQuery.data
     if (!changes) return
     cursorRef.current = changes.syncCursor
+    streamIdRef.current = changes.streamId
     queryClient.setQueryData<InfiniteData<AssistantFeedPage, string | null>>(
       historyQueryKey,
       (current) => mergeAssistantChangesIntoHistory(current, changes),
     )
-    setSyncState((current) => ({
-      scopeKey,
-      initialized: true,
-      items: mergeAssistantFeedEntries(
-        current.scopeKey === scopeKey ? current.items : [],
-        changes.items,
-        changes.removedIds,
-      ),
-      removedIds: [
-        ...new Set([
-          ...(current.scopeKey === scopeKey ? current.removedIds : []),
-          ...changes.removedIds,
-        ]),
-      ],
-      requests: changes.requests ?? (current.scopeKey === scopeKey ? current.requests : []),
-      activity: changes.activity,
-    }))
+    setSyncState((current) =>
+      current.scopeKey === scopeKey && current.streamId === changes.streamId
+        ? {
+            scopeKey,
+            initialized: true,
+            items: mergeAssistantFeedEntries(current.items, changes.items, changes.removedIds),
+            removedIds: [...new Set([...current.removedIds, ...changes.removedIds])],
+            requests: changes.requests,
+            activity: changes.activity,
+            streamId: changes.streamId,
+          }
+        : {
+            scopeKey,
+            initialized: true,
+            items: changes.items,
+            removedIds: [],
+            requests: changes.requests,
+            activity: changes.activity,
+            streamId: changes.streamId,
+          },
+    )
   }, [changesQuery.data, historyQueryKey, queryClient, scopeKey])
 
   const items = useMemo(() => {
@@ -156,6 +166,7 @@ export function useAssistantFeedStream({
         requests: currentSyncState.requests,
         activity,
         syncCursor: cursorRef.current ?? newestPage.syncCursor,
+        streamId: currentSyncState.streamId ?? newestPage.streamId,
         pageInfo: {
           oldestCursor: oldestPage?.pageInfo.oldestCursor ?? null,
           newestCursor: newestPage.pageInfo.newestCursor,
@@ -166,7 +177,15 @@ export function useAssistantFeedStream({
       })
     }, 250)
     return () => window.clearTimeout(timeout)
-  }, [activity, currentSyncState.requests, historySnapshotKey, items, newestPage, oldestPage])
+  }, [
+    activity,
+    currentSyncState.requests,
+    currentSyncState.streamId,
+    historySnapshotKey,
+    items,
+    newestPage,
+    oldestPage,
+  ])
 
   const loadOlder = useCallback(() => {
     if (!historyQuery.hasNextPage || historyQuery.isFetchingNextPage) return
@@ -213,6 +232,7 @@ function emptyAssistantFeedSyncState(scopeKey: string): AssistantFeedSyncState {
     removedIds: [],
     requests: [],
     activity: null,
+    streamId: null,
   }
 }
 

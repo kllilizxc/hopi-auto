@@ -40,6 +40,7 @@ test('retains Assistant changes in cached history for the next mount', () => {
     requests: [],
     activity: null,
     syncCursor: 'old-sync',
+    streamId: 'stream-1',
     pageInfo: {
       oldestCursor: 'before-old',
       newestCursor: 'after-old',
@@ -57,6 +58,7 @@ test('retains Assistant changes in cached history for the next mount', () => {
       requests: [{ eventId: 'EV-request', attentions: [] }],
       activity: { phase: 'working' },
       syncCursor: 'new-sync',
+      streamId: 'stream-1',
     },
   )
 
@@ -74,6 +76,7 @@ test('drops all in-memory Feed state when the Assistant scope changes', () => {
     removedIds: ['old-event-a'],
     requests: [{ eventId: 'event-a', attentions: [] }],
     activity: { phase: 'working' },
+    streamId: 'stream-a',
   }
 
   expect(assistantFeedSyncStateForScope(projectAState, 'project-a')).toBe(projectAState)
@@ -84,6 +87,49 @@ test('drops all in-memory Feed state when the Assistant scope changes', () => {
     removedIds: [],
     requests: [],
     activity: null,
+    streamId: null,
+  })
+})
+
+test('replaces cached Assistant history when its persistent stream changes', () => {
+  const old = eventEntry('event:old', '2026-07-16T09:00:00.000Z', 'completed')
+  const current = eventEntry('event:current', '2026-07-16T09:01:00.000Z', 'completed')
+  const page: AssistantFeedPage = {
+    items: [old],
+    requests: [],
+    activity: null,
+    syncCursor: 'old-sync',
+    streamId: 'stream-before-reset',
+    pageInfo: {
+      oldestCursor: 'before-old',
+      newestCursor: 'after-old',
+      hasOlder: true,
+      hasNewer: false,
+      totalCount: 20,
+    },
+  }
+
+  const replaced = mergeAssistantChangesIntoHistory(
+    { pages: [page], pageParams: [null] },
+    {
+      items: [current],
+      removedIds: [],
+      requests: [],
+      activity: null,
+      syncCursor: 'new-sync',
+      streamId: 'stream-after-reset',
+    },
+  )
+
+  expect(replaced?.pages).toHaveLength(1)
+  expect(replaced?.pages[0]?.items).toEqual([current])
+  expect(replaced?.pages[0]?.streamId).toBe('stream-after-reset')
+  expect(replaced?.pages[0]?.pageInfo).toEqual({
+    oldestCursor: null,
+    newestCursor: null,
+    hasOlder: false,
+    hasNewer: false,
+    totalCount: 1,
   })
 })
 

@@ -232,6 +232,7 @@ export interface AssistantFeedPage extends CursorPage<AssistantFeedEntry> {
   requests: AssistantOpenRequest[]
   activity: AssistantFeedActivity | null
   syncCursor: string | null
+  streamId: string
 }
 
 export interface AssistantFeedChanges {
@@ -240,6 +241,7 @@ export interface AssistantFeedChanges {
   requests: AssistantOpenRequest[]
   activity: AssistantFeedActivity | null
   syncCursor: string | null
+  streamId: string
 }
 
 export interface AppSnapshot {

@@ -1,9 +1,5 @@
 import { expect, test } from 'bun:test'
-import {
-  readAssistantFeedChanges,
-  readState,
-  updateAgentRoleSettings,
-} from './apiClient'
+import { readAssistantFeedChanges, readState, updateAgentRoleSettings } from './apiClient'
 
 test('turns a transport failure into an actionable backend recovery message', async () => {
   const originalFetch = globalThis.fetch
@@ -29,17 +25,18 @@ test('requests mutable Assistant changes from the independent synchronization cu
       requests: [],
       activity: null,
       syncCursor: null,
+      streamId: 'stream-1',
     })
   }) as typeof fetch
 
   try {
-    await readAssistantFeedChanges('2026-07-16T12:00:00.000Z', 'P-1')
+    await readAssistantFeedChanges('2026-07-16T12:00:00.000Z', 'P-1', 'stream-1')
   } finally {
     globalThis.fetch = originalFetch
   }
 
   expect(observed).toBe(
-    '/api/assistant/feed/changes?cursor=2026-07-16T12%3A00%3A00.000Z&projectId=P-1',
+    '/api/assistant/feed/changes?cursor=2026-07-16T12%3A00%3A00.000Z&projectId=P-1&streamId=stream-1',
   )
 })
 

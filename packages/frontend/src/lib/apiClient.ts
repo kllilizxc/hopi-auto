@@ -10,9 +10,9 @@ import type {
   GoalDocumentView,
   GoalExecutionCost,
   PreviewStartResult,
-  ProjectRebindPlan,
   ProjectCodingDefaults,
   ProjectDirectorySelection,
+  ProjectRebindPlan,
   ReflectionRunSummary,
   RunAttemptDetail,
   RunAttemptEvent,
@@ -73,10 +73,15 @@ export function readAssistantFeed(input: CursorPageRequest & AssistantScopeReque
   return apiRequest<AssistantFeedPage>(withPage('/api/assistant/feed', input, input.projectId))
 }
 
-export function readAssistantFeedChanges(cursor: string | null, projectId?: string) {
+export function readAssistantFeedChanges(
+  cursor: string | null,
+  projectId?: string,
+  streamId?: string | null,
+) {
   const query = new URLSearchParams()
   if (cursor) query.set('cursor', cursor)
   if (projectId) query.set('projectId', projectId)
+  if (streamId) query.set('streamId', streamId)
   const suffix = query.toString()
   return apiRequest<AssistantFeedChanges>(
     `/api/assistant/feed/changes${suffix ? `?${suffix}` : ''}`,

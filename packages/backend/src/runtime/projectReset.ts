@@ -1,11 +1,13 @@
 import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { resetProjectAssistantConversationEpoch } from '../assistant/assistantConversationEpoch'
 import { assistantConversationScopeForEvent } from '../assistant/assistantConversationScope'
 import { createAssistantWorkspacePaths } from '../domain/assistantWorkspace'
 import {
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
 } from '../domain/assistantWorkspaceDocuments'
+import { goalAttentionReference } from '../domain/attentionReference'
 import { projectReleaseRef } from '../domain/project'
 import { assertStableId } from '../domain/stableId'
 import { acquireCoordinatorInstanceLock } from '../publication/instanceLock'
@@ -37,6 +39,7 @@ export interface ProjectResetPlan {
     attentionIds: string[]
     orphanAttachments: string[]
     turnRoots: string[]
+    feedEntryIds: string[]
   }
   runtime: {
     runRoots: string[]
@@ -51,6 +54,7 @@ export interface ProjectResetResult {
   kind: 'reset'
   projectId: string
   releaseCommit: string | null
+  conversationStreamId: string
   manifestPath: string
   plan: ProjectResetPlan
 }
@@ -140,6 +144,22 @@ export async function planProjectReset(input: {
     const goalId = path.slice(`${GOALS_ROOT}/`.length).split('/')[0]
     if (goalId) goalIds.add(goalId)
   }
+  const goalAttentionFeedEntryIds = (
+    await Promise.all(
+      [...goalIds].map(async (goalId) =>
+        (
+          await markdownFiles(join(goalsRoot, goalId, 'attention'))
+        ).map((path) => {
+          const attentionId = basename(path, '.md')
+          return `completion:${goalAttentionReference(projectId, goalId, attentionId)}`
+        }),
+      ),
+    )
+  ).flat()
+  assistantState.feedEntryIds = [
+    ...assistantState.eventIds.map((eventId) => `event:${eventId}`),
+    ...goalAttentionFeedEntryIds,
+  ].toSorted()
 
   return {
     version: 1,
@@ -220,6 +240,12 @@ export async function applyProjectReset(input: {
     ])
 
     await removeEmptyAttachmentDirectories(homeRoot, plan.assistant.orphanAttachments)
+    const priorRemovedFeedEntryIds = await readPriorResetFeedEntryIds(homeRoot, plan.projectId)
+    const conversationEpoch = await resetProjectAssistantConversationEpoch({
+      homeRoot,
+      projectId: plan.projectId,
+      removedFeedEntryIds: [...priorRemovedFeedEntryIds, ...plan.assistant.feedEntryIds],
+    })
 
     const manifestPath = join(
       homeRoot,
@@ -238,6 +264,7 @@ export async function applyProjectReset(input: {
           projectId: plan.projectId,
           appliedAt: new Date().toISOString(),
           releaseCommit,
+          conversationStreamId: conversationEpoch.streamId,
           plan,
         },
         null,
@@ -249,6 +276,7 @@ export async function applyProjectReset(input: {
       kind: 'reset',
       projectId: plan.projectId,
       releaseCommit,
+      conversationStreamId: conversationEpoch.streamId,
       manifestPath,
       plan,
     }
@@ -331,6 +359,7 @@ async function inspectAssistantState(
     turnRoots: eventIds.map((eventId) =>
       join(homeRoot, '.hopi', 'runtime', 'assistant', 'turns', eventId),
     ),
+    feedEntryIds: [] as string[],
   }
 }
 
@@ -423,6 +452,35 @@ async function matchingManifestRoots(
     if (isRecord(manifest) && matches(manifest)) result.push(dirname(absolute))
   }
   return result
+}
+
+async function readPriorResetFeedEntryIds(homeRoot: string, projectId: string) {
+  const root = join(homeRoot, '.hopi', 'runtime', 'project-resets')
+  if (!(await pathExists(root))) return []
+  const ids = new Set<string>()
+  const glob = new Bun.Glob('*.json')
+  for await (const fileName of glob.scan({ cwd: root, onlyFiles: true })) {
+    const manifest = await Bun.file(join(root, fileName))
+      .json()
+      .catch(() => null)
+    if (!isRecord(manifest) || manifest.projectId !== projectId || !isRecord(manifest.plan)) {
+      continue
+    }
+    const assistant = isRecord(manifest.plan.assistant) ? manifest.plan.assistant : null
+    if (!assistant) continue
+    if (Array.isArray(assistant.feedEntryIds)) {
+      for (const id of assistant.feedEntryIds) {
+        if (typeof id === 'string' && id) ids.add(id)
+      }
+      continue
+    }
+    if (Array.isArray(assistant.eventIds)) {
+      for (const eventId of assistant.eventIds) {
+        if (typeof eventId === 'string' && eventId) ids.add(`event:${eventId}`)
+      }
+    }
+  }
+  return [...ids].toSorted()
 }
 
 async function listGitWorktrees(repoPath: string) {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resetProjectAssistantConversationEpoch } from '../src/assistant/assistantConversationEpoch'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
 import {
@@ -2192,6 +2193,24 @@ describe('MVP server', () => {
     expect((initialHome.items as Array<{ id: string }>).map(({ id }) => id)).toEqual([
       'event:EV-home-scope',
     ])
+
+    await resetProjectAssistantConversationEpoch({
+      homeRoot,
+      projectId: 'P-1',
+      removedFeedEntryIds: ['event:EV-cached-before-reset'],
+      now: new Date('2026-07-16T09:00:00.000Z'),
+    })
+    const resetChanges = await request(
+      base,
+      `/api/assistant/feed/changes?projectId=P-1&cursor=${encodeURIComponent(
+        String(projectFeed.syncCursor),
+      )}&streamId=${encodeURIComponent(String(projectFeed.streamId))}`,
+    )
+    expect(resetChanges.streamId).not.toBe(projectFeed.streamId)
+    expect(resetChanges.removedIds).toContain('event:EV-cached-before-reset')
+    expect((resetChanges.items as Array<{ id: string }>).map(({ id }) => id)).toContain(
+      `event:${projectReceipt.eventId}`,
+    )
   })
 
   test('does not let another Project advance a cached Project feed past a delayed event', async () => {

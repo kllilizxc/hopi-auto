@@ -8,6 +8,7 @@ import {
   type AgentRuntimeEvent,
   isPresentableAgentRuntimeEvent,
 } from './agent/runtimeEvents'
+import { readAssistantConversationEpoch } from './assistant/assistantConversationEpoch'
 import {
   type AssistantConversationScope,
   assistantConversationScopeKey,
@@ -291,6 +292,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
               runtime,
               readAssistantChangeCursor(url),
               readAssistantConversationScope(runtime, url),
+              url.searchParams.get('streamId')?.trim() || null,
             ),
           )
         }
@@ -1073,6 +1075,7 @@ async function presentAssistantFeed(
     requests: projection.requests,
     activity: projection.activity,
     syncCursor: projection.syncCursor,
+    streamId: projection.streamId,
   }
 }
 
@@ -1080,9 +1083,13 @@ async function presentAssistantFeedChanges(
   runtime: MvpRuntime,
   cursor: string | null,
   scope: AssistantConversationScope,
+  clientStreamId: string | null,
 ) {
   const projection = await readAssistantFeedProjection(runtime, scope)
-  const replayFrom = cursor ? Date.parse(cursor) - 1 : null
+  const replayFrom =
+    cursor && (!clientStreamId || clientStreamId === projection.streamId)
+      ? Date.parse(cursor) - 1
+      : null
   const changed =
     replayFrom !== null
       ? projection.entries.filter((entry) => Date.parse(entry.updatedAt) >= replayFrom)
@@ -1096,11 +1103,15 @@ async function presentAssistantFeedChanges(
     requests: projection.requests,
     activity: projection.activity,
     syncCursor: projection.syncCursor,
+    streamId: projection.streamId,
   }
 }
 
 async function readAssistantFeedProjection(runtime: MvpRuntime, scope: AssistantConversationScope) {
-  const workspace = await runtime.workspace.readWorkspace()
+  const [workspace, conversationEpoch] = await Promise.all([
+    runtime.workspace.readWorkspace(),
+    readAssistantConversationEpoch(runtime.homeRoot, scope),
+  ])
   const attentions = await readScopedAssistantAttentions(runtime, scope, workspace)
   const completions = attentions.filter((attention) => attention.target === null)
   const requests = projectAssistantOpenRequests(workspace.homeId, workspace.events, attentions)
@@ -1193,11 +1204,19 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       completion,
     }
   })
-  const removals = eventEntries.flatMap((entry) => {
-    if (!entry.completion) return []
-    const reference = eventCompletionReferences.get(entry.event.attributes.id)
-    return reference ? [{ id: `completion:${reference}`, updatedAt: entry.updatedAt }] : []
-  })
+  const removals = [
+    ...eventEntries.flatMap((entry) => {
+      if (!entry.completion) return []
+      const reference = eventCompletionReferences.get(entry.event.attributes.id)
+      return reference ? [{ id: `completion:${reference}`, updatedAt: entry.updatedAt }] : []
+    }),
+    ...(conversationEpoch.resetAt
+      ? conversationEpoch.removedFeedEntryIds.map((id) => ({
+          id,
+          updatedAt: conversationEpoch.resetAt as string,
+        }))
+      : []),
+  ]
   const allEntries = [
     ...eventEntries,
     ...completions
@@ -1239,13 +1258,15 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       ),
       reflectionRunning: scope.kind === 'home' && runtime.reflection.isActive(),
     }),
-    syncCursor: allEntries
-      .map(({ updatedAt }) => updatedAt)
-      .reduce<string | null>(
-        (latest, timestamp) =>
-          !latest || Date.parse(timestamp) > Date.parse(latest) ? timestamp : latest,
-        null,
-      ),
+    syncCursor: [
+      ...allEntries.map(({ updatedAt }) => updatedAt),
+      ...(conversationEpoch.resetAt ? [conversationEpoch.resetAt] : []),
+    ].reduce<string | null>(
+      (latest, timestamp) =>
+        !latest || Date.parse(timestamp) > Date.parse(latest) ? timestamp : latest,
+      null,
+    ),
+    streamId: conversationEpoch.streamId,
   }
 }
 

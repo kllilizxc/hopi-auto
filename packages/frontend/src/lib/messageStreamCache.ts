@@ -94,6 +94,27 @@ export function mergeAssistantChangesIntoHistory(
 ) {
   const newestPage = current?.pages[0]
   if (!current || !newestPage) return current
+  if (newestPage.streamId !== changes.streamId) {
+    return {
+      pages: [
+        {
+          items: changes.items,
+          requests: changes.requests,
+          activity: changes.activity,
+          syncCursor: changes.syncCursor,
+          streamId: changes.streamId,
+          pageInfo: {
+            oldestCursor: null,
+            newestCursor: null,
+            hasOlder: false,
+            hasNewer: false,
+            totalCount: changes.items.length,
+          },
+        },
+      ],
+      pageParams: [null],
+    }
+  }
   const removed = new Set(changes.removedIds)
   const existingIds = new Set(current.pages.flatMap((page) => page.items.map((entry) => entry.id)))
   const removedCount = changes.removedIds.filter((id) => existingIds.has(id)).length
@@ -114,6 +135,7 @@ export function mergeAssistantChangesIntoHistory(
     requests: changes.requests ?? pages[0].requests ?? [],
     activity: changes.activity,
     syncCursor: changes.syncCursor,
+    streamId: changes.streamId,
     pageInfo: {
       ...pages[0].pageInfo,
       hasNewer: false,
