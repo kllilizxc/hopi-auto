@@ -670,7 +670,7 @@ describe('CoordinatorReconciler', () => {
     }
   })
 
-  test('admits independent Generator Work from the same Goal on successive ticks', async () => {
+  test('fills Generator capacity with independent Work from the same Goal', async () => {
     const fixture = await workspaceFixture()
     const goalPackage = engineeringPackage('G-1')
     const firstWork = goalPackage.works.get('W-1')
@@ -733,13 +733,16 @@ describe('CoordinatorReconciler', () => {
       ],
     })
 
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    coordinator.start()
+    for (let attempt = 0; attempt < 100 && live.size < 2; attempt += 1) {
+      await Bun.sleep(1)
+    }
     expect([...live]).toEqual(['W-1', 'W-2'])
 
+    const stopping = coordinator.stop()
     finish.get('W-1')?.()
     finish.get('W-2')?.()
-    await coordinator.waitForIdle()
+    await stopping
   })
 
   test('reports settled Reflection eligibility only after responsibility progress drains', async () => {

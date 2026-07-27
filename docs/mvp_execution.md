@@ -1461,7 +1461,7 @@ Concurrency rules:
 - read-only work may run in parallel
 - independent writers require separate Work and worktrees
 - independent same-Goal Generator Runs may execute in parallel within profile capacity; Coordinator
-  may admit them on successive reconciliation ticks
+  admits one Work per Goal in a tick, then immediately reconciles again to fill remaining capacity
 - same-revision Planning and Engineering use independent Work leases and may run concurrently;
   changed selected authority makes the losing result stale
 - a material contract revision interrupts already admitted Runs for that Goal after the revision is

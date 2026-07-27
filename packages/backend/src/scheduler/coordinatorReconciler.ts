@@ -231,12 +231,8 @@ export function createCoordinatorReconciler(
           if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
             const workspace = await options.workspace.readWorkspaceForControl()
             if (
-              eligiblePendingEvents(
-                workspace,
-                assistantActive,
-                assistantRetries,
-                now().getTime(),
-              ).length === 0
+              eligiblePendingEvents(workspace, assistantActive, assistantRetries, now().getTime())
+                .length === 0
             ) {
               await options.reflection.observe({
                 settled:
@@ -249,6 +245,7 @@ export function createCoordinatorReconciler(
             epoch === reconcileEpoch &&
             (result.kind === 'assistant_started' ||
               result.kind === 'deterministic_action' ||
+              result.kind === 'passes_started' ||
               result.kind === 'delivery')
           ) {
             wakePending = true
@@ -346,12 +343,7 @@ export function createCoordinatorReconciler(
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const passCounts = reservationPassCounts(reservations)
     const candidates: GoalCandidate[] = []
-    let nextWakeAt = nextAssistantRetryAt(
-      workspace,
-      assistantActive,
-      assistantRetries,
-      observedAt,
-    )
+    let nextWakeAt = nextAssistantRetryAt(workspace, assistantActive, assistantRetries, observedAt)
     for (const project of options.projects) {
       if (!eligibleProjects.has(project.projectId)) continue
       try {
