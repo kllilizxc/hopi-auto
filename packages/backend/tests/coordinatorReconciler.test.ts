@@ -373,7 +373,7 @@ describe('CoordinatorReconciler', () => {
     })
   })
 
-  test('surfaces a failed internal Assistant wake without creating Attention', async () => {
+  test('keeps a failed internal Assistant wake pending and resumes it after restart', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveReflectionEvent({
       eventId: 'EV-reflection-failed',
@@ -394,19 +394,48 @@ describe('CoordinatorReconciler', () => {
 
     await coordinator.reconcileOnce()
     await coordinator.waitForIdle()
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    expect(await coordinator.reconcileOnce()).toMatchObject({
+      kind: 'idle',
+      nextWakeAt: expect.any(Number),
+    })
     const workspace = await fixture.workspace.readWorkspace()
     const event = workspace.events.get('EV-reflection-failed')
 
     expect(calls).toBe(1)
     expect(event?.attributes).toMatchObject({
       source: 'reflection',
-      visibility: 'public',
-      status: 'handled',
-      disposition: 'operational-failed',
-      reply: 'Assistant unavailable: speaking transport failed',
+      visibility: 'internal',
+      status: 'pending',
     })
     expect(workspace.attentions.size).toBe(0)
+
+    const restarted = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process(eventId) {
+          calls += 1
+          await fixture.workspace.handleEvent(eventId, {
+            reply: 'Recovered after restart.',
+            disposition: 'notified',
+            expose: true,
+          })
+          return { kind: 'answered' as const, eventId }
+        },
+      },
+      attentions: fixture.attentions,
+      projects: [],
+    })
+
+    expect(await restarted.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    await restarted.waitForIdle()
+    expect(calls).toBe(2)
+    expect(
+      (await fixture.workspace.readWorkspace()).events.get('EV-reflection-failed')?.attributes,
+    ).toMatchObject({
+      status: 'handled',
+      disposition: 'notified',
+      reply: 'Recovered after restart.',
+    })
   })
 
   test('does not let an Attention suppress a public turn or the following wake observation', async () => {

@@ -1539,10 +1539,11 @@ An internal Reflection-sourced turn owns its semantic judgment. It may act, tran
 Attention, notify, or finish silently. Coordinator validates every requested effect but does not
 infer an omitted action, append a correction pass, or require a fixed Attention disposition. Open
 Attention remains canonical and continues blocking its target independently of that conversational
-turn. A terminal failure while speaking an internal Reflection handoff is retained in that turn's
-runtime record and terminates the internal Inbox event without creating event-target Attention. The
-handoff is an advisory projection of already-canonical state, so recursively blocking it cannot
-preserve additional user intent. Public user turns keep the ordinary targeted-Attention failure path.
+turn. A provider or process failure while speaking an internal Reflection handoff is retained in the
+turn runtime, but it does not consume the Inbox event: no Assistant judgment was produced. The same
+durable pending event retries with bounded backoff and is immediately eligible after process restart;
+it creates no event-target Attention and no duplicate Reflection handoff. Public user turns keep the
+ordinary targeted-Attention failure path.
 
 Messages remain writable while passes run. A material instruction ensures Planning Work, advances
 that Work and the Goal to the new `contractRevision`, and leaves existing nonterminal Engineering
@@ -1648,10 +1649,11 @@ read-only Reflection process. Source priority selects public input next. Reflect
 immutable snapshot, but Coordinator publishes its prepared brief only when the semantic digest is
 still current; otherwise the result is discarded and the newest eligible digest is assessed later.
 This avoids cancellation churn without letting stale thought act or delay speech. One digest is
-otherwise assessed once. Reflection model transport failures retain one exponential backoff across
-semantic changes, which continue to coalesce without resetting the retry delay. After repeated
-failure, HOPI probes only at the capped interval until a successful Reflection clears the backoff.
-Consecutive internal handoffs are also bounded so a feedback loop cannot consume unbounded calls.
+otherwise assessed once. A failed speaking handoff remains the one pending event for that digest;
+Coordinator retries it with exponential backoff up to a capped interval, and a successful turn clears
+the backoff. A restart loses only the delay, not the pending assessment, so recovery does not depend
+on another Project state change or user message. Consecutive internal handoffs are also bounded so a
+feedback loop cannot consume unbounded calls.
 
 ## Reconciler and Scheduling
 

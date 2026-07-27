@@ -69,6 +69,14 @@ interface GoalCandidate {
   decision: ReturnType<typeof decideGoalReconciliation>
 }
 
+interface AssistantRetry {
+  failures: number
+  retryAt: number
+}
+
+const INTERNAL_ASSISTANT_RETRY_BASE_MS = 30_000
+const INTERNAL_ASSISTANT_RETRY_MAX_MS = 15 * 60_000
+
 export function createCoordinatorReconciler(
   options: CoordinatorReconcilerOptions,
 ): CoordinatorReconciler {
@@ -76,6 +84,7 @@ export function createCoordinatorReconciler(
   const eligibleProjects = new Set(options.projects.map((project) => project.projectId))
   const reservations = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
+  const assistantRetries = new Map<string, AssistantRetry>()
   const assistantTurnBarriers = new Map<string, AssistantTurnBarrier>()
   const projectActivityVersions = new Map<string, number>()
   let wakeTimer: ReturnType<typeof setTimeout> | null = null
@@ -221,7 +230,14 @@ export function createCoordinatorReconciler(
           if (result.kind !== 'assistant_started') armDeadline(result.nextWakeAt ?? null)
           if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
             const workspace = await options.workspace.readWorkspaceForControl()
-            if (eligiblePendingEvents(workspace, assistantActive).length === 0) {
+            if (
+              eligiblePendingEvents(
+                workspace,
+                assistantActive,
+                assistantRetries,
+                now().getTime(),
+              ).length === 0
+            ) {
               await options.reflection.observe({
                 settled:
                   result.kind === 'idle' && !startedWithReservation && reservations.size === 0,
@@ -274,9 +290,10 @@ export function createCoordinatorReconciler(
   async function reconcileTick(epoch: number): Promise<CoordinatorReconcileTick> {
     const workspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
+    const observedAt = now().getTime()
     const event =
       directAssistantCommands === 0 && assistantActive.size === 0
-        ? eligiblePendingEvent(workspace, assistantActive)
+        ? eligiblePendingEvent(workspace, assistantActive, assistantRetries, observedAt)
         : undefined
     if (event) {
       const controller = new AbortController()
@@ -286,9 +303,25 @@ export function createCoordinatorReconciler(
       }
       const promise = options.assistant
         .process(event.attributes.id, controller.signal)
-        .then(() => undefined)
+        .then(() => {
+          assistantRetries.delete(event.attributes.id)
+        })
         .catch(async (error) => {
           if (controller.signal.aborted) return
+          if (event.attributes.source !== 'user') {
+            const previous = assistantRetries.get(event.attributes.id)
+            const failures = (previous?.failures ?? 0) + 1
+            assistantRetries.set(event.attributes.id, {
+              failures,
+              retryAt:
+                now().getTime() +
+                Math.min(
+                  INTERNAL_ASSISTANT_RETRY_BASE_MS * 2 ** Math.min(failures - 1, 20),
+                  INTERNAL_ASSISTANT_RETRY_MAX_MS,
+                ),
+            })
+            return
+          }
           await options.workspace.handleEvent(event.attributes.id, {
             reply: `Assistant unavailable: ${errorMessage(error)}`,
             disposition: 'operational-failed',
@@ -313,7 +346,12 @@ export function createCoordinatorReconciler(
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const passCounts = reservationPassCounts(reservations)
     const candidates: GoalCandidate[] = []
-    let nextWakeAt: number | null = null
+    let nextWakeAt = nextAssistantRetryAt(
+      workspace,
+      assistantActive,
+      assistantRetries,
+      observedAt,
+    )
     for (const project of options.projects) {
       if (!eligibleProjects.has(project.projectId)) continue
       try {
@@ -538,19 +576,50 @@ async function readReconciliationPackages(store: GoalPackageStore) {
   return goalPackages
 }
 
-function eligiblePendingEvent<T>(workspace: AssistantWorkspace, active: ReadonlyMap<string, T>) {
-  return eligiblePendingEvents(workspace, active)[0]
+function eligiblePendingEvent<T>(
+  workspace: AssistantWorkspace,
+  active: ReadonlyMap<string, T>,
+  retries: ReadonlyMap<string, AssistantRetry>,
+  observedAt: number,
+) {
+  return eligiblePendingEvents(workspace, active, retries, observedAt)[0]
 }
 
-function eligiblePendingEvents<T>(workspace: AssistantWorkspace, active: ReadonlyMap<string, T>) {
+function eligiblePendingEvents<T>(
+  workspace: AssistantWorkspace,
+  active: ReadonlyMap<string, T>,
+  retries: ReadonlyMap<string, AssistantRetry>,
+  observedAt: number,
+) {
   return [...workspace.events.values()]
-    .filter((event) => event.attributes.status === 'pending' && !active.has(event.attributes.id))
+    .filter(
+      (event) =>
+        event.attributes.status === 'pending' &&
+        !active.has(event.attributes.id) &&
+        (retries.get(event.attributes.id)?.retryAt ?? Number.NEGATIVE_INFINITY) <= observedAt,
+    )
     .sort(
       (left, right) =>
         inboxSourceRank(left.attributes.source) - inboxSourceRank(right.attributes.source) ||
         left.attributes.receivedAt.localeCompare(right.attributes.receivedAt) ||
         left.attributes.id.localeCompare(right.attributes.id),
     )
+}
+
+function nextAssistantRetryAt<T>(
+  workspace: AssistantWorkspace,
+  active: ReadonlyMap<string, T>,
+  retries: ReadonlyMap<string, AssistantRetry>,
+  observedAt: number,
+) {
+  let next: number | null = null
+  for (const event of workspace.events.values()) {
+    if (event.attributes.status !== 'pending' || active.has(event.attributes.id)) continue
+    const retryAt = retries.get(event.attributes.id)?.retryAt
+    if (retryAt === undefined || retryAt <= observedAt) continue
+    next = next === null ? retryAt : Math.min(next, retryAt)
+  }
+  return next
 }
 
 function inboxSourceRank(source: InboxEventAttributes['source']) {
