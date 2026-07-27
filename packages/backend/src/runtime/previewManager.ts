@@ -14,6 +14,7 @@ import { runtimeCacheRoot } from './runPaths'
 
 export type PreviewStatus = 'starting' | 'running' | 'stopped' | 'failed'
 export type PreviewStoppedReason = 'release_updated' | 'runtime_restarted'
+export type PreviewStartRequester = 'operator' | 'assistant'
 export type PreviewFailureReason =
   | 'missing'
   | 'not_executable'
@@ -55,7 +56,7 @@ export interface PreviewSession {
 
 export type PreviewStartResult = { kind: 'started'; session: PreviewSession } | PreviewFailure
 
-export interface PreviewProjectEvent {
+interface PreviewProjectEventBase {
   projectId: string
   sessionId: string
   status: 'failed' | 'stopped'
@@ -65,12 +66,22 @@ export interface PreviewProjectEvent {
   reason: PreviewFailureReason | PreviewStoppedReason
 }
 
+export type PreviewProjectEvent =
+  | (PreviewProjectEventBase & {
+      kind: 'start_failed'
+      requesters: readonly PreviewStartRequester[]
+    })
+  | (PreviewProjectEventBase & {
+      kind: 'lifecycle'
+    })
+
 export interface PreviewManager {
   recover(): Promise<void>
   start(input: {
     projectId: string
     projectRoot: string
     releaseHeads: Readonly<Record<string, string>>
+    requestedBy: PreviewStartRequester
     primaryRepoId?: string
     repoRoots?: readonly ProjectPreparationRepoRoot[]
   }): Promise<PreviewStartResult>
@@ -91,6 +102,7 @@ interface PreviewOperation {
   startPromise: Promise<PreviewStartResult>
   phase: 'preparation' | 'startup'
   settled: boolean
+  requesters: Set<PreviewStartRequester>
 }
 
 type PreviewReadiness =
@@ -132,9 +144,13 @@ export function createPreviewManager(
     session: PreviewSession,
     reason: PreviewFailureReason | PreviewStoppedReason,
     message: string,
+    source:
+      | { kind: 'start_failed'; requesters: readonly PreviewStartRequester[] }
+      | { kind: 'lifecycle' },
   ) {
     try {
       await options.onEvent?.({
+        ...source,
         projectId: session.projectId,
         sessionId: session.sessionId,
         status: session.status === 'failed' ? 'failed' : 'stopped',
@@ -161,7 +177,10 @@ export function createPreviewManager(
     operation.session.error = error
     operation.session.failureReason = reason
     await persistSession(operation.session)
-    await emitEvent(operation.session, reason, error)
+    await emitEvent(operation.session, reason, error, {
+      kind: 'start_failed',
+      requesters: [...operation.requesters],
+    })
     return { kind: 'failed', reason, logs, session: operation.session }
   }
 
@@ -319,7 +338,9 @@ export function createPreviewManager(
       await settlePreviewLogs(operation)
       operation.session.failureReason = 'startup_failed'
       await persistSession(operation.session)
-      await emitEvent(operation.session, 'startup_failed', operation.session.error)
+      await emitEvent(operation.session, 'startup_failed', operation.session.error, {
+        kind: 'lifecycle',
+      })
     })
     return { kind: 'started', session: operation.session }
   }
@@ -346,6 +367,7 @@ export function createPreviewManager(
         operation.session,
         reason,
         'Preview stopped because the managed Project release changed.',
+        { kind: 'lifecycle' },
       )
     }
     return operation.session
@@ -401,6 +423,7 @@ export function createPreviewManager(
           session,
           'runtime_restarted',
           'Preview stopped because the HOPI runtime restarted.',
+          { kind: 'lifecycle' },
         )
       }
     },
@@ -415,6 +438,7 @@ export function createPreviewManager(
       const current = operations.get(input.projectId)
       if (current?.session.status === 'running' || current?.session.status === 'starting') {
         if (sameReleaseHeads(current.session.releaseHeads, releaseHeads)) {
+          current.requesters.add(input.requestedBy)
           return current.startPromise
         }
         return stopOperation(current, 'release_updated')
@@ -464,6 +488,7 @@ export function createPreviewManager(
         startPromise: Promise.resolve({ kind: 'started', session }),
         phase: 'preparation',
         settled: false,
+        requesters: new Set([input.requestedBy]),
       }
       operations.set(input.projectId, operation)
       const paths = {

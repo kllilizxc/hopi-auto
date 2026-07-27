@@ -1389,18 +1389,10 @@ describe('MVP server', () => {
       failureReason: 'missing',
       error: expect.stringContaining('scripts/hopi/preview'),
     })
-    const previewWorkspace = await createAssistantWorkspaceStore(
-      homeRoot,
-      publisher,
-    ).readWorkspace()
-    expect(
-      [...previewWorkspace.events.values()].find(
-        (event) =>
-          event.attributes.source === 'system' && event.body.includes('Project Preview failed.'),
-      ),
-    ).toMatchObject({
+    expect(await waitForPreviewRequestEvent(homeRoot, publisher)).toMatchObject({
       attributes: {
         status: 'pending',
+        visibility: 'public',
         context: { projectId: 'P-1' },
       },
     })
@@ -2608,6 +2600,21 @@ async function waitForPreviewSession(
     await Bun.sleep(10)
   }
   throw new Error(`Preview ${projectId} did not reach ${status}`)
+}
+
+async function waitForPreviewRequestEvent(homeRoot: string, publisher: PublicationCoordinator) {
+  const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    const event = [...(await workspace.readWorkspace()).events.values()].find(
+      (candidate) =>
+        candidate.attributes.source === 'user' &&
+        candidate.body.includes('Start a working Project Preview'),
+    )
+    if (event) return event
+    await Bun.sleep(10)
+  }
+  throw new Error('Preview Start failure did not reach the Assistant Inbox')
 }
 
 async function createRepo(path: string) {

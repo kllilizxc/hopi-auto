@@ -168,6 +168,7 @@ describe('PreviewManager', () => {
       const result = await manager.start({
         projectId: 'P-1',
         projectRoot,
+        requestedBy: 'assistant',
         releaseHeads: { primary: 'release-1' },
       })
 
@@ -305,7 +306,7 @@ describe('PreviewManager', () => {
     await manager.stop('P-1')
   })
 
-  test('persists and emits a factual Project event when the adapter is missing', async () => {
+  test('persists the initiating requesters with an initial Start failure', async () => {
     const events: unknown[] = []
     const manager = createTestPreviewManager({
       onEvent: (event) => {
@@ -319,6 +320,7 @@ describe('PreviewManager', () => {
     const result = await manager.start({
       projectId: 'P-1',
       projectRoot,
+      requestedBy: 'operator',
     })
 
     expect(result).toMatchObject({ kind: 'failed', reason: 'missing' })
@@ -329,9 +331,11 @@ describe('PreviewManager', () => {
     })
     expect(events).toEqual([
       expect.objectContaining({
+        kind: 'start_failed',
         projectId: 'P-1',
         status: 'failed',
         reason: 'missing',
+        requesters: ['operator'],
       }),
     ])
     expect(await Bun.file(result.session.manifestPath).json()).toMatchObject({
@@ -345,19 +349,34 @@ describe('PreviewManager', () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const launchLog = await writeCountingFailureAdapter(projectRoot)
     const controlled = createControlledPreparer()
+    const events: unknown[] = []
     const manager = createTestPreviewManager({
       preparer: controlled.preparer,
+      onEvent: (event) => {
+        events.push(event)
+      },
     })
 
     const first = manager.start({ projectId: 'P-1', projectRoot })
-    const second = manager.start({ projectId: 'P-1', projectRoot })
+    const second = manager.start({
+      projectId: 'P-1',
+      projectRoot,
+      requestedBy: 'operator',
+    })
     await controlled.entered
     controlled.release()
     const [firstResult, secondResult] = await Promise.all([first, second])
 
     expect(controlled.calls).toBe(1)
     expect(secondResult).toBe(firstResult)
+    expect(firstResult).toMatchObject({ kind: 'failed' })
     expect(await Bun.file(launchLog).text()).toBe('started\n')
+    expect(events).toEqual([
+      expect.objectContaining({
+        kind: 'start_failed',
+        requesters: ['assistant', 'operator'],
+      }),
+    ])
   })
 
   test('Stop during Repo preparation prevents the Preview adapter from launching', async () => {
@@ -619,6 +638,7 @@ describe('PreviewManager', () => {
       const starting = manager.start({
         projectId: 'P-1',
         projectRoot,
+        requestedBy: 'assistant',
         releaseHeads: { primary: 'release-1' },
       })
       await probeEntered
@@ -677,6 +697,7 @@ describe('PreviewManager', () => {
       const result = await manager.start({
         projectId: 'P-1',
         projectRoot,
+        requestedBy: 'assistant',
         releaseHeads: { primary: 'release-1' },
       })
       expect(result).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
@@ -837,8 +858,12 @@ describe('PreviewManager', () => {
   })
 })
 
-type TestPreviewStartInput = Omit<Parameters<PreviewManager['start']>[0], 'releaseHeads'> & {
+type TestPreviewStartInput = Omit<
+  Parameters<PreviewManager['start']>[0],
+  'releaseHeads' | 'requestedBy'
+> & {
   releaseHeads?: Readonly<Record<string, string>>
+  requestedBy?: Parameters<PreviewManager['start']>[0]['requestedBy']
 }
 
 function createTestPreviewManager(options: PreviewManagerOptions = {}) {
@@ -855,6 +880,7 @@ function createTestPreviewManager(options: PreviewManagerOptions = {}) {
           : [{ repoId: input.primaryRepoId ?? 'primary' }]
       return manager.start({
         ...input,
+        requestedBy: input.requestedBy ?? 'assistant',
         releaseHeads:
           input.releaseHeads ??
           Object.fromEntries(repos.map((repo) => [repo.repoId, `release-${repo.repoId}`])),

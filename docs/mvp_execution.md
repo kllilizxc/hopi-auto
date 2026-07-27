@@ -1856,15 +1856,17 @@ or container whose process group or cgroup is terminated with the parent. A hard
 observed on the next Start is treated as an ordinary startup conflict and routed through Preview
 repair. The MVP adds no durable Preview lease, PID document, or orphan scanner.
 
-On Start, Coordinator first checks for the reviewed adapter. If it is missing, preparation fails, or
-startup fails, the current UI observes the failed session, shows the condition, and asks whether
-Assistant should establish or repair Preview. A
-positive answer submits an ordinary durable message with the adapter path and available failure
-logs plus immutable Project context and, when invoked from a Goal page, that optional Goal context.
-Context locates relevant current authority but does not force the viewed Goal to receive the repair.
-The message contains only the current failure facts and the target Project capability. It does not
-prescribe Planning, Engineering, reuse, reopening, or creation. Assistant judges the appropriate
-ordinary Goal and Work effect from current documents and its existing capabilities. Coordinator
-does not synthesize a Work because Goal ownership and a complete acceptance contract are semantic
-choices. There is no Preview setup Action, deduplication field, setup state, or
-Reconciler-created Work.
+On Start, Coordinator first checks for the reviewed adapter. The operator's Start command itself
+expresses the desired outcome: a working Preview for the Project's current managed release. If the
+adapter is missing, preparation fails, or startup fails, Preview first persists the failed session
+and then publishes that command result as one ordinary durable user Inbox turn. The turn contains
+the target capability, adapter path, available failure logs, and immutable Project context. Project
+context locates current authority without forcing any existing Goal to receive the repair.
+
+The turn contains no workflow prescription. Assistant judges the appropriate ordinary Goal and Work
+effect from current documents and its existing capabilities. Coordinator does not synthesize a Work
+because Goal ownership and a complete acceptance contract are semantic choices. An
+Assistant-initiated Start receives the same failure directly as its tool result instead of creating
+a duplicate Inbox turn. Failures after a successful Start and stops caused by release change or
+runtime recovery remain factual Project system events. There is no Preview setup Action, setup
+state, or Reconciler-created Work.

@@ -546,12 +546,19 @@ not infer execution success from a retry request or reconstruct state from prose
 derived continuation, Kanban predicates, and unrelated open Attention; Assistant reads current state
 only when the next decision actually needs them.
 
-A failed Preview retains its diagnosis on the disposable Project Preview session. The UI can
-therefore offer an ordinary Assistant turn with Project context and optional Goal context even when
-preparation or startup outlives the initiating HTTP request. That turn states the observed failure
-and desired Project capability, not a workflow choice. Assistant already has ordinary Goal, design,
-and Planning-or-Engineering Work capabilities for its own judgment; Preview has no special repair
-operation or repair workflow.
+A failed Preview retains its diagnosis on the disposable Project Preview session. An operator Start
+is already an ordinary request for a working Project Preview, even when preparation or startup
+outlives the initiating HTTP response. If that initial Start fails, its result therefore becomes one
+ordinary user Inbox turn with immutable Project context, the desired Project capability, and the
+observed failure paths and logs. It is not reduced to a system notification, because doing so would
+discard the intent carried by the operator command. Assistant already has ordinary Goal, design, and
+Planning-or-Engineering Work capabilities for its own judgment; the turn states no workflow choice
+and Preview has no special repair operation or repair workflow.
+
+An Assistant-initiated Start returns the same diagnosis directly in the tool result and does not
+create a second Inbox turn. Failures after Preview has become running, and stops caused by release
+change or runtime recovery, remain internal Project system events because they are environment
+changes rather than new operator commands.
 
 Every work-domain operation shared by the product UI and speaking Assistant uses the same domain
 validator and document store. Host configuration is deliberately outside that parity: model and

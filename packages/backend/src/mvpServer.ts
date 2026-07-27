@@ -799,6 +799,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           void runtime.preview.start({
             projectId: project.projectId,
             projectRoot: project.sourceRoot,
+            requestedBy: 'operator',
             releaseHeads: await readProjectReleaseHeads(
               project.projectId,
               project.repos.map((repo) => ({ repoId: repo.repoId, path: repo.integrationRoot })),

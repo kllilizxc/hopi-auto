@@ -1248,6 +1248,7 @@ export function createAssistantTools(options: {
             const result = await options.preview.start({
               projectId: project.projectId,
               projectRoot: project.sourceRoot ?? project.projectRoot,
+              requestedBy: 'assistant',
               releaseHeads: await readProjectReleaseHeads(
                 project.projectId,
                 project.repos?.map((repo) => ({

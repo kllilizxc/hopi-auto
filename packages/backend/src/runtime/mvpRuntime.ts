@@ -136,8 +136,27 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const linkedProjects = await home.listProjects()
   const projects = new Map<string, MvpProjectRuntime>()
   let wakeCoordinator: () => void = () => undefined
+  let interruptInternalAssistant: () => void = () => undefined
   const preview = createPreviewManager(options.homeRoot, {
     onEvent: async (event) => {
+      if (event.kind === 'start_failed') {
+        if (!event.requesters.includes('operator')) return
+        await workspace.receiveEvent({
+          eventId: `EV-preview-start-${event.sessionId}`,
+          context: { projectId: event.projectId },
+          content: [
+            "Start a working Project Preview for this Project's current managed release.",
+            'The requested Preview start failed.',
+            `Reason: ${event.reason}.`,
+            `Detail: ${event.message}`,
+            `Session manifest: ${event.manifestPath}`,
+            `Log: ${event.logPath}`,
+          ].join('\n'),
+        })
+        interruptInternalAssistant()
+        wakeCoordinator()
+        return
+      }
       await recordProjectSystemEvent(workspace, {
         projectId: event.projectId,
         summary: `Project Preview ${event.status}.`,
@@ -310,6 +329,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   protectAssistantProject = (eventId, projectId) =>
     coordinator.protectAssistantProject(eventId, projectId)
   wakeCoordinator = () => coordinator.wake()
+  interruptInternalAssistant = () => coordinator.interruptInternalAssistant()
   restoreProjectEligibility = async (projectId) => {
     const project = requireProject(projects, projectId)
     try {
