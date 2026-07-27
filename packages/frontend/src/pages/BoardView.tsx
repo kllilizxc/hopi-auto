@@ -65,6 +65,7 @@ import {
   readWorkAttemptEvents,
   readWorkAttempts,
   readWorkDocument,
+  requireGoalBoardDetail,
   startPreview,
   stopPreview,
 } from '../lib/api'
@@ -321,6 +322,7 @@ export function BoardView() {
     enabled: Boolean(projectId && goalId),
     refetchInterval: boardPollInterval,
     notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
+    select: requireGoalBoardDetail,
   })
   const executionCostQuery = useQuery({
     queryKey: ['goal-execution-cost', projectId, goalId],

@@ -1,5 +1,10 @@
 import { expect, test } from 'bun:test'
-import { readAssistantFeedChanges, readState, updateAgentRoleSettings } from './apiClient'
+import {
+  readAssistantFeedChanges,
+  readState,
+  requireGoalBoardDetail,
+  updateAgentRoleSettings,
+} from './apiClient'
 
 test('turns a transport failure into an actionable backend recovery message', async () => {
   const originalFetch = globalThis.fetch
@@ -12,6 +17,26 @@ test('turns a transport failure into an actionable backend recovery message', as
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('rejects incomplete Goal board projections instead of inventing empty Attention facts', () => {
+  expect(() =>
+    requireGoalBoardDetail({
+      projectId: 'P-1',
+      goal: { id: 'G-1' },
+      works: [],
+      projectAttention: null,
+    }),
+  ).toThrow('Goal board projection is incomplete')
+
+  const projection = {
+    projectId: 'P-1',
+    goal: { id: 'G-1' },
+    works: [],
+    attentions: [],
+    projectAttention: null,
+  }
+  expect(requireGoalBoardDetail(projection)).toBe(projection)
 })
 
 test('requests mutable Assistant changes from the independent synchronization cursor', async () => {

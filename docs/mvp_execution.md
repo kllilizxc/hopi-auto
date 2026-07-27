@@ -1689,6 +1689,9 @@ Each cycle:
 - no active Run already owns it and pass/worktree capacity is available
 
 The UI may show every failed predicate, but readiness is not another state machine.
+API JSON and in-memory query caches are runtime inputs, not TypeScript-guaranteed values. Each UI
+surface validates the small structural contract it renders before using it. An incomplete projection
+is shown as a retryable read error and is never normalized into empty Work or Attention facts.
 
 For an active Goal with no nonterminal Work, Coordinator ensures Planning Work. Final Planner
 `success` with no nonterminal Engineering Work is the semantic completion judgment; Coordinator

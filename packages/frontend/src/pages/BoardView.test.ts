@@ -153,6 +153,7 @@ test('Board reads the compact projection without colliding with Goal docs cache'
 
   expect(source).toContain('queryKey: goalBoardQueryKey(projectId, goalId)')
   expect(source).toContain("queryFn: () => readGoalBoard(projectId ?? '', goalId ?? '')")
+  expect(source).toContain('select: requireGoalBoardDetail')
   expect(source).not.toContain("queryFn: () => readGoal(projectId ?? '', goalId ?? '')")
 })
 

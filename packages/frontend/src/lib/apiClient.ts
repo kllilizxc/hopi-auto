@@ -102,8 +102,24 @@ export function readGoal(projectId: string, goalId: string) {
   return apiRequest<GoalDetail>(goalPath(projectId, goalId))
 }
 
-export function readGoalBoard(projectId: string, goalId: string) {
-  return apiRequest<GoalBoardDetail>(`${goalPath(projectId, goalId)}?view=board`)
+export async function readGoalBoard(projectId: string, goalId: string) {
+  return requireGoalBoardDetail(
+    await apiRequest<unknown>(`${goalPath(projectId, goalId)}?view=board`),
+  )
+}
+
+export function requireGoalBoardDetail(value: unknown): GoalBoardDetail {
+  if (
+    !isRecord(value) ||
+    typeof value.projectId !== 'string' ||
+    !isRecord(value.goal) ||
+    !Array.isArray(value.works) ||
+    !Array.isArray(value.attentions) ||
+    (value.projectAttention !== null && !isRecord(value.projectAttention))
+  ) {
+    throw new Error('Goal board projection is incomplete. Waiting for a fresh backend response.')
+  }
+  return value as unknown as GoalBoardDetail
 }
 
 export function readGoalExecutionCost(projectId: string, goalId: string) {
@@ -293,6 +309,10 @@ export function stopPreview(projectId: string) {
 
 function goalPath(projectId: string, goalId: string) {
   return `/api/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(goalId)}`
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function attemptPath(projectId: string, goalId: string, workId: string) {
