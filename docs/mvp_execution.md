@@ -1517,15 +1517,20 @@ clears it and rebuilds once from bounded durable conversation history. A failure
 conversation follows the ordinary targeted-Attention path; provider allocation, transport, and
 application failures do not trigger a rebuild.
 
-An internal Reflection-sourced turn owns its semantic judgment. It may act, transfer selected open
-Attention, notify, or finish silently. Coordinator validates every requested effect but does not
-infer an omitted action, append a correction pass, or require a fixed Attention disposition. Open
-Attention remains canonical and continues blocking its target independently of that conversational
-turn. A provider or process failure while speaking an internal Reflection handoff is retained in the
-turn runtime, but it does not consume the Inbox event: no Assistant judgment was produced. The same
-durable pending event retries with bounded backoff and is immediately eligible after process restart;
-it creates no event-target Attention and no duplicate Reflection handoff. Public user turns keep the
-ordinary targeted-Attention failure path.
+An internal state turn owns its semantic judgment. The event records the exact open Attention
+references whose next state is still owned by Assistant. Coordinator does not choose a disposition,
+but it does enforce the responsibility boundary: every listed Attention that is still Assistant-owned
+when the turn begins must acquire a changed canonical successor before the event can settle. A
+resolution, responsibility transfer, future revisit, or new durable execution state on the targeted
+Work all satisfy that boundary because each is observable state; prose, an empty reply, and unrelated
+tool activity do not.
+
+An informational internal turn with no listed responsibility may still finish silently. Failure to
+settle listed responsibility is a failed Assistant turn, not a handled no-op: the Inbox event remains
+pending, its turn runtime records the failure, and the same event retries with bounded backoff. A
+process restart makes that durable pending event eligible without requiring another Project change.
+Coordinator neither invents a repair nor creates a second handoff for the same observation. Public
+user turns keep the ordinary targeted-Attention failure path.
 
 Messages remain writable while passes run. A material instruction ensures Planning Work, advances
 that Work and the Goal to the new `contractRevision`, and leaves existing nonterminal Engineering
@@ -1597,20 +1602,18 @@ speaking thread. Work deltas contain control fields and one bounded latest-Run o
 paths, full Evidence lists, or unrelated Goal state. Reflection may call scoped `hopi_read_state` and
 follow an exact diagnostic path only after identifying a concrete candidate.
 
-Reflection has only read plus one `handoff_to_main` capability. When all immediate signals belong to
-one Project or Goal, that exact scope becomes the Reflection read context, so omitted IDs and a
-Goal-only read resolve against the candidate named by the environment instead of expanding Home
-state. The context locates evidence; it grants no mutation authority. A no-op result is silent, including
-when Assistant-owned Attention remains open. Only an explicit handoff durably creates one internal
-Inbox turn. Coordinator validates the selected scope and may attach canonical references from that
-scope, but it does not select another scope or synthesize a brief. The speaking thread then
-revalidates current state and owns every action and optional operator notification.
+Reflection is a deterministic state observer, not a second model. When a scope becomes eligible it
+publishes one internal Inbox event in that same Assistant conversation. The event carries the current
+scope digest and the exact open, Assistant-owned Attention references that have no already-durable
+successor or future revisit. A scheduled revisit carries its exact Attention reference. The speaking
+thread receives the current state separately, revalidates it, and owns every judgment and optional
+operator notification.
 
-For a handoff carrying exact targeted Attention, the speaking turn may resolve it after concrete
-repair, stage `transfer_attention_to_user`, or leave it Assistant-owned and open while repair is
-unavailable or still running. Coordinator accepts that result without a forced follow-up turn.
-Existing reference, request, artifact, and mutation validation remains authoritative; a prose claim
-or authorization cannot substitute for the state change represented by Attention.
+The state event describes the environment consequence rather than prescribing an action: listed
+Attention remains Assistant responsibility until its canonical state advances. Coordinator compares
+the state at turn admission and settlement. It does not parse prose, infer intent, or select among
+the available Attention and Work capabilities. This makes a silent no-op invalid without turning
+domain judgment into Coordinator rules.
 
 One eligible pending Reflection-sourced Inbox turn suppresses another Reflection assessment until
 that turn is handled. An internal turn blocked by event-target Attention is no longer eligible: it
@@ -1620,22 +1623,14 @@ the exact Attention that requires speaking-Assistant management. Canonical Atten
 `notifiedAt` prevent recursive notification. An Attention-blocked public user turn is likewise
 Reflection-eligible because no executable internal assessment currently owns that state.
 
-The bounded-handoff guard counts only an unhandled failure chain. Once the speaking Assistant handles
-the preceding handoff, that handling is convergence and the next semantic handoff starts a fresh
-chain. A predecessor that remains pending because of event-target Attention extends the chain. This
-keeps the loop ceiling local to the failing delivery path instead of penalizing unrelated Goal
-Attention or normal speaking-thread effects.
-
 Receiving a public user turn aborts an active Reflection-sourced speaking turn but not the independent
-read-only Reflection process. Source priority selects public input next. Reflection may finish its
-immutable snapshot, but Coordinator publishes its prepared brief only when the semantic digest is
-still current; otherwise the result is discarded and the newest eligible digest is assessed later.
-This avoids cancellation churn without letting stale thought act or delay speech. One digest is
-otherwise assessed once. A failed speaking handoff remains the one pending event for that digest;
-Coordinator retries it with exponential backoff up to a capped interval, and a successful turn clears
-the backoff. A restart loses only the delay, not the pending assessment, so recovery does not depend
-on another Project state change or user message. Consecutive internal handoffs are also bounded so a
-feedback loop cannot consume unbounded calls.
+This avoids cancellation churn without letting stale state act or delay speech. One digest and wake
+protocol revision identify one ordinary state event. A failed state turn remains that one pending
+event; Coordinator retries it with exponential backoff up to a capped interval, and a successful turn
+clears the backoff. A restart loses only the delay, not the pending assessment, so recovery does not
+depend on another Project state change or user message. A wake protocol revision changes event
+identity once, allowing a stronger settlement contract to revisit state that an older protocol
+incorrectly consumed without creating a recurring wake.
 
 ## Reconciler and Scheduling
 

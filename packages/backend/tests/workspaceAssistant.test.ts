@@ -982,6 +982,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
     expect(seen[0]?.prompt).not.toContain('[Current execution environment observation]')
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
+    expect(seen[0]?.prompt).not.toContain('[Current Project state and unresolved Attention')
     expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
     expect(seen[0]?.prompt).not.toContain('Role: HOPI Project owner')
     expect(seen[0]?.prompt).not.toContain('Each Engineering Work receives every Repo binding')
@@ -990,7 +991,7 @@ describe('WorkspaceAssistant conversation', () => {
       'A Work requested in this turn can start only after the turn settles',
     )
     expect(seen[0]?.prompt).toContain('Attention remains Assistant-owned')
-    expect(seen[0]?.prompt).toContain('transferred with hopi_manage_attention')
+    expect(seen[0]?.prompt).toContain('hopi_manage_attention records a resolution')
     expect(seen[0]?.prompt).not.toContain('<NeedsYou>')
     expect(seen[0]?.prompt).not.toContain('<DecisionPrompt>')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
@@ -1526,7 +1527,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-complete-state')
 
-    expect(stateReads).toEqual([{ projectId: 'P-1' }])
+    expect(stateReads).toEqual([{ projectId: 'P-1' }, { projectId: 'P-1' }])
     const encoded = prompts[0]?.match(/```json\n([\s\S]*?)\n```/)?.[1]
     expect(encoded).toBeDefined()
     const current = JSON.parse(encoded ?? '{}')
@@ -1547,18 +1548,21 @@ describe('WorkspaceAssistant conversation', () => {
 
   test('accepts a transient continuation-only internal handoff without a second model call', async () => {
     let calls = 0
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        calls += 1
-        await tools.execute(input.toolToken, 'hopi_control_work', {
-          projectId: 'P-1',
-          goalId: 'G-1',
-          workId: 'plan-initial',
-          action: { kind: 'continue' },
-        })
-        return { reply: '', session: codexSession('thread-atomic-retry') }
-      },
-    }))
+    const fixture = await setup(
+      (tools) => ({
+        async run(input) {
+          calls += 1
+          await tools.execute(input.toolToken, 'hopi_control_work', {
+            projectId: 'P-1',
+            goalId: 'G-1',
+            workId: 'plan-initial',
+            action: { kind: 'continue' },
+          })
+          return { reply: '', session: codexSession('thread-atomic-retry') }
+        },
+      }),
+      { includeState: true },
+    )
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
       fixture.goalStore,
@@ -1590,22 +1594,92 @@ describe('WorkspaceAssistant conversation', () => {
     expect(current?.attributes.resolvedAt).toBeNull()
   })
 
+  test('keeps an internal event pending until its Assistant-owned Attention advances', async () => {
+    let calls = 0
+    let attentionRef = ''
+    const sessions: Array<string | null> = []
+    const fixture = await setup(
+      (tools) => ({
+        async run(input, observer) {
+          calls += 1
+          sessions.push(input.session?.sessionId ?? null)
+          await observer?.onSession?.(codexSession(`thread-responsibility-${calls}`))
+          if (calls === 1) {
+            return { reply: '', session: codexSession('thread-responsibility-1') }
+          }
+          await tools.execute(input.toolToken, 'hopi_manage_attention', {
+            change: {
+              kind: 'defer_attention',
+              attentionRef,
+              until: '2027-07-12T00:00:00.000Z',
+            },
+          })
+          return { reply: '', session: codexSession('thread-responsibility-2') }
+        },
+      }),
+      { includeState: true },
+    )
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await publishTestWorkAttention(
+      fixture.goalStore,
+      'G-1',
+      'plan-initial',
+      1,
+      'The next owner must be recorded.',
+    )
+    attentionRef = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-responsibility',
+      content: 'Current Assistant responsibility changed.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [attentionRef],
+      },
+    })
+
+    await expect(fixture.assistant.process('EV-responsibility')).rejects.toThrow(
+      'canonical Assistant responsibility is unchanged',
+    )
+    expect((await fixture.workspace.readEvent('EV-responsibility'))?.attributes.status).toBe(
+      'pending',
+    )
+    expect((await fixture.conversation.readTurn('EV-responsibility'))?.manifest.status).toBe(
+      'failed',
+    )
+
+    await fixture.assistant.process('EV-responsibility')
+
+    expect(sessions).toEqual([null, null])
+    expect((await fixture.workspace.readEvent('EV-responsibility'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'internal',
+    })
+    const current = (await fixture.goalStore.readPackage('G-1')).attentions.get(
+      attention.attributes.id,
+    )
+    expect(current?.attributes.revisitAt).toBe('2027-07-12T00:00:00.000Z')
+  })
+
   test('publishes one final user request and atomically transfers its Attention', async () => {
     let attentionRef = ''
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        await tools.execute(input.toolToken, 'hopi_manage_attention', {
-          change: {
-            kind: 'transfer_attention_to_user',
-            attentionRefs: [attentionRef],
-          },
-        })
-        return {
-          reply: 'Which production window should I use?',
-          session: codexSession('thread-transfer'),
-        }
-      },
-    }))
+    const fixture = await setup(
+      (tools) => ({
+        async run(input) {
+          await tools.execute(input.toolToken, 'hopi_manage_attention', {
+            change: {
+              kind: 'transfer_attention_to_user',
+              attentionRefs: [attentionRef],
+            },
+          })
+          return {
+            reply: 'Which production window should I use?',
+            session: codexSession('thread-transfer'),
+          }
+        },
+      }),
+      { includeState: true },
+    )
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
       fixture.goalStore,
@@ -1647,7 +1721,7 @@ describe('WorkspaceAssistant conversation', () => {
 
 async function setup(
   buildRunner: (tools: ReturnType<typeof createAssistantTools>) => AssistantModelRunner,
-  options: { assistantState?: AssistantStateReader } = {},
+  options: { assistantState?: AssistantStateReader; includeState?: boolean } = {},
 ) {
   const repoRoot = join(temporaryRoot, 'repo')
   await mkdir(repoRoot, { recursive: true })
@@ -1669,6 +1743,7 @@ async function setup(
   const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
   const controller = createGoalController(goalStore, { verifyCompletion: () => false })
   const preview = createPreviewManager(homeRoot)
+  const attempts = createRunAttemptStore(homeRoot)
   const projects = new Map([
     [
       'P-1',
@@ -1679,8 +1754,15 @@ async function setup(
         controller,
         reconciler: {
           interruptRuns() {},
-          async requestWorkRun() {
-            return { runId: 'R-transient-retry', disposition: 'scheduled' as const }
+          async requestWorkRun(goalId: string, workId: string) {
+            return attempts.reserve({
+              projectId: 'P-1',
+              goalId,
+              workId,
+              runId: 'R-transient-retry',
+              responsibility: 'planner',
+              workHash: 'a'.repeat(64),
+            })
           },
         },
       },
@@ -1691,7 +1773,7 @@ async function setup(
     workspace,
     projects,
     publisher,
-    attempts: createRunAttemptStore(homeRoot),
+    attempts,
   })
   const tools = createAssistantTools({
     home,
@@ -1706,7 +1788,9 @@ async function setup(
     workspace,
     conversation,
     tools,
-    ...(options.assistantState ? { state: options.assistantState } : {}),
+    ...(options.assistantState || options.includeState
+      ? { state: options.assistantState ?? state }
+      : {}),
     runner: buildRunner(tools),
     resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
     now: () => new Date('2026-07-11T00:00:00Z'),

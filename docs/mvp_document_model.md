@@ -727,6 +727,14 @@ one-shot: leaving the Attention unresolved does not schedule another turn, and A
 new timestamp only when another observation is useful. `revisitAt` neither retries Work nor asserts
 that the external condition changed.
 
+An ordinary Project state event records every currently actionable Assistant-owned Attention as an
+exact canonical reference. These references are responsibility facts, not suggested actions. At turn
+admission HOPI snapshots each referenced Attention and its canonical target. The event can settle
+only after every responsibility still owned at admission has a changed canonical successor state.
+The comparison is structural and does not parse Assistant prose. An Attention already transferred to
+the operator, deferred to a future revisit, or backed by a queued or running target Work is not
+reintroduced as an actionable responsibility by an unrelated state event.
+
 `createdAt` is the Coordinator's publication timestamp, not model-authored time. Responsibility
 proposals carry the parseable placeholder declared by the proposal capability schema; Coordinator
 replaces it while publishing every new targeted Attention. The body and identity remain model output.

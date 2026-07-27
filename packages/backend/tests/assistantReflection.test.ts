@@ -84,6 +84,13 @@ describe('Assistant wake trigger', () => {
 
     const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
     if (!event) throw new Error('Expected wake event')
+    const homeId = (await fixture.workspace.readWorkspace()).homeId
+    expect(event.attributes.context).toMatchObject({
+      projectId: 'P-1',
+      attentionRefs: [`home:${homeId}/attention:A-1`],
+    })
+    expect(event.body).toContain('Assistant-owned responsibility')
+    expect(event.body).toContain('cannot settle')
     await fixture.workspace.handleEvent(event.attributes.id, {
       reply: 'No public update.',
       disposition: 'silent',
@@ -107,7 +114,6 @@ describe('Assistant wake trigger', () => {
       (candidate) => candidate.attributes.id !== event.attributes.id,
     )
     if (!revisit) throw new Error('Expected scheduled Attention revisit')
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
     expect(revisit.attributes).toMatchObject({
       source: 'system',
       status: 'pending',
@@ -124,6 +130,61 @@ describe('Assistant wake trigger', () => {
     expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
     expect(await fixture.recreateWake().observe({ settled: true })).toBe('unchanged')
     expect((await recoveredWake.listRuns()).length).toBe(2)
+  })
+
+  test('re-emits actionable responsibility once when upgrading a consumed v1 wake', async () => {
+    const fixture = await setup(['P-1'])
+    await fixture.workspace.createAttention(attention('A-1', 'P-1'))
+    fixture.setSnapshot(
+      snapshot(['P-1'], {
+        workspaceAttentions: [snapshotAttention('A-1', 'P-1')],
+      }),
+    )
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-wake-v1',
+      content: 'Legacy wake.',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.workspace.handleEvent('EV-wake-v1', {
+      reply: 'No operator update.',
+      disposition: 'silent',
+    })
+    const cursorPath = join(
+      fixture.homeRoot,
+      '.hopi',
+      'runtime',
+      'assistant',
+      'wakes',
+      'cursors',
+      'project-P-1.json',
+    )
+    await mkdir(join(cursorPath, '..'), { recursive: true })
+    await Bun.write(
+      cursorPath,
+      `${JSON.stringify({
+        version: 1,
+        scope: { kind: 'project', projectId: 'P-1' },
+        stateDigest: '1'.repeat(64),
+        eventId: 'EV-wake-v1',
+        updatedAt: '2026-07-25T00:00:00.000Z',
+      })}\n`,
+    )
+
+    const upgraded = fixture.recreateWake()
+    expect(await upgraded.observe({ settled: false })).toBe('started')
+    await upgraded.waitForIdle()
+
+    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
+    expect(events).toHaveLength(2)
+    const current = events.find((event) => event.attributes.id !== 'EV-wake-v1')
+    const homeId = (await fixture.workspace.readWorkspace()).homeId
+    expect(current?.attributes).toMatchObject({
+      status: 'pending',
+      context: {
+        projectId: 'P-1',
+        attentionRefs: [`home:${homeId}/attention:A-1`],
+      },
+    })
   })
 
   test('wakes a Goal Attention at its scheduled revisit without a state digest edge', async () => {
@@ -426,6 +487,7 @@ async function setup(projectIds: string[], now: () => Date = () => new Date()) {
   }
   const wake = createAssistantWake({ homeRoot, workspace, state, now })
   return {
+    homeRoot,
     wake,
     workspace,
     setSnapshot(next: AssistantStateSnapshot) {
@@ -560,7 +622,19 @@ function delegatedAttentionSnapshot(active: boolean, sourceDigest: string) {
         releaseHead: 'release',
         goals: [
           {
-            attentions: [{ attributes: { resolvedAt: null } }],
+            goal: { attributes: { id: 'G-source' } },
+            attentions: [
+              {
+                reference: 'project:P-1/goal:G-source/attention:A-source',
+                attributes: {
+                  id: 'A-source',
+                  target: 'project:P-1/goal:G-source',
+                  resolvedAt: null,
+                  operatorRequest: null,
+                  revisitAt: null,
+                },
+              },
+            ],
             works: [],
           },
         ],

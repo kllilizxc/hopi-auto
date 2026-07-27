@@ -20,13 +20,21 @@ afterEach(async () => {
 })
 
 describe('Project Assistant wake and Attention E2E', () => {
-  test('runs one scheduled Attention revisit without looping while it remains unresolved', async () => {
+  test('runs one scheduled Attention revisit and transfers responsibility without looping', async () => {
     const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
-    const runtime = await setupRuntime({
+    let runtime: MvpRuntime
+    let attentionRef = ''
+    runtime = await setupRuntime({
       async run(input) {
         calls.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
+        await runtime.assistantTools.execute(input.toolToken, 'hopi_manage_attention', {
+          change: {
+            kind: 'transfer_attention_to_user',
+            attentionRefs: [attentionRef],
+          },
+        })
         return {
-          reply: 'The Project todo remains in progress.',
+          reply: 'Which release window should I use?',
           session: codexSession('project-session'),
         }
       },
@@ -40,11 +48,12 @@ describe('Project Assistant wake and Attention E2E', () => {
         context: { projectId: 'P-1' },
       })
       const homeId = (await runtime.workspace.readWorkspace()).homeId
+      attentionRef = workspaceAttentionReference(homeId, 'A-choice')
       const revisitAt = new Date(Date.now() + 100).toISOString()
       await runtime.assistantTools.executeForEvent('EV-schedule', 'hopi_manage_attention', {
         change: {
           kind: 'defer_attention',
-          attentionRef: workspaceAttentionReference(homeId, 'A-choice'),
+          attentionRef,
           until: revisitAt,
         },
       })
@@ -65,6 +74,10 @@ describe('Project Assistant wake and Attention E2E', () => {
       expect(events).toHaveLength(2)
       expect(events.every((event) => event.attributes.status === 'handled')).toBe(true)
       expect(events[1]?.attributes.context?.attentionRefs).toHaveLength(1)
+      expect(
+        (await runtime.workspace.readWorkspace()).attentions.get('A-choice')?.attributes
+          .operatorRequest,
+      ).toMatch(/\/event:/)
 
       runtime.coordinator.wake()
       await runtime.coordinator.waitForIdle()
@@ -77,19 +90,29 @@ describe('Project Assistant wake and Attention E2E', () => {
 
   test('uses one persistent Project session for user speech and internal supervision', async () => {
     const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
+    let runtime: MvpRuntime
+    let attentionRef = ''
     const runner: AssistantModelRunner = {
       async run(input) {
         calls.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
+        if (input.toolMode === 'internal') {
+          await runtime.assistantTools.execute(input.toolToken, 'hopi_manage_attention', {
+            change: {
+              kind: 'transfer_attention_to_user',
+              attentionRefs: [attentionRef],
+            },
+          })
+        }
         return {
           reply:
             input.toolMode === 'internal'
-              ? '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>'
+              ? 'Choose the release window.'
               : 'I will supervise this Project.',
           session: codexSession('project-session'),
         }
       },
     }
-    const runtime = await setupRuntime(runner)
+    runtime = await setupRuntime(runner)
 
     try {
       await runtime.workspace.receiveEvent({
@@ -99,6 +122,10 @@ describe('Project Assistant wake and Attention E2E', () => {
       })
       await runtime.assistant.process('EV-user')
       await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
+      attentionRef = workspaceAttentionReference(
+        (await runtime.workspace.readWorkspace()).homeId,
+        'A-choice',
+      )
 
       expect(await runtime.reflection.observe({ settled: false })).toBe('started')
       await runtime.reflection.waitForIdle()
@@ -117,7 +144,8 @@ describe('Project Assistant wake and Attention E2E', () => {
       ).toMatchObject({
         visibility: 'public',
         status: 'handled',
-        reply: '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>',
+        reply: 'Choose the release window.',
+        disposition: 'operator-requested',
       })
     } finally {
       await runtime.coordinator.stop()

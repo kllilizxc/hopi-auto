@@ -11,6 +11,7 @@ import {
   assistantConversationScopeForEvent,
   assistantConversationScopeKey,
 } from './assistantConversationScope'
+import { actionableAssistantAttentionReferences } from './assistantResponsibility'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 
 export type ReflectionObserveResult = 'baseline' | 'deferred' | 'unchanged' | 'running' | 'started'
@@ -28,13 +29,15 @@ type WakeScope = z.infer<typeof wakeScopeSchema>
 
 const wakeCursorSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     scope: wakeScopeSchema,
     stateDigest: z.string().regex(/^[a-f0-9]{64}$/),
     eventId: z.string().min(1).nullable(),
     updatedAt: z.string().datetime({ offset: true }),
   })
   .strict()
+
+const ASSISTANT_WAKE_PROTOCOL_REVISION = 2
 
 const reflectionManifestSchema = z
   .object({
@@ -140,17 +143,24 @@ export function createAssistantWake(options: {
         scope: WakeScope
         scopeKey: string
         snapshot: AssistantStateSnapshot
+        attentionRefs: string[]
       }> = []
       let establishedBaseline = false
       let deferred = false
 
       for (const candidate of scopes) {
         const cursor = await readCursor(cursorPath(cursorsRoot, candidate.scopeKey))
-        const immediate = hasImmediateWakeSignal(candidate.snapshot)
+        const attentionRefs = actionableAssistantAttentionReferences(
+          candidate.scope,
+          candidate.snapshot,
+          workspace,
+          now().getTime(),
+        )
+        const immediate = hasImmediateWakeSignal(candidate.snapshot, attentionRefs)
         if (!cursor) {
           if (!immediate) {
             await writeCursor(cursorPath(cursorsRoot, candidate.scopeKey), {
-              version: 1,
+              version: 2,
               scope: candidate.scope,
               stateDigest: candidate.snapshot.stateDigest,
               eventId: null,
@@ -170,7 +180,7 @@ export function createAssistantWake(options: {
           deferred = true
           continue
         }
-        eligible.push(candidate)
+        eligible.push({ ...candidate, attentionRefs })
       }
 
       if (eligible.length === 0) {
@@ -180,12 +190,16 @@ export function createAssistantWake(options: {
 
       const selected = selectWakeScope(eligible, lastScopeKey)
       lastScopeKey = selected.scopeKey
-      const operation = publishWake(selected.scope, selected.scopeKey, selected.snapshot).finally(
-        () => {
-          active = null
-          options.onWake?.()
-        },
-      )
+      const operation = publishWake(
+        selected.scope,
+        selected.scopeKey,
+        selected.snapshot,
+        undefined,
+        selected.attentionRefs,
+      ).finally(() => {
+        active = null
+        options.onWake?.()
+      })
       active = operation
       void operation
       return 'started'
@@ -205,7 +219,7 @@ export function createAssistantWake(options: {
         const path = cursorPath(cursorsRoot, scopeKey)
         const cursor = await readCursor(path)
         await writeCursor(path, {
-          version: 1,
+          version: 2,
           scope: candidate.scope,
           stateDigest: candidate.snapshot.stateDigest,
           eventId: cursor?.eventId ?? null,
@@ -258,11 +272,12 @@ export function createAssistantWake(options: {
       attentionRef: string
       revisitAt: string
     },
+    attentionRefs: readonly string[] = [],
   ) {
     const digestKey = await sha256(
       revisit
-        ? `${scopeKey}\u0000${revisit.attentionRef}\u0000${revisit.revisitAt}`
-        : `${scopeKey}\u0000${snapshot.stateDigest}`,
+        ? `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${revisit.attentionRef}\u0000${revisit.revisitAt}`
+        : `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${snapshot.stateDigest}\u0000${attentionRefs.join('\u0000')}`,
     )
     const eventId = revisit?.eventId ?? `EV-wake-${digestKey.slice(0, 24)}`
     const wakeId = `WK-${crypto.randomUUID()}`
@@ -288,7 +303,7 @@ export function createAssistantWake(options: {
 
     const body = revisit
       ? renderAttentionRevisit(scope, revisit.attentionRef, revisit.revisitAt)
-      : renderWakeEvent(scope, snapshot)
+      : renderWakeEvent(scope, snapshot, attentionRefs)
     await Bun.write(promptPath, body)
     await Bun.write(
       transcriptPath,
@@ -309,11 +324,13 @@ export function createAssistantWake(options: {
         await options.workspace.receiveSystemEvent({
           eventId,
           content: body,
-          ...(scope.kind === 'project' || revisit
+          ...(scope.kind === 'project' || revisit || attentionRefs.length > 0
             ? {
                 context: {
                   ...(scope.kind === 'project' ? { projectId: scope.projectId } : {}),
-                  ...(revisit ? { attentionRefs: [revisit.attentionRef] } : {}),
+                  ...(revisit || attentionRefs.length > 0
+                    ? { attentionRefs: revisit ? [revisit.attentionRef] : [...attentionRefs] }
+                    : {}),
                 },
               }
             : {}),
@@ -321,7 +338,7 @@ export function createAssistantWake(options: {
         })
       }
       await writeCursor(cursorPath(cursorsRoot, scopeKey), {
-        version: 1,
+        version: 2,
         scope,
         stateDigest: snapshot.stateDigest,
         eventId,
@@ -507,17 +524,33 @@ function attentionRevisitCandidates(
     )
 }
 
-function renderWakeEvent(scope: WakeScope, snapshot: AssistantStateSnapshot) {
+function renderWakeEvent(
+  scope: WakeScope,
+  snapshot: AssistantStateSnapshot,
+  attentionRefs: readonly string[],
+) {
   return [
     '# Project state event',
     '',
     `Scope: ${scope.kind === 'project' ? `Project ${scope.projectId}` : 'Home'}`,
     `Observed digest: ${snapshot.stateDigest}`,
     `Observed at: ${snapshot.observedAt}`,
+    ...(attentionRefs.length
+      ? [
+          '',
+          'Assistant-owned responsibility:',
+          ...attentionRefs.map((reference) => `- ${reference}`),
+        ]
+      : []),
     '',
     'This is a durable internal event for the same Assistant session. It is not operator input.',
     'A non-empty final response is persisted as a public Assistant message; an empty response remains internal.',
     'Current Project state and every unresolved Attention are supplied separately with this turn.',
+    ...(attentionRefs.length
+      ? [
+          'This event cannot settle while a listed Attention remains Assistant-owned with unchanged canonical responsibility state.',
+        ]
+      : []),
     '',
   ].join('\n')
 }
@@ -532,6 +565,7 @@ function renderAttentionRevisit(scope: WakeScope, attentionRef: string, revisitA
     '',
     'This is a durable internal event for the same Assistant session. It is not operator input.',
     'Current state and every unresolved Attention are supplied separately with this turn.',
+    'This event cannot settle while the listed Attention remains Assistant-owned with unchanged canonical responsibility state.',
     '',
   ].join('\n')
 }
@@ -542,20 +576,18 @@ function goalStateId(goal: Record<string, unknown>) {
   return typeof goal.goal.attributes.id === 'string' ? goal.goal.attributes.id : null
 }
 
-function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
+function hasImmediateWakeSignal(
+  snapshot: AssistantStateSnapshot,
+  attentionRefs: readonly string[],
+) {
   if (snapshot.projects.some(projectHasPublishedReviewerReject)) return true
   if (snapshot.projects.some(projectHasStaleRun)) return true
   if (snapshot.projects.some(projectHasSettledFailure)) return true
-  if (snapshot.activeRuns.length > 0) return false
-  if (snapshot.workspaceAttentions.some(isOpenAttention)) return true
+  if (attentionRefs.length > 0) return true
   return snapshot.projects.some((project) => {
     if (!isRecord(project)) return false
     if (project.available === false) return true
-    if (!Array.isArray(project.goals)) return false
-    return project.goals.some(
-      (goal) =>
-        isRecord(goal) && Array.isArray(goal.attentions) && goal.attentions.some(isOpenAttention),
-    )
+    return false
   })
 }
 
@@ -612,12 +644,6 @@ function projectHasStaleRun(project: unknown) {
   )
 }
 
-function isOpenAttention(value: unknown) {
-  if (!isRecord(value)) return false
-  const attributes = isRecord(value.attributes) ? value.attributes : value
-  return attributes.resolvedAt === null
-}
-
 function selectWakeScope<T extends { scopeKey: string }>(
   eligible: readonly T[],
   previousScopeKey: string | null,
@@ -641,7 +667,8 @@ function cursorPath(root: string, scopeKey: string) {
 async function readCursor(path: string) {
   const file = Bun.file(path)
   if (!(await file.exists())) return null
-  return wakeCursorSchema.parse(await file.json())
+  const parsed = wakeCursorSchema.safeParse(await file.json().catch(() => null))
+  return parsed.success ? parsed.data : null
 }
 
 async function writeCursor(path: string, cursor: z.infer<typeof wakeCursorSchema>) {

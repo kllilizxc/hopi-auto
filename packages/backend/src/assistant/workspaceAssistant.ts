@@ -22,6 +22,7 @@ import {
   withNativeCompactionEnabled,
 } from '../agent/vendorTransport'
 import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
+import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import {
   type InboxEventDocument,
   isInternalInboxSource,
@@ -44,6 +45,7 @@ import {
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
+import { assistantResponsibilityState } from './assistantResponsibility'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import { type AssistantTools, assistantStateProjection } from './assistantTools'
 
@@ -113,6 +115,8 @@ export type WorkspaceAssistantResult = { kind: 'answered'; eventId: string }
 export class WorkspaceAssistantError extends Error {}
 
 export class AssistantSessionUnavailableError extends WorkspaceAssistantError {}
+
+class UnsettledAssistantResponsibilityError extends WorkspaceAssistantError {}
 
 export function createConfiguredAssistantModelRunner(options: {
   resolveConfig(): RoleTransportConfig | Promise<RoleTransportConfig>
@@ -565,6 +569,30 @@ export function createWorkspaceAssistant(input: {
         if (!reply && (!internal || attentionRequest)) {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }
+        if (internal) {
+          const responsibilityRefs = normalizeInboxAttentionReferences(
+            event.attributes.context ?? {},
+          )
+          if (responsibilityRefs.length > 0 && (!input.state || !stateSnapshot)) {
+            throw new WorkspaceAssistantError(
+              'Assistant responsibility validation requires current HOPI state',
+            )
+          }
+          if (input.state && stateSnapshot) {
+            const [currentState, currentWorkspace] = await Promise.all([
+              input.state.read(projectId ? { projectId } : {}),
+              input.workspace.readWorkspaceForControl(),
+            ])
+            assertAssistantResponsibilitiesAdvanced({
+              event,
+              stagedEvent,
+              beforeState: stateSnapshot,
+              afterState: currentState,
+              beforeWorkspace: workspaceState,
+              afterWorkspace: currentWorkspace,
+            })
+          }
+        }
         await input.conversation.writeSession(
           conversationScope,
           result.session,
@@ -593,6 +621,9 @@ export function createWorkspaceAssistant(input: {
         await input.conversation.complete(eventId)
         return { kind: 'answered', eventId }
       } catch (error) {
+        if (error instanceof UnsettledAssistantResponsibilityError) {
+          await input.conversation.clearSession(conversationScope)
+        }
         await input.conversation.fail(eventId, errorMessage(error))
         throw error
       } finally {
@@ -600,6 +631,40 @@ export function createWorkspaceAssistant(input: {
         await input.onTurnSettled?.(eventId)
       }
     },
+  }
+}
+
+function assertAssistantResponsibilitiesAdvanced(input: {
+  event: InboxEventDocument
+  stagedEvent: InboxEventDocument | null
+  beforeState: AssistantStateSnapshot
+  afterState: AssistantStateSnapshot
+  beforeWorkspace: AssistantWorkspace
+  afterWorkspace: AssistantWorkspace
+}) {
+  const references = normalizeInboxAttentionReferences(input.event.attributes.context ?? {})
+  if (references.length === 0) return
+  const transferred = new Set(input.stagedEvent?.attributes.attentionRequest?.attentionRefs ?? [])
+  const unchanged: string[] = []
+  for (const reference of references) {
+    const before = assistantResponsibilityState(reference, input.beforeState, input.beforeWorkspace)
+    if (!before?.assistantOwned || before.hasDurableSuccessor) continue
+    if (transferred.has(reference)) continue
+    const after = assistantResponsibilityState(reference, input.afterState, input.afterWorkspace)
+    if (
+      !after ||
+      !after.assistantOwned ||
+      after.hasDurableSuccessor ||
+      after.fingerprint !== before.fingerprint
+    ) {
+      continue
+    }
+    unchanged.push(reference)
+  }
+  if (unchanged.length > 0) {
+    throw new UnsettledAssistantResponsibilityError(
+      `Internal event cannot settle because canonical Assistant responsibility is unchanged: ${unchanged.join(', ')}`,
+    )
   }
 }
 
@@ -928,7 +993,7 @@ const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
   'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
-  'Attention remains Assistant-owned until it is resolved or transferred with hopi_manage_attention; transfer makes the final reply the exact user request.',
+  'Attention remains Assistant-owned until hopi_manage_attention records a resolution, future revisit, or transfer; a responsibility-bearing internal event cannot settle while its canonical successor state is unchanged.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
 ] as const
 
@@ -964,7 +1029,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 14
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 15
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
@@ -1023,6 +1088,9 @@ function renderTurn(event: InboxEventDocument, state?: AssistantStateSnapshot) {
       '[Project system event. This is not operator input.]',
       'A non-empty final response becomes the public update; an empty response remains internal.',
       context ? `[Suggested context: ${renderInboxContext(context)}]` : '[Home context]',
+      event.attributes.attentionRequest
+        ? `[Staged responsibility transfer: ${event.attributes.attentionRequest.attentionRefs.join(', ')}. It becomes user-owned only when this turn persists a non-empty final reply.]`
+        : '',
       renderCurrentState(state),
       event.body,
     ]
