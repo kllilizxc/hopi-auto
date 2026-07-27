@@ -1,5 +1,15 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
 import { selectPeerShortcuts } from '../lib/goalScope'
+import {
+  compactShortcutLimit,
+  compactShortcutRailWidth,
+} from '../lib/peerSwitcherLayout'
 import { cn } from '../lib/utils'
 import { AppTabs, SelectField } from './ui'
 
@@ -25,28 +35,58 @@ interface PeerSwitcherProps {
   variant?: 'compact' | 'headline'
 }
 
-function shortcutLimit() {
+function viewportShortcutLimit() {
   if (typeof window === 'undefined') return 3
   if (window.matchMedia(SINGLE_SHORTCUT_QUERY).matches) return 1
   if (window.matchMedia(NARROW_SHORTCUT_QUERY).matches) return 2
   return 3
 }
 
-function useShortcutLimit() {
-  const [limit, setLimit] = useState(shortcutLimit)
+function useViewportShortcutLimit(enabled: boolean) {
+  const [limit, setLimit] = useState(viewportShortcutLimit)
 
   useEffect(() => {
+    if (!enabled) return
+
     const media = [
       window.matchMedia(SINGLE_SHORTCUT_QUERY),
       window.matchMedia(NARROW_SHORTCUT_QUERY),
     ]
-    const update = () => setLimit(shortcutLimit())
+    const update = () => setLimit(viewportShortcutLimit())
     update()
     media.forEach((query) => query.addEventListener('change', update))
     return () => media.forEach((query) => query.removeEventListener('change', update))
-  }, [])
+  }, [enabled])
 
   return limit
+}
+
+function useCompactShortcutLimit(itemCount: number, enabled: boolean) {
+  const [container, setContainer] = useState<HTMLDivElement | null>(null)
+  const [limit, setLimit] = useState(() => compactShortcutLimit(Number.NaN, itemCount))
+
+  useLayoutEffect(() => {
+    if (!enabled || !container) return
+
+    const update = (width = container.getBoundingClientRect().width) => {
+      setLimit(compactShortcutLimit(width, itemCount))
+    }
+    update()
+
+    if (typeof ResizeObserver === 'undefined') {
+      const updateFromWindow = () => update()
+      window.addEventListener('resize', updateFromWindow)
+      return () => window.removeEventListener('resize', updateFromWindow)
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      update(entries[0]?.contentRect.width)
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [container, enabled, itemCount])
+
+  return [limit, setContainer] as const
 }
 
 export function PeerSwitcher({
@@ -61,7 +101,12 @@ export function PeerSwitcher({
   selectedKey,
   variant = 'compact',
 }: PeerSwitcherProps) {
-  const limit = useShortcutLimit()
+  const viewportLimit = useViewportShortcutLimit(variant === 'headline')
+  const [compactLimit, compactContainerRef] = useCompactShortcutLimit(
+    items.length,
+    variant === 'compact',
+  )
+  const limit = variant === 'compact' ? compactLimit : viewportLimit
   const orderedItems =
     variant === 'headline'
       ? [
@@ -84,6 +129,7 @@ export function PeerSwitcher({
     >
       <span className="peer-switcher__label">{label}</span>
       <div
+        ref={variant === 'compact' ? compactContainerRef : undefined}
         className={cn(
           'peer-switcher__controls',
           variant === 'compact' && 'project-switcher__controls',
@@ -95,8 +141,14 @@ export function PeerSwitcher({
             className={cn(
               'peer-switcher__tabs',
               variant === 'compact' && 'project-switcher__tabs',
-              variant === 'compact' && `project-switcher__tabs--${shortcuts.length}`,
             )}
+            style={
+              variant === 'compact'
+                ? ({
+                    '--project-shortcuts-width': `${compactShortcutRailWidth(shortcuts.length)}px`,
+                  } as CSSProperties)
+                : undefined
+            }
             selectedKey={selectedKey}
             onSelectionChange={(key) => {
               const nextKey = String(key)

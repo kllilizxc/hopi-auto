@@ -490,7 +490,9 @@ navigation behavior while using only the visual variant required by their hierar
 is rendered once in the Goal surface's title slot rather than duplicated in the global shell: the
 selected Goal is the page title, nearby Goals are smaller muted peers beside it, and additional Goals
 remain available through the same overflow control. This title variant has no rail border or
-background. The compact Project rail and ordinary content tabs retain their sliding selected
+background. The compact Project rail derives its shortcut count from its own available width at the
+readable compact-tab size; it consumes otherwise idle shell space before placing remaining Projects
+in overflow. The compact Project rail and ordinary content tabs retain their sliding selected
 indicator. Attempt history and document indexes remain lists because they select records rather than
 peer views.
 

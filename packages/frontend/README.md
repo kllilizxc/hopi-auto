@@ -135,9 +135,10 @@ filesystem or identifier order is never treated as recency. Older single-Goal br
 are migrated into the same visit history.
 
 Frequent Project switching uses that same ordering without introducing a second favorites model.
-The most recent Projects are exposed through the shared HeroUI-backed `AppTabs` rail, limited to
-three on wide workspaces, two on narrower workspaces, and one on phones or short landscape screens.
-The current Project always remains directly visible. The same rail, tab, and sliding
+The most recent Projects are exposed through the shared HeroUI-backed `AppTabs` rail. Its shortcut
+count is derived from the rail's measured width, so every Project that fits at the readable compact
+tab width remains directly visible and only the remainder moves into overflow. The current Project
+always remains directly visible. The same rail, tab, and sliding
 SelectionIndicator implementation owns every peer-view switch, including Kanban/Goal docs and
 Activity/Work contract; each surface may change only sizing and placement, not selection styling or
 interaction. Attempt history and the Goal document index remain lists rather than pretending every

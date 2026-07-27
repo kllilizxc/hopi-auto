@@ -4721,19 +4721,8 @@ samp {
   display: block;
   width: 100%;
   min-width: 0;
+  max-width: var(--project-shortcuts-width);
   flex: 1 1 412px;
-}
-
-.project-switcher__tabs--1.tabs {
-  max-width: 140px;
-}
-
-.project-switcher__tabs--2.tabs {
-  max-width: 276px;
-}
-
-.project-switcher__tabs--3.tabs {
-  max-width: 412px;
 }
 
 .app-tabs__list.tabs__list {

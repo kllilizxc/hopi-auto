@@ -345,11 +345,14 @@ test('Project and title-level Goal navigation reuse one peer switcher', async ()
   expect(board).not.toContain('<AppTabs.ListContainer')
   expect(tabs).toContain('<HeroTabs.Indicator className="app-tabs__indicator" />')
   expect(switcher).toContain("variant === 'compact' && 'project-switcher__more'")
-  expect(switcher).toContain('if (window.matchMedia(SINGLE_SHORTCUT_QUERY).matches) return 1')
-  expect(switcher).toContain('if (window.matchMedia(NARROW_SHORTCUT_QUERY).matches) return 2')
+  expect(switcher).toContain('useCompactShortcutLimit(')
+  expect(switcher).toContain('new ResizeObserver(')
+  expect(switcher).toContain("'--project-shortcuts-width'")
   expect(layout).toContain('const [recentProjects] = useState(readRecentProjects)')
   expect(layout).not.toContain('setRecentProjects(')
-  expect(styles).toContain('.project-switcher__tabs.tabs')
+  expect(styles).toMatch(
+    /\.project-switcher__tabs\.tabs\s*\{[^}]*max-width:\s*var\(--project-shortcuts-width\);/,
+  )
   expect(styles).toContain('.peer-switcher--headline .app-tabs__list.tabs__list')
   expect(styles).toMatch(
     /\.peer-switcher--headline \.peer-switcher__tabs\.tabs\s*\{[^}]*width:\s*fit-content;[^}]*max-width:\s*calc\(100% - 36px\);[^}]*flex:\s*0 1 auto;/,
