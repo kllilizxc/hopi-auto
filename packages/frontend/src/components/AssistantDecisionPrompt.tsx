@@ -33,15 +33,11 @@ export function AssistantDecisionPrompt({
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, string>>({})
   const [detailByQuestion, setDetailByQuestion] = useState<Record<string, string>>({})
   const [submitted, setSubmitted] = useState(false)
-  const complete = questions.every(({ key, question }) => {
-    const selected = selectedByQuestion[key]
-    const option = question.options.find((candidate) => candidate.id === selected)
-    return Boolean(
-      selected &&
-        (selected !== OTHER_OPTION_ID || detailByQuestion[key]?.trim()) &&
-        (!option?.detailPrompt || detailByQuestion[key]?.trim()),
-    )
-  })
+  const complete = decisionQuestionsComplete(
+    questions,
+    selectedByQuestion,
+    detailByQuestion,
+  )
 
   if (questions.length === 0) return null
 
@@ -114,19 +110,21 @@ export function AssistantDecisionPrompt({
                 ) : null}
               </div>
               {detailPrompt ? (
-                <AppTextArea
-                  aria-label={detailPrompt}
-                  className="assistant-decision-question__other"
-                  onChange={(event) =>
-                    setDetailByQuestion((current) => ({
-                      ...current,
-                      [key]: event.target.value,
-                    }))
-                  }
-                  placeholder={detailPrompt}
-                  rows={2}
-                  value={detailByQuestion[key] ?? ''}
-                />
+                <div className="field">
+                  <AppTextArea
+                    aria-label={detailPrompt}
+                    className="assistant-decision-question__other"
+                    onChange={(event) =>
+                      setDetailByQuestion((current) => ({
+                        ...current,
+                        [key]: event.target.value,
+                      }))
+                    }
+                    placeholder={detailPrompt}
+                    rows={3}
+                    value={detailByQuestion[key] ?? ''}
+                  />
+                </div>
               ) : null}
             </fieldset>
           )
@@ -141,6 +139,20 @@ export function AssistantDecisionPrompt({
       </AppButton>
     </AppForm>
   )
+}
+
+export function decisionQuestionsComplete(
+  questions: readonly DecisionQuestionEntry[],
+  selectedByQuestion: Readonly<Record<string, string>>,
+  detailByQuestion: Readonly<Record<string, string>>,
+) {
+  return questions.every(({ key, question }) => {
+    const selected = selectedByQuestion[key]
+    if (selected === OTHER_OPTION_ID) {
+      return question.allowOther && Boolean(detailByQuestion[key]?.trim())
+    }
+    return question.options.some((option) => option.id === selected)
+  })
 }
 
 export function formatDecisionAnswers(

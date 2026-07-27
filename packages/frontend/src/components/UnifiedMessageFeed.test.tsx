@@ -1,7 +1,11 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { MessageFeedItem } from '../lib/messageFeed'
-import { AssistantDecisionPrompt, formatDecisionAnswers } from './AssistantDecisionPrompt'
+import {
+  AssistantDecisionPrompt,
+  decisionQuestionsComplete,
+  formatDecisionAnswers,
+} from './AssistantDecisionPrompt'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 
@@ -210,6 +214,43 @@ test('formats selected decision answers as one readable Inbox reply', () => {
       { 'A-1:scope': '42', 'A-1:identity': '现有 SSO 服务' },
     ),
   ).toBe('1. 适用范围: 仅 Accrual — 42\n2. 身份来源: 现有 SSO 服务')
+})
+
+test('treats option detail as optional and requires text only for Other', () => {
+  const questions = [
+    {
+      key: 'A-1:path',
+      question: {
+        id: 'path',
+        header: 'DEV 鉴权路径',
+        question: '选择哪条路径？',
+        options: [
+          {
+            id: 'bridge',
+            label: '服务端鉴权桥接',
+            description: '使用可信服务端身份',
+            detailPrompt: '可补充现有 gateway 信息',
+          },
+          {
+            id: 'revise',
+            label: '取消真实 canary',
+            description: '修订合同',
+          },
+        ],
+        allowOther: true,
+      },
+    },
+  ]
+
+  expect(decisionQuestionsComplete(questions, { 'A-1:path': 'bridge' }, {})).toBe(true)
+  expect(decisionQuestionsComplete(questions, { 'A-1:path': '__other__' }, {})).toBe(false)
+  expect(
+    decisionQuestionsComplete(
+      questions,
+      { 'A-1:path': '__other__' },
+      { 'A-1:path': '沿用现有网关' },
+    ),
+  ).toBe(true)
 })
 
 test('lets Virtuoso follow updates while the reader remains near the bottom', async () => {
