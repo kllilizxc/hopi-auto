@@ -134,13 +134,15 @@ follows one small protocol:
 1. A meaningful state digest change records that a newer snapshot has not yet been assessed; it does
    not by itself start a model Run. Ordinary log appends remain outside the digest.
 2. A snapshot is immediately eligible when it contains an Assistant-owned Attention, an unavailable
-   Project, or a stale running Attempt. Otherwise it becomes eligible only after Coordinator has no
-   deterministic action to take in an idle reconciliation tick that begins and ends with no
-   responsibility Run active. Requiring a quiescent tick prevents a Run that finishes during an old
-   scan from being mistaken for settled state before its result is reconciled. Normal automatic
-   progress therefore coalesces across Planning, Generation, Review, C1, and final Planning. This
-   immediate rule also applies to the first snapshot after process startup; only a non-urgent first
-   snapshot establishes the silent baseline.
+   Project, a stale running Attempt, or a settled failed Attempt that needs Assistant recovery.
+   A Run still active in the same Project suppresses only ordinary intermediate churn; it does not
+   own or explain a settled failure from another Work or Goal. Otherwise the snapshot becomes
+   eligible only after Coordinator has no deterministic action to take in an idle reconciliation
+   tick that begins and ends with no responsibility Run active. Requiring a quiescent tick prevents
+   a Run that finishes during an old scan from being mistaken for settled state before its result is
+   reconciled. Normal automatic progress therefore coalesces across Planning, Generation, Review,
+   C1, and final Planning. This immediate rule also applies to the first snapshot after process
+   startup; only a non-urgent first snapshot establishes the silent baseline.
 3. At most one Reflection model Run executes per Home, so scoped observations remain globally
    serialized without creating model concurrency. Changes coalesce through the current digest
    within their Home or Project scope instead of forming an event queue. Assessing one scope never

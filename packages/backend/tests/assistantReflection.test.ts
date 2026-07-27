@@ -201,6 +201,59 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(1)
   })
 
+  test('wakes for a settled failure while another Goal in the same Project is active', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+
+    const current = snapshot(['P-1'], {
+      projectDigests: { 'P-1': '8'.repeat(64) },
+    })
+    fixture.setSnapshot({
+      ...current,
+      activeRuns: [
+        {
+          projectId: 'P-1',
+          goalId: 'G-active',
+          workId: 'W-active',
+          responsibility: 'planner',
+          runId: 'R-active',
+        },
+      ],
+      projects: [
+        {
+          projectId: 'P-1',
+          available: true,
+          releaseHead: 'release',
+          goals: [
+            {
+              goalId: 'G-failed',
+              works: [
+                {
+                  workId: 'W-failed',
+                  projection: { failedPredicates: ['failed_attempt'] },
+                },
+              ],
+            },
+            {
+              goalId: 'G-active',
+              works: [],
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+
+    const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
+    expect(event?.attributes).toMatchObject({
+      source: 'system',
+      status: 'pending',
+      context: { projectId: 'P-1' },
+    })
+  })
+
   test('wakes for each published Reviewer reject while the repair Generator is active', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')

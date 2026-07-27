@@ -518,25 +518,36 @@ function renderAttentionContinuation(scope: WakeScope, attentionRefs: readonly s
 function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
   if (snapshot.projects.some(projectHasPublishedReviewerReject)) return true
   if (snapshot.projects.some(projectHasStaleRun)) return true
+  if (snapshot.projects.some(projectHasSettledFailure)) return true
   if (snapshot.activeRuns.length > 0) return false
   if (snapshot.workspaceAttentions.some(isOpenAttention)) return true
   return snapshot.projects.some((project) => {
     if (!isRecord(project)) return false
     if (project.available === false) return true
     if (!Array.isArray(project.goals)) return false
-    return project.goals.some((goal) => {
-      if (!isRecord(goal)) return false
-      if (Array.isArray(goal.attentions) && goal.attentions.some(isOpenAttention)) return true
-      if (!Array.isArray(goal.works)) return false
-      return goal.works.some(
+    return project.goals.some(
+      (goal) =>
+        isRecord(goal) &&
+        Array.isArray(goal.attentions) &&
+        goal.attentions.some(isOpenAttention),
+    )
+  })
+}
+
+function projectHasSettledFailure(project: unknown) {
+  if (!isRecord(project) || !Array.isArray(project.goals)) return false
+  return project.goals.some(
+    (goal) =>
+      isRecord(goal) &&
+      Array.isArray(goal.works) &&
+      goal.works.some(
         (work) =>
           isRecord(work) &&
           isRecord(work.projection) &&
           Array.isArray(work.projection.failedPredicates) &&
           work.projection.failedPredicates.includes('failed_attempt'),
-      )
-    })
-  })
+      ),
+  )
 }
 
 function projectHasPublishedReviewerReject(project: unknown) {
