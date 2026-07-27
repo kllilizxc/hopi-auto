@@ -21,6 +21,19 @@ export function appendProjectOwnerMessage(
   input: { recordedAt: string; sourceEventId: string; content: string },
 ) {
   const normalized = body.trimEnd()
+  const sourceMarker = `Source event: ${input.sourceEventId}`
+  const existingSource = normalized.indexOf(sourceMarker)
+  if (existingSource !== -1) {
+    const contentStart = existingSource + sourceMarker.length
+    const nextMessage = normalized.indexOf('\n### ', contentStart)
+    const existingContent = normalized
+      .slice(contentStart, nextMessage === -1 ? undefined : nextMessage)
+      .trim()
+    if (existingContent !== input.content.trim()) {
+      throw new Error(`Project Owner message already exists for ${input.sourceEventId}`)
+    }
+    return body
+  }
   const hasMessages = normalized.includes(`\n${PROJECT_OWNER_MESSAGES_HEADING}\n`)
   return [
     normalized,

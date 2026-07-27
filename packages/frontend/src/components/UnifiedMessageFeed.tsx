@@ -1,33 +1,31 @@
+import { AlertCircle, ArrowDown, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react'
 import {
+  type ReactNode,
+  Suspense,
   lazy,
   memo,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from 'react'
-import { AlertCircle, ArrowDown, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react'
+import { type Components, Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import type { AssistantAttentionDecisionPrompt } from '../lib/api'
 import {
-  Virtuoso,
-  type Components,
-  type VirtuosoHandle,
-} from 'react-virtuoso'
-import {
-  buildMessageFeedRows,
-  commandTextFromToolSummary,
-  summarizeActivityGroup,
   type MessageFeedActivityEntry,
   type MessageFeedDisplayRow,
   type MessageFeedItem,
+  buildMessageFeedRows,
+  commandTextFromToolSummary,
+  summarizeActivityGroup,
 } from '../lib/messageFeed'
 import { cn } from '../lib/utils'
+import { AssistantDecisionPrompt } from './AssistantDecisionPrompt'
 import { MessageFeedSkeleton } from './MessageFeedSkeleton'
 import {
-  AppButton,
   AppBreathingIndicator,
+  AppButton,
   AppDisclosure,
   AppLink,
   AppScrollShadow,
@@ -53,7 +51,10 @@ interface UnifiedMessageFeedProps {
   focusGroupId?: string | null
   focusRequest?: number
   needsYouByGroupId?: ReadonlyMap<string, number>
+  decisionPromptsByGroupId?: ReadonlyMap<string, readonly AssistantAttentionDecisionPrompt[]>
+  decisionPromptDisabled?: boolean
   onReplyNeedsYou?: (groupId: string) => void
+  onSubmitDecisionPrompt?: (groupId: string, answer: string) => void
 }
 
 const INITIAL_FIRST_ITEM_INDEX = 100_000
@@ -104,7 +105,10 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
   focusGroupId = null,
   focusRequest = 0,
   needsYouByGroupId,
+  decisionPromptsByGroupId,
+  decisionPromptDisabled = false,
   onReplyNeedsYou,
+  onSubmitDecisionPrompt,
 }: UnifiedMessageFeedProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
   const handledFocusRequestRef = useRef(0)
@@ -205,15 +209,31 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
       if (row.type === 'action_required') return <ActionRequiredRow item={row.item} />
       if (row.type === 'system_update') return <SystemUpdateRow item={row.item} />
       const groupId = row.item.groupId
+      const decisionPrompts = groupId ? decisionPromptsByGroupId?.get(groupId) : undefined
       return (
         <MessageRow
           item={row.item}
           needsYouCount={groupId ? (needsYouByGroupId?.get(groupId) ?? 0) : 0}
+          decisionPrompts={decisionPrompts}
+          decisionPromptDisabled={decisionPromptDisabled}
           onReply={groupId && onReplyNeedsYou ? () => onReplyNeedsYou(groupId) : undefined}
+          onSubmitDecisionPrompt={
+            groupId && onSubmitDecisionPrompt
+              ? (answer) => onSubmitDecisionPrompt(groupId, answer)
+              : undefined
+          }
         />
       )
     },
-    [expandedItems, lastRowId, needsYouByGroupId, onReplyNeedsYou],
+    [
+      decisionPromptDisabled,
+      decisionPromptsByGroupId,
+      expandedItems,
+      lastRowId,
+      needsYouByGroupId,
+      onReplyNeedsYou,
+      onSubmitDecisionPrompt,
+    ],
   )
   const itemContent = useCallback(
     (_index: number, row: RenderedFeedRow) => renderRow(row),
@@ -315,10 +335,7 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
   )
 }, messageFeedPropsEqual)
 
-function messageFeedPropsEqual(
-  previous: UnifiedMessageFeedProps,
-  next: UnifiedMessageFeedProps,
-) {
+function messageFeedPropsEqual(previous: UnifiedMessageFeedProps, next: UnifiedMessageFeedProps) {
   if (
     previous.feedKey !== next.feedKey ||
     previous.items !== next.items ||
@@ -335,7 +352,10 @@ function messageFeedPropsEqual(
     previous.focusGroupId !== next.focusGroupId ||
     previous.focusRequest !== next.focusRequest ||
     previous.needsYouByGroupId !== next.needsYouByGroupId ||
-    previous.onReplyNeedsYou !== next.onReplyNeedsYou
+    previous.decisionPromptsByGroupId !== next.decisionPromptsByGroupId ||
+    previous.decisionPromptDisabled !== next.decisionPromptDisabled ||
+    previous.onReplyNeedsYou !== next.onReplyNeedsYou ||
+    previous.onSubmitDecisionPrompt !== next.onSubmitDecisionPrompt
   ) {
     return false
   }
@@ -359,11 +379,17 @@ function feedRowGroupId(row: RenderedFeedRow) {
 function MessageRow({
   item,
   needsYouCount = 0,
+  decisionPrompts,
+  decisionPromptDisabled = false,
   onReply,
+  onSubmitDecisionPrompt,
 }: {
   item: MessageFeedItem
   needsYouCount?: number
+  decisionPrompts?: readonly AssistantAttentionDecisionPrompt[]
+  decisionPromptDisabled?: boolean
   onReply?: () => void
+  onSubmitDecisionPrompt?: (answer: string) => void
 }) {
   const isUser = item.kind === 'user_message'
   const needsYou = !isUser && needsYouCount > 0
@@ -399,6 +425,13 @@ function MessageRow({
             <AssistantMessageText text={item.text} />
           </div>
         ) : null}
+        {needsYou && decisionPrompts?.length && onSubmitDecisionPrompt ? (
+          <AssistantDecisionPrompt
+            disabled={decisionPromptDisabled}
+            prompts={decisionPrompts}
+            onSubmit={onSubmitDecisionPrompt}
+          />
+        ) : null}
         {item.attachments && item.attachments.length > 0 ? (
           <div className="unified-feed-message__attachments">
             {item.attachments.map((attachment) => (
@@ -415,7 +448,12 @@ function MessageRow({
           </div>
         ) : null}
         {item.pending ? (
-          <StatusChip className="unified-feed-message__pending" color="accent" size="sm" variant="soft">
+          <StatusChip
+            className="unified-feed-message__pending"
+            color="accent"
+            size="sm"
+            variant="soft"
+          >
             <WorkingIndicator label="Streaming" />
           </StatusChip>
         ) : null}
@@ -454,7 +492,11 @@ function ActionRequiredRow({ item }: { item: MessageFeedItem }) {
         </div>
         {details.length > 0 ? (
           <>
-            <AppButton variant="ghost" type="button" onClick={() => setExpanded((current) => !current)}>
+            <AppButton
+              variant="ghost"
+              type="button"
+              onClick={() => setExpanded((current) => !current)}
+            >
               {expanded ? <ChevronDown /> : <ChevronRight />}
               Details
             </AppButton>

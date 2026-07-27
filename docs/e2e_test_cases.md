@@ -714,7 +714,7 @@ Actions:
 2. Observe one retained failure, restart Coordinator, and confirm unchanged Work is not redispatched.
 3. Let Reflection inspect the failed Attempt and hand the concrete recovery decision to speaking Assistant.
 4. Observe one direct operator-facing question without a synthetic Attention.
-5. Repair the external condition, reply naturally, and let Assistant request one Work retry.
+5. Repair the external condition, reply naturally, and let Assistant continue the Work once.
 6. Let the same Work complete.
 
 Pass conditions:
@@ -725,7 +725,7 @@ Pass conditions:
 - Kanban shows ordinary `waiting` rather than an infinite spinner or invented failure stage.
 - Raw stdout/stderr is present for every failed process.
 - Reflection and speaking Assistant make the recovery judgment from current state.
-- One natural user reply plus explicit Work retry affects only the failed Work.
+- One natural user reply plus explicit Work continuation affects only the failed Work.
 - Success clears the failed-Attempt projection without deleting history.
 - Final Planner success completes the Goal directly; recovery and completion create no Attention.
 
@@ -903,8 +903,9 @@ Actions:
 7. Run one focused configured-provider turn that returns an informational final response without a
    delivery tool; confirm the message records delivery but remains **Waiting for Assistant** and
    receives a correction turn rather than becoming **Needs you**.
-8. Run the actionable variant with `hopi_request_user({ attentionRefs })` followed by the complete
-   question as its final response; confirm its public message is
+8. Run the actionable variant with
+   `hopi_manage_attention({ kind: "transfer_attention_to_user", attentionRefs })` followed by the
+   complete question as its final response; confirm its public message is
    independently understandable from the visible conversation, including the material cause,
    blocking consequence, exact decision, non-obvious alternative effects, and recommendation when
    one exists. Confirm **Needs you** points at that exact public event. Send an unrelated Goal message
@@ -927,8 +928,8 @@ Pass conditions:
 - The final direct operator message corresponds to current unresolved Attention and appears once.
 - A direct operator request contains enough causal context to decide without exposing the internal
   Reflection brief; it is not only a choice list or bare question.
-- Informational delivery never projects **Needs you**; only `hopi_request_user` installs
-  `operatorRequest`.
+- Informational delivery never projects **Needs you**; only an acknowledged
+  `transfer_attention_to_user` installs `operatorRequest`.
 - Only a user event with exact `replyTo` correlation clears that request; adjacent ordinary messages
   do not.
 - The configured speaking model accepts the current notification schema; only its supplied message is public.

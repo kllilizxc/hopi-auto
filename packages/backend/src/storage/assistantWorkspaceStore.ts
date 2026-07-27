@@ -8,6 +8,7 @@ import {
   validateAssistantWorkspaceTransition,
 } from '../domain/assistantWorkspace'
 import {
+  type InboxAttentionRequest,
   type InboxContext,
   type InboxEventDocument,
   type WorkspaceAttentionDocument,
@@ -59,6 +60,14 @@ export interface AssistantWorkspaceStore {
   receiveSystemEvent(input: ReceiveInternalEventInput): Promise<InboxEventDocument>
   receiveReflectionEvent(input: ReceiveInternalEventInput): Promise<InboxEventDocument>
   exposeEvent(eventId: string): Promise<InboxEventDocument>
+  stageAttentionRequest(
+    eventId: string,
+    request: InboxAttentionRequest,
+  ): Promise<InboxEventDocument>
+  migrateHandledAttentionRequest(
+    eventId: string,
+    request: InboxAttentionRequest,
+  ): Promise<InboxEventDocument>
   handleEvent(
     eventId: string,
     input: { reply: string; disposition: string; handledAt?: Date; expose?: boolean },
@@ -67,7 +76,14 @@ export interface AssistantWorkspaceStore {
   createAttention(attention: WorkspaceAttentionDocument): Promise<WorkspaceAttentionDocument>
   updateAttention(
     attentionId: string,
-    input: { body?: string; refs?: string[]; revisitAt?: string | null; updatedAt?: Date },
+    input: {
+      body?: string
+      refs?: string[]
+      revisitAt?: string | null
+      notifiedAt?: string | null
+      operatorRequest?: string | null
+      updatedAt?: Date
+    },
   ): Promise<WorkspaceAttentionDocument>
   resolveAttention(
     attentionId: string,
@@ -183,6 +199,42 @@ export function createAssistantWorkspaceStore(
       await publishEvent(this, publisher, eventId, source, event)
       return event
     },
+    async stageAttentionRequest(eventId, request) {
+      const { source, event } = await requireEvent(this, homeRoot, eventId)
+      if (event.attributes.status !== 'pending') {
+        throw new AssistantWorkspaceStoreError('Handled Inbox event cannot stage operator transfer')
+      }
+      if (JSON.stringify(event.attributes.attentionRequest ?? null) === JSON.stringify(request)) {
+        return event
+      }
+      if (event.attributes.attentionRequest) {
+        throw new AssistantWorkspaceStoreError(
+          'Inbox event already staged a different Attention transfer',
+        )
+      }
+      event.attributes.attentionRequest = request
+      await publishEvent(this, publisher, eventId, source, event)
+      return event
+    },
+    async migrateHandledAttentionRequest(eventId, request) {
+      const { source, event } = await requireEvent(this, homeRoot, eventId)
+      if (event.attributes.status !== 'handled' || event.attributes.visibility !== 'public') {
+        throw new AssistantWorkspaceStoreError(
+          'Only a handled public Inbox event can receive migrated Attention metadata',
+        )
+      }
+      if (JSON.stringify(event.attributes.attentionRequest ?? null) === JSON.stringify(request)) {
+        return event
+      }
+      if (event.attributes.attentionRequest) {
+        throw new AssistantWorkspaceStoreError(
+          'Handled Inbox event already has different Attention metadata',
+        )
+      }
+      event.attributes.attentionRequest = request
+      await publishEvent(this, publisher, eventId, source, event)
+      return event
+    },
     async handleEvent(eventId, input) {
       const { source, event } = await requireEvent(this, homeRoot, eventId)
       if (event.attributes.status === 'handled') return event
@@ -195,6 +247,11 @@ export function createAssistantWorkspaceStore(
       event.attributes.status = 'handled'
       event.attributes.handledAt = (input.handledAt ?? new Date()).toISOString()
       event.attributes.reply = input.reply.trim()
+      if (event.attributes.attentionRequest && !event.attributes.reply) {
+        throw new AssistantWorkspaceStoreError(
+          'Attention transfer requires a non-empty public request',
+        )
+      }
       event.attributes.disposition = input.disposition.trim()
       await publishEvent(this, publisher, eventId, source, event)
       return event
@@ -231,12 +288,18 @@ export function createAssistantWorkspaceStore(
         if (input.body !== undefined) attention.body = normalizeReceivedContent(input.body)
         if (input.refs !== undefined) attention.attributes.refs = [...new Set(input.refs)]
         if (input.revisitAt !== undefined) attention.attributes.revisitAt = input.revisitAt
+        if (input.notifiedAt !== undefined) attention.attributes.notifiedAt = input.notifiedAt
+        if (input.operatorRequest !== undefined) {
+          attention.attributes.operatorRequest = input.operatorRequest
+        }
         attention.attributes.updatedAt = (input.updatedAt ?? new Date()).toISOString()
       })
     },
     async resolveAttention(attentionId, resolution, resolvedAt = new Date()) {
       return mutateAttention(this, publisher, homeRoot, attentionId, (attention) => {
         attention.attributes.resolvedAt ??= resolvedAt.toISOString()
+        attention.attributes.revisitAt = null
+        attention.attributes.operatorRequest = null
         attention.attributes.updatedAt = resolvedAt.toISOString()
         if (!attention.body.includes('\n## Resolution\n')) {
           attention.body += `\n## Resolution\n\n${resolution.trim()}\n`
@@ -271,6 +334,7 @@ async function receiveEvent(
       handledAt: null,
       reply: null,
       disposition: null,
+      attentionRequest: null,
       webhookDeliveredAt: null,
     },
     body,

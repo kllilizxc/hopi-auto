@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { resetProjectAssistantConversationEpoch } from '../src/assistant/assistantConversationEpoch'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
+import { workspaceAttentionReference } from '../src/domain/attentionReference'
 import {
   parseGoalDocument,
   parseWorkDocument,
@@ -272,7 +273,7 @@ describe('MVP server', () => {
 
   test('derives Done completion from the Attempt that applied the terminal transition', () => {
     const attempt = (overrides: Partial<RunAttemptSummary> = {}): RunAttemptSummary => ({
-      version: 1,
+      version: 2,
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'W-1',
@@ -280,6 +281,7 @@ describe('MVP server', () => {
       responsibility: 'reviewer',
       workHash: null,
       execution: null,
+      requestedAt: '2026-07-11T00:00:00Z',
       startedAt: '2026-07-11T00:00:00Z',
       endedAt: '2026-07-11T00:05:00Z',
       status: 'finished',
@@ -1399,7 +1401,7 @@ describe('MVP server', () => {
     expect(await checkoutSnapshot(repoRoot)).toEqual(before)
   })
 
-  test('projects unresolved NeedsYou replies through the scoped Feed snapshot', async () => {
+  test('projects user-owned Attention through the scoped Feed snapshot', async () => {
     const homeRoot = join(temporaryRoot, 'assistant-request-feed-home')
     const repoRoot = await createRepo(join(temporaryRoot, 'assistant-request-feed-repo'))
     const publisher = new PublicationCoordinator()
@@ -1428,11 +1430,45 @@ describe('MVP server', () => {
       context: { projectId: 'P-1' },
       receivedAt: new Date(timestamp),
     })
+    const homeId = (await workspace.readWorkspace()).homeId
+    const attentionRef = workspaceAttentionReference(homeId, 'A-choice')
+    await workspace.stageAttentionRequest(event.attributes.id, {
+      attentionRefs: [attentionRef],
+      decisionPrompt: {
+        questions: [
+          {
+            id: 'window',
+            header: 'Release window',
+            question: 'When should the release run?',
+            options: [
+              {
+                id: 'today',
+                label: 'Today',
+                description: 'Run in the current window',
+                recommended: true,
+              },
+              {
+                id: 'tomorrow',
+                label: 'Tomorrow',
+                description: 'Wait for the next window',
+              },
+            ],
+            allowOther: true,
+          },
+        ],
+      },
+    })
     await workspace.handleEvent(event.attributes.id, {
-      reply: '<NeedsYou attentionId="A-choice">Choose today or tomorrow.</NeedsYou>',
-      disposition: 'notified',
+      reply: 'Choose today or tomorrow.',
+      disposition: 'operator-requested',
       expose: true,
       handledAt: new Date('2026-07-16T08:01:00.000Z'),
+    })
+    await workspace.updateAttention('A-choice', {
+      notifiedAt: '2026-07-16T08:01:00.000Z',
+      operatorRequest: `home:${homeId}/event:EV-choice`,
+      revisitAt: null,
+      updatedAt: new Date('2026-07-16T08:01:00.000Z'),
     })
 
     const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
@@ -1449,6 +1485,34 @@ describe('MVP server', () => {
             id: 'A-choice',
           }),
         ],
+        decisionPrompts: [
+          {
+            attentionId: 'A-choice',
+            prompt: {
+              questions: [
+                {
+                  id: 'window',
+                  header: 'Release window',
+                  question: 'When should the release run?',
+                  options: [
+                    {
+                      id: 'today',
+                      label: 'Today',
+                      description: 'Run in the current window',
+                      recommended: true,
+                    },
+                    {
+                      id: 'tomorrow',
+                      label: 'Tomorrow',
+                      description: 'Wait for the next window',
+                    },
+                  ],
+                  allowOther: true,
+                },
+              ],
+            },
+          },
+        ],
       },
     ])
     expect((await request(base, '/api/assistant/feed?limit=1')).requests).toEqual([])
@@ -1459,31 +1523,22 @@ describe('MVP server', () => {
     )
     expect(changes.requests).toEqual(feed.requests)
 
-    await workspace.updateAttention('A-choice', {
-      body: 'Choose the corrected release window.',
-      updatedAt: new Date('2026-07-16T08:02:00.000Z'),
-    })
-    const correctedEvent = await workspace.receiveSystemEvent({
-      eventId: 'EV-choice-corrected',
-      content: 'The corrected release window still needs an operator decision.',
-      context: { projectId: 'P-1' },
-      receivedAt: new Date('2026-07-16T08:03:00.000Z'),
-    })
-    await workspace.handleEvent(correctedEvent.attributes.id, {
-      reply: '<NeedsYou attentionId="A-choice">Choose Friday or Monday.</NeedsYou>',
-      disposition: 'notified',
-      expose: true,
-      handledAt: new Date('2026-07-16T08:04:00.000Z'),
-    })
-    expect((await workspace.readEvent('EV-choice'))?.attributes.reply).toContain(
-      'Choose today or tomorrow.',
-    )
-    expect((await request(base, '/api/assistant/feed?projectId=P-1&limit=2')).requests).toEqual([
-      {
-        eventId: 'EV-choice-corrected',
-        attentions: [expect.objectContaining({ id: 'A-choice' })],
+    await request(base, '/api/inbox', {
+      method: 'POST',
+      body: {
+        content: 'Use tomorrow.',
+        context: {
+          projectId: 'P-1',
+          attentionRefs: [attentionRef],
+          replyTo: `home:${homeId}/event:EV-choice`,
+        },
       },
-    ])
+    })
+    expect((await workspace.readWorkspace()).attentions.get('A-choice')?.attributes).toMatchObject({
+      operatorRequest: null,
+      resolvedAt: null,
+    })
+    expect((await request(base, '/api/assistant/feed?projectId=P-1&limit=2')).requests).toEqual([])
 
     await workspace.resolveAttention('A-choice', 'Tomorrow was selected.')
     const resolved = await request(

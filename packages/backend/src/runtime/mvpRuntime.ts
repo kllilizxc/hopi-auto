@@ -288,7 +288,11 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     onGoalEffect: (eventId, projectId, goalId) => protectAssistantGoal(eventId, projectId, goalId),
     onProjectDispatchEffect: (eventId, projectId) => protectAssistantProject(eventId, projectId),
   })
-  await migrateLegacyAttentionOwnership({ workspace, projects })
+  await migrateLegacyAttentionOwnership({
+    workspace,
+    projects,
+    acknowledgeEvent: (eventId) => assistantTools.acknowledgeEventAttentionRequest(eventId),
+  })
   const assistant = createWorkspaceAssistant({
     homeRoot: options.homeRoot,
     workspace,

@@ -146,7 +146,7 @@ describe('Assistant automatic context', () => {
 const NOW = '2026-07-12T00:00:00.000Z'
 
 function openRequest(eventId: string, attentions: AttentionView[]): AssistantOpenRequest {
-  return { eventId, attentions }
+  return { eventId, attentions, decisionPrompts: [] }
 }
 
 function attention(overrides: Partial<AttentionView>): AttentionView {

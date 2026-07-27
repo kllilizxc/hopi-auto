@@ -45,7 +45,7 @@ import {
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
-import { assistantStateProjection, type AssistantTools } from './assistantTools'
+import { type AssistantTools, assistantStateProjection } from './assistantTools'
 
 export interface AssistantModelInput {
   eventId: string
@@ -560,7 +560,9 @@ export function createWorkspaceAssistant(input: {
 
         const reply = result.reply.trim()
         const internal = isInternalInboxSource(event.attributes.source)
-        if (!reply && !internal) {
+        const stagedEvent = await input.workspace.readEvent(eventId)
+        const attentionRequest = stagedEvent?.attributes.attentionRequest ?? null
+        if (!reply && (!internal || attentionRequest)) {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }
         await input.conversation.writeSession(
@@ -571,18 +573,23 @@ export function createWorkspaceAssistant(input: {
         )
         await input.workspace.handleEvent(eventId, {
           reply: reply || 'No operator update.',
-          disposition: internal
-            ? reply
-              ? 'notified'
+          disposition: attentionRequest
+            ? 'operator-requested'
+            : internal
+              ? reply
+                ? 'notified'
+                : usedTool
+                  ? 'tools-used'
+                  : 'silent'
               : usedTool
                 ? 'tools-used'
-                : 'silent'
-            : usedTool
-              ? 'tools-used'
-              : 'answered',
+                : 'answered',
           handledAt: now(),
-          expose: internal && Boolean(reply),
+          expose: internal && Boolean(reply || attentionRequest),
         })
+        if (attentionRequest) {
+          await input.tools.acknowledgeEventAttentionRequest(eventId, now())
+        }
         await input.conversation.complete(eventId)
         return { kind: 'answered', eventId }
       } catch (error) {
@@ -921,7 +928,7 @@ const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
   'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
-  'Attention is durable; active Work defers it. NeedsYou means operator input is required; <NeedsYou attentionId="...">...</NeedsYou> only highlights it.',
+  'Attention remains Assistant-owned until it is resolved or transferred with hopi_manage_attention; transfer makes the final reply the exact user request.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
 ] as const
 

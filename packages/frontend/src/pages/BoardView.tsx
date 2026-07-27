@@ -512,9 +512,7 @@ export function BoardView() {
   }
 
   const openAssistantAttentions = goal.attentions.filter(
-    (attention) =>
-      attention.target !== null &&
-      attention.resolvedAt === null,
+    (attention) => attention.target !== null && attention.resolvedAt === null,
   )
   const assistantAttention =
     openAssistantAttentions.find((attention) => Boolean(attention.operatorRequest)) ??
@@ -528,11 +526,9 @@ export function BoardView() {
     goal.works.find((work) => work.projection.primaryBadge === 'working') ??
     goal.works.find((work) => work.stage !== 'done' && work.stage !== 'cancelled')
   const mutationError = previewStartMutation.error ?? previewStopMutation.error
-  const goalPeers = orderGoalsByRecency(
-    project.goals,
-    projectId,
-    readRecentGoals(projectId),
-  ).map((item) => ({ id: item.id, label: item.title }))
+  const goalPeers = orderGoalsByRecency(project.goals, projectId, readRecentGoals(projectId)).map(
+    (item) => ({ id: item.id, label: item.title }),
+  )
 
   const runControl = (control: GoalControl) => {
     controlMutation.mutate(control)
@@ -636,9 +632,7 @@ export function BoardView() {
         <div>
           <small>Current focus</small>
           <strong>
-            {assistantAttention
-              ? assistantAttentionLabel
-              : (focus?.title ?? goal.goal.lifecycle)}
+            {assistantAttention ? assistantAttentionLabel : (focus?.title ?? goal.goal.lifecycle)}
           </strong>
           <p>
             {assistantAttention
@@ -1279,7 +1273,7 @@ function WorkContract({
               label="Attempt"
               onValueChange={onSelect}
               options={attempts.map((attempt, index) => ({
-                label: `Attempt ${attempts.length - index} · ${attempt.responsibility} · ${formatAttemptTime(attempt.startedAt)}`,
+                label: `Attempt ${attempts.length - index} · ${attempt.responsibility} · ${formatAttemptTime(attempt.startedAt ?? attempt.requestedAt)}`,
                 value: attempt.runId,
               }))}
               value={selectedAttempt.runId}
@@ -1431,7 +1425,8 @@ function AttemptHistory({
                 <span>
                   <strong>Attempt {attempts.length - index}</strong>
                   <small>
-                    {attempt.responsibility} · {formatAttemptTime(attempt.startedAt)}
+                    {attempt.responsibility} ·{' '}
+                    {formatAttemptTime(attempt.startedAt ?? attempt.requestedAt)}
                   </small>
                 </span>
                 <StatusChip className={`attempt-status ${attemptStatusTone(attempt)}`} size="sm">
@@ -1603,9 +1598,7 @@ export function attemptOutcomeSummary(attempts: RunAttemptSummary[]) {
   const counts = attemptOutcomeBreakdown(attempts)
   const parts = [
     counts.rejected > 0 ? `${counts.rejected} rejected` : null,
-    counts.preparationFailed > 0
-      ? `${counts.preparationFailed} candidate preflight failed`
-      : null,
+    counts.preparationFailed > 0 ? `${counts.preparationFailed} candidate preflight failed` : null,
     counts.failed > 0 ? `${counts.failed} failed` : null,
     counts.interrupted > 0 ? `${counts.interrupted} interrupted` : null,
   ].filter((part): part is string => part !== null)

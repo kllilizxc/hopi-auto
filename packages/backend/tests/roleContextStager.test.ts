@@ -565,9 +565,7 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain(
       'reconcile the candidate and observed evidence against every accepted criterion',
     )
-    expect(generatorPrompt).toContain(
-      'a prior rejection and its findings do not narrow the Work',
-    )
+    expect(generatorPrompt).toContain('a prior rejection and its findings do not narrow the Work')
     expect(generatorPrompt).toContain('a sample or checkpoint is not the complete accepted outcome')
     expect(generatorPrompt).toContain(
       'Public Preview, when present, observes the integrated release',
@@ -580,12 +578,8 @@ describe('RoleContextStager', () => {
     expect(reviewerPrompt).toContain(
       'does not create a missing contract-required deliverable or become its sole producer',
     )
-    expect(reviewerPrompt).toContain(
-      'Finding one reject-worthy defect does not end the review',
-    )
-    expect(reviewerPrompt).toContain(
-      'report together all material defects found in this pass',
-    )
+    expect(reviewerPrompt).toContain('Finding one reject-worthy defect does not end the review')
+    expect(reviewerPrompt).toContain('report together all material defects found in this pass')
     expect(reviewerPrompt).toContain(
       'A missing or defective deliverable within Generator authority returns reject',
     )

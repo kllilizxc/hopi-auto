@@ -1,8 +1,5 @@
 import { memo, useState } from 'react'
-import Markdown, {
-  type Components as MarkdownComponents,
-  type UrlTransform,
-} from 'react-markdown'
+import Markdown, { type Components as MarkdownComponents, type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChevronRight, ChevronDown, Brain } from 'lucide-react'
 import { AppLink } from './ui'
@@ -13,12 +10,7 @@ const ASSISTANT_MARKDOWN_COMPONENTS = {
   a({ children, href }) {
     if (!href || !isSafeAssistantLink(href)) return <>{children}</>
     return (
-      <AppLink
-        className="assistant-message-link"
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-      >
+      <AppLink className="assistant-message-link" href={href} target="_blank" rel="noreferrer">
         {children}
       </AppLink>
     )
@@ -69,7 +61,10 @@ function ThinkingBlock({ content }: { content: string }) {
 }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
-  const visibleText = unwrapNeedsYou(text)
+  const visibleText = unwrapNeedsYou(text).replace(
+    /<DecisionPrompt>[\s\S]*?<\/DecisionPrompt>/giu,
+    '',
+  )
   const chunks = []
   const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/gi
   let lastIndex = 0
@@ -92,21 +87,19 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { tex
 
   return (
     <div className="assistant-markdown-chunks">
-      {chunks.map((chunk, i) => (
+      {chunks.map((chunk, i) =>
         chunk.type === 'thinking' ? (
           <ThinkingBlock key={i} content={chunk.content} />
         ) : (
           <MarkdownRenderer key={i} text={chunk.content} />
-        )
-      ))}
+        ),
+      )}
     </div>
   )
 })
 
 function unwrapNeedsYou(text: string) {
-  return text
-    .replace(/<NeedsYou\b[^>]*>/giu, '')
-    .replace(/<\/NeedsYou>/giu, '')
+  return text.replace(/<NeedsYou\b[^>]*>/giu, '').replace(/<\/NeedsYou>/giu, '')
 }
 
 function isSafeAssistantLink(href: string) {

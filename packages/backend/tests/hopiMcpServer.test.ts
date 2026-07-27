@@ -119,7 +119,7 @@ describe('HOPI MCP server', () => {
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.description,
-    ).toContain('canonical reference returned from state')
+    ).toContain('transfer Attention ownership using canonical references')
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.inputSchema,
     ).toMatchObject({

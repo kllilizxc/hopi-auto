@@ -5,7 +5,7 @@ export interface RunCostEntry {
   workId: string
   runId: string
   responsibility: Responsibility
-  status: 'running' | 'finished' | 'interrupted'
+  status: 'queued' | 'running' | 'finished' | 'interrupted'
   result: string | null
   application: string | null
   diagnostics: RunAttemptDiagnostics

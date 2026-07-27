@@ -24,7 +24,7 @@ afterEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
 })
 
-test('backfills legacy delivered blockers while preserving explicit Assistant ownership', async () => {
+test('migrates only unambiguous legacy NeedsYou ownership and structured choices', async () => {
   const repoRoot = join(temporaryRoot, 'repo')
   await initializeGitRepo(repoRoot)
   const homeRoot = join(temporaryRoot, 'home')
@@ -91,10 +91,37 @@ test('backfills legacy delivered blockers while preserving explicit Assistant ow
     content: 'Legacy speaking handoff.',
     context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: references },
   })
+  const legacyPrompt =
+    '{"questions":[{"id":"window","header":"Release","question":"Which window?","options":[{"id":"now","label":"Now","description":"Use the current window"},{"id":"later","label":"Later","description":"Use the next window"}],"allowOther":true}]}'
   await workspace.handleEvent(event.attributes.id, {
-    reply: 'Legacy operator message.',
+    reply: [
+      '<NeedsYou attentionId="A-workspace-legacy">',
+      'Choose a release window.',
+      `<DecisionPrompt>${legacyPrompt}</DecisionPrompt>`,
+      '</NeedsYou>',
+      '<NeedsYou attentionId="A-goal-legacy">',
+      'Choose a release window.',
+      `<DecisionPrompt>${legacyPrompt}</DecisionPrompt>`,
+      '</NeedsYou>',
+      '<NeedsYou attentionId="A-goal-informational">This was already answered.</NeedsYou>',
+    ].join('\n'),
     disposition: 'tools-used',
     expose: true,
+  })
+  const legacyEventPath = join(homeRoot, workspace.paths.inboxEvent(event.attributes.id))
+  await Bun.write(
+    legacyEventPath,
+    (await Bun.file(legacyEventPath).text()).replace('attentionRequest: null\n', ''),
+  )
+  await workspace.receiveEvent({
+    eventId: 'EV-legacy-reply',
+    content: 'Use the current window.',
+    context: {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      attentionRefs: [references[2] as string],
+      replyTo: `home:${homeId}/event:EV-legacy-request`,
+    },
   })
 
   expect(
@@ -102,12 +129,29 @@ test('backfills legacy delivered blockers while preserving explicit Assistant ow
       workspace,
       projects: new Map([['P-1', { store }]]),
     }),
-  ).toBe(1)
+  ).toBe(2)
   const expectedRequest = `home:${homeId}/event:EV-legacy-request`
   expect(
     (await workspace.readWorkspace()).attentions.get('A-workspace-legacy')?.attributes
       .operatorRequest,
-  ).toBeNull()
+  ).toBe(expectedRequest)
+  expect((await workspace.readEvent('EV-legacy-request'))?.attributes.attentionRequest).toEqual({
+    attentionRefs: references.slice(0, 2),
+    decisionPrompt: {
+      questions: [
+        {
+          id: 'window',
+          header: 'Release',
+          question: 'Which window?',
+          options: [
+            { id: 'now', label: 'Now', description: 'Use the current window' },
+            { id: 'later', label: 'Later', description: 'Use the next window' },
+          ],
+          allowOther: true,
+        },
+      ],
+    },
+  })
   const goalPackage = await store.readPackage('G-1')
   expect(goalPackage.attentions.get('A-goal-legacy')?.attributes.operatorRequest).toBe(
     expectedRequest,

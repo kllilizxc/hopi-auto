@@ -2,20 +2,20 @@ import { expect, test } from 'bun:test'
 
 test('Assistant submit publishes locally before waiting for the Inbox response', async () => {
   const source = await Bun.file(new URL('./AssistantPanel.tsx', import.meta.url)).text()
-  const handleSend = source.slice(
-    source.indexOf('const handleSend = () =>'),
+  const submitMessage = source.slice(
+    source.indexOf('const submitMessage = useCallback'),
     source.indexOf('const queueImages ='),
   )
   const mutation = source.slice(
-    source.indexOf('const sendMutation = useMutation'),
-    source.indexOf('const handleSend = () =>'),
+    source.indexOf('error: sendError'),
+    source.indexOf('const submitMessage = useCallback'),
   )
 
-  expect(handleSend.indexOf('setOptimisticMessages')).toBeLessThan(
-    handleSend.indexOf('sendMutation.mutate(submission)'),
+  expect(submitMessage.indexOf('setOptimisticMessages')).toBeLessThan(
+    submitMessage.indexOf('publishSubmission(submission)'),
   )
-  expect(handleSend.indexOf("setInput('')")).toBeLessThan(
-    handleSend.indexOf('sendMutation.mutate(submission)'),
+  expect(submitMessage.indexOf("setInput('')")).toBeLessThan(
+    submitMessage.indexOf('publishSubmission(submission)'),
   )
   expect(mutation).toContain('eventId: result.eventId')
   expect(mutation).toContain('assistantStream.refresh()')
@@ -27,7 +27,7 @@ test('Needs-you count focuses the newest exact request and starts its reply', as
   const source = await Bun.file(new URL('./AssistantPanel.tsx', import.meta.url)).text()
   const focusHandler = source.slice(
     source.indexOf('const replyToLatestNeedsYouMessage = useCallback'),
-    source.indexOf('const sendMutation = useMutation'),
+    source.indexOf('error: sendError'),
   )
 
   expect(source).toContain('onClick={replyToLatestNeedsYouMessage}')

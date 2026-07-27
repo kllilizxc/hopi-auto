@@ -222,6 +222,82 @@ describe('RunAttemptStore', () => {
     })
   })
 
+  test('keeps a queued Attempt durable across restart until it runs or is cancelled', async () => {
+    const first = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
+    expect(
+      await first.reserve({
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'W-1',
+        runId: 'R-queued',
+        responsibility: 'generator',
+        workHash: 'a'.repeat(64),
+      }),
+    ).toEqual({ runId: 'R-queued', disposition: 'scheduled' })
+
+    const restarted = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:01:00Z'),
+    })
+    expect(await restarted.interruptRunningAttempts()).toBe(0)
+    expect(await restarted.list('P-1', 'G-1', 'W-1')).toMatchObject([
+      {
+        runId: 'R-queued',
+        status: 'queued',
+        requestedAt: '2026-07-11T00:00:00.000Z',
+        startedAt: null,
+      },
+    ])
+    expect(
+      await restarted.interruptQueued({
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'W-1',
+      }),
+    ).toBe(1)
+    expect(await restarted.list('P-1', 'G-1', 'W-1')).toMatchObject([
+      { runId: 'R-queued', status: 'interrupted' },
+    ])
+  })
+
+  test('lets only one dispatcher claim a queued Attempt', async () => {
+    const store = createRunAttemptStore(temporaryRoot)
+    await store.reserve({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-claim',
+      responsibility: 'generator',
+      workHash: 'b'.repeat(64),
+    })
+    const claims = await Promise.allSettled([
+      store.start({
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'W-1',
+        runId: 'R-claim',
+        responsibility: 'generator',
+        runRoot: runRoot('R-claim'),
+        workHash: 'b'.repeat(64),
+      }),
+      store.start({
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'W-1',
+        runId: 'R-claim',
+        responsibility: 'generator',
+        runRoot: runRoot('R-claim'),
+        workHash: 'b'.repeat(64),
+      }),
+    ])
+    expect(claims.filter((claim) => claim.status === 'fulfilled')).toHaveLength(1)
+    expect(claims.filter((claim) => claim.status === 'rejected')).toHaveLength(1)
+    const recorder = claims.find((claim) => claim.status === 'fulfilled')
+    if (recorder?.status !== 'fulfilled') throw new Error('Expected one claimed Attempt')
+    await recorder.value.interrupt('test complete')
+  })
+
   test('discards a torn event tail before restart recovery appends its interruption', async () => {
     const first = createRunAttemptStore(temporaryRoot, {
       now: () => new Date('2026-07-11T00:00:00Z'),

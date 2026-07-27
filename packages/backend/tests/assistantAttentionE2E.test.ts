@@ -43,9 +43,9 @@ describe('Project Assistant wake and Attention E2E', () => {
       const revisitAt = new Date(Date.now() + 100).toISOString()
       await runtime.assistantTools.executeForEvent('EV-schedule', 'hopi_manage_attention', {
         change: {
-          kind: 'revisit',
+          kind: 'defer_attention',
           attentionRef: workspaceAttentionReference(homeId, 'A-choice'),
-          at: revisitAt,
+          until: revisitAt,
         },
       })
       await runtime.workspace.handleEvent('EV-schedule', {

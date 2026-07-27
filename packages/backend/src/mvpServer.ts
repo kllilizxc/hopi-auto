@@ -14,7 +14,6 @@ import {
   assistantConversationScopeKey,
   assistantEventBelongsToScope,
 } from './assistant/assistantConversationScope'
-import { needsYouAttentionIds } from './assistant/assistantNeedsYou'
 import { AssistantToolRequestError } from './assistant/assistantToolRequestError'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
@@ -32,7 +31,7 @@ import {
 import { workAttentionTarget } from './domain/attentionTarget'
 import { type WorkDocument, isPlanningWork } from './domain/canonicalDocuments'
 import { type GoalPackage, GoalPackageNotFoundError } from './domain/goalPackage'
-import { inboxEventReferenceSchema } from './domain/inboxEventReference'
+import { inboxEventReferenceSchema, parseInboxEventReference } from './domain/inboxEventReference'
 import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
@@ -50,6 +49,7 @@ import {
 } from './runtime/assistantHomeMigration'
 import {
   type AttentionTransport,
+  clearGoalAttentionOperatorRequest,
   createWebhookAttentionTransport,
 } from './runtime/attentionDelivery'
 import {
@@ -1131,9 +1131,11 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
     ]),
   )
   const workspaceEvents = [...workspace.events.values()]
+  const requestEventIds = new Set(requests.map((request) => request.eventId))
   const publicEvents = workspaceEvents.filter(
     (event) =>
-      event.attributes.visibility === 'public' && assistantEventBelongsToScope(event, scope),
+      event.attributes.visibility === 'public' &&
+      (assistantEventBelongsToScope(event, scope) || requestEventIds.has(event.attributes.id)),
   )
   const internalSpeakingEvents = workspaceEvents.filter(
     (event) =>
@@ -1403,56 +1405,54 @@ async function readScopedAssistantProjection(
 }
 
 function projectAssistantOpenRequests(
-  _homeId: string,
+  homeId: string,
   events: ReadonlyMap<string, InboxEventDocument>,
   attentions: Awaited<ReturnType<typeof readScopedAssistantProjection>>['attentions'],
 ) {
-  const openById = new Map<string, (typeof attentions)[number] | null>()
-  for (const attention of attentions) {
-    if (attention.resolvedAt !== null) continue
-    openById.set(attention.id, openById.has(attention.id) ? null : attention)
-  }
-  const latestByAttention = new Map<
-    string,
-    { eventId: string; occurredAt: string; attention: (typeof attentions)[number] }
-  >()
-  for (const event of [...events.values()].toSorted((left, right) =>
-    left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
-  )) {
-    if (
-      event.attributes.status !== 'handled' ||
-      event.attributes.visibility !== 'public' ||
-      !event.attributes.reply
-    ) {
-      continue
-    }
-    for (const attentionId of needsYouAttentionIds(event.attributes.reply)) {
-      const attention = openById.get(attentionId)
-      if (!attention) continue
-      latestByAttention.set(attentionId, {
-        eventId: event.attributes.id,
-        occurredAt: event.attributes.receivedAt,
-        attention,
-      })
-    }
-  }
-
   const grouped = new Map<
     string,
     {
       eventId: string
       occurredAt: string
       attentions: (typeof attentions)[number][]
+      decisionPrompts: Array<{
+        attentionId: string
+        prompt: NonNullable<
+          NonNullable<InboxEventDocument['attributes']['attentionRequest']>['decisionPrompt']
+        >
+      }>
     }
   >()
-  for (const entry of latestByAttention.values()) {
-    const existing = grouped.get(entry.eventId)
-    if (existing) existing.attentions.push(entry.attention)
-    else {
-      grouped.set(entry.eventId, {
-        eventId: entry.eventId,
-        occurredAt: entry.occurredAt,
-        attentions: [entry.attention],
+  for (const attention of attentions) {
+    if (attention.resolvedAt !== null || !attention.operatorRequest) continue
+    const parsedRequest = parseInboxEventReference(attention.operatorRequest)
+    if (!parsedRequest || parsedRequest.homeId !== homeId) continue
+    const event = events.get(parsedRequest.eventId)
+    if (
+      !event ||
+      event.attributes.status !== 'handled' ||
+      event.attributes.visibility !== 'public'
+    ) {
+      continue
+    }
+    const attentionReference =
+      attention.scope === 'goal'
+        ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
+        : workspaceAttentionReference(homeId, attention.id)
+    const request = event.attributes.attentionRequest
+    if (!request?.attentionRefs.includes(attentionReference)) continue
+
+    const existing = grouped.get(event.attributes.id)
+    if (existing) {
+      existing.attentions.push(attention)
+    } else {
+      grouped.set(event.attributes.id, {
+        eventId: event.attributes.id,
+        occurredAt: event.attributes.receivedAt,
+        attentions: [attention],
+        decisionPrompts: request.decisionPrompt
+          ? [{ attentionId: attention.id, prompt: request.decisionPrompt }]
+          : [],
       })
     }
   }
@@ -1463,9 +1463,10 @@ function projectAssistantOpenRequests(
         left.occurredAt.localeCompare(right.occurredAt) ||
         left.eventId.localeCompare(right.eventId),
     )
-    .map(({ eventId, attentions: groupedAttentions }) => ({
+    .map(({ eventId, attentions: groupedAttentions, decisionPrompts }) => ({
       eventId,
       attentions: groupedAttentions,
+      decisionPrompts,
     }))
 }
 
@@ -1654,6 +1655,34 @@ async function receiveUserEvent(
   input: Parameters<MvpRuntime['workspace']['receiveEvent']>[0],
 ) {
   const event = await runtime.workspace.receiveEvent(input)
+  const replyTo = event.attributes.context?.replyTo
+  if (replyTo) {
+    const workspace = await runtime.workspace.readWorkspace()
+    for (const reference of normalizeInboxAttentionReferences(event.attributes.context ?? {})) {
+      const parsed = parseAttentionReference(reference)
+      if (!parsed) continue
+      if (parsed.scope === 'workspace') {
+        const attention =
+          parsed.homeId === workspace.homeId
+            ? workspace.attentions.get(parsed.attentionId)
+            : undefined
+        if ((attention?.attributes.operatorRequest ?? null) !== replyTo) continue
+        await runtime.workspace.updateAttention(parsed.attentionId, {
+          operatorRequest: null,
+          updatedAt: new Date(event.attributes.receivedAt),
+        })
+        continue
+      }
+      const project = runtime.projects.get(parsed.projectId)
+      if (!project) continue
+      await clearGoalAttentionOperatorRequest(
+        project.store,
+        parsed.goalId,
+        parsed.attentionId,
+        replyTo,
+      )
+    }
+  }
   runtime.coordinator.interruptInternalAssistant()
   return event
 }

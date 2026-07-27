@@ -65,10 +65,9 @@ Attention's one-shot `revisitAt`. At that instant HOPI publishes one determinist
 event in the same Project session. The instant is consumed by that event across reconciliation and
 restart; if another check is useful, Assistant chooses another instant.
 
-`NeedsYou` has one operational effect in addition to presentation: it declares that no available
-Assistant or Project action can advance the referenced Attention before an operator response. An
-optional accelerator does not satisfy that condition. A transferred Attention does not run a
-scheduled revisit until an operator reply returns it to Assistant ownership.
+`operatorRequest` is the only operator-ownership fact. `transfer_attention_to_user` stages the
+current event as the public request; after its ordinary final reply is durable, Coordinator records
+that exact event reference on each selected Attention. Reply text contains no workflow markup.
 
 Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
 continue changing without advancing the selected Project's cursor; otherwise a cached Project feed
@@ -165,8 +164,8 @@ follows one small protocol:
    internal work to the speaking thread even when that thread should act silently. A successful Reflection transport may
    express that result with an empty final message; empty output is `No action` in Reflection mode,
    not a failed model Run. Public user turns still require a non-empty reply; an internal speaking
-   turn may remain silent, publish one informational final response, or call `request_user` before
-   returning one exact question for a decision or external action. Selected targeted Attention may
+   turn may remain silent, publish one informational final response, or transfer selected Attention
+   before returning one exact question for a decision or external action. Selected targeted Attention may
    remain open when its concrete repair is still running or no available tool can complete it;
    narration, authorization, or intent is never resolution. Only an explicit `handoff_to_main` call creates an
    internal brief. Reflection selects any Attention references it means to hand off; Coordinator
@@ -538,10 +537,9 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
 | Create Work | Admit the current instruction as one Planning or Engineering Work | Goal Input and exactly one selected Work; Planning never retries Work or resolves Attention implicitly |
 | Control Goal | Pause, resume, cancel, reopen, or reprioritize one Goal | Validated Goal lifecycle or priority transition |
-| Control Work | Retry or defer one Work, or cancel one Engineering Work | One transient retry reservation, a `notBefore` Work update, or validated cancellation |
-| Manage Attention | Create, edit, resolve, or schedule one future revisit for an exact Attention | Attention publication or one deterministic future Assistant Inbox event |
+| Control Work | Continue one Work now or later, change dependencies, or cancel one Engineering Work | One durable queued Attempt, optional `notBefore` and message, or validated cancellation |
+| Manage Attention | Create, edit, resolve, defer, or transfer exact Attention | Attention publication, one deterministic future Assistant event, or one staged operator request |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
-| Request user | Stage selected open Attention for an operator question from an internal turn | None by itself; the validated final response becomes the public Inbox reply and then records Attention `operatorRequest` |
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
@@ -729,12 +727,12 @@ rather than consuming delivery payloads.
 
 Reflection receives a narrower MCP capability containing only state read and `handoff_to_main`.
 `handoff_to_main` may create one internal Inbox turn and has no Project or Goal effect. The speaking
-thread receives its ordinary Goal and Work tools plus `request_user` for one exact decision or
-external action. Capability mode is server-owned and cannot be selected by the model. A non-empty
+thread receives its ordinary Goal, Work, and Attention tools. Capability mode is server-owned and
+cannot be selected by the model. A non-empty
 final response from that internal turn is an informational update by default; an empty response stays
 internal. Tool choice, rather than parsing message prose, owns only the operator-wait transition.
 
-Every internal response paired with `request_user` is a self-contained decision request, not merely a list of choices. It
+Every response paired with `transfer_attention_to_user` is a self-contained decision request, not merely a list of choices. It
 preserves enough material cause and consequence from the internal brief for the operator to
 understand what changed, why HOPI cannot safely continue, what answer or action is needed, and the
 non-obvious effect of viable alternatives. It includes a recommendation when HOPI has one. This is
@@ -743,17 +741,17 @@ IDs, and process narration, not omitting the causal context needed to decide. HO
 request schema, prose parser, or frontend reconstruction rule.
 
 When a Reflection brief exists specifically to deliver Attention, Reflection supplies exact
-Assistant-owned canonical references as Inbox context. The speaking Assistant explicitly confirms
-that same selection in `request_user`; Coordinator never widens or substitutes it. `request_user`
-contains references only: the model's final response is the complete operator-facing question. It
-rejects an empty, mismatched, stale, resolved, operator-owned, targetless, or
-out-of-context selection.
+Assistant-owned canonical references as Inbox context. The speaking Assistant may select any open
+Assistant-owned references visible in that conversation. `transfer_attention_to_user` contains those
+references and optional structured choices; the model's final response is the complete
+operator-facing question. It rejects an empty final reply, stale, resolved, operator-owned,
+targetless, or out-of-context selection.
 Legacy targetless completion Attention may still be delivered as an informational compatibility
-update, but it is never a `request_user` target. New completion updates derive from Goal lifecycle
-and final Planning Evidence rather than Attention.
-One handoff selects either workspace Attention or Attention from exactly one Goal. Reflection chooses
-the single coherent condition worth surfacing instead of combining unrelated scopes, and copies each
-selected `reference` directly from `hopi_read_state`.
+update, but it is never transferred to the operator. New completion updates derive from Goal
+lifecycle and final Planning Evidence rather than Attention.
+One handoff may select multiple coherent Attention records visible in the same conversation. The
+Assistant copies canonical references from current state; Coordinator enforces conversation
+isolation rather than prescribing which open condition the model should choose.
 An internal Reflection handoff is advisory, not a second durable request from the operator. If the
 speaking Assistant still fails after its normal one-time Session recovery, Coordinator terminates
 that internal Inbox event with the failure retained in its turn record and creates no event-target
@@ -762,24 +760,20 @@ change. A failed public user event still receives event-target Attention so user
 lost. This boundary prevents Reflection from recursively reflecting on its own delivery failure.
 Goal-local and workspace Attention use the same mechanism. After the speaking model returns,
 Coordinator treats a non-empty final response as the one public informational reply and an empty
-response as an internal no-op. When `request_user` was staged, that same final response is instead the
-one public request; an empty response is invalid. Coordinator publishes the reply before publishing
-`notifiedAt` for each selected still-current reference. A request additionally records the exact
-handled event in `operatorRequest`. Recovery of an already handled public Reflection turn finishes
-any missing acknowledgement. Targeted Attention remains open; legacy completion Attention is
+response as an internal no-op. When `transfer_attention_to_user` was staged, that same final response
+is instead the one public request; an empty response is invalid. Coordinator publishes the reply
+before publishing `notifiedAt` and the exact handled-event `operatorRequest` for each selected
+still-current reference. Recovery of an already handled public turn finishes any missing
+acknowledgement. Targeted Attention remains open; legacy completion Attention is
 notified and resolved only for compatibility. The optional webhook
 then mirrors only this handled public reply and records `webhookDeliveredAt` on the Inbox event. It
 does not deliver raw Attention or control `notifiedAt`. This reuses Inbox context and existing
 documents instead of adding a notification ledger or parsing brief text.
 
-`request_user` stages ownership intent only; it does not publish at call time. Transferring ownership
-keeps the selected Attention open, keeps its target unscheduled, and ends unattended progress until
-the operator replies. Assistant-owned diagnosis, execution, coordination, or waiting therefore stays
-Assistant-owned; this capability represents genuinely missing operator-owned information, a
-decision, or an external action. After the final model response is available, Coordinator revalidates
-every selected reference before publishing either the reply or its ownership acknowledgement.
-Resolving a selected Attention later in the same turn makes the request stale and rejects it rather
-than asking for an already unnecessary action.
+`transfer_attention_to_user` durably stages ownership intent on the pending event; it does not
+publish at call time. Transferring keeps selected Attention open and keeps their targets
+unscheduled until the exact reply. After final text is available, Coordinator revalidates every
+selected reference before publishing the reply and ownership acknowledgement.
 
 Attention is a state fact, not a command protocol. A handoff may remain **Waiting for Assistant**
 after an ordinary turn when its evidence is insufficient to resolve it or its repair is still in
@@ -802,20 +796,19 @@ Mutation tools follow these rules:
 - return stable document references and a concise result to Assistant
 - reject stale, invalid, or unauthorized requests without partially advancing a control gate
 
-Each Goal or Work control is one atomic operation, not a required pair of model calls. A Work retry
-reserves the current responsibility's next independent Attempt against unchanged Work and does not
-rewrite Work or Attention. That Attempt is not a child of the speaking turn; its settlement produces
-the normal Project state edge. Conversely, shell processes started directly inside an Assistant turn
-end with that turn. Cancellation settles only Attention for the Work it makes terminal. Deferral
-changes scheduling time only. No control operation closes a Goal, Project, or unrelated Work
-Attention.
+Each Goal or Work control is one atomic operation, not a required pair of model calls. Work
+`continue` optionally records a source-traced message, sets `notBefore`, and durably queues the
+current responsibility's next Attempt. That Attempt is not a child of the speaking turn and survives
+Coordinator restart. Conversely, shell processes started directly inside an Assistant turn end with
+that turn. Cancellation terminates queued and running Attempts and settles only Attention for Work
+it makes terminal.
 
 The Assistant chooses ordinary operations from the verified state: it creates Engineering Work for
 a bounded direct change; writes design and creates Planning Work when authority or decomposition changes;
 uses Goal or Work Control for lifecycle changes; and resolves Attention only after the owning condition has
-actually cleared. An explicit user reply is evidence for that judgment, never a forced
-`continue`/`retry`/`revise`/`cancel` classification. There is no stored continuation object:
-ordinary reconciliation derives the next responsibility from canonical Work facts.
+actually cleared. An explicit user reply is evidence for that judgment, never a forced lifecycle
+classification. Reconciliation derives responsibility from canonical Work while the queued Attempt
+durably records requested execution.
 
 Attention resolution is its own Assistant judgment. Resolving a Goal-local Attention through
 `hopi_manage_attention` publishes the current Inbox turn as Goal Input and appends the resolution in
@@ -826,22 +819,12 @@ an Attention ID, or a Planner summary.
 An open targeted Attention is the scheduling gate for its target. Resolving it publishes
 `resolvedAt` immediately, removes that gate, and may make the target eligible for dispatch; a later
 operator request neither reopens it nor retracts a Run already admitted from the resolved state.
-`request_user` instead stages the public request and, after the final response is durable, records
-`operatorRequest` on each still-open reference without resolving it. The same open Attention then
-projects **Needs you** and continues to block scheduling while the answer is absent. These causal
-effects are part of the Assistant environment and tool descriptions; HOPI does not infer intent from
-call order or impose a tool-sequence policy.
-
-The decision boundary is invariant across simple and complex Work. If the current Work outcome,
-acceptance contract, dependency graph, and delivery boundary remain valid and another invocation is
-wanted, the answer is `retry`; that includes a previous invocation stopped by transient preparation,
-network, provider, or capacity failure. `revise` is used only when those represented facts must
-change. A Planner success with an empty proposal confirms that no such represented change was made.
-When a transferred Attention remains open, Reflection returns that compact outcome to the speaking
-Assistant, which applies a different real effect or requests genuinely missing authority; it does
-not repeat the already answered choice. Failed Attempts need no synthetic Attention: their settled
-Work hash pauses automatic redispatch and makes Reflection eligible to ask Assistant for the same
-judgment.
+`transfer_attention_to_user` instead stages the public request and, after the final response is
+durable, records `operatorRequest` on each still-open reference without resolving it. The same open
+Attention then projects **Needs you** and continues to block scheduling while the answer is absent.
+These causal effects are tool and environment semantics; HOPI does not infer intent from reply text
+or call order. Failed Attempts need no synthetic Attention: their settled Work hash pauses automatic
+redispatch until `continue` durably queues the next Attempt or material Work facts change.
 
 An expected domain precondition failure, such as requesting Planning for a terminal Goal before
 reopening it, is a recoverable tool error. The internal HTTP boundary returns a conflict response

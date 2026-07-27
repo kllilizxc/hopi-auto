@@ -125,8 +125,9 @@ was observed. Neither value is proof of a side effect; canonical documents and t
 truth.
 Visibility is also immutable except for one transition: when a Reflection-sourced speaking turn
 finishes, Coordinator publishes `internal -> public` atomically with any non-empty final reply.
-`request_user` changes that reply from informational delivery to an operator-owned request; no reply
-remains internal. Visibility never moves back and a user-sourced turn can never become internal.
+`transfer_attention_to_user` stages the current final reply as an operator-owned request; no staged
+request remains internal. Visibility never moves back and a user-sourced turn can never become
+internal.
 
 - Public input is acknowledged only after the event document is durable; an internal handoff also
   becomes eligible only after its event document is durable.
@@ -672,18 +673,18 @@ process stops after its supporting write but before its Work gate, and remains p
 
 #### Recovery history
 
-Durable Attempt records are the sole source for invocation count, responsibility, result,
-application, timing, model, diagnostics, and interruption history. Work does not duplicate an
+Durable Attempt records are the sole source for queued execution, invocation count, responsibility,
+result, application, timing, model, diagnostics, and interruption history. Work does not duplicate an
 `attempts` counter or retry budget. Legacy Work documents containing `attempts` remain readable, but
 the compatibility field has no semantics and disappears when that nonterminal Work is republished.
 The ordered `evidenceRefs` retains consumed canonical Evidence for model repair context.
 
 Reviewer `reject` and deterministic pre-C1 integration rejection return Engineering Work from
-`review` to `generate`; the corresponding Attempt and Evidence already record why. Explicit retry
-does not rewrite history. It is audited by the durable Assistant turn and reserved Run; it does not
-create Goal Input or settle Attention.
+`review` to `generate`; the corresponding Attempt and Evidence already record why. Explicit
+`continue` does not rewrite history. It is audited by the durable Assistant turn and queued Attempt;
+it does not create Goal Input or settle Attention.
 
-A timed Assistant-selected retry uses Work `notBefore`. Conditions the current responsibility cannot
+A timed Assistant-selected continuation uses Work `notBefore`. Conditions the current responsibility cannot
 resolve may be returned explicitly as targeted Attention. A process crash before the Work gate may
 leave unconsumed Evidence. Runtime failure remains Attempt history and does not
 create Attention or a hidden retry episode. An Attention-producing outcome intentionally leaves Work
@@ -779,25 +780,18 @@ Resolving targeted Attention and applying its effects uses one publication when 
 only gate; it installs supporting effects first and the resolution last. Any additional gate is a
 separate publication. A cross-root answer uses the receipt sequence defined under Canonical
 Publication. In its project phase, effects precede Goal Input, and Goal-local Attention resolution
-is the final unblocking gate after that receipt. An answer has four model-visible decisions:
-`continue` resumes the responsibility derived from current Work kind and stage, `retry` resets that
-Work lineage, `cancel` makes the targeted Work terminal, and `revise` starts Planning under an
-explicit same-contract or new-contract-revision mode. Only `revise` selects Planning because the
-answer changes authority. It clears `operatorRequest` but leaves the old Attention open under
-Assistant ownership until the represented change clears or supersedes the blocker. No continuation
-field or answer-state document is stored. One dependency exception prevents self-blocking: when the
-Attention targets the exact Planning Work being revised, the accepted authority update settles it
-before Planner resumes. Condition-based Attention resolves only when its condition is cleared.
+is the final unblocking gate after that receipt. An exact reply clears `operatorRequest` and returns
+the still-open condition to Assistant ownership; it never selects a Work or Goal operation. The
+Assistant then acts from current state. No answer-state document is stored.
 
-`notifiedAt` is null until an Attention-linked Reflection turn is durably exposed with its complete
-handled reply in the speaking Assistant conversation. Informational delivery leaves
-`operatorRequest` null. An actionable request records that exact handled event in `operatorRequest`;
+`notifiedAt` is null until an Attention-linked Assistant turn is durably exposed with its complete
+handled reply. Informational delivery leaves `operatorRequest` null. A staged
+`transfer_attention_to_user` records that exact handled event in `operatorRequest`;
 only a user Inbox event whose immutable `context.replyTo` equals that pointer clears it after receipt
 is durable and before Assistant continues. Only the explicit Reply action writes that `replyTo` and
 the exact canonical Attention references; ordinary page context never infers them from open
-Attention. By the end of that reply turn the old operator request must be resolved, cleared while a
-represented revision proceeds, or replaced. None of these ownership transitions alone resolves the
-Attention. Completion is marked notified and resolved in the same project publication. The
+Attention. None of these ownership transitions alone resolves the Attention. Completion is marked
+notified and resolved in the same project publication. The
 Assistant-home reply gate is always first, so a crash cannot
 acknowledge delivery or transfer ownership without leaving a durable public turn whose recovery can
 finish the exact linked Attention publications. Resolution facts do not change the immutable

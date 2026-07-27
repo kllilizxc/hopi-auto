@@ -34,6 +34,7 @@ import { deriveReadableId } from '../domain/stableId'
 import { workCancellationClosure } from '../domain/workCancellation'
 import { type PublicationCoordinator, hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
+import { acknowledgeGoalAttention } from '../runtime/attentionDelivery'
 import type {
   GoalController,
   PlanningContext,
@@ -47,6 +48,7 @@ import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import {
   type AssistantConversationScope,
+  assistantConversationScopeForEvent,
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
@@ -70,7 +72,12 @@ export interface AssistantToolProject {
   controller: GoalController
   reconciler?: {
     interruptRuns(goalId?: string, workId?: string): void
-    requestWorkRun?(goalId: string, workId: string): Promise<WorkRunRequest>
+    interruptQueuedRuns?(goalId?: string, workId?: string): Promise<number>
+    requestWorkRun?(
+      goalId: string,
+      workId: string,
+      options?: { allowSuccessor?: boolean },
+    ): Promise<WorkRunRequest>
   }
 }
 
@@ -83,6 +90,7 @@ export interface AssistantToolResult {
 export interface AssistantTools {
   issue(eventId: string): string
   revoke(token: string): void
+  acknowledgeEventAttentionRequest(eventId: string, acknowledgedAt?: Date): Promise<string[]>
   execute(token: string, name: AssistantToolName, input: unknown): Promise<AssistantToolResult>
   executeForEvent(
     eventId: string,
@@ -169,6 +177,7 @@ export function createAssistantTools(options: {
     }
     for (const affectedWorkId of affectedWorkIds) {
       project.reconciler?.interruptRuns(goalId, affectedWorkId)
+      await project.reconciler?.interruptQueuedRuns?.(goalId, affectedWorkId)
     }
     const cancelledPackage = await project.store.readPackage(goalId)
     const settledRefs: string[] = []
@@ -214,7 +223,7 @@ export function createAssistantTools(options: {
     project: AssistantToolProject
     goalId: string
     workId: string
-    kind: 'work_retry_requested' | 'work_cancelled' | 'work_deferred'
+    kind: 'work_continue_requested' | 'work_cancelled'
     affectedWorkIds?: readonly string[]
     settledRefs?: readonly string[]
     pendingRefs?: readonly string[]
@@ -223,7 +232,7 @@ export function createAssistantTools(options: {
     const currentPackage = await input.project.store.readPackage(input.goalId)
     const currentWork = currentPackage.works.get(input.workId)
     if (!currentWork) throw new Error(`Work not found after control: ${input.workId}`)
-    const runRequest = input.kind === 'work_retry_requested' ? input.runRequest : undefined
+    const runRequest = input.kind === 'work_continue_requested' ? input.runRequest : undefined
     const changed = runRequest ? runRequest.disposition === 'scheduled' : true
     return {
       summary: runRequest
@@ -253,6 +262,64 @@ export function createAssistantTools(options: {
     }
   }
 
+  async function assertTransferableAttentionReferences(
+    event: InboxEventDocument,
+    references: readonly string[],
+  ) {
+    const scope = assistantConversationScopeForEvent(event)
+    const workspace = await options.workspace.readWorkspace()
+    for (const reference of references) {
+      const parsed = parseAttentionReference(reference)
+      if (!parsed) {
+        throw new AssistantToolRequestError(`Invalid canonical Attention reference: ${reference}`)
+      }
+      if (parsed.scope === 'workspace') {
+        if (parsed.homeId !== workspace.homeId) {
+          throw new AssistantToolRequestError(
+            `Attention belongs to another Assistant Home: ${reference}`,
+          )
+        }
+        const attention = workspace.attentions.get(parsed.attentionId)
+        if (!attention) throw new AssistantToolRequestError(`Attention not found: ${reference}`)
+        const projectId = workspaceAttentionProjectId(attention)
+        if (
+          attention.attributes.resolvedAt !== null ||
+          (attention.attributes.operatorRequest ?? null) !== null
+        ) {
+          throw new AssistantToolRequestError(`Attention is not owned by Assistant: ${reference}`)
+        }
+        if (
+          (scope.kind === 'home' && projectId !== null) ||
+          (scope.kind === 'project' && projectId !== scope.projectId)
+        ) {
+          throw new AssistantToolRequestError(
+            `Attention is outside the current conversation: ${reference}`,
+          )
+        }
+        if (projectId) options.onProjectDispatchEffect?.(event.attributes.id, projectId)
+        continue
+      }
+
+      if (scope.kind !== 'project' || parsed.projectId !== scope.projectId) {
+        throw new AssistantToolRequestError(
+          `Attention is outside the current conversation: ${reference}`,
+        )
+      }
+      const project = requireProject(options.projects, parsed.projectId)
+      options.onGoalEffect?.(event.attributes.id, parsed.projectId, parsed.goalId)
+      const goalPackage = await project.store.readPackage(parsed.goalId)
+      const attention = goalPackage.attentions.get(parsed.attentionId)
+      if (!attention) throw new AssistantToolRequestError(`Attention not found: ${reference}`)
+      if (
+        attention.attributes.target === null ||
+        attention.attributes.resolvedAt !== null ||
+        (attention.attributes.operatorRequest ?? null) !== null
+      ) {
+        throw new AssistantToolRequestError(`Attention is not owned by Assistant: ${reference}`)
+      }
+    }
+  }
+
   return {
     issue(eventId) {
       const token = crypto.randomUUID()
@@ -265,6 +332,66 @@ export function createAssistantTools(options: {
 
     revoke(token) {
       capabilities.delete(token)
+    },
+
+    async acknowledgeEventAttentionRequest(eventId, acknowledgedAt = now()) {
+      const event = await options.workspace.readEvent(eventId)
+      if (
+        !event ||
+        event.attributes.status !== 'handled' ||
+        event.attributes.visibility !== 'public' ||
+        !event.attributes.attentionRequest
+      ) {
+        return []
+      }
+      const workspace = await options.workspace.readWorkspace()
+      const requestReference = inboxEventReference(workspace.homeId, eventId)
+      const acknowledged: string[] = []
+      for (const reference of event.attributes.attentionRequest.attentionRefs) {
+        const parsed = parseAttentionReference(reference)
+        if (!parsed) continue
+        if (parsed.scope === 'workspace') {
+          if (parsed.homeId !== workspace.homeId) continue
+          const attention = workspace.attentions.get(parsed.attentionId)
+          if (!attention || attention.attributes.resolvedAt !== null) continue
+          if (
+            (attention.attributes.operatorRequest ?? null) === requestReference &&
+            attention.attributes.revisitAt === null
+          ) {
+            acknowledged.push(reference)
+            continue
+          }
+          await options.workspace.updateAttention(parsed.attentionId, {
+            notifiedAt: attention.attributes.notifiedAt ?? acknowledgedAt.toISOString(),
+            operatorRequest: requestReference,
+            revisitAt: null,
+            updatedAt: acknowledgedAt,
+          })
+          acknowledged.push(reference)
+          continue
+        }
+        const project = options.projects.get(parsed.projectId)
+        if (
+          project &&
+          (await acknowledgeGoalAttention(
+            project.store,
+            parsed.goalId,
+            parsed.attentionId,
+            acknowledgedAt,
+            requestReference,
+          ))
+        ) {
+          acknowledged.push(reference)
+          continue
+        }
+        const current = project
+          ? (await project.store.readPackage(parsed.goalId)).attentions.get(parsed.attentionId)
+          : null
+        if ((current?.attributes.operatorRequest ?? null) === requestReference) {
+          acknowledged.push(reference)
+        }
+      }
+      return acknowledged
     },
 
     async execute(token, name, input) {
@@ -833,37 +960,41 @@ export function createAssistantTools(options: {
               `Only Engineering Work can be cancelled: ${args.workId}`,
             )
           }
-          if (args.action.kind === 'retry') {
-            if (args.action.notBefore !== undefined) {
-              await project.controller.setWorkNotBefore(
-                args.goalId,
-                args.workId,
-                args.action.notBefore,
-              )
+          if (args.action.kind === 'continue') {
+            if (!project.reconciler?.requestWorkRun) {
+              throw new AssistantToolRequestError('Project runtime cannot queue Work continuation')
             }
-            const runRequest = await project.reconciler?.requestWorkRun?.(args.goalId, args.workId)
-            if (!runRequest) {
-              throw new AssistantToolRequestError('Project runtime cannot reserve a Work retry')
+            let workChanged = false
+            if (args.action.message) {
+              const current = await project.controller.appendWorkMessage(args.goalId, args.workId, {
+                sourceEventId: eventId,
+                content: args.action.message,
+              })
+              workChanged = current.body !== work.body
             }
-            return currentWorkResult({
-              project,
-              goalId: args.goalId,
-              workId: args.workId,
-              kind: 'work_retry_requested',
-              runRequest,
+            const currentPackage = await project.store.readPackage(args.goalId)
+            const currentWork = currentPackage.works.get(args.workId)
+            if (!currentWork) {
+              throw new AssistantToolRequestError(`Work not found: ${args.workId}`)
+            }
+            const notBefore = args.action.at ?? null
+            if (currentWork.attributes.notBefore !== notBefore) {
+              await project.controller.setWorkNotBefore(args.goalId, args.workId, notBefore)
+              workChanged = true
+            }
+            if (workChanged) {
+              project.reconciler?.interruptRuns(args.goalId, args.workId)
+              await project.reconciler?.interruptQueuedRuns?.(args.goalId, args.workId)
+            }
+            const runRequest = await project.reconciler.requestWorkRun(args.goalId, args.workId, {
+              allowSuccessor: workChanged,
             })
-          }
-          if (args.action.kind === 'defer') {
-            await project.controller.setWorkNotBefore(
-              args.goalId,
-              args.workId,
-              args.action.notBefore,
-            )
             return currentWorkResult({
               project,
               goalId: args.goalId,
               workId: args.workId,
-              kind: 'work_deferred',
+              kind: 'work_continue_requested',
+              runRequest,
             })
           }
           if (args.action.kind === 'set_dependencies') {
@@ -879,7 +1010,10 @@ export function createAssistantTools(options: {
               args.workId,
               args.action.dependsOn,
             )
-            if (changed) project.reconciler?.interruptRuns(args.goalId, args.workId)
+            if (changed) {
+              project.reconciler?.interruptRuns(args.goalId, args.workId)
+              await project.reconciler?.interruptQueuedRuns?.(args.goalId, args.workId)
+            }
             return {
               summary: `Dependencies updated for Work ${args.workId}.`,
               changed,
@@ -890,26 +1024,6 @@ export function createAssistantTools(options: {
                   goalId: args.goalId,
                   workId: args.workId,
                   dependsOn: current.attributes.dependsOn,
-                },
-              },
-            }
-          }
-          if (args.action.kind === 'message') {
-            const current = await project.controller.appendWorkMessage(args.goalId, args.workId, {
-              sourceEventId: eventId,
-              content: args.action.content,
-            })
-            project.reconciler?.interruptRuns(args.goalId, args.workId)
-            return {
-              summary: `Message appended to Work ${args.workId}.`,
-              changed: true,
-              value: {
-                effect: {
-                  kind: 'work_message_appended',
-                  projectId: project.projectId,
-                  goalId: args.goalId,
-                  workId: args.workId,
-                  stage: current.attributes.stage,
                 },
               },
             }
@@ -1126,6 +1240,27 @@ export function createAssistantTools(options: {
             }
           }
 
+          if (change.kind === 'transfer_attention_to_user') {
+            await assertTransferableAttentionReferences(event, change.attentionRefs)
+            const changed = event.attributes.attentionRequest == null
+            await options.workspace.stageAttentionRequest(eventId, {
+              attentionRefs: [...change.attentionRefs],
+              ...(change.decisionPrompt ? { decisionPrompt: change.decisionPrompt } : {}),
+            })
+            return {
+              summary: changed
+                ? `Staged transfer of ${change.attentionRefs.length} Attention${change.attentionRefs.length === 1 ? '' : 's'} to the user through this turn's final reply.`
+                : 'This turn already staged the same Attention transfer.',
+              changed,
+              value: {
+                effect: {
+                  kind: 'attention_transfer_staged',
+                  attentionRefs: [...change.attentionRefs],
+                },
+              },
+            }
+          }
+
           const parsedReference = parseAttentionReference(change.attentionRef)
           if (!parsedReference) {
             throw new AssistantToolRequestError(
@@ -1165,22 +1300,23 @@ export function createAssistantTools(options: {
                 },
               }
             }
-            if (change.kind === 'revisit') {
-              assertFutureAttentionRevisit(change.at, now())
+            if (change.kind === 'defer_attention') {
+              assertFutureAttentionRevisit(change.until, now())
               if (attention.attributes.resolvedAt !== null) {
                 throw new AssistantToolRequestError('Resolved Attention cannot be revisited')
               }
-              const changed = (attention.attributes.revisitAt ?? null) !== change.at
+              if ((attention.attributes.operatorRequest ?? null) !== null) {
+                throw new AssistantToolRequestError('User-owned Attention cannot be deferred')
+              }
+              const changed = (attention.attributes.revisitAt ?? null) !== change.until
               const updated = changed
                 ? await options.workspace.updateAttention(parsedReference.attentionId, {
-                    revisitAt: change.at,
+                    revisitAt: change.until,
                     updatedAt: now(),
                   })
                 : attention
               return {
-                summary: change.at
-                  ? `Scheduled one revisit for Attention ${parsedReference.attentionId} at ${change.at}.`
-                  : `Cleared the scheduled revisit for Attention ${parsedReference.attentionId}.`,
+                summary: `Deferred Attention ${parsedReference.attentionId} until ${change.until}.`,
                 changed,
                 value: {
                   attentionId: parsedReference.attentionId,
@@ -1222,7 +1358,7 @@ export function createAssistantTools(options: {
             throw new AssistantToolRequestError(`Attention not found: ${change.attentionRef}`)
           }
           if (attention.attributes.resolvedAt !== null) {
-            if (change.kind === 'revisit') {
+            if (change.kind === 'defer_attention') {
               throw new AssistantToolRequestError('Resolved Attention cannot be revisited')
             }
             return {
@@ -1237,28 +1373,29 @@ export function createAssistantTools(options: {
               },
             }
           }
-          if (change.kind === 'revisit') {
-            assertFutureAttentionRevisit(change.at, now())
-            const changed = (attention.attributes.revisitAt ?? null) !== change.at
+          if (change.kind === 'defer_attention') {
+            assertFutureAttentionRevisit(change.until, now())
+            if ((attention.attributes.operatorRequest ?? null) !== null) {
+              throw new AssistantToolRequestError('User-owned Attention cannot be deferred')
+            }
+            const changed = (attention.attributes.revisitAt ?? null) !== change.until
             if (changed) {
               await setGoalAttentionRevisit(
                 project.store,
                 parsedReference.goalId,
                 parsedReference.attentionId,
-                change.at,
+                change.until,
               )
             }
             return {
-              summary: change.at
-                ? `Scheduled one revisit for Attention ${parsedReference.attentionId} at ${change.at}.`
-                : `Cleared the scheduled revisit for Attention ${parsedReference.attentionId}.`,
+              summary: `Deferred Attention ${parsedReference.attentionId} until ${change.until}.`,
               changed,
               value: {
                 attentionId: parsedReference.attentionId,
                 target: attention.attributes.target,
                 resolved: false,
                 attentionRef: change.attentionRef,
-                revisitAt: change.at,
+                revisitAt: change.until,
               },
             }
           }

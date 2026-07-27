@@ -175,7 +175,7 @@ so the Server can quiesce and reload its runtime around the same durable mutatio
 
 ## Work Workspace
 
-One Engineering Work still has one Generator, one Reviewer, one card, one retry counter, and one
+One Engineering Work still has one Generator, one Reviewer, one card, one Attempt history, and one
 result. For every Repo bound to the Project, Coordinator creates or reuses a stable task branch and worktree
 starting from that binding's current Project release. The responsibility receives the roots together in
 one runtime manifest:

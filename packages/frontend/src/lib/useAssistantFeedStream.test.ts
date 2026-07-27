@@ -55,7 +55,7 @@ test('retains Assistant changes in cached history for the next mount', () => {
     {
       items: [added],
       removedIds: [removed.id],
-      requests: [{ eventId: 'EV-request', attentions: [] }],
+      requests: [{ eventId: 'EV-request', attentions: [], decisionPrompts: [] }],
       activity: { phase: 'working' },
       syncCursor: 'new-sync',
       streamId: 'stream-1',
@@ -64,7 +64,9 @@ test('retains Assistant changes in cached history for the next mount', () => {
 
   expect(merged?.pages[0]?.items).toEqual([added])
   expect(merged?.pages[0]?.activity).toEqual({ phase: 'working' })
-  expect(merged?.pages[0]?.requests).toEqual([{ eventId: 'EV-request', attentions: [] }])
+  expect(merged?.pages[0]?.requests).toEqual([
+    { eventId: 'EV-request', attentions: [], decisionPrompts: [] },
+  ])
   expect(merged?.pages[0]?.syncCursor).toBe('new-sync')
 })
 
@@ -74,7 +76,7 @@ test('drops all in-memory Feed state when the Assistant scope changes', () => {
     initialized: true,
     items: [eventEntry('event-a', '2026-07-24T10:00:00.000Z', 'running')],
     removedIds: ['old-event-a'],
-    requests: [{ eventId: 'event-a', attentions: [] }],
+    requests: [{ eventId: 'event-a', attentions: [], decisionPrompts: [] }],
     activity: { phase: 'working' },
     streamId: 'stream-a',
   }

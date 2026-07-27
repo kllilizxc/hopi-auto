@@ -144,6 +144,7 @@ export async function acknowledgeGoalAttention(
   const attention = parseAttentionDocument(source)
   attention.attributes.notifiedAt ??= acknowledgedAt.toISOString()
   attention.attributes.operatorRequest = nextOperatorRequest
+  if (nextOperatorRequest !== null) attention.attributes.revisitAt = null
   if (completion) {
     attention.attributes.resolvedAt = acknowledgedAt.toISOString()
     attention.body += '\n## Resolution\n\nCompletion update delivered.\n'

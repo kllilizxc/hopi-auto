@@ -212,60 +212,42 @@ Only the explicit Reply action copies `replyTo` and exact Attention references i
 turn. Ordinary page context carries Project and Goal identity only; it does not attach every open
 blocker. The canonical reference identifies the Attention while its owning Project selects the
 persistent Assistant conversation; a Workspace-stored Project Attention must not fall back to the
-Home conversation. `replyTo` may reference any handled public message in that same conversation; it
-is conversational provenance, not Attention authority. A reply may leave an Attention open when its
+Home conversation. `replyTo` names the exact handled public event stored in the Attention's
+`operatorRequest`. It is responsibility provenance, not evidence that the condition is resolved. A
+reply may leave an Attention open when its
 evidence does not clear the condition. Unrelated Attention is never settled as a page-scoped batch.
 Planner and Coordinator do not infer closure from prose or from a Goal revision because an
 environmental or external blocker may survive it.
 
-Explicitly retrying a Work ensures that one current invocation exists in the existing lineage; it
-does not claim that the invocation succeeded and does not mutate Attention. If the Work already has
-an active Attempt, retry is an idempotent no-op and returns that exact Run ID. If the unchanged Work
-is settled after failure, retry creates one new Attempt. There is no queued second retry behind an
-active Attempt, retry episode, or retry-specific Attention ownership.
-
-Retry is independent of failure kind and contains no Git-, test-, sandbox-, or vendor-specific
-recovery policy. Assistant chooses retry, document change, defer, cancellation, or an exact operator
-request from the Attempt facts. Retry does not copy the current Inbox event into Goal Input or set
-`resolutionInput`. Cancellation remains a material decision and retains its accepted Input. Neither
-operation closes Goal, Project, or another Work's Attention.
-
-Consequently, retry is valid only when the current Work already contains the complete instruction and
-an external or operational condition changed. It reuses the same contract and responsibility session;
-it is not a channel for corrections, reviewer-like findings, or new requirements from the current
-Inbox turn. Assistant persists such information in Goal design and requests Planning first, using a
-new contract revision when the accepted outcome or execution contract materially changes. This keeps
-one retry concept while preventing a nominal retry from silently dropping the very information meant
-to repair the Work.
+Continuing a Work ensures that one current-responsibility invocation exists in the existing lineage;
+it does not claim that the invocation succeeded or mutate Attention. An unchanged active or queued
+Attempt makes the operation idempotently return that Run ID. A source-traced message or changed
+`notBefore` interrupts the active Attempt and creates one successor in the same responsibility
+lineage. The Inbox event is not copied into Goal Input and `resolutionInput` is unchanged.
 
 A changed Goal design document is canonical context, so its durable publication immediately
 interrupts same-Goal responsibility Runs. The immutable publication guard remains the final race
 boundary, but it should not be the normal mechanism for discovering that an obsolete Run consumed
 minutes after its authority changed. A no-op design write causes no interruption.
 
-Assistant derives the next ordinary operation from canonical target and Work state: Control retries
+Assistant derives the next ordinary operation from canonical target and Work state: Control continues
 or cancels Work, design plus Planning changes authority, and Resolve Attention clears only a verified
 condition. Creating Planning never resolves Attention, retries Engineering Work, or resets
 Engineering Work. If an accepted instruction makes a blocker obsolete, Assistant resolves that exact
 Attention as a separate explicit effect. An empty Planner proposal means only that Planning changed
 nothing.
 
-Retry authorizes at most one current invocation in the same Work lineage; it is not a worktree
-mutation and is not proof that a deterministic environment defect was repaired. The tool reports
-the actual Attempt ID and whether it was newly scheduled or already active. Speaking Assistant
-describes success only after a later state or Attempt proves it.
-An internal Reflection handoff that identifies an unchanged branch defect must request Planning or
-another represented effect instead of using retry as a fictional repair. Direct operator retry keeps
-the same transient reservation because the operator instruction authorizes trying the same lineage
-again.
+`continue` durably queues at most one current-responsibility Attempt for a Work. It may record
+source-traced guidance and set `notBefore`; it is not proof that an environment defect was repaired.
+The tool reports the actual Attempt ID and whether it was newly queued, already queued, or already
+running. Speaking Assistant describes success only after a later state or Attempt proves it.
 
-`notBefore` only defers dispatch. Setting it never makes Work terminal, cancels it, or resolves its
+`notBefore` only gates dispatch. Setting it never makes Work terminal, cancels it, or resolves its
 Attention. Work cancellation is reserved for an explicit decision to abandon that execution route
 and is not an operational or worktree-sync recovery command. It durably cancels the dependent
 closure and then interrupts its live Runs, but it does not change the Goal contract or request
 Planning. After every Work control operation, the control API reads canonical state again and
-returns the Work's `stage`, `notBefore`, terminal fact, and failed readiness predicates; Assistant
-must base its claim on that returned state rather than infer an effect from the requested command.
+returns the Work's `stage`, `notBefore`, terminal fact, and queued Attempt identity.
 
 Project-target Workspace Attention cannot be closed by a model assertion. Explicit repair such as
 Repo rebind first validates the Repo, release ref, managed root, and Project identity, then resolves
@@ -1436,14 +1418,14 @@ Project validation, diagnostics, and Background Reflection own repair or escalat
 patches and Git crash mechanics are implementation details, not workflow stages.
 
 Safe deterministic repair is attempted at the failing boundary before the failure settles. The
-settled Attempt and Project event wake the Assistant, which may inspect, repair, retry, communicate,
+settled Attempt and Project event wake the Assistant, which may inspect, repair, continue, communicate,
 or preserve unfinished responsibility as Project Attention. Coordinator does not synthesize
 Attention or choose a recovery path.
 
 Project Attention is the Assistant's todo, not Project eligibility or a scheduling predicate.
-Creating, updating, or resolving it does not admit, stop, or retry Work. The exact execution fact
+Creating, updating, or resolving it does not admit, stop, or continue Work. The exact execution fact
 continues to own readiness: for example, a checkpoint failure leaves the Work stopped by
-`failed_attempt` until an explicit retry or material Work change. A separately invalid Project
+`failed_attempt` until an explicit queued continuation or material Work change. A separately invalid Project
 runtime may still fail closed at its deterministic boundary, but its repair and validation are
 independent from Attention lifecycle.
 
@@ -1625,7 +1607,7 @@ scope, but it does not select another scope or synthesize a brief. The speaking 
 revalidates current state and owns every action and optional operator notification.
 
 For a handoff carrying exact targeted Attention, the speaking turn may resolve it after concrete
-repair, stage its exact `request_user` transfer, or leave it Assistant-owned and open while repair is
+repair, stage `transfer_attention_to_user`, or leave it Assistant-owned and open while repair is
 unavailable or still running. Coordinator accepts that result without a forced follow-up turn.
 Existing reference, request, artifact, and mutation validation remains authoritative; a prose claim
 or authorization cannot substitute for the state change represented by Attention.
@@ -1713,20 +1695,18 @@ inconsistency after its durable ref. Neither adds another Goal or Work lifecycle
 
 ### Notification
 
-Open targeted Attention appears as **Waiting for Assistant** until the speaking Assistant has
-delivered a user-facing question. An unresolved Attention with `notifiedAt` set appears as **Needs
-you**. Both are projections of the same Attention document, not additional state. Raw Attention is
+Open targeted Attention appears as **Waiting for Assistant** while `operatorRequest` is null and as
+**Needs you** while that pointer names an unanswered public Assistant request. Both are projections
+of the same Attention document, not additional state. Raw Attention is
 handled through Reflection and the speaking Assistant rather than exposed directly inside
 conversation and Goal views. Goal completion appears from the Goal transition and final Planning
 Evidence as a deterministic **Completed** conversation update; it is presentation of canonical
 completion, not another notification document or required model phrase. Legacy targetless
 completion Attention remains readable through the same presentation.
-An eligible Reflection handoff binds exact canonical Goal-local or workspace Attention references
-in ordinary Inbox context. The speaking turn either returns an empty final response and remains
-hidden, returns a non-empty informational final response, or first calls `request_user` with exact
-current Attention references and then returns the exact public question. Coordinator publishes the
-complete public reply before acknowledging every still-current linked Attention. Only a staged
-request sets `operatorRequest`; informational delivery leaves ownership with Assistant. Targeted
+An Assistant turn may stage `transfer_attention_to_user` for exact canonical Attention references
+visible in its conversation, then return the complete public question as ordinary text. Coordinator
+publishes the reply before acknowledging every still-current linked Attention. Only the staged
+transfer sets `operatorRequest`; informational delivery leaves ownership with Assistant. Targeted
 Attention may remain open after the speaking turn. Completion resolves in its acknowledgement
 publication. A crash between
 roots leaves a complete public reply and an unacknowledged Attention; ordinary Inbox recovery

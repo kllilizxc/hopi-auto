@@ -44,6 +44,7 @@ import {
 } from '../runtime/runAttemptStore'
 import { runStoragePath } from '../runtime/runPaths'
 import { settledFailureWorkIds as deriveSettledFailureWorkIds } from '../runtime/settledAttemptFailure'
+import { responsibilityFor } from '../runtime/softwareDeliveryProfile'
 import {
   type StableWorktreeManager,
   StableWorktreeSyncError,
@@ -105,7 +106,12 @@ export interface ProjectReconciler {
   ): Promise<ProjectReconcileResult>
   liveWorkIds(): ReadonlySet<string>
   settledFailureWorkIds?(goalId: string, goalPackage?: GoalPackage): Promise<ReadonlySet<string>>
-  requestWorkRun?(goalId: string, workId: string): Promise<WorkRunRequest>
+  requestWorkRun?(
+    goalId: string,
+    workId: string,
+    options?: { allowSuccessor?: boolean },
+  ): Promise<WorkRunRequest>
+  interruptQueuedRuns?(goalId?: string, workId?: string): Promise<number>
   interruptRuns(goalId?: string, workId?: string): void
 }
 
@@ -116,8 +122,8 @@ export interface WorkRunRequest {
 
 interface WorkRunSlot {
   runId: string
-  state: 'requested' | 'active'
-  controller: AbortController | null
+  state: 'active'
+  controller: AbortController
 }
 
 export function createProjectReconciler(options: ProjectReconcilerOptions): ProjectReconciler {
@@ -178,7 +184,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       if (!goalId) throw new Error('A Work interruption requires its Goal ID')
       const liveKey = `${goalId}/${workId}`
       const slot = runSlots.get(liveKey)
-      if (slot?.state === 'requested') runSlots.delete(liveKey)
       workInterruptionSequence += 1
       workInterruptionGenerations.set(liveKey, workInterruptionSequence)
       slot?.controller?.abort()
@@ -187,14 +192,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     if (goalId) {
       for (const [key, slot] of runSlots) {
         if (!key.startsWith(`${goalId}/`)) continue
-        if (slot.state === 'requested') runSlots.delete(key)
-        else slot.controller?.abort()
+        slot.controller.abort()
       }
       goalInterruptionGenerations.set(goalId, (goalInterruptionGenerations.get(goalId) ?? 0) + 1)
     } else {
-      for (const [key, slot] of runSlots) {
-        if (slot.state === 'requested') runSlots.delete(key)
-        else slot.controller?.abort()
+      for (const slot of runSlots.values()) {
+        slot.controller.abort()
       }
       projectInterruptionGeneration += 1
     }
@@ -203,9 +206,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   return {
     interruptRuns,
     liveWorkIds() {
-      return new Set(
-        [...runSlots].filter(([, slot]) => slot.state === 'active').map(([key]) => key),
-      )
+      return new Set(runSlots.keys())
     },
     async settledFailureWorkIds(goalId, suppliedPackage) {
       const goalPackage = suppliedPackage ?? (await options.store.readPackage(goalId))
@@ -213,26 +214,38 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       return deriveSettledFailureWorkIds(
         goalPackage,
         snapshot.listGoal(options.projectId, goalId),
-        requestedWorkIds(runSlots, goalId),
+        queuedWorkIds(snapshot.queued(), options.projectId, goalId),
       )
     },
-    async requestWorkRun(goalId, workId) {
+    interruptQueuedRuns(goalId, workId) {
+      return attempts.interruptQueued({
+        projectId: options.projectId,
+        ...(goalId ? { goalId } : {}),
+        ...(workId ? { workId } : {}),
+      })
+    },
+    async requestWorkRun(goalId, workId, requestOptions) {
+      const active = runSlots.get(`${goalId}/${workId}`)
+      if (active && !requestOptions?.allowSuccessor) {
+        return { runId: active.runId, disposition: 'already_active' }
+      }
       const goalPackage = await options.store.readPackage(goalId)
       const work = goalPackage.works.get(workId)
       if (!work || isWorkTerminal(work.attributes)) {
-        throw new Error(`Cannot retry missing or terminal Work: ${workId}`)
-      }
-      const key = `${goalId}/${workId}`
-      const existing = runSlots.get(key)
-      if (existing) {
-        return {
-          runId: existing.runId,
-          disposition: existing.state === 'active' ? 'already_active' : 'already_scheduled',
-        }
+        throw new Error(`Cannot continue missing or terminal Work: ${workId}`)
       }
       const runId = createRunId()
-      runSlots.set(key, { runId, state: 'requested', controller: null })
-      return { runId, disposition: 'scheduled' }
+      const responsibility = responsibilityFor(work.attributes.kind, work.attributes.stage)
+      if (!responsibility) throw new Error(`Work has no current responsibility: ${workId}`)
+      return attempts.reserve({
+        projectId: options.projectId,
+        goalId,
+        workId,
+        runId,
+        responsibility,
+        workHash: await workAssignmentHash(work),
+        allowSuccessor: requestOptions?.allowSuccessor,
+      })
     },
     async reconcileGoal(goalId, runtime = {}) {
       const interruptionGeneration = {
@@ -241,11 +254,41 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         work: workInterruptionSequence,
       }
       const goalPackage = await options.store.readPackage(goalId)
-      const attemptSnapshot = await attempts.snapshot()
-      const requested = requestedWorkIds(runSlots, goalId)
+      let attemptSnapshot = await attempts.snapshot()
+      let invalidatedQueuedAttempt = false
+      for (const queued of attemptSnapshot
+        .queued()
+        .filter(
+          (attempt) => attempt.projectId === options.projectId && attempt.goalId === goalId,
+        )) {
+        const queuedWork = goalPackage.works.get(queued.workId)
+        const currentResponsibility = queuedWork
+          ? responsibilityFor(queuedWork.attributes.kind, queuedWork.attributes.stage)
+          : null
+        const currentHash =
+          queuedWork && !isWorkTerminal(queuedWork.attributes)
+            ? await workAssignmentHash(queuedWork)
+            : null
+        if (
+          !queuedWork ||
+          isWorkTerminal(queuedWork.attributes) ||
+          currentResponsibility !== queued.responsibility ||
+          currentHash !== queued.workHash
+        ) {
+          await attempts.interruptQueued({
+            projectId: options.projectId,
+            goalId,
+            workId: queued.workId,
+            reason: 'Queued Attempt no longer matches current Work authority.',
+          })
+          invalidatedQueuedAttempt = true
+        }
+      }
+      if (invalidatedQueuedAttempt) attemptSnapshot = await attempts.snapshot()
+      const requested = queuedWorkIds(attemptSnapshot.queued(), options.projectId, goalId)
       const livePrefix = `${goalId}/`
       const localLiveWorkIds = [...runSlots]
-        .filter(([key, slot]) => key.startsWith(livePrefix) && slot.state === 'active')
+        .filter(([key]) => key.startsWith(livePrefix))
         .map(([key]) => key.slice(livePrefix.length))
       const facts: WorkRuntimeFacts = {
         projectEligible: runtime.projectEligible ?? true,
@@ -292,8 +335,21 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const { workId, responsibility } = decision
       const liveKey = `${goalId}/${workId}`
       const existingSlot = runSlots.get(liveKey)
-      if (existingSlot?.state === 'active') return { kind: 'wait', decision }
-      const runId = existingSlot?.runId ?? createRunId()
+      if (existingSlot) return { kind: 'wait', decision }
+      const owningWork = goalPackage.works.get(workId)
+      if (!owningWork) throw new Error(`Work is missing: ${workId}`)
+      const assignmentHash = await workAssignmentHash(owningWork)
+      const reservation = await attempts.reserve({
+        projectId: options.projectId,
+        goalId,
+        workId,
+        runId: createRunId(),
+        responsibility,
+        workHash: assignmentHash,
+      })
+      if (reservation.disposition === 'already_active') return { kind: 'wait', decision }
+      const runId = reservation.runId
+      if (runSlots.has(liveKey)) return { kind: 'wait', decision }
       const runController = new AbortController()
       const runSlot: WorkRunSlot = {
         runId,
@@ -310,9 +366,15 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         ) {
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
-        const owningWork = goalPackage.works.get(workId)
-        if (!owningWork) throw new Error(`Work is missing: ${workId}`)
-        const assignmentHash = await workAssignmentHash(owningWork)
+        attempt = await attempts.start({
+          projectId: options.projectId,
+          goalId,
+          workId,
+          runId,
+          responsibility,
+          runRoot: runStoragePath(options.homeRoot, runId),
+          workHash: assignmentHash,
+        })
         const runRepos =
           responsibility === 'planner' || isEngineeringWork(owningWork.attributes)
             ? projectRepos
@@ -350,22 +412,13 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         } catch (error) {
           if (!(error instanceof StableWorktreeSyncError)) throw error
           const summary = `Task worktree preparation failed: ${error.message}`
-          const failedAttempt = await attempts.start({
-            projectId: options.projectId,
-            goalId,
-            workId,
-            runId,
-            responsibility,
-            runRoot: runStoragePath(options.homeRoot, runId),
-            workHash: assignmentHash,
-          })
-          await failedAttempt.record({
+          await attempt.record({
             kind: 'message',
             level: 'error',
             role: 'coordinator',
             content: summary,
           })
-          await failedAttempt.finish({
+          await attempt.finish({
             outcome: {
               result: 'fail',
               summary,
@@ -427,15 +480,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             attemptSnapshot.list(options.projectId, goalId, workId),
             responsibility,
           ),
-        })
-        attempt = await attempts.start({
-          projectId: options.projectId,
-          goalId,
-          workId,
-          runId,
-          responsibility,
-          runRoot: context.runRoot,
-          workHash: sessionScope.assignmentHash,
         })
         const preparation =
           responsibility === 'planner'
@@ -911,12 +955,11 @@ function latestResponsibilityAttempt(
     : undefined
 }
 
-function requestedWorkIds(runSlots: ReadonlyMap<string, WorkRunSlot>, goalId: string) {
-  const prefix = `${goalId}/`
+function queuedWorkIds(attempts: readonly RunAttemptSummary[], projectId: string, goalId: string) {
   return new Set(
-    [...runSlots]
-      .filter(([key, slot]) => key.startsWith(prefix) && slot.state === 'requested')
-      .map(([key]) => key.slice(prefix.length)),
+    attempts
+      .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
+      .map((attempt) => attempt.workId),
   )
 }
 

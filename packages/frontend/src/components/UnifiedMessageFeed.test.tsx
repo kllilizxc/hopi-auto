@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { MessageFeedItem } from '../lib/messageFeed'
+import { AssistantDecisionPrompt, formatDecisionAnswers } from './AssistantDecisionPrompt'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 
@@ -108,6 +109,107 @@ test('decorates the exact unresolved Assistant request and restores it after res
   ).not.toContain('<svg')
   expect(resolved).not.toContain('needs-you')
   expect(resolved).not.toContain('Reply to this request')
+})
+
+test('hides DecisionPrompt protocol JSON from Assistant Markdown', () => {
+  const rendered = renderToStaticMarkup(
+    <AssistantMarkdown
+      text={
+        '<NeedsYou attentionId="A-1">Choose one.<DecisionPrompt>{"questions":[]}</DecisionPrompt></NeedsYou>'
+      }
+    />,
+  )
+
+  expect(rendered).toContain('Choose one.')
+  expect(rendered).not.toContain('DecisionPrompt')
+  expect(rendered).not.toContain('questions')
+})
+
+test('renders a bounded decision selector with recommended and Other choices', () => {
+  const prompts = [
+    {
+      attentionId: 'A-1',
+      prompt: {
+        questions: [
+          {
+            id: 'scope',
+            header: '适用范围',
+            question: '哪类单据适用？',
+            options: [
+              {
+                id: 'accrual',
+                label: '仅 Accrual',
+                description: '沿用当前权威代码映射',
+                recommended: true,
+                detailPrompt: '填写 System account ID',
+              },
+              {
+                id: 'actual',
+                label: '仅 Actual',
+                description: '按需求名称解释',
+              },
+            ],
+            allowOther: true,
+          },
+        ],
+      },
+    },
+  ]
+  const rendered = renderToStaticMarkup(
+    <AssistantDecisionPrompt prompts={prompts} onSubmit={() => undefined} />,
+  )
+
+  expect(rendered).toContain('适用范围')
+  expect(rendered).toContain('仅 Accrual')
+  expect(rendered).toContain('Recommended')
+  expect(rendered).toContain('Other')
+  expect(rendered).not.toContain('填写 System account ID')
+  expect(rendered).toContain('Submit answers')
+  expect(rendered).toMatch(/<button[^>]*disabled[^>]*>Submit answers<\/button>/)
+})
+
+test('formats selected decision answers as one readable Inbox reply', () => {
+  const questions = [
+    {
+      key: 'A-1:scope',
+      question: {
+        id: 'scope',
+        header: '适用范围',
+        question: '哪类单据适用？',
+        options: [
+          {
+            id: 'accrual',
+            label: '仅 Accrual',
+            description: '沿用映射',
+            detailPrompt: 'System account ID',
+          },
+          { id: 'actual', label: '仅 Actual', description: '按名称解释' },
+        ],
+        allowOther: true,
+      },
+    },
+    {
+      key: 'A-1:identity',
+      question: {
+        id: 'identity',
+        header: '身份来源',
+        question: '使用哪个权威来源？',
+        options: [
+          { id: 'gateway', label: '可信网关', description: '使用签名 claims' },
+          { id: 'usercenter', label: 'UserCenter', description: '服务端查询' },
+        ],
+        allowOther: true,
+      },
+    },
+  ]
+
+  expect(
+    formatDecisionAnswers(
+      questions,
+      { 'A-1:scope': 'accrual', 'A-1:identity': '__other__' },
+      { 'A-1:scope': '42', 'A-1:identity': '现有 SSO 服务' },
+    ),
+  ).toBe('1. 适用范围: 仅 Accrual — 42\n2. 身份来源: 现有 SSO 服务')
 })
 
 test('lets Virtuoso follow updates while the reader remains near the bottom', async () => {
@@ -345,7 +447,9 @@ test('keeps user text and image attachments in the same message container', () =
       emptyState={<span>Empty</span>}
     />,
   )
-  const message = markup.match(/<div class="unified-feed-message">([\s\S]*?)<\/div><\/article>/)?.[1]
+  const message = markup.match(
+    /<div class="unified-feed-message">([\s\S]*?)<\/div><\/article>/,
+  )?.[1]
 
   expect(message).toContain('unified-feed-message__bubble')
   expect(message).toContain('unified-feed-message__attachments')

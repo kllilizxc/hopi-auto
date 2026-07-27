@@ -181,7 +181,7 @@ describe('Assistant wake trigger', () => {
     expect(await fixture.wake.observe({ settled: true })).toBe('unchanged')
   })
 
-  test('lets an exact NeedsYou reply consume a due revisit without another turn', async () => {
+  test('does not treat legacy NeedsYou text as an Attention ownership transfer', async () => {
     let currentTime = Date.parse('2026-07-25T00:00:00.000Z')
     const fixture = await setup(['P-1'], () => new Date(currentTime))
     await fixture.workspace.createAttention(attention('A-1', 'P-1'))
@@ -207,8 +207,9 @@ describe('Assistant wake trigger', () => {
     await fixture.wake.acknowledgeProjects(['P-1'])
 
     currentTime += 60_000
-    expect(await fixture.wake.observe({ settled: true })).not.toBe('started')
-    expect((await fixture.workspace.readWorkspace()).events.size).toBe(1)
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
+    expect((await fixture.workspace.readWorkspace()).events.size).toBe(2)
 
     await fixture.workspace.receiveEvent({
       eventId: 'EV-answer',
@@ -226,7 +227,7 @@ describe('Assistant wake trigger', () => {
       handledAt: new Date(currentTime),
     })
     expect(await fixture.wake.observe({ settled: true })).not.toBe('started')
-    expect((await fixture.workspace.readWorkspace()).events.size).toBe(2)
+    expect((await fixture.workspace.readWorkspace()).events.size).toBe(3)
   })
 
   test('lets an active Work Attempt provide the next Attention wake edge', async () => {

@@ -2921,19 +2921,18 @@ button:disabled,
 }
 
 .unified-feed-message-row.assistant.needs-you .unified-feed-message {
-  padding: 10px 12px 11px;
+  padding: 16px 20px 20px;
   border: 1px solid color-mix(in srgb, var(--color-warning-400) 16%, transparent);
-  border-radius: 13px;
-  background: linear-gradient(
-      120deg,
-      color-mix(in srgb, var(--color-warning-400) 11%, transparent),
-      color-mix(in srgb, var(--color-warning-400) 3.5%, transparent) 72%
-    ), var(--color-neutral-925);
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--color-black) 18%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-warning-400) 4%, var(--color-neutral-925));
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 24%, transparent);
 }
 
 .unified-feed-message-row.assistant.needs-you .unified-feed-message__text {
-  padding: 3px 0 0;
+  padding: 8px 0 0;
+  color: var(--color-neutral-300);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .unified-feed-needs-you {
@@ -2942,13 +2941,16 @@ button:disabled,
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
 .unified-feed-needs-you .app-status-chip {
-  background: color-mix(in srgb, var(--color-warning-400) 13%, transparent);
-  color: var(--color-warning-300);
-  font-size: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-warning-400) 16%, transparent);
+  color: var(--amber);
+  font-family: inherit;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -2960,13 +2962,80 @@ button:disabled,
   border-radius: 8px;
   background: transparent;
   color: var(--color-warning-200);
-  font-size: 10px;
-  font-weight: 680;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .unified-feed-needs-you__reply.app-button.button:hover {
-  background: color-mix(in srgb, var(--color-warning-400) 14%, transparent);
+  background: transparent;
   color: var(--color-warning-100);
+}
+
+.assistant-decision-prompt {
+  display: grid;
+  gap: 20px;
+}
+
+.assistant-decision-prompt__questions {
+  display: grid;
+  gap: 24px;
+}
+
+.assistant-decision-question {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.assistant-decision-question > legend {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.assistant-decision-question > legend > span {
+  margin-right: 6px;
+  color: var(--color-neutral-450);
+}
+
+.assistant-decision-question > p,
+.assistant-decision-option.app-button.button > span:last-child {
+  margin: 0 0 14px;
+}
+
+.assistant-decision-question__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 10px;
+}
+
+.assistant-decision-option.app-button.button {
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--color-neutral-700) 40%, transparent);
+  text-align: left;
+  white-space: normal;
+}
+
+.assistant-decision-option.app-button.button > span:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.assistant-decision-option.app-button.button > span:last-child {
+  display: block;
+  margin: 6px 0 0;
+}
+
+.assistant-decision-option.app-button.button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--color-accent-400) 50%, transparent);
+  background: color-mix(in srgb, var(--color-accent-500) 12%, transparent);
+}
+
+.assistant-decision-prompt__submit.app-button.button {
+  justify-self: end;
 }
 
 .unified-feed-message__bubble {
@@ -3062,7 +3131,7 @@ button:disabled,
   list-style: none;
 }
 
-.assistant-message-markdown input[type='checkbox'] {
+.assistant-message-markdown input[type="checkbox"] {
   width: 0.9em;
   height: 0.9em;
   margin: 0 0.42em 0 0;
@@ -4617,13 +4686,11 @@ samp {
   position: relative;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
-  background:
-    radial-gradient(
+  background: radial-gradient(
       circle at 50% 18%,
       color-mix(in srgb, var(--color-accent-500) 8%, transparent),
       transparent 32%
-    ),
-    var(--bg);
+    ), var(--bg);
 }
 
 .goal-workspace--project-only > .assistant-drawer.docked {
@@ -4928,7 +4995,8 @@ samp {
   letter-spacing: -0.035em;
 }
 
-.peer-switcher--headline .peer-switcher__tab.tabs__tab[data-hovered="true"]:not([data-selected="true"]) {
+.peer-switcher--headline
+  .peer-switcher__tab.tabs__tab[data-hovered="true"]:not([data-selected="true"]) {
   color: var(--color-neutral-300);
 }
 
@@ -7341,7 +7409,6 @@ samp {
   }
 }
 
-
 /* Thinking Block */
 .assistant-markdown-chunks {
   display: grid;
@@ -7370,7 +7437,8 @@ samp {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast)
+    var(--motion-ease);
 }
 
 .assistant-thinking__toggle:hover {

@@ -10,7 +10,7 @@ export type WorkBadge =
 export type Responsibility = 'planner' | 'generator' | 'reviewer'
 export type ConfigurableAgentRole = 'assistant' | Responsibility
 export type PassResult = 'success' | 'reject' | 'attention' | 'fail' | 'replan'
-export type RunAttemptStatus = 'running' | 'finished' | 'interrupted'
+export type RunAttemptStatus = 'queued' | 'running' | 'finished' | 'interrupted'
 export type CodingAgentTransport = 'codex' | 'claude' | 'opencode'
 export type CodingReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
 
@@ -224,9 +224,35 @@ export interface AssistantFeedActivity {
   phase: 'waiting' | 'working' | 'thinking'
 }
 
+export interface AssistantDecisionOption {
+  id: string
+  label: string
+  description: string
+  recommended?: boolean
+  detailPrompt?: string
+}
+
+export interface AssistantDecisionQuestion {
+  id: string
+  header: string
+  question: string
+  options: AssistantDecisionOption[]
+  allowOther: boolean
+}
+
+export interface AssistantDecisionPrompt {
+  questions: AssistantDecisionQuestion[]
+}
+
+export interface AssistantAttentionDecisionPrompt {
+  attentionId: string
+  prompt: AssistantDecisionPrompt
+}
+
 export interface AssistantOpenRequest {
   eventId: string
   attentions: AttentionView[]
+  decisionPrompts: AssistantAttentionDecisionPrompt[]
 }
 
 export interface CursorPageInfo {
@@ -325,7 +351,7 @@ export interface GoalDocumentView {
 }
 
 export interface RunAttemptSummary {
-  version: 1
+  version: 2
   projectId: string
   goalId: string
   workId: string
@@ -336,7 +362,8 @@ export interface RunAttemptSummary {
     model: string | null
     reasoningEffort: CodingReasoningEffort | null
   } | null
-  startedAt: string
+  requestedAt: string
+  startedAt: string | null
   endedAt: string | null
   status: RunAttemptStatus
   result: PassResult | null

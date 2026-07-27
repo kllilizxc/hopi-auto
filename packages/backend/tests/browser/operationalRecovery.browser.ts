@@ -91,7 +91,7 @@ const assistantRunner: AssistantModelRunner = {
         projectId: PROJECT_ID,
         goalId: GOAL_ID,
         workId: 'plan-initial',
-        action: { kind: 'retry' },
+        action: { kind: 'continue' },
       })
       assistantRuns.push({ eventId: input.eventId, mode, action: 'retried:plan-initial' })
       return assistantResult(ASSISTANT_REPLY, mode)

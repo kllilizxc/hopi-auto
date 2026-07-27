@@ -92,7 +92,7 @@ server.registerTool(
   'hopi_control_work',
   {
     description:
-      "Retry, defer, change dependencies, append a Project Owner message, or cancel one Work. Retry reserves the current responsibility's next independent Attempt in the current environment; its settlement produces a Project event. A message changes the canonical Work document, interrupts an active Run, and resumes the same responsibility lineage. Cancellation includes nonterminal dependents and preserves history.",
+      'Continue one Work now or at a future instant, change dependencies, or cancel one Work. Continue durably queues the next Attempt in the same responsibility lineage and may attach source-traced guidance. Cancellation terminates queued and running Attempts while preserving history.',
     inputSchema: assistantMcpToolSchemas.hopi_control_work,
   },
   (args) => callTool('hopi_control_work', args),
@@ -102,7 +102,7 @@ server.registerTool(
   'hopi_manage_attention',
   {
     description:
-      'Create an Attention for one canonical Project, Goal, or Work target; edit an Assistant-home Attention; resolve it by the canonical reference returned from state; or schedule one future Assistant revisit. A revisit creates one internal turn at that instant and never repeats unless another instant is chosen. Goal resolution records the current Inbox turn as Input.',
+      'Create, update, resolve, defer, or transfer Attention ownership using canonical references. Deferral keeps Assistant ownership and causes one future observation. Transfer stages the current final reply as the user request; after that reply is persisted, the referenced open Attentions become user-owned until an exact reply arrives. Goal resolution records the current Inbox turn as Input.',
     inputSchema: assistantMcpToolSchemas.hopi_manage_attention,
   },
   (args) => callTool('hopi_manage_attention', args),

@@ -173,6 +173,17 @@ export function AssistantPanel({
       ),
     [needsYouAttentionsByGroupId],
   )
+  const decisionPromptsByGroupId = useMemo(
+    () =>
+      new Map(
+        assistantStream.requests.flatMap((request) =>
+          request.decisionPrompts?.length > 0
+            ? [[`inbox:${request.eventId}`, request.decisionPrompts] as const]
+            : [],
+        ),
+      ),
+    [assistantStream.requests],
+  )
   const latestNeedsYouRequest = assistantStream.requests.at(-1)
   const latestNeedsYouGroupId = latestNeedsYouRequest
     ? `inbox:${latestNeedsYouRequest.eventId}`
@@ -265,7 +276,11 @@ export function AssistantPanel({
     requestAnimationFrame(() => composerRef.current?.focus())
   }, [latestNeedsYouGroupId, latestNeedsYouRequest?.eventId, needsYouAttentionsByGroupId])
 
-  const sendMutation = useMutation({
+  const {
+    error: sendError,
+    isPending: sendPending,
+    mutate: publishSubmission,
+  } = useMutation({
     mutationFn: (submission: OptimisticInboxSubmission) =>
       sendInboxMessage({
         content: submission.text,
@@ -294,15 +309,27 @@ export function AssistantPanel({
     },
   })
 
-  const handleSend = () => {
-    if ((input.trim() || draftImages.length > 0) && !sendMutation.isPending) {
-      const text = input.trim()
+  const submitMessage = useCallback(
+    ({
+      text,
+      images,
+      attentions,
+      eventId,
+      clearComposer,
+    }: {
+      text: string
+      images: DraftImage[]
+      attentions: AttentionView[]
+      eventId: string | null
+      clearComposer: boolean
+    }) => {
+      if ((!text.trim() && images.length === 0) || sendPending) return
+
       const clientId = crypto.randomUUID()
-      const images = draftImages
       const submission: OptimisticInboxSubmission = {
         clientId,
         createdAt: new Date().toISOString(),
-        text,
+        text: text.trim(),
         eventId: null,
         attachments: images.map((image) => ({
           reference: `optimistic:${clientId}:${image.id}`,
@@ -312,22 +339,52 @@ export function AssistantPanel({
         images,
         context: resolveAssistantInboxContext(
           scope,
-          replyAttentions,
+          attentions,
           snapshot?.home.homeId,
-          replyEventId ?? undefined,
+          eventId ?? undefined,
         ),
-        replyAttentions,
-        replyEventId,
+        replyAttentions: attentions,
+        replyEventId: eventId,
       }
       setOptimisticMessages((current) => [...current, submission])
-      setInput('')
-      setDraftImages([])
+      if (clearComposer) {
+        setInput('')
+        setDraftImages([])
+      }
       setImageError(null)
       setReplyAttentions([])
       setReplyEventId(null)
-      sendMutation.mutate(submission)
-    }
+      publishSubmission(submission)
+    },
+    [publishSubmission, scope, sendPending, snapshot?.home.homeId],
+  )
+
+  const handleSend = () => {
+    submitMessage({
+      text: input,
+      images: draftImages,
+      attentions: replyAttentions,
+      eventId: replyEventId,
+      clearComposer: true,
+    })
   }
+
+  const submitDecisionPrompt = useCallback(
+    (groupId: string, answer: string) => {
+      const request = assistantStream.requests.find(
+        (candidate) => `inbox:${candidate.eventId}` === groupId,
+      )
+      if (!request?.attentions.length) return
+      submitMessage({
+        text: answer,
+        images: [],
+        attentions: request.attentions,
+        eventId: request.eventId,
+        clearComposer: false,
+      })
+    },
+    [assistantStream.requests, submitMessage],
+  )
 
   const queueImages = (files: File[]) => {
     setImageError(null)
@@ -440,7 +497,10 @@ export function AssistantPanel({
               }
               focusRequest={messageFocus?.request ?? 0}
               needsYouByGroupId={needsYouByGroupId}
+              decisionPromptsByGroupId={decisionPromptsByGroupId}
+              decisionPromptDisabled={sendPending}
               onReplyNeedsYou={replyToNeedsYouMessage}
+              onSubmitDecisionPrompt={submitDecisionPrompt}
               emptyState={
                 <div className="conversation-empty">
                   {assistantStream.error ? (
@@ -462,10 +522,8 @@ export function AssistantPanel({
           </div>
 
           <footer className="assistant-composer">
-            {(sendMutation.error || imageError) && (
-              <AppAlert className="inline-error">
-                {sendMutation.error?.message ?? imageError}
-              </AppAlert>
+            {(sendError || imageError) && (
+              <AppAlert className="inline-error">{sendError?.message ?? imageError}</AppAlert>
             )}
             {replyAttentions.length > 0 && (
               <div className="composer-context">
@@ -502,7 +560,7 @@ export function AssistantPanel({
                       type="button"
                       aria-label={`Remove ${image.file.name || 'image'}`}
                       onClick={() => removeImage(image.id)}
-                      disabled={sendMutation.isPending}
+                      disabled={sendPending}
                     >
                       <X />
                     </IconButton>
@@ -542,7 +600,7 @@ export function AssistantPanel({
               <IconButton
                 className="composer-image-button"
                 type="button"
-                disabled={sendMutation.isPending || draftImages.length >= MAX_DRAFT_IMAGES}
+                disabled={sendPending || draftImages.length >= MAX_DRAFT_IMAGES}
                 onClick={() => fileInputRef.current?.click()}
                 aria-label="Attach images"
                 title="Attach images"
@@ -552,11 +610,11 @@ export function AssistantPanel({
               <IconButton
                 className="send-button"
                 type="button"
-                disabled={(!input.trim() && draftImages.length === 0) || sendMutation.isPending}
+                disabled={(!input.trim() && draftImages.length === 0) || sendPending}
                 onClick={handleSend}
                 aria-label="Send message"
               >
-                {sendMutation.isPending ? <AppSpinner size="sm" /> : <Send />}
+                {sendPending ? <AppSpinner size="sm" /> : <Send />}
               </IconButton>
             </div>
             <small>Paste or attach up to 4 images · Enter to send</small>

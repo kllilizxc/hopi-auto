@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { assistantDecisionPromptSchema } from '../domain/assistantDecisionPrompt'
 import { parseAttentionReference } from '../domain/attentionReference'
 import {
   parseGoalAttentionTarget,
@@ -132,14 +133,9 @@ const goalActionSchema = z.discriminatedUnion('kind', [
 const workActionSchema = z.discriminatedUnion('kind', [
   z
     .object({
-      kind: z.literal('retry'),
-      notBefore: z.string().datetime({ offset: true }).nullable().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('defer'),
-      notBefore: z.string().datetime({ offset: true }).nullable(),
+      kind: z.literal('continue'),
+      message: z.string().trim().min(1).max(16_000).optional(),
+      at: z.string().datetime({ offset: true }).optional(),
     })
     .strict(),
   z
@@ -148,12 +144,6 @@ const workActionSchema = z.discriminatedUnion('kind', [
       dependsOn: z
         .array(stableIdSchema)
         .refine((values) => new Set(values).size === values.length, 'dependsOn must be unique'),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('message'),
-      content: z.string().trim().min(1).max(16_000),
     })
     .strict(),
   z.object({ kind: z.literal('cancel') }).strict(),
@@ -313,9 +303,22 @@ export const assistantToolSchemas = {
           .strict(),
         z
           .object({
-            kind: z.literal('revisit'),
+            kind: z.literal('defer_attention'),
             attentionRef: attentionReferenceSchema,
-            at: z.string().datetime({ offset: true }).nullable(),
+            until: z.string().datetime({ offset: true }),
+          })
+          .strict(),
+        z
+          .object({
+            kind: z.literal('transfer_attention_to_user'),
+            attentionRefs: z
+              .array(attentionReferenceSchema)
+              .min(1)
+              .refine(
+                (values) => new Set(values).size === values.length,
+                'attentionRefs must be unique',
+              ),
+            decisionPrompt: assistantDecisionPromptSchema.optional(),
           })
           .strict(),
       ]),
@@ -473,26 +476,15 @@ const mcpControlWorkSchema = z
     action: z.discriminatedUnion('kind', [
       z
         .object({
-          kind: z.literal('retry'),
-          notBefore: z.string().datetime({ offset: true }).nullable().optional(),
-        })
-        .strict(),
-      z
-        .object({
-          kind: z.literal('defer'),
-          notBefore: z.string().datetime({ offset: true }).nullable(),
+          kind: z.literal('continue'),
+          message: z.string().min(1).max(16_000).optional(),
+          at: z.string().datetime({ offset: true }).optional(),
         })
         .strict(),
       z
         .object({
           kind: z.literal('set_dependencies'),
           dependsOn: z.array(z.string().min(1)),
-        })
-        .strict(),
-      z
-        .object({
-          kind: z.literal('message'),
-          content: z.string().min(1).max(16_000),
         })
         .strict(),
       z.object({ kind: z.literal('cancel') }).strict(),

@@ -62,11 +62,14 @@ prompt, diagnostics, and tool stream remain hidden, and terminal activity leaves
 
 Needs-you presentation belongs to the exact Assistant reply that exposed the canonical Attention.
 While any linked reference remains unresolved, that message receives one restrained warning surface,
-a compact label, and a Reply action carrying all of its open references. Resolution restores the
-ordinary message without adding a status row. Assistant has no title header; the global open count
-remains as a quiet floating badge only when non-zero. Its Reflection entry is hidden in a masked
-top-right hover/focus region, and the Reflection list adds no title or refresh toolbar. Goal and
-Kanban surfaces retain their derived Work state without a duplicate banner.
+a compact label, and a Reply action carrying all of its open references. A validated structured
+decision prompt on that same immutable reply renders mutually exclusive options, optional Other
+inputs, option-specific required details, and one submit action through the existing referenced
+Inbox reply path; malformed or absent prompt data falls back to ordinary Markdown and Reply.
+Resolution restores the ordinary message without adding a status row. Assistant has no title
+header; the global open count remains as a quiet floating badge only when non-zero. Its Reflection
+entry is hidden in a masked top-right hover/focus region, and the Reflection list adds no title or
+refresh toolbar. Goal and Kanban surfaces retain their derived Work state without a duplicate banner.
 
 The UI deliberately has no task drag-and-drop, direct Work mutation, manual reconcile, Assistant
 Action editor, decision graph, planning-request graph, or session-authority screen.

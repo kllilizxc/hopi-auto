@@ -24,13 +24,14 @@ export interface RunAttemptDiagnostics {
 
 export async function readRunAttemptDiagnostics(
   root: string,
-  attempt: Pick<RunAttemptSummary, 'startedAt' | 'endedAt'>,
+  attempt: Pick<RunAttemptSummary, 'startedAt' | 'endedAt'> & { requestedAt?: string },
   events: readonly StoredRunAttemptEvent[],
   now: Date = new Date(),
 ): Promise<RunAttemptDiagnostics> {
   const elapsedMs = Math.max(
     0,
-    Date.parse(attempt.endedAt ?? now.toISOString()) - Date.parse(attempt.startedAt),
+    Date.parse(attempt.endedAt ?? now.toISOString()) -
+      Date.parse(attempt.startedAt ?? attempt.requestedAt ?? now.toISOString()),
   )
   const toolIntervals = pairedToolIntervals(events)
   const observedToolWallTimeMs = unionDuration(toolIntervals)

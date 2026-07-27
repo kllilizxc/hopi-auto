@@ -135,7 +135,19 @@ export function createRoleContextStager(
       const runtimeScratchDir = resolve(input.runtimeScratchDir ?? join(runRoot, 'scratch'))
       const runtimeCacheDir = runtimeCacheRoot(absoluteHomeRoot)
 
-      await rm(runRoot, { recursive: true, force: true })
+      await mkdir(runRoot, { recursive: true })
+      await Promise.all(
+        [
+          contextRoot,
+          proposalRoot,
+          artifactOutputDir,
+          resultFile,
+          contextFile,
+          promptFile,
+          reposFile,
+          browserHarnessArtifactDir,
+        ].map((path) => rm(path, { recursive: true, force: true })),
+      )
       await mkdir(authorityRoot, { recursive: true })
       await mkdir(proposalRoot, { recursive: true })
       await mkdir(artifactOutputDir, { recursive: true })

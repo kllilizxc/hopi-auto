@@ -20,6 +20,7 @@ import {
   workspaceAssistantContextDigest,
   workspaceAssistantRuntimeDigest,
 } from '../src/assistant/workspaceAssistant'
+import { goalAttentionReference } from '../src/domain/attentionReference'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import {
@@ -988,8 +989,10 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain(
       'A Work requested in this turn can start only after the turn settles',
     )
-    expect(seen[0]?.prompt).toContain('Attention is durable; active Work defers it')
-    expect(seen[0]?.prompt).toContain('NeedsYou means operator input is required')
+    expect(seen[0]?.prompt).toContain('Attention remains Assistant-owned')
+    expect(seen[0]?.prompt).toContain('transferred with hopi_manage_attention')
+    expect(seen[0]?.prompt).not.toContain('<NeedsYou>')
+    expect(seen[0]?.prompt).not.toContain('<DecisionPrompt>')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
     expect(seen[0]?.prompt).toContain('omit internals unless asked or decision-relevant')
@@ -1542,7 +1545,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).not.toContain('... truncated')
   })
 
-  test('accepts a transient retry-only internal handoff without a second model call', async () => {
+  test('accepts a transient continuation-only internal handoff without a second model call', async () => {
     let calls = 0
     const fixture = await setup((tools) => ({
       async run(input) {
@@ -1551,7 +1554,7 @@ describe('WorkspaceAssistant conversation', () => {
           projectId: 'P-1',
           goalId: 'G-1',
           workId: 'plan-initial',
-          action: { kind: 'retry' },
+          action: { kind: 'continue' },
         })
         return { reply: '', session: codexSession('thread-atomic-retry') }
       },
@@ -1585,6 +1588,60 @@ describe('WorkspaceAssistant conversation', () => {
       attention.attributes.id,
     )
     expect(current?.attributes.resolvedAt).toBeNull()
+  })
+
+  test('publishes one final user request and atomically transfers its Attention', async () => {
+    let attentionRef = ''
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        await tools.execute(input.toolToken, 'hopi_manage_attention', {
+          change: {
+            kind: 'transfer_attention_to_user',
+            attentionRefs: [attentionRef],
+          },
+        })
+        return {
+          reply: 'Which production window should I use?',
+          session: codexSession('thread-transfer'),
+        }
+      },
+    }))
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await publishTestWorkAttention(
+      fixture.goalStore,
+      'G-1',
+      'plan-initial',
+      1,
+      'A production window is required.',
+    )
+    attentionRef = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-transfer',
+      content: 'Decide who owns the unresolved production window.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [attentionRef],
+      },
+    })
+
+    await fixture.assistant.process('EV-transfer')
+
+    expect((await fixture.workspace.readEvent('EV-transfer'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'public',
+      reply: 'Which production window should I use?',
+      disposition: 'operator-requested',
+      attentionRequest: { attentionRefs: [attentionRef] },
+    })
+    const current = (await fixture.goalStore.readPackage('G-1')).attentions.get(
+      attention.attributes.id,
+    )
+    expect(current?.attributes).toMatchObject({
+      operatorRequest: expect.stringMatching(/\/event:EV-transfer$/),
+      revisitAt: null,
+      notifiedAt: expect.any(String),
+    })
   })
 })
 

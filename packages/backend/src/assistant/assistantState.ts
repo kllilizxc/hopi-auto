@@ -225,10 +225,19 @@ export function createAssistantStateReader(options: {
                   )
                   .map((attempt) => attempt.workId),
               )
+              const queuedWorkIds = new Set(
+                attemptSnapshot
+                  .queued()
+                  .filter(
+                    (attempt) =>
+                      attempt.projectId === project.projectId && attempt.goalId === goalId,
+                  )
+                  .map((attempt) => attempt.workId),
+              )
               const failedWorkIds = await settledFailureWorkIds(
                 goalPackage,
                 attemptSnapshot.listGoal(project.projectId, goalId),
-                liveWorkIds,
+                queuedWorkIds,
               )
               const projections = deriveGoalWorkProjections(
                 project.projectId,

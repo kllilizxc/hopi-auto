@@ -192,9 +192,9 @@ conversation. Resolving the Attention makes any unconsumed revisit irrelevant.
 The Assistant provider process tree has the same turn lifetime. A shell child still running when the
 turn ends is terminated with that turn; it is not a background job. A Work Attempt has an independent
 RoleRunner process lifetime, and its settlement changes Project state and therefore produces the
-ordinary supervision wake. `retry` reserves that Work's next current responsibility Attempt without
-rewriting its contract. `revisitAt` reuses the Coordinator's deadline timer and Inbox rather than
-adding an Assistant job queue or recurring waiting state.
+ordinary supervision wake. `continue` durably queues that Work's next current-responsibility Attempt
+without changing Work identity. `revisitAt` reuses the Coordinator's deadline timer and Inbox rather
+than adding an Assistant job queue or recurring waiting state.
 
 A direct Engineering Work may belong to another Project. Its immutable `assistantDispatch` points
 to the source Inbox event, whose Project context identifies the conversation that delegated it and
@@ -208,43 +208,30 @@ This adds no cross-Project dependency document, callback record, or workflow sta
 
 ## Needs You
 
-The Assistant can associate part of a public reply with one unresolved Attention:
+Needs You is a projection of canonical Attention ownership, not a reply-text protocol. The Assistant
+calls `transfer_attention_to_user` with one or more open Attention references, then writes the
+complete question as ordinary final text. The pending Inbox event durably records the selected
+references and optional structured decision prompt before publication. Once its non-empty reply is
+handled, Coordinator stores that exact event reference in each Attention's `operatorRequest` and
+clears `revisitAt`.
 
-```xml
-<NeedsYou attentionId="A-123">
-需要你确认实际业务取舍。
-</NeedsYou>
-```
+The request event may carry a vendor-neutral `decisionPrompt` with bounded questions, mutually
+exclusive options, optional recommendation, optional supporting detail, and free-text Other. This
+data belongs to the immutable request event; it is never reconstructed from Markdown. The UI submits
+the selected answer as one ordinary Inbox reply to the same event and Attention references.
 
-This annotation changes message presentation and records that the current turn has handed that
-Attention to the operator:
+- an open Attention with non-null `operatorRequest` renders as `Needs you`
+- the header count is the number of distinct open Attention records with that pointer
+- the referenced event is projected into the Attention's owning conversation
+- `replyTo` preserves provenance; the canonical Attention references identify returned ownership
+- the exact reply clears `operatorRequest` and wakes Assistant without resolving the Attention
+- resolving the Attention removes the decoration from its historical request
+- a successful transfer clears any pending Assistant revisit because the exact reply supplies the
+  next observation
 
-- while the referenced Attention is unresolved, the block renders as `Needs you`
-- resolving the Attention makes the same historical block render as ordinary Markdown
-- Reply records the message ID and exact canonical Attention reference as conversation context
-- Reply stays in the Attention's owning Project conversation even when the canonical reference is
-  stored under Assistant Home
-- the referenced message may originate from any handled public turn in that same conversation;
-  `replyTo` is provenance while the Attention reference is mutation authority
-- Reply does not mutate the Attention
-- an unresolved Attention referenced by the current turn does not cause an immediate internal
-  continuation; a later operator or Project event can wake the same Assistant again
-- a pending `revisitAt` waits while `NeedsYou` still awaits its exact Reply
-- a missing or invalid reference renders as ordinary Markdown and records a diagnostic
-
-Using `NeedsYou` declares that no currently available Assistant or Project action can advance that
-Attention until the operator responds. Because the declaration pauses scheduled observation, an
-optional shortcut or useful extra input that does not prevent continued work remains ordinary reply
-text rather than `NeedsYou`.
-
-Only this allowlisted tag is interpreted. It does not enable arbitrary HTML, scripts, or nested
-control markup. The header count is the number of distinct unresolved Attention IDs referenced by
-visible Assistant messages.
-
-Published message text is immutable. Updating an Attention wakes its Project Assistant, but does not
-rewrite an older `Needs you` block with the new canonical body. When the Assistant publishes a newer
-message for the same unresolved Attention, that newest message is the Reply target; resolving the
-Attention changes every historical block for that identity back to ordinary Markdown.
+New messages contain no interpreted control markup. Legacy `<NeedsYou>` and `<DecisionPrompt>`
+content is read only by the one-time ownership migration and stripped for historical display.
+Published message text remains immutable.
 
 The Assistant's ordinary final text is already public communication. There is no separate
 `inform`, `notify`, or delivery decision for in-app replies. Optional external delivery mirrors an
@@ -278,8 +265,8 @@ The Assistant changes Work through the same canonical Work document used by resp
 Changing dependencies replaces the nonterminal Engineering Work's `dependsOn` set and is accepted
 only when the resulting graph is valid and acyclic.
 
-Sending a Work message appends a timestamped, source-traced Project Owner note to that document. If
-an Attempt is active, HOPI interrupts it and schedules the changed Work in the same persistent
+Continuing with a message appends a timestamped, source-traced Project Owner note to that document.
+If an Attempt is active, HOPI interrupts it and schedules the changed Work in the same persistent
 responsibility lineage. This is transport recovery, not a new queue or workflow state: the resumed
 Agent receives the current Work document and its prior provider session. Project Owner message
 blocks do not change the responsibility-session compatibility fingerprint; ordinary Work contract

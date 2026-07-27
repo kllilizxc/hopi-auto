@@ -617,6 +617,7 @@ export function createGoalController(
           content,
         }),
       }
+      if (next.body === work.body) return work
       await store.publishGoal(goalId, {
         supportingWrites: [],
         gateWrite: {

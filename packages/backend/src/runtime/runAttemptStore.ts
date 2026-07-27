@@ -20,7 +20,7 @@ import { cleanupRunScratch } from './runArtifacts'
 import { type RunAttemptDiagnostics, readRunAttemptDiagnostics } from './runAttemptDiagnostics'
 import { legacyRunStoragePath, runStoragePath, runStorageRoot } from './runPaths'
 
-export const RUN_ATTEMPT_STATUSES = ['running', 'finished', 'interrupted'] as const
+export const RUN_ATTEMPT_STATUSES = ['queued', 'running', 'finished', 'interrupted'] as const
 export type RunAttemptStatus = (typeof RUN_ATTEMPT_STATUSES)[number]
 
 const nullableResultSchema = z.enum(STORED_PASS_RESULTS).nullable()
@@ -31,7 +31,31 @@ const roleExecutionIdentitySchema = z
     reasoningEffort: codingReasoningEffortSchema.nullable().default(null),
   })
   .strict()
-const attemptManifestSchema = z
+const currentAttemptManifestSchema = z
+  .object({
+    version: z.literal(2),
+    projectId: stableIdSchema,
+    goalId: stableIdSchema,
+    workId: stableIdSchema,
+    runId: stableIdSchema,
+    responsibility: z.enum(RESPONSIBILITIES),
+    workHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable()
+      .default(null),
+    execution: roleExecutionIdentitySchema.nullable().default(null),
+    requestedAt: z.string().datetime(),
+    startedAt: z.string().datetime().nullable(),
+    endedAt: z.string().datetime().nullable(),
+    status: z.enum(RUN_ATTEMPT_STATUSES),
+    result: nullableResultSchema,
+    summary: z.string().nullable(),
+    exitCode: z.number().int().nullable(),
+    application: z.string().nullable(),
+  })
+  .strict()
+const legacyAttemptManifestSchema = z
   .object({
     version: z.literal(1),
     projectId: stableIdSchema,
@@ -47,14 +71,23 @@ const attemptManifestSchema = z
     execution: roleExecutionIdentitySchema.nullable().default(null),
     startedAt: z.string().datetime(),
     endedAt: z.string().datetime().nullable(),
-    status: z.enum(RUN_ATTEMPT_STATUSES),
+    status: z.enum(['running', 'finished', 'interrupted']),
     result: nullableResultSchema,
     summary: z.string().nullable(),
     exitCode: z.number().int().nullable(),
     application: z.string().nullable(),
   })
   .strict()
-const attemptIdentitySchema = attemptManifestSchema.pick({
+const attemptManifestSchema = z.preprocess((value) => {
+  const legacy = legacyAttemptManifestSchema.safeParse(value)
+  if (!legacy.success) return value
+  return {
+    ...legacy.data,
+    version: 2,
+    requestedAt: legacy.data.startedAt,
+  }
+}, currentAttemptManifestSchema)
+const attemptIdentitySchema = currentAttemptManifestSchema.pick({
   projectId: true,
   goalId: true,
   workId: true,
@@ -142,6 +175,16 @@ export interface StartRunAttemptInput {
   workHash?: string | null
 }
 
+export interface ReserveRunAttemptInput {
+  projectId: string
+  goalId: string
+  workId: string
+  runId: string
+  responsibility: Responsibility
+  workHash: string
+  allowSuccessor?: boolean
+}
+
 export interface FinishRunAttemptInput {
   outcome: Pick<RoleRunResult, 'result' | 'summary' | 'exitCode'>
   application: string
@@ -157,12 +200,23 @@ export interface RunAttemptRecorder {
 
 export interface RunAttemptSnapshot {
   running(): readonly RunAttemptSummary[]
+  queued(): readonly RunAttemptSummary[]
   list(projectId: string, goalId: string, workId: string): readonly RunAttemptSummary[]
   listGoal(projectId: string, goalId: string): ReadonlyMap<string, readonly RunAttemptSummary[]>
 }
 
 export interface RunAttemptStore {
+  reserve(input: ReserveRunAttemptInput): Promise<{
+    runId: string
+    disposition: 'scheduled' | 'already_scheduled' | 'already_active'
+  }>
   start(input: StartRunAttemptInput): Promise<RunAttemptRecorder>
+  interruptQueued(input?: {
+    projectId?: string
+    goalId?: string
+    workId?: string
+    reason?: string
+  }): Promise<number>
   generation(): number
   snapshot(): Promise<RunAttemptSnapshot>
   list(projectId: string, goalId: string, workId: string): Promise<RunAttemptSummary[]>
@@ -243,6 +297,78 @@ export function createRunAttemptStore(
     })
 
   return {
+    async reserve(input) {
+      assertIds(input.projectId, input.goalId, input.workId, input.runId)
+      return withIndexLock(async () => {
+        const attempts = sortAttempts(
+          (await readAllAttemptSummaries(attemptsRoot)).filter(
+            (attempt) =>
+              attempt.projectId === input.projectId &&
+              attempt.goalId === input.goalId &&
+              attempt.workId === input.workId,
+          ),
+        )
+        const active = attempts.find(
+          (attempt) =>
+            attempt.responsibility === input.responsibility &&
+            (attempt.status === 'queued' || attempt.status === 'running'),
+        )
+        if (active?.status === 'running' && !input.allowSuccessor) {
+          return { runId: active.runId, disposition: 'already_active' as const }
+        }
+        if (active?.status === 'queued' && active.workHash === input.workHash) {
+          return { runId: active.runId, disposition: 'already_scheduled' as const }
+        }
+        for (const stale of attempts.filter((attempt) => attempt.status === 'queued')) {
+          await interruptQueuedManifest(
+            homeRoot,
+            stale,
+            'Queued Attempt was superseded by a newer continuation.',
+            now(),
+          )
+        }
+
+        const requestedAt = now()
+        const manifest: RunAttemptSummary = {
+          version: 2,
+          projectId: input.projectId,
+          goalId: input.goalId,
+          workId: input.workId,
+          runId: input.runId,
+          responsibility: input.responsibility,
+          workHash: input.workHash,
+          execution: null,
+          requestedAt: requestedAt.toISOString(),
+          startedAt: null,
+          endedAt: null,
+          status: 'queued',
+          result: null,
+          summary: null,
+          exitCode: null,
+          application: null,
+        }
+        const root = runStoragePath(homeRoot, input.runId)
+        await mkdir(root, { recursive: true })
+        await writeManifest(join(root, 'attempt.json'), manifest)
+        await Bun.write(
+          join(root, 'events.jsonl'),
+          `${JSON.stringify(
+            storeEvent(
+              {
+                kind: 'message',
+                level: 'info',
+                role: 'coordinator',
+                content: `${input.responsibility} Attempt queued.`,
+              },
+              requestedAt,
+            ),
+          )}\n`,
+        )
+        index.generation += 1
+        return { runId: input.runId, disposition: 'scheduled' as const }
+      })
+    },
+
     async start(input) {
       assertIds(input.projectId, input.goalId, input.workId, input.runId)
       const expectedRoot = runStoragePath(homeRoot, input.runId)
@@ -250,29 +376,53 @@ export function createRunAttemptStore(
         throw new Error(`Run root does not match Attempt identity: ${input.runRoot}`)
       }
 
-      let manifest: RunAttemptSummary = {
-        version: 1,
-        projectId: input.projectId,
-        goalId: input.goalId,
-        workId: input.workId,
-        runId: input.runId,
-        responsibility: input.responsibility,
-        workHash: input.workHash ?? null,
-        execution: null,
-        startedAt: now().toISOString(),
-        endedAt: null,
-        status: 'running',
-        result: null,
-        summary: null,
-        exitCode: null,
-        application: null,
-      }
       const manifestPath = join(expectedRoot, 'attempt.json')
       const eventsPath = join(expectedRoot, 'events.jsonl')
-      await mkdir(expectedRoot, { recursive: true })
-      await writeManifest(manifestPath, manifest)
-      await Bun.write(eventsPath, '')
-      await recordIndexedAttempt(manifest)
+      let manifest = await withIndexLock(async () => {
+        const existing = await readStoredManifest(manifestPath).catch(() => null)
+        if (
+          existing &&
+          (existing.projectId !== input.projectId ||
+            existing.goalId !== input.goalId ||
+            existing.workId !== input.workId ||
+            existing.runId !== input.runId ||
+            existing.responsibility !== input.responsibility ||
+            existing.status !== 'queued')
+        ) {
+          throw new Error(`Attempt cannot start from ${existing.status}: ${input.runId}`)
+        }
+        const startedAt = now()
+        const claimed: RunAttemptSummary = existing
+          ? {
+              ...existing,
+              workHash: input.workHash ?? existing.workHash,
+              startedAt: startedAt.toISOString(),
+              status: 'running',
+            }
+          : {
+              version: 2,
+              projectId: input.projectId,
+              goalId: input.goalId,
+              workId: input.workId,
+              runId: input.runId,
+              responsibility: input.responsibility,
+              workHash: input.workHash ?? null,
+              execution: null,
+              requestedAt: startedAt.toISOString(),
+              startedAt: startedAt.toISOString(),
+              endedAt: null,
+              status: 'running',
+              result: null,
+              summary: null,
+              exitCode: null,
+              application: null,
+            }
+        await mkdir(expectedRoot, { recursive: true })
+        await writeManifest(manifestPath, claimed)
+        if (!existing) await Bun.write(eventsPath, '')
+        index.generation += 1
+        return claimed
+      })
 
       let closed = false
       let writeTail: Promise<void> = Promise.resolve()
@@ -349,6 +499,28 @@ export function createRunAttemptStore(
           )
         },
       }
+    },
+
+    async interruptQueued(input = {}) {
+      return withIndexLock(async () => {
+        const queued = (await readAllAttemptSummaries(attemptsRoot)).filter(
+          (attempt) =>
+            attempt.status === 'queued' &&
+            (!input.projectId || attempt.projectId === input.projectId) &&
+            (!input.goalId || attempt.goalId === input.goalId) &&
+            (!input.workId || attempt.workId === input.workId),
+        )
+        for (const attempt of queued) {
+          await interruptQueuedManifest(
+            homeRoot,
+            attempt,
+            input.reason ?? 'Queued Attempt was interrupted before dispatch.',
+            now(),
+          )
+        }
+        if (queued.length > 0) index.generation += 1
+        return queued.length
+      })
     },
 
     generation() {
@@ -529,9 +701,19 @@ function createAttemptSnapshot(attempts: readonly RunAttemptSummary[]): RunAttem
       ),
     ),
   )
+  const queued = sortAttempts(
+    [...sorted.values()].flatMap((byWork) =>
+      [...byWork.values()].flatMap((workAttempts) =>
+        workAttempts.filter((attempt) => attempt.status === 'queued'),
+      ),
+    ),
+  )
   return {
     running() {
       return running
+    },
+    queued() {
+      return queued
     },
     list(projectId, goalId, workId) {
       return sorted.get(`${projectId}\u0000${goalId}`)?.get(workId) ?? []
@@ -656,11 +838,12 @@ async function readLegacySummaryWithFallback(
   const parsed = parseLegacyResult(source)
   const resultStats = source.trim() ? await stat(resultPath).catch(() => null) : null
   return {
-    version: 1,
+    version: 2,
     ...parsedIdentity.data,
     responsibility,
     workHash: null,
     execution: null,
+    requestedAt: contextStats.mtime.toISOString(),
     startedAt: contextStats.mtime.toISOString(),
     endedAt: resultStats?.mtime.toISOString() ?? contextStats.mtime.toISOString(),
     status: source.trim() ? 'finished' : 'interrupted',
@@ -756,8 +939,39 @@ function assertScopeIds(projectId: string, goalId: string) {
 function sortAttempts(attempts: RunAttemptSummary[]) {
   return attempts.sort(
     (left, right) =>
-      right.startedAt.localeCompare(left.startedAt) || right.runId.localeCompare(left.runId),
+      right.requestedAt.localeCompare(left.requestedAt) || right.runId.localeCompare(left.runId),
   )
+}
+
+async function interruptQueuedManifest(
+  homeRoot: string,
+  attempt: RunAttemptSummary,
+  summary: string,
+  endedAt: Date,
+) {
+  const root = runStoragePath(homeRoot, attempt.runId)
+  const eventsPath = join(root, 'events.jsonl')
+  await repairDurableJsonLineTail(eventsPath)
+  await appendFile(
+    eventsPath,
+    `${JSON.stringify(
+      storeEvent(
+        {
+          kind: 'message',
+          level: 'error',
+          role: 'coordinator',
+          content: summary,
+        },
+        endedAt,
+      ),
+    )}\n`,
+  )
+  await writeManifest(join(root, 'attempt.json'), {
+    ...attempt,
+    endedAt: endedAt.toISOString(),
+    status: 'interrupted',
+    summary,
+  })
 }
 
 function errorCode(error: unknown) {

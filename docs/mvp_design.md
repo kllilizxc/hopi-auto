@@ -59,9 +59,9 @@ The operator needs only three durable concepts:
 Attention remains an internal durable control document, not a separate product concept. Open
 Attention with a target is routed internally through Reflection. It appears as **Waiting for
 Assistant** while Assistant owns the next action and **Needs you** only while its explicit
-`operatorRequest` points at an unanswered public Assistant request. Needs-you decorates that exact
-question and contributes to one non-zero floating Assistant count; Kanban does not duplicate it as
-a page banner. An informational update does not transfer ownership. An exact operator reply returns
+`operatorRequest` points at an unanswered public Assistant request. The UI decorates that exact
+question and contributes to one non-zero floating Assistant count; no reply-text tag carries
+authority. An informational update does not transfer ownership. An exact operator reply returns
 ownership to Assistant through immutable Inbox `replyTo` correlation, and resolution restores
 ordinary message styling. An ordinary message on the same Goal is not inferred to be a reply. Only the speaking
 Assistant decides whether the operator must be asked. Goal completion appears as a normal Assistant

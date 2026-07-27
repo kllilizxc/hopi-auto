@@ -185,7 +185,7 @@ flowchart LR
     CE -->|HOPI tool call| HT[Validate target and requested operation]
     HT --> TP[Publish tool effects and optional Goal Input]
     TP --> A
-    CE -->|final reply or staged request_user question| HR[Publish complete reply and mark turn handled]
+    CE -->|final reply or staged Attention transfer| HR[Publish complete reply and mark turn handled]
     HR --> AL{Linked Attention?}
     AL -->|inform| NA[Publish Attention notifiedAt after reply]
     AL -->|request| OR[Publish notifiedAt plus operatorRequest]
@@ -270,10 +270,10 @@ Public user turns are selected before internal Reflection turns, with receipt or
 each class. Reflection never enters the publication path directly. Its one optional brief is ordinary
 pending Inbox input to the speaking thread, which rereads current truth before choosing any HOPI tool.
 A hidden internal turn remains absent from the conversation projection when its final response is
-empty. A non-empty final response is the one informational public message. Calling `request_user`
-with exact current Attention references stages an actionable question, and that same turn's final
-response is the question published to the operator. Only this staged request transfers current
-Attention ownership to the operator.
+empty. A non-empty final response is the one informational public message. Calling
+`transfer_attention_to_user` with current visible Attention references stages an actionable
+question, and that same turn's final response is the question published to the operator. Only this
+staged request transfers current Attention ownership to the operator.
 
 ## Reflection Runtime Lifecycle
 
@@ -562,9 +562,9 @@ ready(work) :=
   and every work.dependsOn item is done
   and (work.notBefore is null or work.notBefore <= now)
   and no open targeted Attention covers its project, Goal, or Work
-  and no Coordinator reservation occupies the Work
+  and no running Attempt occupies the Work
   and no settled failed Attempt covers the exact current Work authority,
-      unless Assistant reserved one explicit retry
+      unless one queued Attempt requests that same responsibility
   and no unsettled Assistant turn has touched the Goal
   and capacity exists for pass(work.kind, work.stage)
 ```
@@ -574,23 +574,21 @@ capacity, leases, time, revision, and project-root eligibility remain runtime co
 Goal with no nonterminal Work causes Reconciler to ensure Planning Work for semantic assessment.
 Final Planner success completes the Goal in its own guarded application.
 
-## Retry and Process Restart
+## Continue and Process Restart
 
 - Reviewer `reject`, deterministic pre-C1 rejection, semantic failure, runtime failure, and
   interruption remain distinct immutable Attempt outcomes. Work carries no counter or retry budget.
 - A material contract revision or materially changed Planner publication changes current Work
-  authority. A delayed retry changes only `notBefore`.
+  authority. Delayed continuation changes only `notBefore`.
 - A runner or Coordinator stop before the Work gate may leave source or Evidence but does not
   consume the result. Restart releases the stale lease and starts a new Run when readiness allows;
   it never reattaches the old child process.
 - A consumed semantic `fail`, rejected outcome application, or `operational_failure` pauses automatic
   redispatch while its settled Work hash still equals current Work authority. Changing that authority
   naturally removes the pause.
-- Explicit Work retry reserves one in-process Run against unchanged authority. It is an execution
-  command, not Goal state, Attention state, or accepted Goal Input. A crash before that Run starts
-  leaves the prior failed Attempt settled so Reflection may judge it again after restart. Defer changes
-  only `notBefore`. Work cancellation is a material decision and retains its Input while settling only
-  Attention for Work it makes terminal.
+- Explicit Work `continue` creates or reuses one persisted queued Attempt against current authority.
+  It may attach one source-traced message and set `notBefore`. A crash before dispatch retains the
+  queued Attempt; cancellation terminates queued and running Attempts while preserving history.
 - `attention` leaves Work stage unchanged. Speaking Assistant may request Planning; reconciliation
   uses ordinary readiness plus Planning and Attention guards.
 - Targeted Attention remains the only durable operator block. It stays open until answered or its
@@ -622,9 +620,9 @@ Each nonterminal card shows exactly one primary badge, chosen by this priority:
 | ----------------------- | -------------------------------------------------------------------------------- |
 | `Needs you`             | Open targeted Attention covers the Work or Goal and `operatorRequest` is non-null |
 | `Waiting for Assistant` | Open targeted Attention covers the Work or Goal and `operatorRequest` is null     |
-| `working`               | The Work has a persisted Attempt with `status: running`                  |
+| `working`               | The Work has a persisted Attempt with `status: running`                           |
 | `scheduled`             | Nonterminal Work has a future `notBefore`                               |
-| `queued`                | `ready(work)` and no running Attempt                                    |
+| `queued`                | A persisted queued Attempt exists, or `ready(work)` awaits dispatch      |
 | `waiting`               | A non-stage readiness predicate is false                                |
 
 The first matching badge wins, so cards do not accumulate competing status labels. Terminal and

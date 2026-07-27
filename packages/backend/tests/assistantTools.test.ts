@@ -1122,7 +1122,7 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(1)
   })
 
-  test('requests one transient Work retry without mutating Attention', async () => {
+  test('requests one Work continuation without mutating Attention', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
@@ -1145,11 +1145,11 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'plan-initial',
-      action: { kind: 'retry' },
+      action: { kind: 'continue' },
     })
     expect(retried.value).toMatchObject({
       effect: {
-        kind: 'work_retry_requested',
+        kind: 'work_continue_requested',
         workId: 'plan-initial',
         stage: 'plan',
         runId: 'R-requested-1',
@@ -1163,7 +1163,7 @@ describe('Assistant HOPI tools', () => {
     expect(pendingPackage.inputs).toHaveLength(0)
   })
 
-  test('reserves operational retry without changing Work fields', async () => {
+  test('reserves operational continuation without changing Work fields', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
@@ -1190,13 +1190,13 @@ describe('Assistant HOPI tools', () => {
         projectId: 'P-1',
         goalId: 'G-1',
         workId: 'plan-initial',
-        action: { kind: 'retry' },
+        action: { kind: 'continue' },
       },
     )
 
     expect(retried.value).toMatchObject({
       effect: {
-        kind: 'work_retry_requested',
+        kind: 'work_continue_requested',
         workId: 'plan-initial',
         stage: 'plan',
         runId: 'R-requested-1',
@@ -1211,7 +1211,7 @@ describe('Assistant HOPI tools', () => {
     expect(goalPackage.inputs).toHaveLength(0)
   })
 
-  test('does not route a retry turn into the controlled Goal as accepted Input', async () => {
+  test('does not route a continuation turn into the controlled Goal as accepted Input', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({
       goalId: 'G-target',
@@ -1236,7 +1236,7 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       goalId: 'G-target',
       workId: 'plan-initial',
-      action: { kind: 'retry' },
+      action: { kind: 'continue' },
     })
 
     const target = await fixture.goalStore.readPackage('G-target')
@@ -1310,7 +1310,7 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'plan-initial',
-      action: { kind: 'defer', notBefore: '2099-01-01T00:00:00.000Z' },
+      action: { kind: 'continue', at: '2099-01-01T00:00:00.000Z' },
     })
 
     expect(deferred.value).toMatchObject({
@@ -1349,8 +1349,8 @@ describe('Assistant HOPI tools', () => {
       goalId: 'G-1',
       workId: 'W-owner',
       action: {
-        kind: 'message',
-        content: 'Use the verified API command recorded in the Project design.',
+        kind: 'continue',
+        message: 'Use the verified API command recorded in the Project design.',
       },
     })
 
@@ -1368,7 +1368,7 @@ describe('Assistant HOPI tools', () => {
       changed: true,
       value: {
         effect: {
-          kind: 'work_message_appended',
+          kind: 'work_continue_requested',
           workId: 'W-owner',
         },
       },
@@ -1383,7 +1383,7 @@ describe('Assistant HOPI tools', () => {
     ])
   })
 
-  test('persists a Work message without inventing a separate retry reservation', async () => {
+  test('rejects a Work continuation before mutation when no durable queue exists', async () => {
     const fixture = await setup({ omitWorkScheduler: true })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
@@ -1396,26 +1396,18 @@ describe('Assistant HOPI tools', () => {
     const workPath = fixture.goalStore.paths.absolute(
       fixture.goalStore.paths.workDocument('G-1', 'W-owner'),
     )
-    const result = await fixture.tools.executeForEvent(
-      'EV-unscheduled-message',
-      'hopi_control_work',
-      {
+    await expect(
+      fixture.tools.executeForEvent('EV-unscheduled-message', 'hopi_control_work', {
         projectId: 'P-1',
         goalId: 'G-1',
         workId: 'W-owner',
         action: {
-          kind: 'message',
-          content: 'Use this guidance on the next natural invocation.',
+          kind: 'continue',
+          message: 'Use this guidance on the next natural invocation.',
         },
-      },
-    )
-
-    expect(result.value).toMatchObject({
-      effect: { kind: 'work_message_appended', workId: 'W-owner' },
-    })
-    expect(await Bun.file(workPath).text()).toContain(
-      'Use this guidance on the next natural invocation.',
-    )
+      }),
+    ).rejects.toThrow('cannot queue Work continuation')
+    expect(await Bun.file(workPath).text()).not.toContain('Use this guidance')
   })
 
   test('starting Planning preserves attached Attention', async () => {
@@ -1710,14 +1702,14 @@ describe('Assistant HOPI tools', () => {
       'EV-revisit',
       'hopi_manage_attention',
       {
-        change: { kind: 'revisit', attentionRef: workspaceRef, at },
+        change: { kind: 'defer_attention', attentionRef: workspaceRef, until: at },
       },
     )
     const goalResult = await fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
-      change: { kind: 'revisit', attentionRef: goalRef, at },
+      change: { kind: 'defer_attention', attentionRef: goalRef, until: at },
     })
     const repeated = await fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
-      change: { kind: 'revisit', attentionRef: goalRef, at },
+      change: { kind: 'defer_attention', attentionRef: goalRef, until: at },
     })
 
     expect(workspaceResult).toMatchObject({
@@ -1744,12 +1736,84 @@ describe('Assistant HOPI tools', () => {
     await expect(
       fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
         change: {
-          kind: 'revisit',
+          kind: 'defer_attention',
           attentionRef: goalRef,
-          at: new Date(Date.now() - 1_000).toISOString(),
+          until: new Date(Date.now() - 1_000).toISOString(),
         },
       }),
     ).rejects.toThrow('must be in the future')
+  })
+
+  test('transfers Attention through the exact final reply and clears its revisit', async () => {
+    const fixture = await setup()
+    const attention = await createWorkspaceAttentionController(
+      fixture.workspace,
+    ).ensureProjectAttention('P-1', 'Choose a release window.')
+    const homeId = (await fixture.workspace.readWorkspace()).homeId
+    const attentionRef = workspaceAttentionReference(homeId, attention.attributes.id)
+    await fixture.workspace.updateAttention(attention.attributes.id, {
+      revisitAt: new Date(Date.now() + 60_000).toISOString(),
+    })
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-transfer',
+      content: 'The release window requires a user decision.',
+      context: { projectId: 'P-1', attentionRefs: [attentionRef] },
+    })
+
+    const staged = await fixture.tools.executeForEvent('EV-transfer', 'hopi_manage_attention', {
+      change: {
+        kind: 'transfer_attention_to_user',
+        attentionRefs: [attentionRef],
+        decisionPrompt: {
+          questions: [
+            {
+              id: 'window',
+              header: 'Release',
+              question: 'Which window?',
+              options: [
+                { id: 'now', label: 'Now', description: 'Use the current window' },
+                { id: 'later', label: 'Later', description: 'Wait for the next window' },
+              ],
+              allowOther: true,
+            },
+          ],
+        },
+      },
+    })
+    expect(staged).toMatchObject({
+      changed: true,
+      value: {
+        effect: { kind: 'attention_transfer_staged', attentionRefs: [attentionRef] },
+      },
+    })
+    expect((await fixture.workspace.readEvent('EV-transfer'))?.attributes.attentionRequest).toEqual(
+      {
+        attentionRefs: [attentionRef],
+        decisionPrompt: expect.objectContaining({
+          questions: [expect.objectContaining({ id: 'window' })],
+        }),
+      },
+    )
+
+    await fixture.workspace.handleEvent('EV-transfer', {
+      reply: 'Which release window should I use?',
+      disposition: 'operator-requested',
+      expose: true,
+    })
+    expect(await fixture.tools.acknowledgeEventAttentionRequest('EV-transfer')).toEqual([
+      attentionRef,
+    ])
+    const transferred = (await fixture.workspace.readWorkspace()).attentions.get(
+      attention.attributes.id,
+    )
+    expect(transferred?.attributes).toMatchObject({
+      operatorRequest: `home:${homeId}/event:EV-transfer`,
+      revisitAt: null,
+      notifiedAt: expect.any(String),
+    })
+    expect(await fixture.tools.acknowledgeEventAttentionRequest('EV-transfer')).toEqual([
+      attentionRef,
+    ])
   })
 
   test('creates Goal-local Attention from one canonical Work target', async () => {

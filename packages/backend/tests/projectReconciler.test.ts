@@ -863,7 +863,7 @@ describe('ProjectReconciler', () => {
     expect(await fixture.attempts.list('project-1', 'goal-1', 'W-1')).toHaveLength(2)
   })
 
-  test('explicit retry reserves one Run without inventing or mutating Attention', async () => {
+  test('explicit continuation reserves one Run without inventing or mutating Attention', async () => {
     const fixture = await createFixture({ directInitialWork: true, generatorResult: 'fail' })
     const first = await fixture.reconciler.reconcileGoal('goal-1')
     expect(first).toMatchObject({
@@ -898,7 +898,53 @@ describe('ProjectReconciler', () => {
     })
   })
 
-  test('returns the active Attempt when retry arrives during Project preparation', async () => {
+  test('runs the same queued Attempt after the Coordinator is recreated', async () => {
+    const fixture = await createFixture({ directInitialWork: true })
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+      runId: 'run-1',
+      disposition: 'scheduled',
+    })
+
+    const restarted = fixture.createReconciler()
+    expect(await restarted.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'pass_finished',
+      runId: 'run-1',
+      result: 'success',
+    })
+    expect(fixture.runner.responsibilities).toEqual(['generator'])
+    expect(await fixture.attempts.list('project-1', 'goal-1', 'W-1')).toMatchObject([
+      { runId: 'run-1', status: 'finished' },
+    ])
+  })
+
+  test('keeps a timed queued Attempt across restart and runs it once after notBefore', async () => {
+    const fixture = await createFixture({ directInitialWork: true })
+    const controller = createGoalController(fixture.store, { verifyCompletion: () => false })
+    await controller.setWorkNotBefore('goal-1', 'W-1', '2026-07-12T00:00:00.000Z')
+    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toMatchObject({
+      runId: 'run-1',
+      disposition: 'scheduled',
+    })
+    expect(
+      await fixture.reconciler.reconcileGoal('goal-1', {
+        now: new Date('2026-07-11T12:00:00.000Z'),
+      }),
+    ).toMatchObject({ kind: 'wait' })
+
+    const restarted = fixture.createReconciler()
+    expect(
+      await restarted.reconcileGoal('goal-1', {
+        now: new Date('2026-07-12T00:00:01.000Z'),
+      }),
+    ).toMatchObject({
+      kind: 'pass_finished',
+      runId: 'run-1',
+      result: 'success',
+    })
+    expect(fixture.runner.responsibilities).toEqual(['generator'])
+  })
+
+  test('returns the active Attempt when continuation arrives during Project preparation', async () => {
     let markPreparationStarted: () => void = () => undefined
     const preparationStarted = new Promise<void>((resolve) => {
       markPreparationStarted = resolve
