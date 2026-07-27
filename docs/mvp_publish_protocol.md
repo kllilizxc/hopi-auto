@@ -367,7 +367,10 @@ Task-branch source checkpoints are separate Run savepoints. Coordinator alone wr
 index and creates their commits after Generator Runs. A checkpoint may preserve partial output and
 does not consume a pass result, change Work, or imply success; only a later validated Work gate and
 eventual C1 can do so. Each Coordinator-authored checkpoint commit retains its HOPI provenance
-trailers and identifies its generation mode with one `Generation-Mode: AI-Pure` trailer.
+trailers and identifies its generation mode with one `Generation-Mode: AI-Pure` trailer. When a
+current task-branch checkpoint predates this invariant, the next checkpoint pass may replace that
+unreleased Git object with the same tree, parent, and provenance plus the missing trailer. This is
+an idempotent managed-state migration; it never rewrites a user checkout or an accepted release.
 
 Git checkpoints may be created by C1, after Goal completion, or by a background checkpoint worker.
 Their failure never changes Goal, Work, Inbox, or Attention state. Git history is audit and export

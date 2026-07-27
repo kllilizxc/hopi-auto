@@ -62,6 +62,50 @@ describe('checkpointTaskWorktree', () => {
     expect(checkpoint.head).toBe(await git(fixture.worktreePath, ['rev-parse', 'HEAD']))
   })
 
+  test('upgrades the current unreleased checkpoint when only its generation trailer is missing', async () => {
+    const fixture = await setup()
+    await Bun.write(join(fixture.worktreePath, 'feature.ts'), 'export const feature = true\n')
+    await git(fixture.worktreePath, ['add', '-A'])
+    await git(fixture.worktreePath, [
+      'commit',
+      '-m',
+      [
+        'hopi: checkpoint G-1/W-1',
+        '',
+        'HOPI-Project: P-1',
+        'HOPI-Goal: G-1',
+        'HOPI-Work: W-1',
+        'HOPI-Producer-Run: old-run',
+      ].join('\n'),
+    ])
+    const oldHead = await git(fixture.worktreePath, ['rev-parse', 'HEAD'])
+    const oldTree = await git(fixture.worktreePath, ['show', '-s', '--format=%T', 'HEAD'])
+    const oldParent = await git(fixture.worktreePath, ['show', '-s', '--format=%P', 'HEAD'])
+
+    const upgraded = await checkpointTaskWorktree(fixture.input)
+
+    expect(upgraded.created).toBe(true)
+    expect(upgraded.head).not.toBe(oldHead)
+    expect(await git(fixture.worktreePath, ['show', '-s', '--format=%T', 'HEAD'])).toBe(oldTree)
+    expect(await git(fixture.worktreePath, ['show', '-s', '--format=%P', 'HEAD'])).toBe(oldParent)
+    expect(await git(fixture.worktreePath, ['show', '-s', '--format=%B', 'HEAD'])).toBe(
+      [
+        'hopi: checkpoint G-1/W-1',
+        '',
+        'HOPI-Project: P-1',
+        'HOPI-Goal: G-1',
+        'HOPI-Work: W-1',
+        'HOPI-Producer-Run: old-run',
+        '',
+        'Generation-Mode: AI-Pure',
+      ].join('\n'),
+    )
+    expect(await checkpointTaskWorktree(fixture.input)).toEqual({
+      head: upgraded.head,
+      created: false,
+    })
+  })
+
   test('fails without committing forbidden canonical changes', async () => {
     const fixture = await setup()
     await mkdir(join(fixture.worktreePath, '.hopi'), { recursive: true })

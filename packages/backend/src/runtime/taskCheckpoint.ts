@@ -54,6 +54,16 @@ export async function checkpointTaskWorktree(input: TaskCheckpointInput): Promis
     throw new TaskCheckpointError(staged.stderr || 'Cannot inspect staged task changes')
   }
   if (staged.exitCode === 0) {
+    const currentMessage = await git(input.worktreePath, ['show', '-s', '--format=%B', 'HEAD'])
+    if (
+      isCurrentTaskCheckpoint(currentMessage, input) &&
+      !currentMessage.split('\n').some((line) => line.startsWith('Generation-Mode: '))
+    ) {
+      await commitCheckpoint(input, `${currentMessage.trimEnd()}\n\nGeneration-Mode: AI-Pure`, [
+        '--amend',
+      ])
+      return { head: await git(input.worktreePath, ['rev-parse', 'HEAD']), created: true }
+    }
     return { head: await git(input.worktreePath, ['rev-parse', 'HEAD']), created: false }
   }
 
@@ -68,9 +78,29 @@ export async function checkpointTaskWorktree(input: TaskCheckpointInput): Promis
     '',
     'Generation-Mode: AI-Pure',
   ].join('\n')
+  await commitCheckpoint(input, message)
+  return { head: await git(input.worktreePath, ['rev-parse', 'HEAD']), created: true }
+}
+
+function isCurrentTaskCheckpoint(message: string, input: TaskCheckpointInput) {
+  const lines = new Set(message.split('\n'))
+  return (
+    message.startsWith(`hopi: checkpoint ${input.goalId}/${input.workId}\n`) &&
+    lines.has(`HOPI-Project: ${input.projectId}`) &&
+    lines.has(`HOPI-Goal: ${input.goalId}`) &&
+    lines.has(`HOPI-Work: ${input.workId}`) &&
+    (!input.repoId || lines.has(`HOPI-Repo: ${input.repoId}`))
+  )
+}
+
+async function commitCheckpoint(
+  input: TaskCheckpointInput,
+  message: string,
+  extraArgs: string[] = [],
+) {
   const commit = await gitResult(
     input.worktreePath,
-    ['-c', 'core.hooksPath=/dev/null', 'commit', '--no-gpg-sign', '-m', message],
+    ['-c', 'core.hooksPath=/dev/null', 'commit', ...extraArgs, '--no-gpg-sign', '-m', message],
     {
       GIT_AUTHOR_NAME: 'HOPI Generator',
       GIT_AUTHOR_EMAIL: 'hopi@local',
@@ -81,7 +111,6 @@ export async function checkpointTaskWorktree(input: TaskCheckpointInput): Promis
   if (commit.exitCode !== 0) {
     throw new TaskCheckpointError(commit.stderr || commit.stdout || 'Task checkpoint failed')
   }
-  return { head: await git(input.worktreePath, ['rev-parse', 'HEAD']), created: true }
 }
 
 async function git(cwd: string, args: string[]) {
