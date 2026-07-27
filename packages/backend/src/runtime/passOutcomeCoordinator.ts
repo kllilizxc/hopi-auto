@@ -228,6 +228,7 @@ function normalizeNewAttentions(
         id,
         createdAt,
         operatorRequest: attention.document.attributes.operatorRequest ?? null,
+        revisitAt: null,
       },
       body: attention.document.body,
     }
@@ -899,9 +900,10 @@ function validateNewAttention(
   if (
     document.attributes.resolvedAt !== null ||
     document.attributes.notifiedAt !== null ||
-    (document.attributes.operatorRequest ?? null) !== null
+    (document.attributes.operatorRequest ?? null) !== null ||
+    (document.attributes.revisitAt ?? null) !== null
   ) {
-    throw new PassProposalError('New Attention must be open and unnotified')
+    throw new PassProposalError('New Attention must be open, unnotified, and unscheduled')
   }
   const expectedTarget = workRef(store, input.goalId, input.workId)
   if (document.attributes.target === null) {

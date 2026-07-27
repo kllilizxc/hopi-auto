@@ -34,6 +34,7 @@ export function createWorkspaceAttentionController(
         createdAt: now().toISOString(),
         updatedAt: now().toISOString(),
         resolvedAt: null,
+        revisitAt: null,
         refs: [target],
         notifiedAt: null,
         operatorRequest: null,

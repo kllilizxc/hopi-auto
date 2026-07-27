@@ -1684,6 +1684,74 @@ describe('Assistant HOPI tools', () => {
     })
   })
 
+  test('schedules one future revisit for workspace and Goal Attention', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const goalAttention = await publishTestWorkAttention(
+      fixture.goalStore,
+      'G-1',
+      'plan-initial',
+      'Check the external condition later.',
+    )
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-revisit',
+      content: 'Recheck both conditions later.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+    const projectAttention = await createWorkspaceAttentionController(
+      fixture.workspace,
+    ).ensureProjectAttention('P-1', 'Check Project recovery later.')
+    const homeId = (await fixture.workspace.readWorkspace()).homeId
+    const at = new Date(Date.now() + 60_000).toISOString()
+    const workspaceRef = workspaceAttentionReference(homeId, projectAttention.attributes.id)
+    const goalRef = goalAttentionReference('P-1', 'G-1', goalAttention.attributes.id)
+
+    const workspaceResult = await fixture.tools.executeForEvent(
+      'EV-revisit',
+      'hopi_manage_attention',
+      {
+        change: { kind: 'revisit', attentionRef: workspaceRef, at },
+      },
+    )
+    const goalResult = await fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
+      change: { kind: 'revisit', attentionRef: goalRef, at },
+    })
+    const repeated = await fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
+      change: { kind: 'revisit', attentionRef: goalRef, at },
+    })
+
+    expect(workspaceResult).toMatchObject({
+      changed: true,
+      value: { attentionRef: workspaceRef, revisitAt: at },
+    })
+    expect(goalResult).toMatchObject({
+      changed: true,
+      value: { attentionRef: goalRef, revisitAt: at },
+    })
+    expect(repeated).toMatchObject({
+      changed: false,
+      value: { attentionRef: goalRef, revisitAt: at },
+    })
+    expect(
+      (await fixture.workspace.readWorkspace()).attentions.get(projectAttention.attributes.id)
+        ?.attributes.revisitAt,
+    ).toBe(at)
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get(goalAttention.attributes.id)
+        ?.attributes.revisitAt,
+    ).toBe(at)
+
+    await expect(
+      fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
+        change: {
+          kind: 'revisit',
+          attentionRef: goalRef,
+          at: new Date(Date.now() - 1_000).toISOString(),
+        },
+      }),
+    ).rejects.toThrow('must be in the future')
+  })
+
   test('creates Goal-local Attention from one canonical Work target', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })

@@ -129,6 +129,7 @@ export const workspaceAttentionAttributesSchema = z
         createdAt: timestampSchema,
         updatedAt: timestampSchema,
         resolvedAt: timestampSchema.nullable(),
+        revisitAt: timestampSchema.nullable().optional(),
         refs: z.array(z.string().trim().min(1)),
       })
       .strict(),
@@ -209,6 +210,7 @@ function normalizeWorkspaceAttention(value: unknown) {
     createdAt,
     updatedAt: attributes.updatedAt ?? createdAt,
     resolvedAt: attributes.resolvedAt,
+    revisitAt: attributes.revisitAt ?? null,
     refs: [...new Set([...(target ? [target] : []), ...refs])],
   }
 }

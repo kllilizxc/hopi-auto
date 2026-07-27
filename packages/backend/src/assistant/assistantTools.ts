@@ -1038,6 +1038,7 @@ export function createAssistantTools(options: {
                   createdAt: timestamp,
                   updatedAt: timestamp,
                   resolvedAt: null,
+                  revisitAt: null,
                   refs: [change.target],
                   notifiedAt: null,
                   operatorRequest: null,
@@ -1097,6 +1098,7 @@ export function createAssistantTools(options: {
                 resolvedAt: null,
                 notifiedAt: null,
                 operatorRequest: null,
+                revisitAt: null,
               },
               body: `${change.body.trim()}\n`,
             }
@@ -1163,6 +1165,32 @@ export function createAssistantTools(options: {
                 },
               }
             }
+            if (change.kind === 'revisit') {
+              assertFutureAttentionRevisit(change.at, now())
+              if (attention.attributes.resolvedAt !== null) {
+                throw new AssistantToolRequestError('Resolved Attention cannot be revisited')
+              }
+              const changed = (attention.attributes.revisitAt ?? null) !== change.at
+              const updated = changed
+                ? await options.workspace.updateAttention(parsedReference.attentionId, {
+                    revisitAt: change.at,
+                    updatedAt: now(),
+                  })
+                : attention
+              return {
+                summary: change.at
+                  ? `Scheduled one revisit for Attention ${parsedReference.attentionId} at ${change.at}.`
+                  : `Cleared the scheduled revisit for Attention ${parsedReference.attentionId}.`,
+                changed,
+                value: {
+                  attentionId: parsedReference.attentionId,
+                  target: updated.attributes.target,
+                  resolved: false,
+                  attentionRef: change.attentionRef,
+                  revisitAt: updated.attributes.revisitAt ?? null,
+                },
+              }
+            }
             const changed = attention.attributes.resolvedAt === null
             if (changed) {
               await options.workspace.resolveAttention(
@@ -1194,6 +1222,9 @@ export function createAssistantTools(options: {
             throw new AssistantToolRequestError(`Attention not found: ${change.attentionRef}`)
           }
           if (attention.attributes.resolvedAt !== null) {
+            if (change.kind === 'revisit') {
+              throw new AssistantToolRequestError('Resolved Attention cannot be revisited')
+            }
             return {
               summary: `Attention ${parsedReference.attentionId} was already resolved.`,
               changed: false,
@@ -1203,6 +1234,31 @@ export function createAssistantTools(options: {
                 resolved: true,
                 attentionRef: change.attentionRef,
                 resolutionInput: attention.attributes.resolutionInput ?? null,
+              },
+            }
+          }
+          if (change.kind === 'revisit') {
+            assertFutureAttentionRevisit(change.at, now())
+            const changed = (attention.attributes.revisitAt ?? null) !== change.at
+            if (changed) {
+              await setGoalAttentionRevisit(
+                project.store,
+                parsedReference.goalId,
+                parsedReference.attentionId,
+                change.at,
+              )
+            }
+            return {
+              summary: change.at
+                ? `Scheduled one revisit for Attention ${parsedReference.attentionId} at ${change.at}.`
+                : `Cleared the scheduled revisit for Attention ${parsedReference.attentionId}.`,
+              changed,
+              value: {
+                attentionId: parsedReference.attentionId,
+                target: attention.attributes.target,
+                resolved: false,
+                attentionRef: change.attentionRef,
+                revisitAt: change.at,
               },
             }
           }
@@ -1718,6 +1774,7 @@ async function resolveGoalAttention(
   const attention = parseAttentionDocument(source)
   if (attention.attributes.resolvedAt !== null) return false
   attention.attributes.operatorRequest = null
+  attention.attributes.revisitAt = null
   attention.attributes.resolvedAt = resolvedAt.toISOString()
   attention.attributes.resolutionInput = admission.path
   attention.body = [
@@ -1739,6 +1796,39 @@ async function resolveGoalAttention(
     },
   })
   return true
+}
+
+async function setGoalAttentionRevisit(
+  store: GoalPackageStore,
+  goalId: string,
+  attentionId: string,
+  revisitAt: string | null,
+) {
+  const path = store.paths.attentionDocument(goalId, attentionId)
+  const absolutePath = store.paths.absolute(path)
+  const file = Bun.file(absolutePath)
+  if (!(await file.exists()))
+    throw new AssistantToolRequestError(`Goal Attention not found: ${attentionId}`)
+  const source = await file.text()
+  const attention = parseAttentionDocument(source)
+  if (attention.attributes.resolvedAt !== null) {
+    throw new AssistantToolRequestError('Resolved Attention cannot be revisited')
+  }
+  attention.attributes.revisitAt = revisitAt
+  await store.publishGoal(goalId, {
+    supportingWrites: [],
+    gateWrite: {
+      path,
+      expectedHash: await hashBytes(new TextEncoder().encode(source)),
+      content: renderAttentionDocument(attention),
+    },
+  })
+}
+
+function assertFutureAttentionRevisit(revisitAt: string | null, current: Date) {
+  if (revisitAt !== null && Date.parse(revisitAt) <= current.getTime()) {
+    throw new AssistantToolRequestError('Attention revisit must be in the future or null')
+  }
 }
 
 function goalAttentionTargetLocation(target: string) {

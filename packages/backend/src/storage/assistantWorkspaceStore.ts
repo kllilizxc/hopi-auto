@@ -67,7 +67,7 @@ export interface AssistantWorkspaceStore {
   createAttention(attention: WorkspaceAttentionDocument): Promise<WorkspaceAttentionDocument>
   updateAttention(
     attentionId: string,
-    input: { body?: string; refs?: string[]; updatedAt?: Date },
+    input: { body?: string; refs?: string[]; revisitAt?: string | null; updatedAt?: Date },
   ): Promise<WorkspaceAttentionDocument>
   resolveAttention(
     attentionId: string,
@@ -230,6 +230,7 @@ export function createAssistantWorkspaceStore(
         }
         if (input.body !== undefined) attention.body = normalizeReceivedContent(input.body)
         if (input.refs !== undefined) attention.attributes.refs = [...new Set(input.refs)]
+        if (input.revisitAt !== undefined) attention.attributes.revisitAt = input.revisitAt
         attention.attributes.updatedAt = (input.updatedAt ?? new Date()).toISOString()
       })
     },

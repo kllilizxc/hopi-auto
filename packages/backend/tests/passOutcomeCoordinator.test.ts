@@ -464,6 +464,38 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.evidence.has('E-run-wrong-attention-target')).toBe(false)
   })
 
+  test('keeps future revisit selection with the Project Assistant', async () => {
+    const fixture = await createEngineeringFixture('generate')
+    const context = await fixture.stage('W-1', 'run-scheduled-attention', 'generator')
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-scheduled')
+    const stagedAttentionPath = join(context.proposalRoot, ...attentionPath.split('/'))
+    await mkdir(dirname(stagedAttentionPath), { recursive: true })
+    await Bun.write(
+      stagedAttentionPath,
+      renderAttentionDocument({
+        attributes: {
+          id: 'A-scheduled',
+          target: 'project:project-1/goal:goal-1/work:W-1',
+          createdAt: '2026-07-11T00:00:00Z',
+          resolvedAt: null,
+          notifiedAt: null,
+          revisitAt: '2099-07-11T01:00:00Z',
+        },
+        body: 'Recheck registry access later.\n',
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('W-1', 'run-scheduled-attention', 'generator', context, 'attention'),
+    )
+
+    expect(result).toMatchObject({
+      kind: 'invalid',
+      reason: 'New Attention must be open, unnotified, and unscheduled',
+    })
+    expect((await fixture.store.readPackage('goal-1')).attentions.has('A-scheduled')).toBe(false)
+  })
+
   test('rejects malformed Generator Attention as invalid', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-malformed-attention', 'generator')

@@ -991,6 +991,7 @@ function proposalCapabilities(
       resolvedAt: null,
       notifiedAt: null,
       operatorRequest: null,
+      revisitAt: null,
     },
   }
   if (input.responsibility !== 'planner') {

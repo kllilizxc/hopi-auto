@@ -311,6 +311,13 @@ export const assistantToolSchemas = {
             resolution: z.string().trim().min(1).max(2_000),
           })
           .strict(),
+        z
+          .object({
+            kind: z.literal('revisit'),
+            attentionRef: attentionReferenceSchema,
+            at: z.string().datetime({ offset: true }).nullable(),
+          })
+          .strict(),
       ]),
     })
     .strict(),

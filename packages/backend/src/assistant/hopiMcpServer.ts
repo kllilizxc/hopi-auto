@@ -102,7 +102,7 @@ server.registerTool(
   'hopi_manage_attention',
   {
     description:
-      'Create an Attention for one canonical Project, Goal, or Work target; edit an Assistant-home Attention; or resolve an exact Project/Goal Attention by the canonical reference returned from state. Goal resolution records the current Inbox turn as Input.',
+      'Create an Attention for one canonical Project, Goal, or Work target; edit an Assistant-home Attention; resolve it by the canonical reference returned from state; or schedule one future Assistant revisit. A revisit creates one internal turn at that instant and never repeats unless another instant is chosen. Goal resolution records the current Inbox turn as Input.',
     inputSchema: assistantMcpToolSchemas.hopi_manage_attention,
   },
   (args) => callTool('hopi_manage_attention', args),

@@ -20,16 +20,13 @@ afterEach(async () => {
 })
 
 describe('Project Assistant wake and Attention E2E', () => {
-  test('drains unresolved Attention through the same Project session until NeedsYou', async () => {
+  test('runs one scheduled Attention revisit without looping while it remains unresolved', async () => {
     const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
     const runtime = await setupRuntime({
       async run(input) {
         calls.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
         return {
-          reply:
-            calls.length === 1
-              ? 'The Project todo remains in progress.'
-              : '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>',
+          reply: 'The Project todo remains in progress.',
           session: codexSession('project-session'),
         }
       },
@@ -37,13 +34,31 @@ describe('Project Assistant wake and Attention E2E', () => {
 
     try {
       await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
+      await runtime.workspace.receiveEvent({
+        eventId: 'EV-schedule',
+        content: 'Check this Attention later.',
+        context: { projectId: 'P-1' },
+      })
+      const homeId = (await runtime.workspace.readWorkspace()).homeId
+      const revisitAt = new Date(Date.now() + 100).toISOString()
+      await runtime.assistantTools.executeForEvent('EV-schedule', 'hopi_manage_attention', {
+        change: {
+          kind: 'revisit',
+          attentionRef: workspaceAttentionReference(homeId, 'A-choice'),
+          at: revisitAt,
+        },
+      })
+      await runtime.workspace.handleEvent('EV-schedule', {
+        reply: 'Scheduled.',
+        disposition: 'tools-used',
+      })
+      await runtime.reflection.acknowledgeProjects(['P-1'])
       runtime.coordinator.start()
       await runtime.coordinator.waitForIdle()
+      await waitUntil(() => calls.length === 1)
+      await runtime.coordinator.waitForIdle()
 
-      expect(calls).toEqual([
-        { mode: 'internal', sessionId: null },
-        { mode: 'internal', sessionId: 'project-session' },
-      ])
+      expect(calls).toEqual([{ mode: 'internal', sessionId: null }])
       const events = [...(await runtime.workspace.readWorkspace()).events.values()].toSorted(
         (left, right) => left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
       )
@@ -53,7 +68,7 @@ describe('Project Assistant wake and Attention E2E', () => {
 
       runtime.coordinator.wake()
       await runtime.coordinator.waitForIdle()
-      expect(calls).toHaveLength(2)
+      expect(calls).toHaveLength(1)
     } finally {
       await runtime.coordinator.stop()
       await runtime.preview.stopAll()
@@ -203,6 +218,14 @@ async function git(cwd: string, args: string[]) {
     child.exited,
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for scheduled Attention revisit')
+    await Bun.sleep(10)
+  }
 }
 
 function codexSession(sessionId: string) {

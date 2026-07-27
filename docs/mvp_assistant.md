@@ -58,14 +58,17 @@ Reflection loop remain independent and may run concurrently.
 The current Reflection implementation is the deterministic wake recorder defined by
 [Project Owner And Attention](./mvp_project_owner.md), not the legacy read-only model described later
 in this document. At an idle boundary it coalesces material state changes into a durable internal
-turn. It also continues unresolved Attention after a settled turn unless the current reply presents
-that Attention through `NeedsYou`, another turn already covers the conversation, or an active Work
-Attempt will provide the next settlement edge. The continuation reuses Inbox, Attention, and the same
-Project session; it adds no waiting state, owner field, timer, or second Agent.
+turn. An unresolved Attention is not itself a repeating wake signal: its creation or another
+semantic state change wakes Assistant once, while an active Work Attempt supplies its own later
+settlement edge. When progress depends on facts outside HOPI state, Assistant may set that
+Attention's one-shot `revisitAt`. At that instant HOPI publishes one deterministic internal Inbox
+event in the same Project session. The instant is consumed by that event across reconciliation and
+restart; if another check is useful, Assistant chooses another instant.
 
 `NeedsYou` has one operational effect in addition to presentation: it declares that no available
 Assistant or Project action can advance the referenced Attention before an operator response. An
-optional accelerator does not satisfy that condition and therefore does not pause continuation.
+optional accelerator does not satisfy that condition. A transferred Attention does not run a
+scheduled revisit until an operator reply returns it to Assistant ownership.
 
 Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
 continue changing without advancing the selected Project's cursor; otherwise a cached Project feed
@@ -536,7 +539,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Create Work | Admit the current instruction as one Planning or Engineering Work | Goal Input and exactly one selected Work; Planning never retries Work or resolves Attention implicitly |
 | Control Goal | Pause, resume, cancel, reopen, or reprioritize one Goal | Validated Goal lifecycle or priority transition |
 | Control Work | Retry or defer one Work, or cancel one Engineering Work | One transient retry reservation, a `notBefore` Work update, or validated cancellation |
-| Resolve Attention | Record that one exact reported condition has cleared | Attention settlement after the owning validator accepts the condition |
+| Manage Attention | Create, edit, resolve, or schedule one future revisit for an exact Attention | Attention publication or one deterministic future Assistant Inbox event |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 | Request user | Stage selected open Attention for an operator question from an internal turn | None by itself; the validated final response becomes the public Inbox reply and then records Attention `operatorRequest` |
 

@@ -651,8 +651,10 @@ from scope is a material Goal revision instead.
 
 #### Time and revision
 
-`notBefore` is the MVP's only durable time gate. Null means eligible now; a future instant delays
-dispatch. There are no Goal schedules, recurring schedules, or time-wait documents.
+`notBefore` is the Work dispatch time gate. Null means eligible now; a future instant delays
+dispatch. Attention may separately record one `revisitAt` for a future Assistant observation; it
+does not change Work readiness. There are no Goal schedules, recurring schedules, or time-wait
+documents.
 
 Each Work records the Goal contract revision it was planned against. Output from an older revision
 is never applied. A material Goal revision leaves existing nonterminal Engineering Work at the old
@@ -691,8 +693,8 @@ transition. Terminal Work remains in `work/`.
 ### `attention/<attentionId>.md`
 
 Attention is the durable model for a condition that pauses Work or requires Assistant ownership.
-There is no separate decision entity or blocker entity. One nullable event reference records the
-only wait relation that affects ownership.
+There is no separate decision entity or blocker entity. One nullable event reference records
+operator ownership, and one optional timestamp may request a single future Assistant observation.
 
 ```yaml
 ---
@@ -702,6 +704,7 @@ createdAt: 2026-07-10T09:00:00Z
 resolvedAt: null
 notifiedAt: null
 operatorRequest: null
+revisitAt: null
 ---
 ```
 
@@ -715,11 +718,20 @@ delivery history and may be non-null in either projection. The parser accepts an
 
 Attention is open exactly when `resolvedAt` is null; there is no duplicate `status` field.
 
+`revisitAt` is null when no future observation is requested. A non-null value names one instant at
+which HOPI may publish an internal Assistant turn if the Attention is still open and Assistant-owned.
+The resulting Inbox event has a deterministic identity derived from the exact Attention reference
+and timestamp, so repeated reconciliation and restart cannot repeat that check. The timestamp is
+one-shot: leaving the Attention unresolved does not schedule another turn, and Assistant records a
+new timestamp only when another observation is useful. `revisitAt` neither retries Work nor asserts
+that the external condition changed.
+
 `createdAt` is the Coordinator's publication timestamp, not model-authored time. Responsibility
 proposals carry the parseable placeholder declared by the proposal capability schema; Coordinator
 replaces it while publishing every new targeted Attention. The body and identity remain model output.
-This keeps time in the deterministic persistence boundary without adding another field or clock
-protocol.
+Responsibility-created Attention starts with `revisitAt: null`; only the Project Assistant chooses a
+future observation through its Attention capability. This keeps time and execution ownership in the
+deterministic persistence boundary without a second clock protocol.
 
 Storage location derives ownership:
 

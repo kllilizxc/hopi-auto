@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AssistantReflection } from '../src/assistant/assistantReflection'
-import type { WorkDocument } from '../src/domain/canonicalDocuments'
+import type { AttentionDocument, WorkDocument } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import type { Responsibility } from '../src/runtime/roleContextStager'
@@ -1331,6 +1331,65 @@ describe('CoordinatorReconciler', () => {
     await waitUntil(() => dispatches === 1)
     await coordinator.waitForIdle()
     expect(dispatches).toBe(1)
+    await coordinator.stop()
+  })
+
+  test('wakes once when a Goal Attention revisit becomes due', async () => {
+    const fixture = await workspaceFixture()
+    const goalPackage = engineeringPackage('G-1')
+    goalPackage.goal.attributes.lifecycle = 'paused'
+    const revisitAt = new Date(Date.now() + 60).toISOString()
+    ;(goalPackage.attentions as Map<string, AttentionDocument>).set('A-revisit', {
+      attributes: {
+        id: 'A-revisit',
+        target: 'project:P-1/goal:G-1/work:W-1',
+        createdAt: new Date().toISOString(),
+        resolvedAt: null,
+        notifiedAt: null,
+        operatorRequest: null,
+        revisitAt,
+      },
+      body: 'Recheck the external condition.\n',
+    })
+    const observations: boolean[] = []
+    const reflection = {
+      async observe(input) {
+        observations.push(input.settled)
+        return 'unchanged' as const
+      },
+      acknowledgeProjects: async () => undefined,
+      isActive: () => false,
+      listRuns: async () => [],
+      listRunSummaries: async () => [],
+      readRunEvents: async () => null,
+      waitForIdle: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AssistantReflection
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      reflection,
+      attentions: fixture.attentions,
+      projects: [
+        {
+          projectId: 'P-1',
+          store: {
+            readReconciliationSnapshot: async () => new Map([['G-1', goalPackage]]),
+          } as unknown as GoalPackageStore,
+          reconciler: {
+            interruptRuns: () => undefined,
+            liveWorkIds: () => new Set<string>(),
+          } as unknown as ProjectReconciler,
+        },
+      ],
+    })
+
+    coordinator.start()
+    await coordinator.waitForIdle()
+    expect(observations).toEqual([true])
+    await waitUntil(() => observations.length === 2)
+    await coordinator.waitForIdle()
+    expect(observations).toEqual([true, true])
     await coordinator.stop()
   })
 

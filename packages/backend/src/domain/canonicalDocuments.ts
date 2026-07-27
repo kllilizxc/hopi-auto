@@ -84,6 +84,7 @@ export const attentionAttributesSchema = z.preprocess(
       resolvedAt: timestampSchema.nullable(),
       notifiedAt: timestampSchema.nullable(),
       operatorRequest: inboxEventReferenceSchema.nullable().optional(),
+      revisitAt: timestampSchema.nullable().optional(),
       resolutionInput: canonicalRefSchema.nullable().optional(),
     })
     .strict()

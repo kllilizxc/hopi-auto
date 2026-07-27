@@ -1,7 +1,12 @@
+import { attentionRevisitTimestamp } from '../assistant/assistantAttentionRevisit'
 import type { AssistantReflection } from '../assistant/assistantReflection'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
-import type { InboxEventAttributes } from '../domain/assistantWorkspaceDocuments'
+import {
+  type InboxEventAttributes,
+  workspaceAttentionProjectId,
+} from '../domain/assistantWorkspaceDocuments'
+import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
 import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
@@ -344,6 +349,20 @@ export function createCoordinatorReconciler(
     const passCounts = reservationPassCounts(reservations)
     const candidates: GoalCandidate[] = []
     let nextWakeAt = nextAssistantRetryAt(workspace, assistantActive, assistantRetries, observedAt)
+    for (const attention of workspace.attentions.values()) {
+      const revisitAt = attentionRevisitTimestamp({
+        reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
+        id: attention.attributes.id,
+        projectId: workspaceAttentionProjectId(attention),
+        resolvedAt: attention.attributes.resolvedAt,
+        operatorRequest: attention.attributes.operatorRequest ?? null,
+        revisitAt: attention.attributes.revisitAt ?? null,
+        workspace,
+      })
+      if (revisitAt !== null && revisitAt > observedAt) {
+        nextWakeAt = nextWakeAt === null ? revisitAt : Math.min(nextWakeAt, revisitAt)
+      }
+    }
     for (const project of options.projects) {
       if (!eligibleProjects.has(project.projectId)) continue
       try {
@@ -351,6 +370,20 @@ export function createCoordinatorReconciler(
           ? await project.store.readReconciliationSnapshot()
           : await readReconciliationPackages(project.store)
         for (const [goalId, goalPackage] of reconciliationPackages) {
+          for (const attention of goalPackage.attentions.values()) {
+            const revisitAt = attentionRevisitTimestamp({
+              reference: goalAttentionReference(project.projectId, goalId, attention.attributes.id),
+              id: attention.attributes.id,
+              projectId: project.projectId,
+              resolvedAt: attention.attributes.resolvedAt,
+              operatorRequest: attention.attributes.operatorRequest ?? null,
+              revisitAt: attention.attributes.revisitAt ?? null,
+              workspace,
+            })
+            if (revisitAt !== null && revisitAt > observedAt) {
+              nextWakeAt = nextWakeAt === null ? revisitAt : Math.min(nextWakeAt, revisitAt)
+            }
+          }
           if (goalPackage.goal.attributes.lifecycle === 'active') {
             for (const work of goalPackage.works.values()) {
               const notBefore = work.attributes.notBefore

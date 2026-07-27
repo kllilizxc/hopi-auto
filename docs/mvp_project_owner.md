@@ -99,7 +99,7 @@ Wake-up is edge-triggered:
 - every published Reviewer `reject` is a material Project event
 - settled failure, Attention, Goal completion or cancellation, Project availability changes, and
   explicit runtime liveness recovery are material Project events
-- settling an Assistant turn with unresolved Attention may create one durable continuation edge
+- an Assistant-owned Attention may request one future observation through `revisitAt`
 
 Transient logs, command output, running progress, and the ordinary Generator-to-Reviewer handoff do
 not wake the Assistant by themselves. Material events are derived from durable Project and Attempt
@@ -120,14 +120,14 @@ Events coalesce while an invocation is running. Advancing the observed cursor an
 Assistant effects is crash-safe. An interrupted invocation does not acknowledge unseen events.
 Effects produced by the current Assistant turn are acknowledged with that turn and do not create a
 second state-change wake. A different operator or runtime event that arrives while the turn is active
-remains newer than the turn and causes the next wake. If no such event is pending, turn settlement
-creates one idempotent internal continuation when at least one unresolved Attention was not presented
-through `NeedsYou` in that turn. Restart recovery derives the same continuation from the settled turn,
-so no separate queue cursor or waiting state is needed.
+remains newer than the turn and causes the next wake. An unresolved Attention alone is not a
+repeating event. When the condition depends on facts outside HOPI state, Assistant may record one
+future `revisitAt`; HOPI derives one deterministic internal Inbox event from the exact Attention
+reference and timestamp. Restart and repeated reconciliation observe the same event identity.
 
 An existing turn for that conversation already carries the current Attention set, so it suppresses a
-redundant continuation. A running Work Attempt also supplies its own later settlement event; the
-continuation waits for that event rather than polling while delegated work is active.
+redundant revisit. A running Work Attempt also supplies its own later settlement event, so Assistant
+does not need to poll delegated progress.
 
 New operator input interrupts an internal Assistant invocation so the persistent session can receive
 the new turn. Interruption does not itself create or modify Attention. The Assistant may persist
@@ -148,6 +148,7 @@ id: A-...
 createdAt: ...
 updatedAt: ...
 resolvedAt: null
+revisitAt: null
 refs:
   - project:P-...
 body: |
@@ -158,7 +159,8 @@ body: |
 always the Project Assistant, and the owning Project selects that Assistant's persistent
 conversation. A Project Attention keeps its canonical Home reference when copied into an Inbox
 turn; routing it through the owning Project does not rewrite that reference. There is no owner,
-target, kind, priority, waiting, working, notification, retry, or operator-request state.
+target, kind, priority, waiting, working, notification, recurring retry, or operator-request state.
+`revisitAt` is only a one-shot observation time; it neither changes ownership nor asserts progress.
 
 The Assistant may create, edit, merge, or resolve Attention. An operator message is not
 automatically converted into Attention, and an operator reply never automatically resolves one.
@@ -183,22 +185,22 @@ All unresolved Attention is supplied together on each wake. The model may consid
 relationships and current Project facts rather than consuming them as a strict FIFO.
 
 Finishing an Assistant turn publishes its effects and optional reply. Unresolved Attention preserves
-unfinished responsibility. Unless the current reply presents that Attention through `NeedsYou`, HOPI
-continues the same Project conversation at the next idle boundary. Resolving the Attention ends that
-continuation; delegating work to an active Attempt defers it to the Attempt's settlement event.
+unfinished responsibility but does not by itself create another turn. A material state edge, an
+active Attempt's settlement, or an explicitly selected `revisitAt` wakes the same Project
+conversation. Resolving the Attention makes any unconsumed revisit irrelevant.
 
 The Assistant provider process tree has the same turn lifetime. A shell child still running when the
 turn ends is terminated with that turn; it is not a background job. A Work Attempt has an independent
 RoleRunner process lifetime, and its settlement changes Project state and therefore produces the
 ordinary supervision wake. `retry` reserves that Work's next current responsibility Attempt without
-rewriting its contract. This uses the existing Work and Attention concepts rather than adding an
-Assistant job queue, timer, or waiting state.
+rewriting its contract. `revisitAt` reuses the Coordinator's deadline timer and Inbox rather than
+adding an Assistant job queue or recurring waiting state.
 
 A direct Engineering Work may belong to another Project. Its immutable `assistantDispatch` points
 to the source Inbox event, whose Project context identifies the conversation that delegated it and
 whose Attention references preserve any unresolved originating condition. HOPI derives a compact
 cross-Project delegation view from those existing facts. While the delegated Work has an active Run,
-that Run is visible to the source Project Assistant and defers unfinished Attention continuation.
+that Run is visible to the source Project Assistant and supplies the next ordinary observation edge.
 When the delegated Work settles, the derived source-Project state changes and wakes that same
 conversation. The Assistant then judges the original condition from current evidence; settlement
 does not mechanically resolve Attention, retry Work, or declare the external repair sufficient.
@@ -227,10 +229,11 @@ Attention to the operator:
 - Reply does not mutate the Attention
 - an unresolved Attention referenced by the current turn does not cause an immediate internal
   continuation; a later operator or Project event can wake the same Assistant again
+- a pending `revisitAt` waits while `NeedsYou` still awaits its exact Reply
 - a missing or invalid reference renders as ordinary Markdown and records a diagnostic
 
 Using `NeedsYou` declares that no currently available Assistant or Project action can advance that
-Attention until the operator responds. Because the declaration pauses automatic continuation, an
+Attention until the operator responds. Because the declaration pauses scheduled observation, an
 optional shortcut or useful extra input that does not prevent continued work remains ordinary reply
 text rather than `NeedsYou`.
 

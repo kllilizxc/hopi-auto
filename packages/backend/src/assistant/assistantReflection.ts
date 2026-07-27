@@ -3,17 +3,14 @@ import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
-import {
-  type InboxEventDocument,
-  workspaceAttentionProjectId,
-} from '../domain/assistantWorkspaceDocuments'
+import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocuments'
 import { workspaceAttentionReference } from '../domain/attentionReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
+import { attentionRevisitEventId, attentionRevisitTimestamp } from './assistantAttentionRevisit'
 import {
   assistantConversationScopeForEvent,
   assistantConversationScopeKey,
 } from './assistantConversationScope'
-import { needsYouAttentionIds } from './assistantNeedsYou'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 
 export type ReflectionObserveResult = 'baseline' | 'deferred' | 'unchanged' | 'running' | 'started'
@@ -121,19 +118,16 @@ export function createAssistantWake(options: {
               : 'home',
           ),
       )
-      const continuations = attentionContinuationCandidates(workspace, scopes).filter(
-        (candidate) =>
-          input.settled &&
-          !allPendingScopeKeys.has(candidate.scopeKey) &&
-          candidate.snapshot.activeRuns.length === 0,
+      const revisits = attentionRevisitCandidates(workspace, scopes, now().getTime()).filter(
+        (candidate) => input.settled && !allPendingScopeKeys.has(candidate.scopeKey),
       )
-      if (continuations.length > 0) {
-        const selected = selectWakeScope(continuations, lastScopeKey)
+      if (revisits.length > 0) {
+        const selected = selectWakeScope(revisits, lastScopeKey)
         lastScopeKey = selected.scopeKey
         const operation = publishWake(selected.scope, selected.scopeKey, selected.snapshot, {
-          sourceEventId: selected.sourceEventId,
-          attentionIds: selected.attentionIds,
-          attentionRefs: selected.attentionRefs,
+          eventId: selected.eventId,
+          attentionRef: selected.attentionRef,
+          revisitAt: selected.revisitAt,
         }).finally(() => {
           active = null
           options.onWake?.()
@@ -259,18 +253,18 @@ export function createAssistantWake(options: {
     scope: WakeScope,
     scopeKey: string,
     snapshot: AssistantStateSnapshot,
-    continuation?: {
-      sourceEventId: string
-      attentionIds: string[]
-      attentionRefs: string[]
+    revisit?: {
+      eventId: string
+      attentionRef: string
+      revisitAt: string
     },
   ) {
     const digestKey = await sha256(
-      continuation
-        ? `${scopeKey}\u0000${continuation.sourceEventId}\u0000${continuation.attentionIds.join('\u0000')}`
+      revisit
+        ? `${scopeKey}\u0000${revisit.attentionRef}\u0000${revisit.revisitAt}`
         : `${scopeKey}\u0000${snapshot.stateDigest}`,
     )
-    const eventId = `${continuation ? 'EV-attention' : 'EV-wake'}-${digestKey.slice(0, 24)}`
+    const eventId = revisit?.eventId ?? `EV-wake-${digestKey.slice(0, 24)}`
     const wakeId = `WK-${crypto.randomUUID()}`
     const runRoot = join(runsRoot, wakeId)
     const manifestPath = join(runRoot, 'reflection.json')
@@ -292,14 +286,14 @@ export function createAssistantWake(options: {
     await mkdir(runRoot, { recursive: true })
     await writeJson(manifestPath, baseManifest)
 
-    const body = continuation
-      ? renderAttentionContinuation(scope, continuation.attentionRefs)
+    const body = revisit
+      ? renderAttentionRevisit(scope, revisit.attentionRef, revisit.revisitAt)
       : renderWakeEvent(scope, snapshot)
     await Bun.write(promptPath, body)
     await Bun.write(
       transcriptPath,
-      continuation
-        ? 'Unresolved Attention continued in the same Assistant conversation.\n'
+      revisit
+        ? 'Scheduled Attention revisit routed to the same Assistant conversation.\n'
         : 'Deterministic state change routed to the Project Assistant.\n',
     )
     await appendWakeEvent(eventsPath, {
@@ -315,13 +309,11 @@ export function createAssistantWake(options: {
         await options.workspace.receiveSystemEvent({
           eventId,
           content: body,
-          ...(scope.kind === 'project' || continuation?.attentionRefs.length
+          ...(scope.kind === 'project' || revisit
             ? {
                 context: {
                   ...(scope.kind === 'project' ? { projectId: scope.projectId } : {}),
-                  ...(continuation?.attentionRefs.length
-                    ? { attentionRefs: continuation.attentionRefs }
-                    : {}),
+                  ...(revisit ? { attentionRefs: [revisit.attentionRef] } : {}),
                 },
               }
             : {}),
@@ -425,64 +417,94 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
   ]
 }
 
-function attentionContinuationCandidates(
+function attentionRevisitCandidates(
   workspace: AssistantWorkspace,
   scopes: ReturnType<typeof wakeScopeSnapshots>,
+  currentTime: number,
 ) {
   const scopeSnapshots = new Map(scopes.map((candidate) => [candidate.scopeKey, candidate]))
-  const openByScope = new Map<string, Array<{ id: string; updatedAt: string; reference: string }>>()
+  const candidates: Array<{
+    scopeKey: string
+    reference: string
+    id: string
+    projectId: string | null
+    resolvedAt: string | null
+    operatorRequest: string | null
+    revisitAt: string
+  }> = []
   for (const attention of workspace.attentions.values()) {
-    if (attention.attributes.resolvedAt !== null) continue
     const projectId = workspaceAttentionProjectId(attention)
     const scopeKey = projectId ? `project:${projectId}` : 'home'
-    const current = openByScope.get(scopeKey) ?? []
-    current.push({
-      id: attention.attributes.id,
-      updatedAt: attention.attributes.updatedAt,
+    if (!attention.attributes.revisitAt) continue
+    candidates.push({
+      scopeKey,
       reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
+      id: attention.attributes.id,
+      projectId,
+      resolvedAt: attention.attributes.resolvedAt,
+      operatorRequest: attention.attributes.operatorRequest ?? null,
+      revisitAt: attention.attributes.revisitAt,
     })
-    openByScope.set(scopeKey, current)
   }
-
-  const latestHandledByScope = new Map<string, InboxEventDocument>()
-  for (const event of workspace.events.values()) {
-    if (event.attributes.status !== 'handled') continue
-    const scopeKey = assistantConversationScopeKey(assistantConversationScopeForEvent(event))
-    const current = latestHandledByScope.get(scopeKey)
-    if (
-      !current ||
-      (event.attributes.handledAt ?? event.attributes.receivedAt).localeCompare(
-        current.attributes.handledAt ?? current.attributes.receivedAt,
-      ) > 0 ||
-      ((event.attributes.handledAt ?? event.attributes.receivedAt) ===
-        (current.attributes.handledAt ?? current.attributes.receivedAt) &&
-        event.attributes.id.localeCompare(current.attributes.id) > 0)
-    ) {
-      latestHandledByScope.set(scopeKey, event)
+  for (const scoped of scopes) {
+    if (scoped.scope.kind !== 'project') continue
+    for (const project of scoped.snapshot.projects) {
+      if (!isRecord(project) || !Array.isArray(project.goals)) continue
+      for (const goal of project.goals) {
+        if (!isRecord(goal) || !Array.isArray(goal.attentions)) continue
+        const goalId = goalStateId(goal)
+        if (!goalId) continue
+        for (const value of goal.attentions) {
+          if (!isRecord(value) || !isRecord(value.attributes)) continue
+          const attributes = value.attributes
+          const id = typeof attributes.id === 'string' ? attributes.id : null
+          const revisitAt = typeof attributes.revisitAt === 'string' ? attributes.revisitAt : null
+          if (!id || !revisitAt) continue
+          candidates.push({
+            scopeKey: scoped.scopeKey,
+            reference:
+              typeof value.reference === 'string'
+                ? value.reference
+                : `project:${scoped.scope.projectId}/goal:${goalId}/attention:${id}`,
+            id,
+            projectId: scoped.scope.projectId,
+            resolvedAt: typeof attributes.resolvedAt === 'string' ? attributes.resolvedAt : null,
+            operatorRequest:
+              typeof attributes.operatorRequest === 'string' ? attributes.operatorRequest : null,
+            revisitAt,
+          })
+        }
+      }
     }
   }
 
-  return [...openByScope.entries()].flatMap(([scopeKey, attentions]) => {
-    const scoped = scopeSnapshots.get(scopeKey)
-    const source = latestHandledByScope.get(scopeKey)
-    if (!scoped || !source || source.attributes.disposition === 'operational-failed') return []
-    const handedToOperator = new Set(needsYouAttentionIds(source.attributes.reply ?? ''))
-    const remaining = attentions
-      .filter((attention) => !handedToOperator.has(attention.id))
-      .toSorted(
-        (left, right) =>
-          left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
-      )
-    if (remaining.length === 0) return []
-    return [
-      {
-        ...scoped,
-        sourceEventId: source.attributes.id,
-        attentionIds: remaining.map((attention) => attention.id),
-        attentionRefs: remaining.map((attention) => attention.reference),
-      },
-    ]
-  })
+  return candidates
+    .flatMap((candidate) => {
+      const timestamp = attentionRevisitTimestamp({
+        reference: candidate.reference,
+        id: candidate.id,
+        projectId: candidate.projectId,
+        resolvedAt: candidate.resolvedAt,
+        operatorRequest: candidate.operatorRequest,
+        revisitAt: candidate.revisitAt,
+        workspace,
+      })
+      const scoped = scopeSnapshots.get(candidate.scopeKey)
+      if (!scoped || timestamp === null || timestamp > currentTime) return []
+      return [
+        {
+          ...scoped,
+          eventId: attentionRevisitEventId(candidate.reference, candidate.revisitAt),
+          attentionRef: candidate.reference,
+          revisitAt: candidate.revisitAt,
+          timestamp,
+        },
+      ]
+    })
+    .toSorted(
+      (left, right) =>
+        left.timestamp - right.timestamp || left.attentionRef.localeCompare(right.attentionRef),
+    )
 }
 
 function renderWakeEvent(scope: WakeScope, snapshot: AssistantStateSnapshot) {
@@ -500,19 +522,24 @@ function renderWakeEvent(scope: WakeScope, snapshot: AssistantStateSnapshot) {
   ].join('\n')
 }
 
-function renderAttentionContinuation(scope: WakeScope, attentionRefs: readonly string[]) {
+function renderAttentionRevisit(scope: WakeScope, attentionRef: string, revisitAt: string) {
   return [
-    '# Unresolved Attention continuation',
+    '# Scheduled Attention revisit',
     '',
     `Scope: ${scope.kind === 'project' ? `Project ${scope.projectId}` : 'Home'}`,
-    '',
-    'The preceding Assistant turn settled while these Attention items remained unresolved and were not presented through NeedsYou:',
-    ...attentionRefs.map((reference) => `- ${reference}`),
+    `Attention: ${attentionRef}`,
+    `Scheduled for: ${revisitAt}`,
     '',
     'This is a durable internal event for the same Assistant session. It is not operator input.',
     'Current state and every unresolved Attention are supplied separately with this turn.',
     '',
   ].join('\n')
+}
+
+function goalStateId(goal: Record<string, unknown>) {
+  if (typeof goal.goalId === 'string') return goal.goalId
+  if (!isRecord(goal.goal) || !isRecord(goal.goal.attributes)) return null
+  return typeof goal.goal.attributes.id === 'string' ? goal.goal.attributes.id : null
 }
 
 function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
@@ -527,9 +554,7 @@ function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
     if (!Array.isArray(project.goals)) return false
     return project.goals.some(
       (goal) =>
-        isRecord(goal) &&
-        Array.isArray(goal.attentions) &&
-        goal.attentions.some(isOpenAttention),
+        isRecord(goal) && Array.isArray(goal.attentions) && goal.attentions.some(isOpenAttention),
     )
   })
 }

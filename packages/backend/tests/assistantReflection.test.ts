@@ -68,8 +68,9 @@ describe('Assistant wake trigger', () => {
     expect(projectIds).toEqual(['P-1', 'P-2'])
   })
 
-  test('continues unresolved Project Attention until the Assistant presents NeedsYou', async () => {
-    const fixture = await setup(['P-1'])
+  test('does not loop an unresolved Attention and consumes one scheduled revisit once', async () => {
+    let currentTime = Date.parse('2026-07-25T00:00:00.000Z')
+    const fixture = await setup(['P-1'], () => new Date(currentTime))
     await fixture.workspace.createAttention(attention('A-1', 'P-1'))
     fixture.setSnapshot(
       snapshot(['P-1'], {
@@ -89,15 +90,25 @@ describe('Assistant wake trigger', () => {
     })
     const recoveredWake = fixture.recreateWake()
     expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
+    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
+
+    const revisitAt = new Date(currentTime + 60_000).toISOString()
+    await fixture.workspace.updateAttention('A-1', {
+      revisitAt,
+      updatedAt: new Date(currentTime),
+    })
+    await recoveredWake.acknowledgeProjects(['P-1'])
+    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
+
+    currentTime += 60_000
     expect(await recoveredWake.observe({ settled: true })).toBe('started')
     await recoveredWake.waitForIdle()
-
-    const continuation = [...(await fixture.workspace.readWorkspace()).events.values()].find(
+    const revisit = [...(await fixture.workspace.readWorkspace()).events.values()].find(
       (candidate) => candidate.attributes.id !== event.attributes.id,
     )
-    if (!continuation) throw new Error('Expected Attention continuation')
+    if (!revisit) throw new Error('Expected scheduled Attention revisit')
     const homeId = (await fixture.workspace.readWorkspace()).homeId
-    expect(continuation.attributes).toMatchObject({
+    expect(revisit.attributes).toMatchObject({
       source: 'system',
       status: 'pending',
       context: {
@@ -106,13 +117,116 @@ describe('Assistant wake trigger', () => {
       },
     })
     expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
-    await fixture.workspace.handleEvent(continuation.attributes.id, {
-      reply: '<NeedsYou attentionId="A-1">Choose the source.</NeedsYou>',
+    await fixture.workspace.handleEvent(revisit.attributes.id, {
+      reply: 'The external condition is still unavailable.',
+      disposition: 'silent',
+    })
+    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
+    expect(await fixture.recreateWake().observe({ settled: true })).toBe('unchanged')
+    expect((await recoveredWake.listRuns()).length).toBe(2)
+  })
+
+  test('wakes a Goal Attention at its scheduled revisit without a state digest edge', async () => {
+    let currentTime = Date.parse('2026-07-25T00:00:00.000Z')
+    const revisitAt = new Date(currentTime + 60_000).toISOString()
+    const fixture = await setup(['P-1'], () => new Date(currentTime))
+    const current = snapshot(['P-1'])
+    fixture.setSnapshot({
+      ...current,
+      projects: [
+        {
+          projectId: 'P-1',
+          available: true,
+          releaseHead: 'release',
+          goals: [
+            {
+              goal: { attributes: { id: 'G-1' } },
+              attentions: [
+                {
+                  reference: 'project:P-1/goal:G-1/attention:A-goal',
+                  attributes: {
+                    id: 'A-goal',
+                    resolvedAt: null,
+                    operatorRequest: null,
+                    revisitAt,
+                  },
+                },
+              ],
+              works: [],
+            },
+          ],
+        },
+      ],
+    })
+    await fixture.wake.acknowledgeProjects(['P-1'])
+
+    currentTime += 60_000
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
+    const revisit = [...(await fixture.workspace.readWorkspace()).events.values()][0]
+    expect(revisit?.attributes).toMatchObject({
+      source: 'system',
+      status: 'pending',
+      context: {
+        projectId: 'P-1',
+        attentionRefs: ['project:P-1/goal:G-1/attention:A-goal'],
+      },
+    })
+    if (!revisit) throw new Error('Expected Goal Attention revisit')
+    await fixture.workspace.handleEvent(revisit.attributes.id, {
+      reply: 'Checked.',
+      disposition: 'silent',
+    })
+    expect(await fixture.wake.observe({ settled: true })).not.toBe('started')
+    expect(await fixture.wake.observe({ settled: true })).toBe('unchanged')
+  })
+
+  test('lets an exact NeedsYou reply consume a due revisit without another turn', async () => {
+    let currentTime = Date.parse('2026-07-25T00:00:00.000Z')
+    const fixture = await setup(['P-1'], () => new Date(currentTime))
+    await fixture.workspace.createAttention(attention('A-1', 'P-1'))
+    const state = await fixture.workspace.readWorkspace()
+    const attentionRef = `home:${state.homeId}/attention:A-1`
+    const revisitAt = new Date(currentTime + 60_000).toISOString()
+    await fixture.workspace.updateAttention('A-1', {
+      revisitAt,
+      updatedAt: new Date(currentTime),
+    })
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-question',
+      content: 'Ask for the missing input.',
+      context: { projectId: 'P-1', attentionRefs: [attentionRef] },
+      receivedAt: new Date(currentTime),
+    })
+    await fixture.workspace.handleEvent('EV-question', {
+      reply: '<NeedsYou attentionId="A-1">Restore the external session.</NeedsYou>',
       disposition: 'notified',
       expose: true,
+      handledAt: new Date(currentTime),
     })
-    expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
-    expect((await recoveredWake.listRuns()).length).toBe(2)
+    await fixture.wake.acknowledgeProjects(['P-1'])
+
+    currentTime += 60_000
+    expect(await fixture.wake.observe({ settled: true })).not.toBe('started')
+    expect((await fixture.workspace.readWorkspace()).events.size).toBe(1)
+
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-answer',
+      content: 'The external session is restored.',
+      context: {
+        projectId: 'P-1',
+        attentionRefs: [attentionRef],
+        replyTo: `home:${state.homeId}/event:EV-question`,
+      },
+      receivedAt: new Date(currentTime),
+    })
+    await fixture.workspace.handleEvent('EV-answer', {
+      reply: 'I will recheck it.',
+      disposition: 'answered',
+      handledAt: new Date(currentTime),
+    })
+    expect(await fixture.wake.observe({ settled: true })).not.toBe('started')
+    expect((await fixture.workspace.readWorkspace()).events.size).toBe(2)
   })
 
   test('lets an active Work Attempt provide the next Attention wake edge', async () => {
@@ -294,7 +408,7 @@ describe('Assistant wake trigger', () => {
   })
 })
 
-async function setup(projectIds: string[]) {
+async function setup(projectIds: string[], now: () => Date = () => new Date()) {
   const homeRoot = join(temporaryRoot, 'home')
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(homeRoot, publisher)
@@ -309,7 +423,7 @@ async function setup(projectIds: string[]) {
     read: async () => current,
     readForReflection: async () => current,
   }
-  const wake = createAssistantWake({ homeRoot, workspace, state })
+  const wake = createAssistantWake({ homeRoot, workspace, state, now })
   return {
     wake,
     workspace,
@@ -317,7 +431,7 @@ async function setup(projectIds: string[]) {
       current = next
     },
     recreateWake() {
-      return createAssistantWake({ homeRoot, workspace, state })
+      return createAssistantWake({ homeRoot, workspace, state, now })
     },
   }
 }

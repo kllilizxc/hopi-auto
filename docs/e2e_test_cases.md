@@ -1475,34 +1475,37 @@ Pass conditions:
   turn remains pending.
 - Prepare duration and complete logs remain attached to the same Attempt that runs the Agent.
 
-### HOPI-E2E-035: Durable Attention Continuation And NeedsYou Handoff
+### HOPI-E2E-035: Durable Attention Revisit And NeedsYou Handoff
 
 | Field   | Value                                                                                                             |
 | ------- | ----------------------------------------------------------------------------------------------------------------- |
-| Risk    | Assistant ends one turn with unfinished Attention and is never awakened again, or loops while waiting externally. |
-| Reality | Production Inbox, deterministic wake recorder, scoped Assistant session, Coordinator, and Work Run projection.    |
-| Fixture | One Project Attention, ordinary internal reply, `NeedsYou` reply, and an active independent Work Attempt.          |
+| Risk    | Assistant loses an intentional future check or loops while waiting for an external condition.                       |
+| Reality | Production Inbox, deterministic wake recorder, scoped Assistant session, Coordinator, and Work Run projection.     |
+| Fixture | One Project Attention, one scheduled revisit, `NeedsYou` transfer, and an active independent Work Attempt.          |
 | Cost    | Zero provider calls; deterministic model seam with production orchestration.                                      |
 
 Actions:
 
 1. Create one unresolved Project Attention and let its state edge wake the Project Assistant.
-2. End the first turn without resolving it or publishing `NeedsYou`.
-3. Observe one durable internal continuation in the same Project session.
-4. Publish `NeedsYou` from the continuation and reconcile again.
-5. Repeat the unfinished-turn boundary while an independent Work Attempt is active, then settle it.
+2. End that turn without resolving, transferring, or scheduling the Attention.
+3. Verify repeated idle reconciliation and restart do not create another turn.
+4. Schedule one future revisit, cross its deadline, and handle the resulting internal turn.
+5. Verify the same timestamp cannot wake again; schedule a different timestamp to request another
+   observation.
+6. Transfer the Attention through `NeedsYou` and verify its pending revisit waits for an exact
+   operator reply.
 
 Pass conditions:
 
-- One unfinished turn produces exactly one idempotent continuation event with the canonical
-  Attention reference.
-- The continuation resumes the same Project provider session and receives current state plus all
+- An unresolved Attention without a new state edge or `revisitAt` produces no repeated turn.
+- One `revisitAt` produces exactly one idempotent event with the canonical Attention reference.
+- The revisit resumes the same Project provider session and receives current state plus all
   unresolved Attention.
-- A current valid `NeedsYou` block suppresses immediate continuation without mutating Attention.
+- A current valid `NeedsYou` block suppresses scheduled observation until the exact reply.
 - A pending same-scope Inbox turn is used instead of creating a duplicate continuation.
-- A non-stale active Work Attempt defers continuation until its own settlement edge; a stale Run can
+- A non-stale active Work Attempt defers observation until its own settlement edge; a stale Run can
   still wake supervision.
-- Restart or repeated reconciliation cannot duplicate the deterministic continuation.
+- Restart or repeated reconciliation cannot duplicate a deterministic revisit.
 - `waitForIdle()` includes wake work queued by a completing Reflection record.
 
 ## Harness Self-Verification
