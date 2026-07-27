@@ -1,8 +1,13 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocuments'
-import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
+import {
+  goalAttentionReference,
+  normalizeInboxAttentionReferences,
+  workspaceAttentionReference,
+} from '../domain/attentionReference'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
   type WorkDocument,
@@ -11,6 +16,7 @@ import {
   isWorkTerminal,
 } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
+import { inboxEventReference } from '../domain/inboxEventReference'
 import { projectReleaseRef } from '../domain/project'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
@@ -69,6 +75,7 @@ export interface AssistantStateSnapshot {
     projects: Record<string, string>
   }
   activeRuns: AssistantStateActiveRun[]
+  delegations: AssistantStateDelegation[]
   workspaceAttentions: unknown[]
   projects: unknown[]
 }
@@ -79,6 +86,22 @@ export interface AssistantStateActiveRun {
   workId: string
   responsibility: Responsibility
   runId: string
+}
+
+export interface AssistantStateDelegation {
+  sourceProjectId: string
+  sourceGoalId: string | null
+  sourceEventId: string
+  sourceAttentionRefs: string[]
+  targetProjectId: string
+  targetGoalId: string
+  targetWorkId: string
+  work: {
+    attributes: unknown
+    path: string
+    runtime: DigestRuntime
+  }
+  activeRun: AssistantStateActiveRun | null
 }
 
 interface DigestWorkspaceAttention {
@@ -424,14 +447,27 @@ export function createAssistantStateReader(options: {
       }),
     )
 
+    const delegations = await readCrossProjectDelegations({
+      workspace,
+      projects: options.projects,
+      sourceProjectId: input.projectId,
+      sourceGoalId: input.goalId,
+      runningAttemptsByWork,
+      attemptSnapshot,
+      attemptStore: options.attempts,
+      homeRoot,
+      observedAt,
+      staleAfterMs,
+    })
     const projectIds = new Set(projects.map((project) => project.projectId))
     const attentionProjectId = (attention: DigestWorkspaceAttention) =>
       attention.projectId && projectIds.has(attention.projectId) ? attention.projectId : null
     const [stateDigest, homeDigest, projectDigestEntries] = await Promise.all([
-      semanticDigest(projects, workspaceAttentions),
+      semanticDigest(projects, workspaceAttentions, delegations),
       semanticDigest(
         [],
         workspaceAttentions.filter((attention) => attentionProjectId(attention) === null),
+        [],
       ),
       Promise.all(
         projects.map(
@@ -442,6 +478,9 @@ export function createAssistantStateReader(options: {
                 [project],
                 workspaceAttentions.filter(
                   (attention) => attentionProjectId(attention) === project.projectId,
+                ),
+                delegations.filter(
+                  (delegation) => delegation.sourceProjectId === project.projectId,
                 ),
               ),
             ] as const,
@@ -456,12 +495,13 @@ export function createAssistantStateReader(options: {
         home: homeDigest,
         projects: Object.fromEntries(projectDigestEntries),
       },
-      activeRuns: activeRunViews.sort(
-        (left, right) =>
-          left.projectId.localeCompare(right.projectId) ||
-          left.goalId.localeCompare(right.goalId) ||
-          left.workId.localeCompare(right.workId),
-      ),
+      activeRuns: uniqueActiveRuns([
+        ...activeRunViews,
+        ...delegations.flatMap((delegation) =>
+          delegation.activeRun ? [delegation.activeRun] : [],
+        ),
+      ]),
+      delegations,
       workspaceAttentions,
       projects,
     }
@@ -865,9 +905,118 @@ function compactAttemptIndex(attempt: RunAttemptSummary) {
   }
 }
 
+async function readCrossProjectDelegations(input: {
+  workspace: AssistantWorkspace
+  projects: ReadonlyMap<string, AssistantStateProject>
+  sourceProjectId?: string
+  sourceGoalId?: string
+  runningAttemptsByWork: ReadonlyMap<string, RunAttemptSummary>
+  attemptSnapshot: RunAttemptSnapshot
+  attemptStore: RunAttemptStore
+  homeRoot: string
+  observedAt: Date
+  staleAfterMs: number
+}) {
+  const sourceEvents = new Map<
+    string,
+    {
+      projectId: string
+      goalId: string | null
+      eventId: string
+      attentionRefs: string[]
+    }
+  >()
+  for (const event of input.workspace.events.values()) {
+    const projectId = event.attributes.context?.projectId
+    if (!projectId || (input.sourceProjectId && projectId !== input.sourceProjectId)) continue
+    const goalId = event.attributes.context?.goalId ?? null
+    if (input.sourceGoalId && goalId !== input.sourceGoalId) continue
+    sourceEvents.set(inboxEventReference(input.workspace.homeId, event.attributes.id), {
+      projectId,
+      goalId,
+      eventId: event.attributes.id,
+      attentionRefs: normalizeInboxAttentionReferences(event.attributes.context ?? {}),
+    })
+  }
+  if (sourceEvents.size === 0) return []
+
+  const delegations: AssistantStateDelegation[] = []
+  await Promise.all(
+    [...input.projects.values()].map(async (targetProject) => {
+      let goalPackages: ReadonlyMap<string, GoalPackage>
+      try {
+        goalPackages = await targetProject.store.readReconciliationSnapshot()
+      } catch {
+        return
+      }
+      await Promise.all(
+        [...goalPackages.entries()].flatMap(([goalId, goalPackage]) =>
+          [...goalPackage.works.values()].flatMap((work) => {
+            if (!isEngineeringWork(work.attributes) || !work.attributes.assistantDispatch) return []
+            const source = sourceEvents.get(work.attributes.assistantDispatch)
+            if (!source || source.projectId === targetProject.projectId) return []
+            return [
+              (async () => {
+                const key = `${targetProject.projectId}/${goalId}/${work.attributes.id}`
+                const runningAttempt = input.runningAttemptsByWork.get(key) ?? null
+                const runtime = await readWorkRuntime({
+                  homeRoot: input.homeRoot,
+                  projectRoot: targetProject.projectRoot,
+                  projectId: targetProject.projectId,
+                  goalId,
+                  workId: work.attributes.id,
+                  activeResponsibility: runningAttempt?.responsibility ?? null,
+                  attemptSnapshot: input.attemptSnapshot,
+                  attemptStore: input.attemptStore,
+                  observedAt: input.observedAt,
+                  staleAfterMs: input.staleAfterMs,
+                })
+                delegations.push({
+                  sourceProjectId: source.projectId,
+                  sourceGoalId: source.goalId,
+                  sourceEventId: source.eventId,
+                  sourceAttentionRefs: source.attentionRefs,
+                  targetProjectId: targetProject.projectId,
+                  targetGoalId: goalId,
+                  targetWorkId: work.attributes.id,
+                  work: {
+                    attributes: compactWorkAttributes(work),
+                    path: targetProject.store.paths.absolute(
+                      targetProject.store.paths.workDocument(goalId, work.attributes.id),
+                    ),
+                    runtime,
+                  },
+                  activeRun: runningAttempt
+                    ? {
+                        projectId: targetProject.projectId,
+                        goalId,
+                        workId: work.attributes.id,
+                        responsibility: runningAttempt.responsibility,
+                        runId: runningAttempt.runId,
+                      }
+                    : null,
+                })
+              })(),
+            ]
+          }),
+        ),
+      )
+    }),
+  )
+  return delegations.toSorted(
+    (left, right) =>
+      left.sourceProjectId.localeCompare(right.sourceProjectId) ||
+      (left.sourceGoalId ?? '').localeCompare(right.sourceGoalId ?? '') ||
+      left.targetProjectId.localeCompare(right.targetProjectId) ||
+      left.targetGoalId.localeCompare(right.targetGoalId) ||
+      left.targetWorkId.localeCompare(right.targetWorkId),
+  )
+}
+
 async function semanticDigest(
   projects: DigestProject[],
   workspaceAttentions: DigestWorkspaceAttention[],
+  delegations: AssistantStateDelegation[],
 ) {
   const semantic = {
     workspaceAttentions: workspaceAttentions.map(
@@ -897,10 +1046,32 @@ async function semanticDigest(
         design: goal.design.map(({ canonicalPath, hash }) => ({ canonicalPath, hash })),
       })),
     })),
+    delegations: delegations.map((delegation) => ({
+      sourceProjectId: delegation.sourceProjectId,
+      sourceGoalId: delegation.sourceGoalId,
+      sourceEventId: delegation.sourceEventId,
+      sourceAttentionRefs: delegation.sourceAttentionRefs,
+      targetProjectId: delegation.targetProjectId,
+      targetGoalId: delegation.targetGoalId,
+      targetWorkId: delegation.targetWorkId,
+      attributes: delegation.work.attributes,
+      terminalAttempt: latestTerminalAttempt(delegation.work.runtime),
+      stale: delegation.work.runtime.stale,
+      activeRun: delegation.activeRun,
+    })),
   }
   const bytes = new TextEncoder().encode(JSON.stringify(semantic))
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
   return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+function uniqueActiveRuns(runs: AssistantStateActiveRun[]) {
+  return [...new Map(runs.map((run) => [run.runId, run])).values()].sort(
+    (left, right) =>
+      left.projectId.localeCompare(right.projectId) ||
+      left.goalId.localeCompare(right.goalId) ||
+      left.workId.localeCompare(right.workId),
+  )
 }
 
 function latestTerminalAttempt(runtime: DigestRuntime) {

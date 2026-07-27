@@ -1825,6 +1825,101 @@ describe('Assistant HOPI tools', () => {
     )
   })
 
+  test('projects cross-Project direct Work back into its source conversation', async () => {
+    const fixture = await setup()
+    const delegatedRepo = await createTestRepo(join(temporaryRoot, 'delegated-repo'))
+    const delegatedLink = await fixture.home.linkProject({
+      projectId: 'P-2',
+      repoPath: delegatedRepo,
+    })
+    const delegatedStore = createGoalPackageStore(
+      delegatedLink.integrationRoot,
+      'P-2',
+      fixture.publisher,
+    )
+    fixture.projects.set('P-2', {
+      projectId: 'P-2',
+      primaryRepoId: delegatedLink.primaryRepoId,
+      repos: delegatedLink.repos,
+      projectRoot: delegatedLink.integrationRoot,
+      sourceRoot: delegatedLink.integrationRoot,
+      store: delegatedStore,
+      controller: createGoalController(delegatedStore, { verifyCompletion: () => false }),
+      reconciler: {
+        interruptRuns() {},
+        async requestWorkRun() {
+          return { runId: 'R-requested-delegation', disposition: 'scheduled' as const }
+        },
+      },
+    })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-delegate',
+      content: 'Repair the shared runtime, then return to this Attention.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-source',
+        attentionRefs: ['project:P-1/goal:G-source/attention:A-source'],
+      },
+    })
+    const created = await fixture.tools.executeForEvent('EV-delegate', 'hopi_create_goal', {
+      projectId: 'P-2',
+      goalId: 'G-runtime',
+      title: 'Repair shared runtime',
+      objective: 'Repair the shared runtime.',
+      firstWork: {
+        kind: 'engineering',
+        title: 'Repair shared runtime',
+        objective: 'Repair the shared runtime.',
+        acceptanceCriteria: ['The runtime is repaired and verified.'],
+      },
+    })
+    const workId = (created.value as { effect: { workId: string } }).effect.workId
+    await fixture.attempts.start({
+      projectId: 'P-2',
+      goalId: 'G-runtime',
+      workId,
+      runId: 'R-delegated',
+      responsibility: 'generator',
+      runRoot: runStoragePath(fixture.homeRoot, 'R-delegated'),
+    })
+
+    const state = await fixture.state.read({ projectId: 'P-1' })
+
+    expect(state.projects).toHaveLength(1)
+    expect(state.delegations).toMatchObject([
+      {
+        sourceProjectId: 'P-1',
+        sourceGoalId: 'G-source',
+        sourceEventId: 'EV-delegate',
+        sourceAttentionRefs: ['project:P-1/goal:G-source/attention:A-source'],
+        targetProjectId: 'P-2',
+        targetGoalId: 'G-runtime',
+        targetWorkId: workId,
+        work: {
+          attributes: {
+            id: workId,
+            kind: 'engineering',
+            stage: 'generate',
+          },
+        },
+        activeRun: {
+          projectId: 'P-2',
+          goalId: 'G-runtime',
+          workId,
+          responsibility: 'generator',
+          runId: 'R-delegated',
+        },
+      },
+    ])
+    expect(state.activeRuns).toContainEqual({
+      projectId: 'P-2',
+      goalId: 'G-runtime',
+      workId,
+      responsibility: 'generator',
+      runId: 'R-delegated',
+    })
+  })
+
   test('keeps selected checkout state outside the Project state contract', async () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({ eventId: 'EV-state', content: 'Read state.' })
@@ -2658,6 +2753,8 @@ async function setup(
     topologyChangedEventIds,
     goalEffects,
     projectDispatchEffects,
+    projects,
+    publisher,
   }
 }
 

@@ -632,6 +632,14 @@ idempotent and reject a different or second direct Work. If the instruction need
 Work, the direct admission boundary rejects the second effect. Direct admission never claims Goal
 completion; final Planning remains unchanged.
 
+When the admitted Work belongs to a different Project than its source Inbox event,
+`hopi_read_state` exposes it as a derived delegation in the source Project state. The projection
+contains the source event and Attention references plus the target Project, Goal, Work, current
+stage, active Run, and latest Attempt diagnosis. It is derived from `assistantDispatch` and the
+durable Inbox event rather than copied into either Project. Its active Run participates in the
+source conversation's liveness; settlement changes the source Project digest and wakes Assistant
+without prescribing the follow-up decision.
+
 Creating Planning Work is an authority boundary, not a general way to remember conversation. It
 adopts the current turn as Goal Input and may invalidate an active Planner. Assistant therefore leaves
 a non-blocking suggestion conversation-only unless the operator intends it to change the current plan

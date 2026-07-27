@@ -194,6 +194,16 @@ ordinary supervision wake. `retry` reserves that Work's next current responsibil
 rewriting its contract. This uses the existing Work and Attention concepts rather than adding an
 Assistant job queue, timer, or waiting state.
 
+A direct Engineering Work may belong to another Project. Its immutable `assistantDispatch` points
+to the source Inbox event, whose Project context identifies the conversation that delegated it and
+whose Attention references preserve any unresolved originating condition. HOPI derives a compact
+cross-Project delegation view from those existing facts. While the delegated Work has an active Run,
+that Run is visible to the source Project Assistant and defers unfinished Attention continuation.
+When the delegated Work settles, the derived source-Project state changes and wakes that same
+conversation. The Assistant then judges the original condition from current evidence; settlement
+does not mechanically resolve Attention, retry Work, or declare the external repair sufficient.
+This adds no cross-Project dependency document, callback record, or workflow status.
+
 ## Needs You
 
 The Assistant can associate part of a public reply with one unresolved Attention:

@@ -378,6 +378,18 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
     const projectId = typeof attention.projectId === 'string' ? attention.projectId : null
     return projectId && projectIds.has(projectId) ? projectId : null
   }
+  const delegatedRuns = (projectId: string | null) =>
+    snapshot.delegations
+      .filter((delegation) => delegation.sourceProjectId === projectId)
+      .flatMap((delegation) => (delegation.activeRun ? [delegation.activeRun] : []))
+  const scopedRuns = (projectId: string | null) => {
+    const owned = snapshot.activeRuns.filter((run) =>
+      projectId ? run.projectId === projectId : !projectIds.has(run.projectId),
+    )
+    return [
+      ...new Map([...owned, ...delegatedRuns(projectId)].map((run) => [run.runId, run])).values(),
+    ]
+  }
 
   return [
     {
@@ -386,7 +398,8 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
       snapshot: {
         ...snapshot,
         stateDigest: snapshot.conversationDigests.home,
-        activeRuns: snapshot.activeRuns.filter((run) => !projectIds.has(run.projectId)),
+        activeRuns: scopedRuns(null),
+        delegations: [],
         workspaceAttentions: snapshot.workspaceAttentions.filter(
           (attention) => attentionProjectId(attention) === null,
         ),
@@ -399,7 +412,10 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
       snapshot: {
         ...snapshot,
         stateDigest: requiredProjectDigest(snapshot, projectId),
-        activeRuns: snapshot.activeRuns.filter((run) => run.projectId === projectId),
+        activeRuns: scopedRuns(projectId),
+        delegations: snapshot.delegations.filter(
+          (delegation) => delegation.sourceProjectId === projectId,
+        ),
         workspaceAttentions: snapshot.workspaceAttentions.filter(
           (attention) => attentionProjectId(attention) === projectId,
         ),

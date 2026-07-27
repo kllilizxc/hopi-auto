@@ -163,6 +163,33 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
+  test('routes cross-Project delegated Work settlement back to the source Project', async () => {
+    const fixture = await setup(['P-1', 'P-2'])
+    const running = delegatedAttentionSnapshot(true, '1')
+    fixture.setSnapshot(running)
+
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+
+    fixture.setSnapshot(delegatedAttentionSnapshot(false, '2'))
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+
+    const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
+    expect(event?.attributes).toMatchObject({
+      source: 'system',
+      status: 'pending',
+      context: { projectId: 'P-1' },
+    })
+    expect(await fixture.wake.listRuns()).toMatchObject([
+      {
+        manifest: {
+          scope: { kind: 'project', projectId: 'P-1' },
+          status: 'completed',
+        },
+      },
+    ])
+  })
+
   test('defers an ordinary unsettled change but preserves it for the settled edge', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
@@ -263,6 +290,7 @@ function snapshot(
       projects: projectDigests,
     },
     activeRuns: [],
+    delegations: [],
     workspaceAttentions: overrides.workspaceAttentions ?? [],
     projects: projectIds.map((projectId) => ({
       projectId,
@@ -301,6 +329,81 @@ function snapshotAttention(id: string, projectId: string) {
     refs: [`project:${projectId}`],
     body: 'Inspect the repeated failure.',
     inspectionPath: `/tmp/${id}.md`,
+  }
+}
+
+function delegatedAttentionSnapshot(active: boolean, sourceDigest: string) {
+  const current = snapshot(['P-1', 'P-2'], {
+    projectDigests: {
+      'P-1': sourceDigest.repeat(64),
+      'P-2': '3'.repeat(64),
+    },
+  })
+  const activeRun = active
+    ? {
+        projectId: 'P-2',
+        goalId: 'G-target',
+        workId: 'W-target',
+        responsibility: 'generator' as const,
+        runId: 'R-target',
+      }
+    : null
+  return {
+    ...current,
+    activeRuns: activeRun ? [activeRun] : [],
+    delegations: [
+      {
+        sourceProjectId: 'P-1',
+        sourceGoalId: 'G-source',
+        sourceEventId: 'EV-source',
+        sourceAttentionRefs: ['project:P-1/goal:G-source/attention:A-source'],
+        targetProjectId: 'P-2',
+        targetGoalId: 'G-target',
+        targetWorkId: 'W-target',
+        work: {
+          attributes: {
+            id: 'W-target',
+            kind: 'engineering',
+            stage: active ? 'generate' : 'done',
+          },
+          path: '/tmp/W-target.md',
+          runtime: {
+            latestAttempt: { status: active ? 'running' : 'finished' },
+            recentAttempts: [
+              {
+                runId: 'R-target',
+                responsibility: 'generator',
+                status: active ? 'running' : 'finished',
+                result: active ? null : 'success',
+                application: active ? null : 'published',
+              },
+            ],
+            attemptCount: 1,
+            stale: false,
+          },
+        },
+        activeRun,
+      },
+    ],
+    projects: [
+      {
+        projectId: 'P-1',
+        available: true,
+        releaseHead: 'release',
+        goals: [
+          {
+            attentions: [{ attributes: { resolvedAt: null } }],
+            works: [],
+          },
+        ],
+      },
+      {
+        projectId: 'P-2',
+        available: true,
+        releaseHead: 'release',
+        goals: [],
+      },
+    ],
   }
 }
 
