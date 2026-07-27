@@ -144,6 +144,33 @@ describe('ProjectReconciler', () => {
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
   })
 
+  test('writes one complete checkpoint trailer for every Repo in a multi-Repo Work', async () => {
+    const fixture = await createFixture({
+      includeSecondaryRepo: true,
+      changedRepoIds: ['primary', 'api'],
+    })
+
+    await fixture.reconciler.reconcileGoal('goal-1')
+    await fixture.reconciler.reconcileGoal('goal-1')
+
+    for (const repo of fixture.linked.repos) {
+      const worktreePath = join(dirname(repo.integrationRoot), 'work', 'goal-1', 'W-1')
+      expect(await git(worktreePath, ['show', '-s', '--format=%B', 'HEAD'])).toBe(
+        [
+          'hopi: checkpoint goal-1/W-1',
+          '',
+          'HOPI-Project: project-1',
+          'HOPI-Goal: goal-1',
+          'HOPI-Work: W-1',
+          `HOPI-Repo: ${repo.repoId}`,
+          'HOPI-Producer-Run: run-2',
+          '',
+          'Generation-Mode: AI-Pure',
+        ].join('\n'),
+      )
+    }
+  })
+
   test('exposes every Repo without making a missing prepare adapter an Engineering gate', async () => {
     const fixture = await createFixture({
       includeSecondaryRepo: true,
@@ -266,6 +293,63 @@ describe('ProjectReconciler', () => {
     )
     expect(repairPrompt?.runPrompt).not.toContain('Previous claimed summary')
     expect(repairPrompt?.runPrompt).not.toContain('Observed execution commands')
+  })
+
+  test('creates a new checkpoint after Reviewer rejection without bypassing review', async () => {
+    const fixture = await createFixture({
+      reviewerRejectOnce: true,
+      generatorChangesOnRetry: true,
+    })
+
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      await fixture.reconciler.reconcileGoal('goal-1')
+    }
+
+    const worktreePath = join(dirname(fixture.projectRoot), 'work', 'goal-1', 'W-1')
+    const [retryCheckpoint, firstCheckpoint] = (
+      await git(worktreePath, ['log', '--format=%H', '-2'])
+    ).split('\n')
+    if (!retryCheckpoint || !firstCheckpoint) throw new Error('Expected two Generator checkpoints')
+
+    expect(await git(worktreePath, ['show', '-s', '--format=%P', retryCheckpoint])).toBe(
+      firstCheckpoint,
+    )
+    expect(await git(worktreePath, ['show', '-s', '--format=%B', firstCheckpoint])).toBe(
+      [
+        'hopi: checkpoint goal-1/W-1',
+        '',
+        'HOPI-Project: project-1',
+        'HOPI-Goal: goal-1',
+        'HOPI-Work: W-1',
+        'HOPI-Repo: primary',
+        'HOPI-Producer-Run: run-2',
+        '',
+        'Generation-Mode: AI-Pure',
+      ].join('\n'),
+    )
+    expect(await git(worktreePath, ['show', '-s', '--format=%B', retryCheckpoint])).toBe(
+      [
+        'hopi: checkpoint goal-1/W-1',
+        '',
+        'HOPI-Project: project-1',
+        'HOPI-Goal: goal-1',
+        'HOPI-Work: W-1',
+        'HOPI-Repo: primary',
+        'HOPI-Producer-Run: run-4',
+        '',
+        'Generation-Mode: AI-Pure',
+      ].join('\n'),
+    )
+    expect(fixture.runner.responsibilities).toEqual([
+      'planner',
+      'generator',
+      'reviewer',
+      'generator',
+      'reviewer',
+    ])
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+      'done',
+    )
   })
 
   test('settles Planner semantic failure without inventing Attention or redispatching', async () => {
@@ -532,7 +616,19 @@ describe('ProjectReconciler', () => {
     })
     expect(typeof attempts[0]?.workHash).toBe('string')
     expect(await git(taskWorktreePath, ['status', '--porcelain'])).toBe('')
-    expect(await git(taskWorktreePath, ['log', '-1', '--format=%s'])).toContain('hopi: checkpoint')
+    expect(await git(taskWorktreePath, ['show', '-s', '--format=%B', 'HEAD'])).toBe(
+      [
+        'hopi: checkpoint goal-1/W-1',
+        '',
+        'HOPI-Project: project-1',
+        'HOPI-Goal: goal-1',
+        'HOPI-Work: W-1',
+        'HOPI-Repo: primary',
+        'HOPI-Producer-Run: run-2',
+        '',
+        'Generation-Mode: AI-Pure',
+      ].join('\n'),
+    )
     expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
       kind: 'wait',
       decision: { reasons: expect.arrayContaining(['failed_attempt']) },
@@ -571,7 +667,19 @@ describe('ProjectReconciler', () => {
     })
     expect(taskWorktreePath).toBe(expectedWorktree)
     expect(await git(taskWorktreePath, ['status', '--porcelain'])).toBe('')
-    expect(await git(taskWorktreePath, ['log', '-1', '--format=%s'])).toContain('hopi: checkpoint')
+    expect(await git(taskWorktreePath, ['show', '-s', '--format=%B', 'HEAD'])).toBe(
+      [
+        'hopi: checkpoint goal-1/W-1',
+        '',
+        'HOPI-Project: project-1',
+        'HOPI-Goal: goal-1',
+        'HOPI-Work: W-1',
+        'HOPI-Repo: primary',
+        'HOPI-Producer-Run: run-2',
+        '',
+        'Generation-Mode: AI-Pure',
+      ].join('\n'),
+    )
     expect(attempt).toMatchObject({ status: 'interrupted', result: null, application: null })
     expect(
       (await fixture.attempts.read('project-1', 'goal-1', 'W-1', attempt?.runId ?? ''))?.events,
@@ -1002,12 +1110,14 @@ class DeliveryScriptRunner implements RoleRunner {
   readonly reviewerCwds: string[] = []
   readonly reviewerRunRoots: string[] = []
   readonly repoRootsByRun: Array<{ responsibility: string; paths: string[] }> = []
+  private generatorRuns = 0
   private reviewerRuns = 0
   private reviewerRejections = 0
 
   constructor(
     private readonly options: {
       generatorResult: 'success' | 'attention' | 'fail'
+      generatorChangesOnRetry: boolean
       generatorOperationalFailure: boolean
       reviewerOperationalWriteOnce: boolean
       reviewerRejectOnce: boolean
@@ -1072,6 +1182,7 @@ class DeliveryScriptRunner implements RoleRunner {
       else if (this.options.plannerResult === 'success') await this.plan(input)
     }
     if (input.responsibility === 'generator') {
+      const featureVersion = this.options.generatorChangesOnRetry ? this.generatorRuns++ + 2 : 2
       await observer?.onEvent?.({
         kind: 'transcript',
         transport: 'codex',
@@ -1091,7 +1202,10 @@ class DeliveryScriptRunner implements RoleRunner {
       for (const repo of input.context.repoRoots) {
         if (!this.options.changedRepoIds.includes(repo.repoId)) continue
         await mkdir(join(repo.path, 'src'), { recursive: true })
-        await Bun.write(join(repo.path, 'src', 'feature.ts'), 'export const feature = 2\n')
+        await Bun.write(
+          join(repo.path, 'src', 'feature.ts'),
+          `export const feature = ${featureVersion}\n`,
+        )
       }
       if (this.options.generatorWaitForAbort) {
         await waitForAbort(input.signal)
@@ -1194,6 +1308,7 @@ class DeliveryScriptRunner implements RoleRunner {
 async function createFixture(
   options: {
     generatorResult?: 'success' | 'attention' | 'fail'
+    generatorChangesOnRetry?: boolean
     changedRepoIds?: readonly string[]
     generatorOperationalFailure?: boolean
     generatorWaitForAbort?: boolean
@@ -1290,6 +1405,7 @@ async function createFixture(
   })
   const runner = new DeliveryScriptRunner({
     generatorResult: options.generatorResult ?? 'success',
+    generatorChangesOnRetry: options.generatorChangesOnRetry ?? false,
     generatorOperationalFailure: options.generatorOperationalFailure ?? false,
     reviewerOperationalWriteOnce: options.reviewerOperationalWriteOnce ?? false,
     reviewerRejectOnce: options.reviewerRejectOnce ?? false,

@@ -17,7 +17,7 @@ afterEach(async () => {
 })
 
 describe('checkpointTaskWorktree', () => {
-  test('commits accumulated source changes on the stable task branch', async () => {
+  test('commits the complete first-checkpoint message on the stable task branch', async () => {
     const fixture = await setup()
     await Bun.write(join(fixture.worktreePath, 'feature.ts'), 'export const feature = true\n')
 
@@ -25,8 +25,17 @@ describe('checkpointTaskWorktree', () => {
 
     expect(checkpoint.created).toBe(true)
     expect(await git(fixture.worktreePath, ['status', '--porcelain'])).toBe('')
-    expect(await git(fixture.worktreePath, ['show', '-s', '--format=%B', 'HEAD'])).toContain(
-      'HOPI-Producer-Run: run-1',
+    expect(await git(fixture.worktreePath, ['show', '-s', '--format=%B', 'HEAD'])).toBe(
+      [
+        'hopi: checkpoint G-1/W-1',
+        '',
+        'HOPI-Project: P-1',
+        'HOPI-Goal: G-1',
+        'HOPI-Work: W-1',
+        'HOPI-Producer-Run: run-1',
+        '',
+        'Generation-Mode: AI-Pure',
+      ].join('\n'),
     )
   })
 

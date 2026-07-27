@@ -65,6 +65,8 @@ export async function checkpointTaskWorktree(input: TaskCheckpointInput): Promis
     `HOPI-Work: ${input.workId}`,
     ...(input.repoId ? [`HOPI-Repo: ${input.repoId}`] : []),
     `HOPI-Producer-Run: ${input.runId}`,
+    '',
+    'Generation-Mode: AI-Pure',
   ].join('\n')
   const commit = await gitResult(
     input.worktreePath,
