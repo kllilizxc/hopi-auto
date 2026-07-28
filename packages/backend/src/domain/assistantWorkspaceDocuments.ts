@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { assistantDecisionPromptSchema } from './assistantDecisionPrompt'
 import { parseAttentionReference } from './attentionReference'
+import { parseWorkAttentionTarget } from './attentionTarget'
 import { inboxEventReferenceSchema } from './inboxEventReference'
 import {
   type MarkdownDocument,
@@ -54,6 +55,13 @@ export const inboxContextSchema = z
     goalId: stableIdSchema.optional(),
     attentionId: stableIdSchema.optional(),
     attentionRefs: z.array(z.union([stableIdSchema, attentionReferenceSchema])).optional(),
+    workRefs: z
+      .array(
+        z.string().refine((value) => parseWorkAttentionTarget(value) !== null, {
+          message: 'Invalid canonical Work reference',
+        }),
+      )
+      .optional(),
     replyTo: inboxEventReferenceSchema.optional(),
     observedDigest: z
       .string()
@@ -78,6 +86,23 @@ export const inboxContextSchema = z
       refinement.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Inbox replyTo requires exact Attention references',
+      })
+    }
+    if (context.workRefs?.length && !context.projectId) {
+      refinement.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Inbox Work references require a Project location',
+      })
+    }
+    if (
+      context.projectId &&
+      context.workRefs?.some(
+        (reference) => parseWorkAttentionTarget(reference)?.projectId !== context.projectId,
+      )
+    ) {
+      refinement.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Inbox Work references must belong to the located Project',
       })
     }
     if (

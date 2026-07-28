@@ -842,6 +842,13 @@ fail-closed boundaries, which create a new Project Attention. A successful shell
 not resolution, and Assistant must not report the Project unblocked unless the Attention tool call
 succeeds.
 
+The deterministic wake records exact canonical references for both kinds of current responsibility:
+Attention references and failed Work references. A responsibility-bearing internal turn cannot be
+acknowledged while a referenced Attention remains unchanged or a referenced failed Work still has the
+same settled Attempt and no durable successor. This is a persistence boundary, not a prescribed
+recovery branch: the Assistant decides whether to continue, revise, cancel, defer or transfer using
+the capabilities available in the current environment.
+
 A single conversation turn may call multiple tools and may affect more than one Goal. The old
 single-destination Inbox route claim therefore is not part of the forward Assistant protocol.
 Historical route claims remain readable only for migration and provenance.

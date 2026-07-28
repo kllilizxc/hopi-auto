@@ -125,6 +125,15 @@ repeating event. When the condition depends on facts outside HOPI state, Assista
 future `revisitAt`; HOPI derives one deterministic internal Inbox event from the exact Attention
 reference and timestamp. Restart and repeated reconciliation observe the same event identity.
 
+A settled failure wake carries the exact Work recovery reference derived from the persisted Attempt.
+That reference is not another document or workflow state. It records which failed execution currently
+belongs to the Assistant. The internal event is acknowledged only after that Work has a queued or
+running successor, its canonical authority changes, or it becomes terminal. The Assistant remains
+free to choose the consequence; HOPI only prevents a durable failure from disappearing because a
+conversation turn ended without a durable successor. Wake protocol revisions invalidate old
+observation cursors once, so restart recovery also revisits failures acknowledged under an older
+responsibility contract.
+
 An existing turn for that conversation already carries the current Attention set, so it suppresses a
 redundant revisit. A running Work Attempt also supplies its own later settlement event, so Assistant
 does not need to poll delegated progress.

@@ -887,16 +887,17 @@ advance it. Planning Work remains `plan` while clarification is required. After 
 proposal validates, Coordinator derives the Planning Work `done` gate from the current canonical
 document. These are fixed profile facts, not details Planner must rediscover from history.
 
-The Run's proposal-capabilities file contains the compact frontmatter field shape for every new
-Engineering Work and Attention document Planner may create. The execution boundary states that
-unlisted paths or field values are rejected at publication, so the deterministic contract does not
-need to be inferred from another Goal, a historical Run, or HOPI source code. These are the existing
-canonical document schemas, not a plan DSL: identifiers, Markdown bodies, decomposition,
-dependencies, criteria, and whether any document is needed remain model judgments. Coordinator owns
-deterministic proposal schema and DAG validation. Planner performs semantic and proportionate
-content checks, but does not build an ad hoc validator that duplicates Coordinator. A rejection
-diagnostic names the offending field and accepted value set so Assistant can repair or retry without
-reverse-engineering the parser.
+The Run's proposal-capabilities file contains the compact frontmatter field shape and path identity
+relationship for every new Engineering Work and Attention document Planner may create. A document
+path is `{directory}/{id}.md`; the frontmatter `id` and filename stem are the same canonical identity.
+The execution boundary states that unlisted paths or field values are rejected at publication, so the
+deterministic contract does not need to be inferred from another Goal, a historical Run, or HOPI
+source code. These are the existing canonical document schemas, not a plan DSL: identifiers, Markdown
+bodies, decomposition, dependencies, criteria, and whether any document is needed remain model
+judgments. Coordinator owns deterministic proposal schema and DAG validation. Planner performs
+semantic and proportionate content checks, but does not build an ad hoc validator that duplicates
+Coordinator. A rejection diagnostic names the offending field and accepted value set so Assistant
+can repair or retry without reverse-engineering the parser.
 
 The accepted `goal.md` is immutable input to Planner. Planner records clarified implementation
 decisions in `design/**` and Work acceptance criteria, never edits the Goal contract, and always

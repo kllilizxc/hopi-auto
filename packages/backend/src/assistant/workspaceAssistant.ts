@@ -45,7 +45,10 @@ import {
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
-import { assistantResponsibilityState } from './assistantResponsibility'
+import {
+  assistantResponsibilityState,
+  assistantWorkResponsibilityState,
+} from './assistantResponsibility'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import { type AssistantTools, assistantStateProjection } from './assistantTools'
 
@@ -643,7 +646,8 @@ function assertAssistantResponsibilitiesAdvanced(input: {
   afterWorkspace: AssistantWorkspace
 }) {
   const references = normalizeInboxAttentionReferences(input.event.attributes.context ?? {})
-  if (references.length === 0) return
+  const workReferences = input.event.attributes.context?.workRefs ?? []
+  if (references.length === 0 && workReferences.length === 0) return
   const transferred = new Set(input.stagedEvent?.attributes.attentionRequest?.attentionRefs ?? [])
   const unchanged: string[] = []
   for (const reference of references) {
@@ -651,6 +655,20 @@ function assertAssistantResponsibilitiesAdvanced(input: {
     if (!before?.assistantOwned || before.hasDurableSuccessor) continue
     if (transferred.has(reference)) continue
     const after = assistantResponsibilityState(reference, input.afterState, input.afterWorkspace)
+    if (
+      !after ||
+      !after.assistantOwned ||
+      after.hasDurableSuccessor ||
+      after.fingerprint !== before.fingerprint
+    ) {
+      continue
+    }
+    unchanged.push(reference)
+  }
+  for (const reference of workReferences) {
+    const before = assistantWorkResponsibilityState(reference, input.beforeState)
+    if (!before?.assistantOwned || before.hasDurableSuccessor) continue
+    const after = assistantWorkResponsibilityState(reference, input.afterState)
     if (
       !after ||
       !after.assistantOwned ||
@@ -1124,12 +1142,14 @@ function renderAttentionContext(context: {
   goalId?: string
   attentionId?: string
   attentionRefs?: string[]
+  workRefs?: string[]
   replyTo?: string
   observedDigest?: string
 }) {
   const references = normalizeInboxAttentionReferences(context)
   return [
     ...(references.length ? [` / Attention ${references.join(', ')}`] : []),
+    ...(context.workRefs?.length ? [` / Work recovery ${context.workRefs.join(', ')}`] : []),
     ...(context.replyTo ? [` / reply to ${context.replyTo}`] : []),
     ...(context.observedDigest ? [` / observed digest ${context.observedDigest}`] : []),
   ].join('')
@@ -1140,6 +1160,7 @@ function renderInboxContext(context: {
   goalId?: string
   attentionId?: string
   attentionRefs?: string[]
+  workRefs?: string[]
   replyTo?: string
   observedDigest?: string
 }) {

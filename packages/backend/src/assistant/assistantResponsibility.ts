@@ -6,7 +6,11 @@ import {
   parseAttentionReference,
   workspaceAttentionReference,
 } from '../domain/attentionReference'
-import { parseProjectAttentionTarget, parseWorkAttentionTarget } from '../domain/attentionTarget'
+import {
+  parseProjectAttentionTarget,
+  parseWorkAttentionTarget,
+  workAttentionTarget,
+} from '../domain/attentionTarget'
 import type { AssistantStateSnapshot } from './assistantState'
 
 export type AssistantResponsibilityScope = { kind: 'home' } | { kind: 'project'; projectId: string }
@@ -15,6 +19,100 @@ export interface AssistantResponsibilityState {
   assistantOwned: boolean
   hasDurableSuccessor: boolean
   fingerprint: string
+}
+
+export function actionableAssistantWorkReferences(
+  scope: AssistantResponsibilityScope,
+  state: AssistantStateSnapshot,
+) {
+  if (scope.kind === 'home') return []
+  const references: string[] = []
+  for (const project of state.projects) {
+    if (
+      !isRecord(project) ||
+      project.projectId !== scope.projectId ||
+      !Array.isArray(project.goals)
+    ) {
+      continue
+    }
+    for (const goal of project.goals) {
+      if (!isRecord(goal) || !Array.isArray(goal.works)) continue
+      const goalId = goalStateId(goal)
+      if (!goalId) continue
+      for (const work of goal.works) {
+        if (!isRecord(work) || !isRecord(work.attributes)) continue
+        const workId = typeof work.attributes.id === 'string' ? work.attributes.id : null
+        if (!workId) continue
+        const reference = workAttentionTarget(scope.projectId, goalId, workId)
+        const responsibility = assistantWorkResponsibilityState(reference, state)
+        if (responsibility?.assistantOwned && !responsibility.hasDurableSuccessor) {
+          references.push(reference)
+        }
+      }
+    }
+  }
+  return [...new Set(references)].toSorted()
+}
+
+export function assistantWorkResponsibilityState(
+  reference: string,
+  state: AssistantStateSnapshot,
+): AssistantResponsibilityState | null {
+  const target = parseWorkAttentionTarget(reference)
+  if (!target) return null
+  const project = state.projects.find(
+    (candidate) => isRecord(candidate) && candidate.projectId === target.projectId,
+  )
+  if (!isRecord(project) || !Array.isArray(project.goals)) return null
+  const goal = project.goals.find(
+    (candidate) => isRecord(candidate) && goalStateId(candidate) === target.goalId,
+  )
+  if (!isRecord(goal) || !Array.isArray(goal.works)) return null
+  const work = goal.works.find(
+    (candidate) =>
+      isRecord(candidate) &&
+      isRecord(candidate.attributes) &&
+      candidate.attributes.id === target.workId,
+  )
+  if (!isRecord(work)) return null
+  const projection = isRecord(work.projection) ? work.projection : null
+  const failedPredicates =
+    projection && Array.isArray(projection.failedPredicates)
+      ? projection.failedPredicates.filter((value): value is string => typeof value === 'string')
+      : []
+  const latestAttempt =
+    isRecord(work.runtime) && isRecord(work.runtime.latestAttempt)
+      ? work.runtime.latestAttempt
+      : null
+  const hasActiveRun = state.activeRuns.some(
+    (run) =>
+      run.projectId === target.projectId &&
+      run.goalId === target.goalId &&
+      run.workId === target.workId,
+  )
+  const hasOpenAttention =
+    Array.isArray(goal.attentions) &&
+    goal.attentions.some(
+      (attention) =>
+        isRecord(attention) &&
+        isRecord(attention.attributes) &&
+        attention.attributes.resolvedAt === null &&
+        attention.attributes.target === reference,
+    )
+  return {
+    assistantOwned: failedPredicates.includes('failed_attempt'),
+    hasDurableSuccessor:
+      hasActiveRun ||
+      hasOpenAttention ||
+      latestAttempt?.status === 'queued' ||
+      latestAttempt?.status === 'running',
+    fingerprint: responsibilityFingerprint({
+      attributes: isRecord(work.attributes) ? work.attributes : null,
+      body: typeof work.body === 'string' ? work.body : null,
+      failedPredicates,
+      latestAttempt,
+    }),
+  }
 }
 
 export function actionableAssistantAttentionReferences(

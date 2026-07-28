@@ -995,9 +995,10 @@ function proposalCapabilities(
 ) {
   const attention = {
     directory: paths.attentionRoot(input.goalId),
+    pathPattern: `${paths.attentionRoot(input.goalId)}/{id}.md`,
     target: workAttentionTarget(input.projectId, input.goalId, input.workId),
     fields: {
-      id: 'stable-id',
+      id: '{id}',
       target: 'exact target above',
       createdAt: '1970-01-01T00:00:00.000Z',
       resolvedAt: null,
@@ -1021,11 +1022,12 @@ function proposalCapabilities(
       {
         type: 'engineering-work',
         directory: paths.workRoot(input.goalId),
+        pathPattern: `${paths.workRoot(input.goalId)}/{id}.md`,
         fields: {
-          id: 'stable-id',
+          id: '{id}',
           title: 'string',
           notBefore: 'ISO timestamp or null',
-          dependsOn: ['stable-id'],
+          dependsOn: ['{engineering-work-id}'],
           contractRevision: 'current Goal contractRevision',
           evidenceRefs: [],
           kind: 'engineering',

@@ -132,7 +132,7 @@ describe('Assistant wake trigger', () => {
     expect((await recoveredWake.listRuns()).length).toBe(2)
   })
 
-  test('re-emits actionable responsibility once when upgrading a consumed v1 wake', async () => {
+  test('re-emits actionable responsibility once when upgrading a consumed v2 wake', async () => {
     const fixture = await setup(['P-1'])
     await fixture.workspace.createAttention(attention('A-1', 'P-1'))
     fixture.setSnapshot(
@@ -141,11 +141,11 @@ describe('Assistant wake trigger', () => {
       }),
     )
     await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-wake-v1',
+      eventId: 'EV-wake-v2',
       content: 'Legacy wake.',
       context: { projectId: 'P-1' },
     })
-    await fixture.workspace.handleEvent('EV-wake-v1', {
+    await fixture.workspace.handleEvent('EV-wake-v2', {
       reply: 'No operator update.',
       disposition: 'silent',
     })
@@ -162,10 +162,10 @@ describe('Assistant wake trigger', () => {
     await Bun.write(
       cursorPath,
       `${JSON.stringify({
-        version: 1,
+        version: 2,
         scope: { kind: 'project', projectId: 'P-1' },
         stateDigest: '1'.repeat(64),
-        eventId: 'EV-wake-v1',
+        eventId: 'EV-wake-v2',
         updatedAt: '2026-07-25T00:00:00.000Z',
       })}\n`,
     )
@@ -176,7 +176,7 @@ describe('Assistant wake trigger', () => {
 
     const events = [...(await fixture.workspace.readWorkspace()).events.values()]
     expect(events).toHaveLength(2)
-    const current = events.find((event) => event.attributes.id !== 'EV-wake-v1')
+    const current = events.find((event) => event.attributes.id !== 'EV-wake-v2')
     const homeId = (await fixture.workspace.readWorkspace()).homeId
     expect(current?.attributes).toMatchObject({
       status: 'pending',
@@ -405,8 +405,17 @@ describe('Assistant wake trigger', () => {
               goalId: 'G-failed',
               works: [
                 {
-                  workId: 'W-failed',
+                  attributes: { id: 'W-failed', kind: 'engineering', stage: 'generate' },
                   projection: { failedPredicates: ['failed_attempt'] },
+                  runtime: {
+                    latestAttempt: {
+                      runId: 'R-failed',
+                      responsibility: 'generator',
+                      status: 'finished',
+                      result: 'fail',
+                      application: 'invalid',
+                    },
+                  },
                 },
               ],
             },
@@ -426,8 +435,13 @@ describe('Assistant wake trigger', () => {
     expect(event?.attributes).toMatchObject({
       source: 'system',
       status: 'pending',
-      context: { projectId: 'P-1' },
+      context: {
+        projectId: 'P-1',
+        workRefs: ['project:P-1/goal:G-failed/work:W-failed'],
+      },
     })
+    expect(event?.body).toContain('Assistant-owned Work recovery')
+    expect(event?.body).toContain('cannot settle')
   })
 
   test('wakes for each published Reviewer reject while the repair Generator is active', async () => {

@@ -115,6 +115,8 @@ describe('RoleContextStager', () => {
     expect(proposalCapabilities.writable).toContainEqual(
       expect.objectContaining({
         type: 'targeted-attention',
+        pathPattern: expect.stringMatching(/\/attention\/\{id\}\.md$/),
+        fields: expect.objectContaining({ id: '{id}' }),
         target: 'project:project-1/goal:goal-1/work:plan-initial',
       }),
     )
@@ -554,6 +556,8 @@ describe('RoleContextStager', () => {
       writable: [
         {
           type: 'targeted-attention',
+          pathPattern: expect.stringMatching(/\/attention\/\{id\}\.md$/),
+          fields: { id: '{id}' },
           target: 'project:project-1/goal:goal-1/work:W-1',
         },
       ],

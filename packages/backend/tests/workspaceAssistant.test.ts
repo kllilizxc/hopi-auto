@@ -1659,6 +1659,50 @@ describe('WorkspaceAssistant conversation', () => {
     expect(current?.attributes.revisitAt).toBe('2027-07-12T00:00:00.000Z')
   })
 
+  test('keeps a settled-failure event pending until its Work gains a durable successor', async () => {
+    let calls = 0
+    const failed = settledFailureSnapshot('finished')
+    let current = failed
+    const fixture = await setup(
+      () => ({
+        async run(_input, observer) {
+          calls += 1
+          await observer?.onSession?.(codexSession(`thread-work-recovery-${calls}`))
+          if (calls === 2) current = settledFailureSnapshot('queued')
+          return { reply: '', session: codexSession(`thread-work-recovery-${calls}`) }
+        },
+      }),
+      {
+        assistantState: {
+          async read() {
+            return current
+          },
+        },
+      },
+    )
+    const workRef = 'project:P-1/goal:G-1/work:W-failed'
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-work-recovery',
+      content: 'Recover the persisted failed Work.',
+      context: { projectId: 'P-1', workRefs: [workRef] },
+    })
+
+    await expect(fixture.assistant.process('EV-work-recovery')).rejects.toThrow(
+      'canonical Assistant responsibility is unchanged',
+    )
+    expect((await fixture.workspace.readEvent('EV-work-recovery'))?.attributes.status).toBe(
+      'pending',
+    )
+
+    await fixture.assistant.process('EV-work-recovery')
+
+    expect(calls).toBe(2)
+    expect((await fixture.workspace.readEvent('EV-work-recovery'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'internal',
+    })
+  })
+
   test('publishes one final user request and atomically transfers its Attention', async () => {
     let attentionRef = ''
     const fixture = await setup(
@@ -1794,6 +1838,50 @@ async function setup(
     now: () => new Date('2026-07-11T00:00:00Z'),
   })
   return { homeRoot, workspace, conversation, goalStore, controller, tools, assistant }
+}
+
+function settledFailureSnapshot(latestStatus: 'finished' | 'queued'): AssistantStateSnapshot {
+  const workRef = {
+    attributes: { id: 'W-failed', kind: 'engineering', stage: 'generate' },
+    body: 'Recover this Work.',
+    projection: {
+      failedPredicates: latestStatus === 'finished' ? ['failed_attempt'] : [],
+    },
+    runtime: {
+      latestAttempt: {
+        runId: latestStatus === 'finished' ? 'R-failed' : 'R-successor',
+        responsibility: 'generator',
+        status: latestStatus,
+        result: latestStatus === 'finished' ? 'attention' : null,
+        application: latestStatus === 'finished' ? 'invalid' : null,
+      },
+    },
+  }
+  return {
+    observedAt: '2026-07-11T00:00:00.000Z',
+    stateDigest: latestStatus === 'finished' ? 'a'.repeat(64) : 'b'.repeat(64),
+    conversationDigests: {
+      home: 'c'.repeat(64),
+      projects: { 'P-1': latestStatus === 'finished' ? 'd'.repeat(64) : 'e'.repeat(64) },
+    },
+    activeRuns: [],
+    delegations: [],
+    workspaceAttentions: [],
+    projects: [
+      {
+        projectId: 'P-1',
+        available: true,
+        releaseHead: 'release',
+        goals: [
+          {
+            goal: { attributes: { id: 'G-1' } },
+            attentions: [],
+            works: [workRef],
+          },
+        ],
+      },
+    ],
+  } as AssistantStateSnapshot
 }
 
 async function currentAssistantContextDigest(

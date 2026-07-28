@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   normalizeAgentAdapterConfig,
-  readAndMigrateAgentAdapterConfig,
   readAgentRoleCodingDefaults,
+  readAndMigrateAgentAdapterConfig,
   readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,

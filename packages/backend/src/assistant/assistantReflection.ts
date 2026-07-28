@@ -11,7 +11,10 @@ import {
   assistantConversationScopeForEvent,
   assistantConversationScopeKey,
 } from './assistantConversationScope'
-import { actionableAssistantAttentionReferences } from './assistantResponsibility'
+import {
+  actionableAssistantAttentionReferences,
+  actionableAssistantWorkReferences,
+} from './assistantResponsibility'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 
 export type ReflectionObserveResult = 'baseline' | 'deferred' | 'unchanged' | 'running' | 'started'
@@ -29,7 +32,7 @@ type WakeScope = z.infer<typeof wakeScopeSchema>
 
 const wakeCursorSchema = z
   .object({
-    version: z.literal(2),
+    version: z.literal(3),
     scope: wakeScopeSchema,
     stateDigest: z.string().regex(/^[a-f0-9]{64}$/),
     eventId: z.string().min(1).nullable(),
@@ -37,7 +40,7 @@ const wakeCursorSchema = z
   })
   .strict()
 
-const ASSISTANT_WAKE_PROTOCOL_REVISION = 2
+const ASSISTANT_WAKE_PROTOCOL_REVISION = 3
 
 const reflectionManifestSchema = z
   .object({
@@ -144,6 +147,7 @@ export function createAssistantWake(options: {
         scopeKey: string
         snapshot: AssistantStateSnapshot
         attentionRefs: string[]
+        workRefs: string[]
       }> = []
       let establishedBaseline = false
       let deferred = false
@@ -156,11 +160,12 @@ export function createAssistantWake(options: {
           workspace,
           now().getTime(),
         )
-        const immediate = hasImmediateWakeSignal(candidate.snapshot, attentionRefs)
+        const workRefs = actionableAssistantWorkReferences(candidate.scope, candidate.snapshot)
+        const immediate = hasImmediateWakeSignal(candidate.snapshot, attentionRefs, workRefs)
         if (!cursor) {
           if (!immediate) {
             await writeCursor(cursorPath(cursorsRoot, candidate.scopeKey), {
-              version: 2,
+              version: 3,
               scope: candidate.scope,
               stateDigest: candidate.snapshot.stateDigest,
               eventId: null,
@@ -180,7 +185,7 @@ export function createAssistantWake(options: {
           deferred = true
           continue
         }
-        eligible.push({ ...candidate, attentionRefs })
+        eligible.push({ ...candidate, attentionRefs, workRefs })
       }
 
       if (eligible.length === 0) {
@@ -196,6 +201,7 @@ export function createAssistantWake(options: {
         selected.snapshot,
         undefined,
         selected.attentionRefs,
+        selected.workRefs,
       ).finally(() => {
         active = null
         options.onWake?.()
@@ -219,7 +225,7 @@ export function createAssistantWake(options: {
         const path = cursorPath(cursorsRoot, scopeKey)
         const cursor = await readCursor(path)
         await writeCursor(path, {
-          version: 2,
+          version: 3,
           scope: candidate.scope,
           stateDigest: candidate.snapshot.stateDigest,
           eventId: cursor?.eventId ?? null,
@@ -273,11 +279,12 @@ export function createAssistantWake(options: {
       revisitAt: string
     },
     attentionRefs: readonly string[] = [],
+    workRefs: readonly string[] = [],
   ) {
     const digestKey = await sha256(
       revisit
         ? `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${revisit.attentionRef}\u0000${revisit.revisitAt}`
-        : `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${snapshot.stateDigest}\u0000${attentionRefs.join('\u0000')}`,
+        : `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${snapshot.stateDigest}\u0000${attentionRefs.join('\u0000')}\u0000${workRefs.join('\u0000')}`,
     )
     const eventId = revisit?.eventId ?? `EV-wake-${digestKey.slice(0, 24)}`
     const wakeId = `WK-${crypto.randomUUID()}`
@@ -303,7 +310,7 @@ export function createAssistantWake(options: {
 
     const body = revisit
       ? renderAttentionRevisit(scope, revisit.attentionRef, revisit.revisitAt)
-      : renderWakeEvent(scope, snapshot, attentionRefs)
+      : renderWakeEvent(scope, snapshot, attentionRefs, workRefs)
     await Bun.write(promptPath, body)
     await Bun.write(
       transcriptPath,
@@ -324,13 +331,14 @@ export function createAssistantWake(options: {
         await options.workspace.receiveSystemEvent({
           eventId,
           content: body,
-          ...(scope.kind === 'project' || revisit || attentionRefs.length > 0
+          ...(scope.kind === 'project' || revisit || attentionRefs.length > 0 || workRefs.length > 0
             ? {
                 context: {
                   ...(scope.kind === 'project' ? { projectId: scope.projectId } : {}),
                   ...(revisit || attentionRefs.length > 0
                     ? { attentionRefs: revisit ? [revisit.attentionRef] : [...attentionRefs] }
                     : {}),
+                  ...(workRefs.length > 0 ? { workRefs: [...workRefs] } : {}),
                 },
               }
             : {}),
@@ -338,7 +346,7 @@ export function createAssistantWake(options: {
         })
       }
       await writeCursor(cursorPath(cursorsRoot, scopeKey), {
-        version: 2,
+        version: 3,
         scope,
         stateDigest: snapshot.stateDigest,
         eventId,
@@ -528,6 +536,7 @@ function renderWakeEvent(
   scope: WakeScope,
   snapshot: AssistantStateSnapshot,
   attentionRefs: readonly string[],
+  workRefs: readonly string[],
 ) {
   return [
     '# Project state event',
@@ -542,13 +551,16 @@ function renderWakeEvent(
           ...attentionRefs.map((reference) => `- ${reference}`),
         ]
       : []),
+    ...(workRefs.length
+      ? ['', 'Assistant-owned Work recovery:', ...workRefs.map((reference) => `- ${reference}`)]
+      : []),
     '',
     'This is a durable internal event for the same Assistant session. It is not operator input.',
     'A non-empty final response is persisted as a public Assistant message; an empty response remains internal.',
     'Current Project state and every unresolved Attention are supplied separately with this turn.',
-    ...(attentionRefs.length
+    ...(attentionRefs.length || workRefs.length
       ? [
-          'This event cannot settle while a listed Attention remains Assistant-owned with unchanged canonical responsibility state.',
+          'This event cannot settle while a listed responsibility remains unchanged without a durable successor.',
         ]
       : []),
     '',
@@ -579,11 +591,13 @@ function goalStateId(goal: Record<string, unknown>) {
 function hasImmediateWakeSignal(
   snapshot: AssistantStateSnapshot,
   attentionRefs: readonly string[],
+  workRefs: readonly string[],
 ) {
   if (snapshot.projects.some(projectHasPublishedReviewerReject)) return true
   if (snapshot.projects.some(projectHasStaleRun)) return true
   if (snapshot.projects.some(projectHasSettledFailure)) return true
   if (attentionRefs.length > 0) return true
+  if (workRefs.length > 0) return true
   return snapshot.projects.some((project) => {
     if (!isRecord(project)) return false
     if (project.available === false) return true
