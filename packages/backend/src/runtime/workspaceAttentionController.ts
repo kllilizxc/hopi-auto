@@ -34,6 +34,8 @@ export function createWorkspaceAttentionController(
         updatedAt: now().toISOString(),
         resolvedAt: null,
         refs: [target],
+        summary: summarize(reason),
+        decisionPrompt: null,
       },
       body: [
         '## Needs you',
@@ -47,4 +49,9 @@ export function createWorkspaceAttentionController(
     await workspace.createAttention(attention)
     return attention
   }
+}
+
+function summarize(reason: string) {
+  const normalized = reason.trim()
+  return normalized.length > 600 ? `${normalized.slice(0, 597)}...` : normalized
 }

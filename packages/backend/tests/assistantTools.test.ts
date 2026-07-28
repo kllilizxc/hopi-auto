@@ -314,13 +314,13 @@ describe('Assistant HOPI tools', () => {
       'Clarify and plan the Goal',
     )
     expect(goalPackage.works.get('plan-initial')?.body).toContain(
-      'Clarify the current Goal contract and accepted Inputs',
+      'Clarify the current Goal boundary and accepted Inputs',
     )
     expect(goalPackage.works.get('plan-initial')?.body).toContain(
-      'The design documents and smallest complete Engineering Work DAG are current.',
+      'Design and nonterminal Engineering Work reflect the current Goal boundary.',
     )
     expect(goalPackage.works.get('plan-initial')?.body).toContain(
-      'Each Engineering Work owns one terminal proof boundary.',
+      'Deferred or removed outcomes do not remain in current Work or completion criteria.',
     )
   })
 
@@ -1570,6 +1570,7 @@ describe('Assistant HOPI tools', () => {
         change: {
           kind: 'create',
           attentionId,
+          summary: 'The managed integration root still needs verification.',
           body: 'The managed integration root is invalid.',
           refs: [],
         },
@@ -1643,6 +1644,132 @@ describe('Assistant HOPI tools', () => {
       { eventId: 'EV-project-repaired', projectId: 'P-1' },
       { eventId: 'EV-project-repaired', projectId: 'P-1' },
     ])
+  })
+
+  test('transfers current Attention references while keeping presentation on Attention', async () => {
+    const fixture = await setup()
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-attention-transfer',
+      content: 'Ask for my release decision.',
+      context: { projectId: 'P-1' },
+    })
+    const created = await fixture.tools.executeForEvent(
+      'EV-attention-transfer',
+      'hopi_manage_attention',
+      {
+        projectId: 'P-1',
+        change: {
+          kind: 'create',
+          attentionId: 'A-release-window',
+          summary: 'Choose the release window.',
+          decisionPrompt: {
+            questions: [
+              {
+                id: 'window',
+                header: 'Release window',
+                question: 'When should this release happen?',
+                options: [
+                  {
+                    id: 'today',
+                    label: 'Today',
+                    description: 'Use the current window.',
+                    recommended: true,
+                  },
+                  {
+                    id: 'tomorrow',
+                    label: 'Tomorrow',
+                    description: 'Use the next window.',
+                  },
+                ],
+                allowOther: true,
+              },
+            ],
+          },
+          body: 'The candidate is ready; the external release window belongs to the operator.',
+          refs: [],
+        },
+      },
+    )
+    const attentionRef = (created.value as { attentionRef: string }).attentionRef
+    const secondCreated = await fixture.tools.executeForEvent(
+      'EV-attention-transfer',
+      'hopi_manage_attention',
+      {
+        projectId: 'P-1',
+        change: {
+          kind: 'create',
+          attentionId: 'A-deployment-owner',
+          summary: 'Choose who will perform the deployment.',
+          body: 'Deployment requires an operator-owned external action.',
+          refs: [],
+        },
+      },
+    )
+    const secondAttentionRef = (secondCreated.value as { attentionRef: string }).attentionRef
+
+    const transferred = await fixture.tools.executeForEvent(
+      'EV-attention-transfer',
+      'hopi_manage_attention',
+      {
+        projectId: 'P-1',
+        change: {
+          kind: 'transfer_attention_to_user',
+          attentionRefs: [attentionRef],
+        },
+      },
+    )
+    const extended = await fixture.tools.executeForEvent(
+      'EV-attention-transfer',
+      'hopi_manage_attention',
+      {
+        projectId: 'P-1',
+        change: {
+          kind: 'transfer_attention_to_user',
+          attentionRefs: [secondAttentionRef, secondAttentionRef],
+        },
+      },
+    )
+    const repeated = await fixture.tools.executeForEvent(
+      'EV-attention-transfer',
+      'hopi_manage_attention',
+      {
+        projectId: 'P-1',
+        change: {
+          kind: 'transfer_attention_to_user',
+          attentionRefs: [secondAttentionRef],
+        },
+      },
+    )
+    const event = await fixture.workspace.readEvent('EV-attention-transfer')
+    const attention = (await fixture.workspace.readWorkspace()).attentions.get('A-release-window')
+
+    expect(transferred).toMatchObject({
+      changed: true,
+      value: {
+        effect: {
+          kind: 'attention_transfer_staged',
+          attentionRefs: [attentionRef],
+        },
+      },
+    })
+    expect(extended).toMatchObject({
+      changed: true,
+      value: {
+        effect: {
+          attentionRefs: [attentionRef, secondAttentionRef],
+        },
+      },
+    })
+    expect(repeated.changed).toBe(false)
+    expect(event?.attributes.attentionRequest).toEqual({
+      attentionRefs: [attentionRef, secondAttentionRef],
+    })
+    expect(attention?.attributes).toMatchObject({
+      summary: 'Choose the release window.',
+      decisionPrompt: {
+        questions: [expect.objectContaining({ id: 'window' })],
+      },
+    })
   })
 
   test('does not route a Goal-local Attention through the Project Attention tool', async () => {

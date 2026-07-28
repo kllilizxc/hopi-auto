@@ -73,16 +73,12 @@ describe('RoleContextStager', () => {
     )
     expect(prompt).toContain('an absent path is unchanged')
     expect(prompt).toContain(
-      'smallest complete Engineering DAG whose Work each owns one terminal proof boundary',
+      'only the Engineering Work required to reach the current Goal boundary',
     )
-    expect(prompt).toContain('one durable candidate follows one canonical fact chain')
     expect(prompt).toContain(
-      'Split at stable contract or artifact boundaries when accepted concerns require independent proof',
+      'Current Goal authority may shrink or replace earlier nonterminal plans',
     )
-    expect(prompt).toContain('even within one product/runtime flow')
-    expect(prompt).toContain(
-      'keep helper-only changes with their consumer when they have no durable proof boundary',
-    )
+    expect(prompt).toContain('Deferred or future outcomes are outside current completion')
     expect(prompt).not.toContain('plan separate Work for independent outcomes')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
@@ -136,8 +132,8 @@ describe('RoleContextStager', () => {
         target: 'project:project-1/goal:goal-1/work:plan-initial',
       }),
     )
-    expect(prompt).toContain('Reviewer success is terminal for the complete Engineering Work')
-    expect(prompt).toContain('use targeted Attention rather than success')
+    expect(prompt).not.toContain('Reviewer success')
+    expect(prompt).not.toContain('terminal proof boundary')
     expect(prompt).toContain(
       'cannot predict the checkpoint commit Coordinator creates after the Run',
     )
@@ -668,21 +664,19 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain(
       'Public Preview, when present, observes the integrated release',
     )
-    expect(reviewerPrompt).toContain(
-      'independently determine whether the Engineering Work satisfies',
-    )
+    expect(reviewerPrompt).toContain('whether the received candidate satisfies the current')
     expect(generatorPrompt).toContain('does not require prior Reviewer acceptance')
-    expect(reviewerPrompt).toContain('Success is terminal for the complete Work')
+    expect(reviewerPrompt).toContain('Success is terminal for that current Work')
     expect(reviewerPrompt).toContain(
       'does not create a missing contract-required deliverable or become its sole producer',
     )
     expect(reviewerPrompt).toContain('Finding one reject-worthy defect does not end the review')
     expect(reviewerPrompt).toContain('report together all material defects found in this pass')
     expect(reviewerPrompt).toContain(
-      'A missing or defective deliverable within Generator authority returns reject',
+      'A missing or defective accepted deliverable within Generator authority returns reject',
     )
     expect(reviewerPrompt).toContain(
-      'an external action outside both responsibility boundaries returns targeted Attention',
+      'Attention is for authority or action required by the current Work',
     )
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('Source, Project documents, canonical .hopi state')

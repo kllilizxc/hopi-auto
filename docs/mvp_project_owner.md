@@ -26,7 +26,7 @@ The Assistant:
 Planner, Generator, and Reviewer remain specialist responsibility passes:
 
 ```text
-Planner   -> interpret one Goal and maintain its sparse Work DAG
+Planner   -> interpret the current Goal boundary and maintain only the Work needed to reach it
 Generator -> implement one Engineering Work in its persistent lineage
 Reviewer  -> independently verify that Engineering Work
 Assistant -> own the Project outcome and correct exceptions across these passes
@@ -43,8 +43,9 @@ Generator owns the complete accepted Engineering Work in writable Project roots,
 contract-required durable deliverable and the execution needed to materialize it. Reviewer judges
 whether that candidate is already complete. Reviewer may independently reproduce behavior and
 retain review evidence, but it does not become the sole producer of a missing Work deliverable.
-A missing or defective contract-required deliverable is a Reviewer `reject`; missing authority,
-an operator decision, or an external action outside both responsibility boundaries is Attention.
+A missing or defective contract-required deliverable is a Reviewer `reject`. Attention records a
+condition for the Project Assistant to interpret. It is presented as Needs You only when current
+progress genuinely requires operator authority or action.
 
 Reconciler schedules valid ready work and wakes the Assistant. It does not interpret failures,
 select recovery strategies, or decide what the operator should do.
@@ -57,6 +58,13 @@ not a mutable contract.
 Later understanding lives in Goal-local design documents, accepted Inputs, Work, and Evidence.
 Lifecycle, priority, and scheduling controls remain mutable facts. Reopening a Goal changes lifecycle
 only; it does not revise the original statement.
+
+The current Goal contract is the completion boundary for this delivery, not a roadmap of possible
+future rollout, certification, or governance work. An accepted instruction that narrows, defers, or
+removes an outcome removes it from current design, nonterminal Work, acceptance, and completion
+assessment. Deferred concerns may remain as historical context or become a later Goal; they do not
+remain active as blocking Attention. Planner may replace and shrink prior nonterminal plans whenever
+current authority no longer supports them.
 
 ## Speaking Session And Supervision Fork
 
@@ -179,7 +187,7 @@ session merging and a second handoff Agent.
 Attention is the Assistant's durable Project todo set. It is not a workflow gate, queue protocol, or
 separate user channel.
 
-An Attention document owns only:
+An Attention document owns:
 
 ```yaml
 id: A-...
@@ -188,24 +196,32 @@ updatedAt: ...
 resolvedAt: null
 refs:
   - project:P-...
+summary: A short operator-facing explanation.
+decisionPrompt: null
 body: |
-  Natural-language fact, question, or unfinished responsibility.
+  Complete rationale, evidence, and technical detail for Agents.
 ```
 
 `refs` are canonical identity and traceability links, not session-routing targets. Responsibility is
 always the Project Assistant, and the owning Project selects that Assistant's persistent
 conversation. A Project Attention keeps its canonical Home reference when copied into an Inbox
 turn; routing it through the owning Project does not rewrite that reference. There is no owner,
-target, kind, priority, waiting, working, notification, recurring retry, or operator-request state.
+target, kind, priority, waiting, working, notification, or recurring retry state.
+
+`summary` and `body` describe the same condition for different readers. `summary` is the default
+operator presentation; `body` is the complete Agent record. `decisionPrompt` is optional and reuses
+one UI contract for one or more related questions, choices, recommendations, and free-form answers.
+It belongs to Attention so editing the condition updates its current presentation without duplicating
+question data in an Inbox event or transfer call.
 
 The Assistant may create, edit, merge, or resolve Attention. An operator message is not
 automatically converted into Attention, and an operator reply never automatically resolves one.
 Attention does not block unrelated Work or Preview. Historical resolved documents remain auditable.
 
-The model-facing Attention tool operates only on this Project-level set. Goal, Work, Attempt, and
-source relationships are expressed through `refs`; adding a Goal ID never selects another Attention
-store. Historical Goal-local Attention documents may remain as compatibility evidence or
-kernel-owned completion records, but they are not a second Assistant todo surface.
+The model-facing Attention mutation tool operates on the Project-level set. Responsibility passes
+may also publish Goal-local Attention as scoped execution facts. Assistant reads and may transfer
+either form by exact canonical reference; it does not copy one into the other. Historical completion
+Attention remains compatibility evidence rather than a second user channel.
 
 Attention tool results report the resulting fact:
 
@@ -243,25 +259,27 @@ This adds no cross-Project dependency document, callback record, or workflow sta
 
 ## Needs You
 
-Needs You is a presentation of ordinary Assistant text linked to one open Attention. The Assistant
-writes `<NeedsYou attentionId="A-...">...</NeedsYou>` in its final response when operator action is
-required. The message remains the canonical public communication; the tag does not change Attention
-ownership, resolve state, Work readiness, or queue order.
+Needs You is the operator presentation of one or more open Attention records transferred by the
+Project Assistant in a public Inbox turn. `transfer_attention_to_user` records only their exact
+canonical references on that turn. The UI reads current `summary` and optional `decisionPrompt`
+directly from Attention; the detailed `body` remains available behind disclosure.
 
-- an exact unresolved Attention makes its tagged block render as `Needs you`
+- a transfer may batch several related Attention records and several related questions
+- an exact unresolved Attention referenced by the transfer renders as `Needs you`
 - the header count is the number of distinct unresolved Attention records represented by visible
-  tagged blocks
+  requests
 - selecting the count opens the newest represented request
 - replying sends one ordinary user message with the source message and Attention reference as context
 - the reply does not automatically resolve or modify Attention
-- resolving the Attention makes the historical block render as ordinary Markdown
+- resolving every referenced Attention removes the request presentation
+- retransferring an Attention makes the newest public request its current presentation
 
-Legacy decision prompts and ownership pointers remain readable only as migration evidence. New
-messages do not create them.
+Legacy `<NeedsYou>` blocks remain readable as request references. New requests use the transfer tool;
+neither transfer nor a choice submission changes Work readiness or resolves Attention by itself.
 
-The Assistant's ordinary final text is already public communication. There is no separate
-`inform`, `notify`, or delivery decision for in-app replies. Optional external delivery mirrors an
-already persisted public message and never becomes semantic authority.
+The Assistant's ordinary final text is still a durable public receipt, but it is not the source of
+Needs You wording. Optional external delivery mirrors an already persisted public message and never
+becomes semantic authority.
 
 ## Deterministic Kernel
 
@@ -306,7 +324,9 @@ Prompts describe only:
 - current observable facts and canonical source paths
 - available capabilities
 - the real effects of using those capabilities
+- for Planner and Reviewer, the current Goal or Work boundary being judged
 
 Prompts do not prescribe recovery playbooks, attempt thresholds, recommended choices, step order, or
 structured final output. Documents and tools carry authority; model prose is not parsed into hidden
-workflow state.
+workflow state. Planner is not asked for a globally complete roadmap, and Reviewer is not asked to
+promote future or deferred concerns into the current contract.

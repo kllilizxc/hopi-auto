@@ -359,11 +359,11 @@ function createInitialPlanningWork(
   const contract = input.firstPlanningWork ?? {
     title: 'Clarify and plan the Goal',
     objective:
-      'Clarify the current Goal contract and accepted Inputs, then update design and the smallest complete Engineering Work DAG.',
+      'Clarify the current Goal boundary and accepted Inputs, then update design and only the Engineering Work needed to reach it.',
     acceptanceCriteria: [
       'Material ambiguity is resolved or raised through targeted Attention.',
-      'The design documents and smallest complete Engineering Work DAG are current.',
-      'Each Engineering Work owns one terminal proof boundary.',
+      'Design and nonterminal Engineering Work reflect the current Goal boundary.',
+      'Deferred or removed outcomes do not remain in current Work or completion criteria.',
     ],
   }
   return {

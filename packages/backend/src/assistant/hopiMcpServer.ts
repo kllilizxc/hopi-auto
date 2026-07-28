@@ -102,7 +102,7 @@ server.registerTool(
   'hopi_manage_attention',
   {
     description:
-      'Create, update, or resolve one durable natural-language Project todo. References preserve traceability without changing scheduling or ownership. NeedsYou markup in an Assistant reply only presents an unresolved Attention to the user.',
+      'Create, update, resolve, or transfer durable Project Attention. Attention stores an operator summary, optional choices, complete Agent detail, and traceability references. Transfer links current open Attention to this turn; it does not resolve it or change Work scheduling.',
     inputSchema: assistantMcpToolSchemas.hopi_manage_attention,
   },
   (args) => callTool('hopi_manage_attention', args),

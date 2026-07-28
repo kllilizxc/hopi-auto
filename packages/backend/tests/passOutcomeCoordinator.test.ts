@@ -318,6 +318,9 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.attentions.get('A-storage')?.attributes.createdAt).toBe(
       '2026-07-11T00:00:00.000Z',
     )
+    expect(goalPackage.attentions.get('A-storage')?.attributes.summary).toBe(
+      'Choose the durable storage format.',
+    )
     expect(goalPackage.evidence.has('E-run-attention')).toBe(true)
   })
 

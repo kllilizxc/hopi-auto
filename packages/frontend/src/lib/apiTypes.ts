@@ -182,6 +182,26 @@ export interface ReflectionRunDetail {
 
 export type ReflectionRunSummary = Omit<ReflectionRunDetail, 'events'>
 
+export interface AssistantDecisionOption {
+  id: string
+  label: string
+  description: string
+  recommended?: boolean
+  detailPrompt?: string
+}
+
+export interface AssistantDecisionQuestion {
+  id: string
+  header: string
+  question: string
+  options: AssistantDecisionOption[]
+  allowOther: boolean
+}
+
+export interface AssistantDecisionPrompt {
+  questions: AssistantDecisionQuestion[]
+}
+
 export interface AttentionView {
   scope: 'workspace' | 'goal'
   id: string
@@ -191,6 +211,8 @@ export interface AttentionView {
   resolvedAt: string | null
   notifiedAt?: string | null
   refs?: string[]
+  summary: string
+  decisionPrompt?: AssistantDecisionPrompt | null
   body: string
   projectId?: string
   goalId?: string

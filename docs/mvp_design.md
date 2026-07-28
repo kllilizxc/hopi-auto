@@ -57,23 +57,19 @@ The operator needs only three durable concepts:
    operator.
 
 Attention remains an internal durable control document, not a separate product concept. Open
-Attention with a target is routed internally through Reflection. It appears as **Waiting for
-Assistant** while Assistant owns the next action and **Needs you** only while its explicit
-`operatorRequest` points at an unanswered public Assistant request. The UI decorates that exact
-question and contributes to one non-zero floating Assistant count; no reply-text tag carries
-authority. An informational update does not transfer ownership. An exact operator reply returns
-ownership to Assistant through immutable Inbox `replyTo` correlation, and resolution restores
-ordinary message styling. An ordinary message on the same Goal is not inferred to be a reply. Only the speaking
-Assistant decides whether the operator must be asked. Goal completion appears as a normal Assistant
-and Goal update derived from final Planning Evidence. Legacy targetless completion Attention remains
-readable. There is no separate Attention page.
+Attention is supplied to the Project Assistant. It appears as **Needs you** only when a handled
+public Assistant turn references it through `attentionRequest`; the UI reads the Attention's current
+operator summary and optional choices. Neither the request nor the reply changes Attention,
+scheduling, or responsibility. The Assistant resolves the condition from current facts. An ordinary
+message on the same Goal is not inferred to be a reply. Goal completion appears as a normal Assistant
+and Goal update derived from final Planning Evidence. Legacy targetless completion Attention and
+tagged request text remain readable. There is no separate Attention page.
 
 The speaking Assistant is the only operator-delivery authority. Inbox context correlates a public
-reply to complete canonical Goal-local or workspace Attention references, then `notifiedAt` records
-that durable in-app delivery. When the reply actually requests a decision or external action,
-`operatorRequest` additionally records its exact canonical Inbox event. A configured webhook mirrors
-the already handled public reply and has its own Inbox acknowledgement; raw Attention is never
-another user channel.
+reply to complete canonical Goal-local or workspace Attention references. The handled request turn
+stores those same references, while their summaries, choices, and technical detail remain solely in
+Attention. A configured webhook mirrors the already handled public reply and has its own Inbox
+acknowledgement; raw Attention is never another user channel.
 
 Each Goal has a Kanban view for progress and troubleshooting. Its columns and cards are projections
 of Work, readiness, Runs, and Attention rather than another workflow authority.
@@ -139,10 +135,11 @@ Evidence documents. Different facts remain searchable and do not accumulate in o
 ### 3. The Work DAG is sparse and incremental
 
 Assistant may admit one complete Engineering Work directly from one accepted Input. It uses this
-bounded path only when current Goal authority already defines one cohesive terminal proof boundary
+bounded path only when current Goal authority already defines one settled Engineering outcome
 and no existing Work or durable design contract must be revised. One Input can directly admit at
 most one Engineering Work across the Home. When more than one new Work, contract revision, design
-judgment, or graph rewrite is needed, Planner creates the smallest complete Engineering Work set.
+judgment, or graph rewrite is needed, Planner creates only the Engineering Work required by the
+current Goal boundary.
 Each Work owns one durable candidate that follows one canonical fact chain and can receive one
 terminal Reviewer judgment through one primary verification strategy. A product or runtime flow may
 therefore span ordered Work. The whole graph need not exist up front.
@@ -498,8 +495,8 @@ selected Goal is the page title, nearby Goals are smaller muted peers beside it,
 remain available through the same overflow control. This title variant has no rail border or
 background. The compact Project rail derives its shortcut count from its own available width at the
 readable compact-tab size; it consumes otherwise idle shell space before placing remaining Projects
-in overflow. A Project with unresolved Attention explicitly transferred to the operator through
-NeedsYou shows that exact Attention count on its shortcut and in overflow; ordinary open Attention
+in overflow. A Project with unresolved Attention explicitly referenced by a Needs You turn shows
+that exact Attention count on its shortcut and in overflow; ordinary open Attention
 does not create the badge, and zero omits it. A Goal completion first observed after that browser has
 established its Project baseline adds a success marker to the same Project shortcut and overflow
 option. Activating that Project tab, including an already selected tab, records the currently visible

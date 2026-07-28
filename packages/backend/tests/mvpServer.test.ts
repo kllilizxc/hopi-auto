@@ -1579,8 +1579,32 @@ describe('MVP server', () => {
         updatedAt: timestamp,
         resolvedAt: null,
         refs: ['project:P-1'],
+        summary: 'Choose whether to release today or tomorrow.',
+        decisionPrompt: {
+          questions: [
+            {
+              id: 'window',
+              header: 'Release window',
+              question: 'When should this release happen?',
+              options: [
+                {
+                  id: 'today',
+                  label: 'Today',
+                  description: 'Release in the current window.',
+                  recommended: true,
+                },
+                {
+                  id: 'tomorrow',
+                  label: 'Tomorrow',
+                  description: 'Wait for the next window.',
+                },
+              ],
+              allowOther: true,
+            },
+          ],
+        },
       },
-      body: 'Choose the release window.\n',
+      body: 'The release is ready, but only the operator can select its external window.\n',
     })
     const event = await workspace.receiveSystemEvent({
       eventId: 'EV-choice',
@@ -1590,8 +1614,11 @@ describe('MVP server', () => {
     })
     const homeId = (await workspace.readWorkspace()).homeId
     const attentionRef = workspaceAttentionReference(homeId, 'A-choice')
+    await workspace.stageAttentionRequest(event.attributes.id, {
+      attentionRefs: [attentionRef],
+    })
     await workspace.handleEvent(event.attributes.id, {
-      reply: '<NeedsYou attentionId="A-choice">Choose today or tomorrow.</NeedsYou>',
+      reply: 'Your input is needed.',
       disposition: 'operator-requested',
       expose: true,
       handledAt: new Date('2026-07-16T08:01:00.000Z'),
@@ -1612,6 +1639,10 @@ describe('MVP server', () => {
             scope: 'workspace',
             projectId: 'P-1',
             id: 'A-choice',
+            summary: 'Choose whether to release today or tomorrow.',
+            decisionPrompt: expect.objectContaining({
+              questions: [expect.objectContaining({ id: 'window' })],
+            }),
           }),
         ],
       },

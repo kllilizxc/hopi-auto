@@ -987,9 +987,11 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain(
       'A Work requested in this turn can start only after the turn settles',
     )
-    expect(seen[0]?.prompt).toContain('hopi_manage_attention persists the Project Assistant todo')
-    expect(seen[0]?.prompt).toContain('<NeedsYou attentionId="A-...">')
-    expect(seen[0]?.prompt).not.toContain('<DecisionPrompt>')
+    expect(seen[0]?.prompt).toContain('hopi_manage_attention persists Project Attention')
+    expect(seen[0]?.prompt).toContain(
+      'transfer_attention_to_user presents referenced open Attention',
+    )
+    expect(seen[0]?.prompt).not.toContain('<NeedsYou')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
     expect(seen[0]?.prompt).toContain('Project Preview is one local managed runtime')
@@ -1404,6 +1406,47 @@ describe('WorkspaceAssistant conversation', () => {
     expect(turn?.events.some((event) => event.kind === 'message' && event.level === 'error')).toBe(
       true,
     )
+  })
+
+  test('publishes a transferred Attention even when the model adds no duplicate reply text', async () => {
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        const created = await tools.execute(input.toolToken, 'hopi_manage_attention', {
+          projectId: 'P-1',
+          change: {
+            kind: 'create',
+            attentionId: 'A-choice',
+            summary: 'Choose the deployment owner.',
+            body: 'The external deployment requires operator authority.',
+            refs: [],
+          },
+        })
+        await tools.execute(input.toolToken, 'hopi_manage_attention', {
+          projectId: 'P-1',
+          change: {
+            kind: 'transfer_attention_to_user',
+            attentionRefs: [(created.value as { attentionRef: string }).attentionRef],
+          },
+        })
+        return { reply: '', session: codexSession('thread-attention-transfer') }
+      },
+    }))
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-attention-transfer',
+      content: 'Prepare the deployment decision.',
+      context: { projectId: 'P-1' },
+    })
+
+    await fixture.assistant.process('EV-attention-transfer')
+
+    expect((await fixture.workspace.readEvent('EV-attention-transfer'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'public',
+      reply: 'Your input is needed.',
+      attentionRequest: {
+        attentionRefs: [expect.stringContaining('/attention:A-choice')],
+      },
+    })
   })
 
   test('processes a system event in the Project session without treating it as user speech', async () => {

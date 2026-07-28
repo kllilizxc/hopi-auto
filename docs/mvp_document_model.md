@@ -7,8 +7,10 @@ Last updated: 2026-07-24
 > and immutable original Goal statement. Legacy Goal-local and Workspace Attention fields remain
 > readable only for migration until this document is consolidated.
 >
-> Any `operatorRequest`, `revisitAt`, Attention owner/target, decision-prompt, or handoff fields
-> described below are historical compatibility details, not active Project Attention schema.
+> Any `operatorRequest`, `revisitAt`, Attention owner/target, or handoff fields described below are
+> historical compatibility details. The active Project Attention presentation fields are `summary`
+> and optional `decisionPrompt`; responsibility-produced Goal-local Attention shares those
+> presentation fields. A public Inbox `attentionRequest` contains only canonical references.
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
@@ -128,8 +130,9 @@ was observed. Neither value is proof of a side effect; canonical documents and t
 truth.
 Visibility is also immutable except for one transition: when a Reflection-sourced speaking turn
 finishes, Coordinator publishes `internal -> public` atomically with any non-empty final reply.
-`transfer_attention_to_user` stages the current final reply as an operator-owned request; no staged
-request remains internal. Visibility never moves back and a user-sourced turn can never become
+`transfer_attention_to_user` stages exact Attention references on the pending turn; no staged request
+remains internal. The UI renders current summaries and choices from those Attention documents rather
+than parsing the final reply. Visibility never moves back and a user-sourced turn can never become
 internal.
 
 - Public input is acknowledged only after the event document is durable; an internal handoff also

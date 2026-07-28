@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react'
 import { type Components, Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import type { AttentionView } from '../lib/api'
 import {
   type MessageFeedActivityEntry,
   type MessageFeedDisplayRow,
@@ -20,6 +21,7 @@ import {
   summarizeActivityGroup,
 } from '../lib/messageFeed'
 import { cn } from '../lib/utils'
+import { AssistantDecisionPrompt } from './AssistantDecisionPrompt'
 import { MessageFeedSkeleton } from './MessageFeedSkeleton'
 import {
   AppBreathingIndicator,
@@ -48,8 +50,10 @@ interface UnifiedMessageFeedProps {
   onScrollingChange?: (scrolling: boolean) => void
   focusGroupId?: string | null
   focusRequest?: number
-  needsYouByGroupId?: ReadonlyMap<string, number>
+  needsYouAttentionsByGroupId?: ReadonlyMap<string, readonly AttentionView[]>
+  decisionPromptDisabled?: boolean
   onReplyNeedsYou?: (groupId: string) => void
+  onSubmitDecisionPrompt?: (groupId: string, answer: string) => void
 }
 
 const INITIAL_FIRST_ITEM_INDEX = 100_000
@@ -99,8 +103,10 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
   onScrollingChange,
   focusGroupId = null,
   focusRequest = 0,
-  needsYouByGroupId,
+  needsYouAttentionsByGroupId,
+  decisionPromptDisabled = false,
   onReplyNeedsYou,
+  onSubmitDecisionPrompt,
 }: UnifiedMessageFeedProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
   const handledFocusRequestRef = useRef(0)
@@ -201,19 +207,30 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
       if (row.type === 'action_required') return <ActionRequiredRow item={row.item} />
       if (row.type === 'system_update') return <SystemUpdateRow item={row.item} />
       const groupId = row.item.groupId
+      const needsYouAttentions = groupId
+        ? needsYouAttentionsByGroupId?.get(groupId)
+        : undefined
       return (
         <MessageRow
           item={row.item}
-          needsYouCount={groupId ? (needsYouByGroupId?.get(groupId) ?? 0) : 0}
+          needsYouAttentions={needsYouAttentions}
+          decisionPromptDisabled={decisionPromptDisabled}
           onReply={groupId && onReplyNeedsYou ? () => onReplyNeedsYou(groupId) : undefined}
+          onSubmitDecisionPrompt={
+            groupId && onSubmitDecisionPrompt
+              ? (answer) => onSubmitDecisionPrompt(groupId, answer)
+              : undefined
+          }
         />
       )
     },
     [
+      decisionPromptDisabled,
       expandedItems,
       lastRowId,
-      needsYouByGroupId,
+      needsYouAttentionsByGroupId,
       onReplyNeedsYou,
+      onSubmitDecisionPrompt,
     ],
   )
   const itemContent = useCallback(
@@ -332,8 +349,10 @@ function messageFeedPropsEqual(previous: UnifiedMessageFeedProps, next: UnifiedM
     previous.onScrollingChange !== next.onScrollingChange ||
     previous.focusGroupId !== next.focusGroupId ||
     previous.focusRequest !== next.focusRequest ||
-    previous.needsYouByGroupId !== next.needsYouByGroupId ||
-    previous.onReplyNeedsYou !== next.onReplyNeedsYou
+    previous.needsYouAttentionsByGroupId !== next.needsYouAttentionsByGroupId ||
+    previous.decisionPromptDisabled !== next.decisionPromptDisabled ||
+    previous.onReplyNeedsYou !== next.onReplyNeedsYou ||
+    previous.onSubmitDecisionPrompt !== next.onSubmitDecisionPrompt
   ) {
     return false
   }
@@ -356,15 +375,19 @@ function feedRowGroupId(row: RenderedFeedRow) {
 
 function MessageRow({
   item,
-  needsYouCount = 0,
+  needsYouAttentions = [],
+  decisionPromptDisabled = false,
   onReply,
+  onSubmitDecisionPrompt,
 }: {
   item: MessageFeedItem
-  needsYouCount?: number
+  needsYouAttentions?: readonly AttentionView[]
+  decisionPromptDisabled?: boolean
   onReply?: () => void
+  onSubmitDecisionPrompt?: (answer: string) => void
 }) {
   const isUser = item.kind === 'user_message'
-  const needsYou = !isUser && needsYouCount > 0
+  const needsYou = !isUser && needsYouAttentions.length > 0
   return (
     <article
       className={cn(
@@ -377,7 +400,7 @@ function MessageRow({
         {needsYou ? (
           <div className="unified-feed-needs-you">
             <StatusChip color="warning" size="sm" variant="soft">
-              Needs you{needsYouCount > 1 ? ` · ${needsYouCount}` : ''}
+              Needs you{needsYouAttentions.length > 1 ? ` · ${needsYouAttentions.length}` : ''}
             </StatusChip>
             <AppButton
               className="unified-feed-needs-you__reply"
@@ -392,9 +415,38 @@ function MessageRow({
         ) : null}
         {isUser && item.text.trim() ? (
           <div className="unified-feed-message__bubble">{item.text}</div>
-        ) : !isUser ? (
+        ) : !isUser && !needsYou ? (
           <div className="unified-feed-message__text">
             <AssistantMessageText text={item.text} />
+          </div>
+        ) : null}
+        {needsYou ? (
+          <div className="unified-feed-attention-request">
+            {needsYouAttentions.map((attention) => (
+              <section
+                className="unified-feed-attention-request__item"
+                key={`${attention.scope}:${attention.projectId ?? ''}:${attention.goalId ?? ''}:${attention.id}`}
+              >
+                <div className="unified-feed-message__text">
+                  <AssistantMessageText text={attention.summary} />
+                </div>
+                {attention.body.trim() !== attention.summary.trim() ? (
+                  <AppDisclosure
+                    className="unified-feed-attention-request__details"
+                    summary="Technical details"
+                  >
+                    <AssistantMessageText text={attention.body} />
+                  </AppDisclosure>
+                ) : null}
+              </section>
+            ))}
+            {onSubmitDecisionPrompt ? (
+              <AssistantDecisionPrompt
+                attentions={needsYouAttentions}
+                disabled={decisionPromptDisabled}
+                onSubmit={onSubmitDecisionPrompt}
+              />
+            ) : null}
           </div>
         ) : null}
         {item.attachments && item.attachments.length > 0 ? (

@@ -8,6 +8,7 @@ import {
   validateAssistantWorkspaceTransition,
 } from '../domain/assistantWorkspace'
 import {
+  type InboxAttentionRequest,
   type InboxContext,
   type InboxEventDocument,
   type WorkspaceAttentionDocument,
@@ -59,6 +60,10 @@ export interface AssistantWorkspaceStore {
   receiveSystemEvent(input: ReceiveInternalEventInput): Promise<InboxEventDocument>
   receiveReflectionEvent(input: ReceiveInternalEventInput): Promise<InboxEventDocument>
   exposeEvent(eventId: string): Promise<InboxEventDocument>
+  stageAttentionRequest(
+    eventId: string,
+    request: InboxAttentionRequest,
+  ): Promise<InboxEventDocument>
   handleEvent(
     eventId: string,
     input: { reply: string; disposition: string; handledAt?: Date; expose?: boolean },
@@ -70,6 +75,8 @@ export interface AssistantWorkspaceStore {
     input: {
       body?: string
       refs?: string[]
+      summary?: string
+      decisionPrompt?: WorkspaceAttentionDocument['attributes']['decisionPrompt']
       updatedAt?: Date
     },
   ): Promise<WorkspaceAttentionDocument>
@@ -187,6 +194,31 @@ export function createAssistantWorkspaceStore(
       await publishEvent(this, publisher, eventId, source, event)
       return event
     },
+    async stageAttentionRequest(eventId, request) {
+      const { source, event } = await requireEvent(this, homeRoot, eventId)
+      if (event.attributes.status !== 'pending') {
+        throw new AssistantWorkspaceStoreError(
+          'Handled Inbox event cannot stage Attention transfer',
+        )
+      }
+      const attentionRequest = {
+        attentionRefs: [
+          ...new Set([
+            ...(event.attributes.attentionRequest?.attentionRefs ?? []),
+            ...request.attentionRefs,
+          ]),
+        ],
+      }
+      if (
+        JSON.stringify(event.attributes.attentionRequest ?? null) ===
+        JSON.stringify(attentionRequest)
+      ) {
+        return event
+      }
+      event.attributes.attentionRequest = attentionRequest
+      await publishEvent(this, publisher, eventId, source, event)
+      return event
+    },
     async handleEvent(eventId, input) {
       const { source, event } = await requireEvent(this, homeRoot, eventId)
       if (event.attributes.status === 'handled') return event
@@ -199,6 +231,9 @@ export function createAssistantWorkspaceStore(
       event.attributes.status = 'handled'
       event.attributes.handledAt = (input.handledAt ?? new Date()).toISOString()
       event.attributes.reply = input.reply.trim()
+      if (event.attributes.attentionRequest && event.attributes.visibility !== 'public') {
+        throw new AssistantWorkspaceStoreError('Attention transfer requires a public Inbox event')
+      }
       event.attributes.disposition = input.disposition.trim()
       await publishEvent(this, publisher, eventId, source, event)
       return event
@@ -234,6 +269,10 @@ export function createAssistantWorkspaceStore(
         }
         if (input.body !== undefined) attention.body = normalizeReceivedContent(input.body)
         if (input.refs !== undefined) attention.attributes.refs = [...new Set(input.refs)]
+        if (input.summary !== undefined) attention.attributes.summary = input.summary.trim()
+        if (input.decisionPrompt !== undefined) {
+          attention.attributes.decisionPrompt = input.decisionPrompt
+        }
         attention.attributes.updatedAt = (input.updatedAt ?? new Date()).toISOString()
       })
     },
@@ -271,6 +310,7 @@ async function receiveEvent(
       sourceDigest: await inboxSourceDigest(body, attachments),
       attachments,
       ...(input.context ? { context: { ...input.context } } : {}),
+      attentionRequest: null,
       handledAt: null,
       reply: null,
       disposition: null,

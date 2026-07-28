@@ -1054,6 +1054,8 @@ function proposalCapabilities(
       createdAt: '1970-01-01T00:00:00.000Z',
       resolvedAt: null,
       notifiedAt: null,
+      summary: 'short operator-facing explanation of the condition',
+      decisionPrompt: null,
     },
   }
   if (input.responsibility !== 'planner') {
@@ -1571,14 +1573,12 @@ function plannerPrompt(paths: {
   return [
     '## Planner',
     '',
-    'Owned outcome: durable design and the smallest complete Engineering DAG whose Work each owns one terminal proof boundary.',
+    'Owned outcome: durable design and only the Engineering Work required to reach the current Goal boundary.',
     'Goal authority and source are read-only.',
     ...(paths.operatorPreferenceFile
       ? ['Operator preferences are defaults below current Input and Project/Goal authority.']
       : []),
-    'A Work is cohesive when one durable candidate follows one canonical fact chain and Reviewer can judge it with one primary verification strategy.',
-    'Split at stable contract or artifact boundaries when accepted concerns require independent proof, even within one product/runtime flow; keep helper-only changes with their consumer when they have no durable proof boundary.',
-    'Reviewer success is terminal for the complete Engineering Work; use targeted Attention rather than success while required action or proof remains.',
+    'Current Goal authority may shrink or replace earlier nonterminal plans. Deferred or future outcomes are outside current completion unless the Goal includes them.',
     'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
     'The proposal owns the current nonterminal dependsOn graph and may atomically add, remove, or redirect edges. Leave one valid acyclic graph; terminal Work is immutable.',
     'Owned Project Repo context: .hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology.',
@@ -1608,11 +1608,11 @@ function reviewerPrompt(projectId: string) {
   return [
     '## Reviewer',
     '',
-    'Owned outcome: independently determine whether the Engineering Work satisfies its accepted contract and material integrity and safety obligations.',
-    'Success is terminal for the complete Work, not a phase or checkpoint.',
+    'Owned outcome: independently determine whether the received candidate satisfies the current Engineering Work contract.',
+    'Success is terminal for that current Work. Future or deferred outcomes do not extend its contract.',
     'Reviewer verifies the candidate as received; it may reproduce checks but does not create a missing contract-required deliverable or become its sole producer.',
     'Finding one reject-worthy defect does not end the review: continue the reasonably available audit and report together all material defects found in this pass.',
-    'A missing or defective deliverable within Generator authority returns reject. Missing authority, an operator decision, invalid accepted design, or an external action outside both responsibility boundaries returns targeted Attention.',
+    'A missing or defective accepted deliverable within Generator authority returns reject. Attention is for authority or action required by the current Work but unavailable to both responsibilities.',
     `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
     'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview, when present, observes the integrated release rather than this candidate.',

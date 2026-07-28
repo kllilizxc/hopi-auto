@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { assistantDecisionPromptSchema } from './assistantDecisionPrompt'
 import { inboxEventReferenceSchema } from './inboxEventReference'
 import {
   type MarkdownDocument,
@@ -84,6 +85,8 @@ export const attentionAttributesSchema = z.preprocess(
       resolvedAt: timestampSchema.nullable(),
       notifiedAt: timestampSchema.nullable(),
       resolutionInput: canonicalRefSchema.nullable().optional(),
+      summary: z.string().trim().min(1).max(600).optional(),
+      decisionPrompt: assistantDecisionPromptSchema.nullable().optional(),
     })
     .strict(),
 )

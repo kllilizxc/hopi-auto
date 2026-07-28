@@ -227,6 +227,8 @@ function normalizeNewAttentions(
         ...attention.document.attributes,
         id,
         createdAt,
+        summary:
+          attention.document.attributes.summary ?? summarizeAttentionBody(attention.document.body),
       },
       body: attention.document.body,
     }
@@ -243,6 +245,15 @@ function normalizeNewAttentions(
   })
 
   return { ...proposal, changedWrites, newAttentions }
+}
+
+function summarizeAttentionBody(body: string) {
+  const line =
+    body
+      .split(/\r?\n/u)
+      .map((candidate) => candidate.trim())
+      .find((candidate) => candidate && !candidate.startsWith('#')) ?? 'This item needs attention.'
+  return line.length > 600 ? `${line.slice(0, 597)}...` : line
 }
 
 function allocateFreshAttentionId(proposedId: string, reservedIds: ReadonlySet<string>) {

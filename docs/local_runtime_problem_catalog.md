@@ -93,10 +93,10 @@ O-01 属于外部传输故障加恢复体验问题；O-03～O-05 是当前 Proje
 
 | ID | 发生过什么 | 根因/判断 | 状态与证据 | 第一代码位置 |
 | --- | --- | --- | --- | --- |
-| H-15 | `request_user` 的名字让模型以为“调用后系统会询问并暂停”，但它本质是把一个已存在 Attention 的所有权转给用户；早期调用后调度仍继续。 | 工具名称、持久化 effect 和调度后果不一致。 | 当前由 `transfer_attention_to_user` 在最终回复持久化后原子安装 `operatorRequest`；工具本身不发送文本。 | `assistant/assistantTools.ts`、`assistant/workspaceAssistant.ts`、`domain/assistantWorkspaceDocuments.ts` |
+| H-15 | `request_user` 的名字让模型以为“调用后系统会询问并暂停”，但它只是在消息上标记需要用户注意；早期调用后调度仍继续。 | 工具名称、持久化 effect 和调度后果不一致。 | 当前 `transfer_attention_to_user` 只把开放 Attention 的精确引用写入当前公开 turn；摘要和选项来自 Attention，不改变调度或所有权。 | `assistant/assistantTools.ts`、`assistant/workspaceAssistant.ts`、`domain/assistantWorkspaceDocuments.ts` |
 | H-16 | 旧 Attention 一直存在就被 Reflection 当成当前失败，导致“reprojection still missing”等误判反复出现。 | 历史文档和当前 live diagnostic 混为一体。 | `926b88e` 分离 live diagnostics 与 Attention history，`c7eebd7` 让 Reflection 以当前状态为准，`c6842a7` 去掉 phantom reprojection。 | `assistant/assistantState.ts`、`assistant/assistantReflection.ts` |
 | H-17 | Retry 曾触发新的规则分支、重复 Attention 或重复 Work；解决 Attention 后 Work 仍可能不运行。 | Retry 被当成另一个流程，而不是同一 Work authority 的新尝试。 | Work 现在只有 `continue`：每次请求都对应可恢复的 queued Attempt，是否已请求不再依赖内存或 Attention。 | `assistant/assistantTools.ts`、`runtime/runAttemptStore.ts`、`scheduler/projectReconciler.ts` |
-| H-18 | 用户没有回答 Needs you，Agent 却继续执行；另一端又出现 Assistant 自己能修的问题也被标成 Needs you。 | “通知”“用户拥有”“Work 阻塞”曾共用同一个 Attention 状态。 | `operatorRequest` 是唯一的用户责任指针；Assistant 可 resolve、defer 或 transfer，Work 的 queued Attempt 与 Attention 正交。 | `domain/assistantWorkspaceDocuments.ts`、`assistant/assistantAttentionRevisit.ts`、`mvpServer.ts` |
+| H-18 | 用户没有回答 Needs you，Agent 却继续执行；另一端又出现 Assistant 自己能修的问题也被标成 Needs you。 | “通知”“用户拥有”“Work 阻塞”曾共用同一个 Attention 状态。 | Needs You 现在只是公开 turn 对开放 Attention 的投影；transfer、回复和 Attention 都不控制 Work 调度，Assistant 只在确需用户权限或决定时创建该投影。 | `domain/assistantWorkspaceDocuments.ts`、`assistant/workspaceAssistant.ts`、`mvpServer.ts` |
 | H-19 | Background Reflection 连续 3 次 handoff 不收敛，产生 Workspace Attention；常见底层原因是相同 Planner failure、Chrome/npm 阻塞或脏 integration 被重复叙述。 | Reflection checkpoint 只看全局 digest，Project A 的变化会吞掉 Project B 的通知，也会对同一 scope 反复触发。 | 6 个 Workspace Attention 属于此类；`0f53b3a` 按 conversation scope 隔离 checkpoint。O-06 表明进程重启后的 `running` manifest 终结仍需补齐。 | `assistant/assistantReflection.ts`、`assistant/assistantState.ts` |
 | H-20 | Expert Mirror 所有 Work 已 terminal，却没有发 completed；Mystore/NSO completion 会互相影响。 | Reflection 使用 Home 全局 checkpoint，先处理一个 Project 后把另一个 Project 的完成状态一起记为已见。 | `0f53b3a` 已修复并有 scope 回归测试。 | `assistant/assistantReflection.ts::reflectionScopeSnapshots` |
 | H-21 | 8 个 Assistant Turn 因“回复没有包含 Evidence artifact 的 operatorUrl”被强制判失败，即使模型的完成判断本身正确。 | 把回复格式当成完成正确性的硬规则，违反“让模型判断”的设计原则。 | `c32fb4e` 删除该完成规则并信任 Assistant judgement；旧 Turn 仍保留失败记录。 | `assistant/assistantTools.ts`、`assistant/assistantState.ts` |
@@ -209,7 +209,7 @@ O-01 属于外部传输故障加恢复体验问题；O-03～O-05 是当前 Proje
 - `attempt.json` 中 `result=reject` 多数是 Reviewer 正常发现下游候选不满足验收，不应改 Coordinator 让它通过。
 - `application=stale` 表示 publication 时 release/authority 已变化，正常做法是用新上下文重新判断，不是强行套旧结果。
 - `status=interrupted` 多数来自 Coordinator shutdown、新用户输入、cancel 或更高优先级 Run。只有进程仍存活、manifest 不终结或重复发布时才是 bug。
-- 已解决 Attention 仍保留是审计要求。判断是否阻塞要看 `resolvedAt`、`operatorRequest`、`retryRunId` 和当前 state，而不是文件是否存在。
+- 已解决 Attention 仍保留是审计要求。判断当前事实要看 `resolvedAt`、公开 turn 的 `attentionRequest`、Attempt 和当前 state，而不是文件是否存在。
 - Preview prepare 日志里的第三方 warning、项目自己打印的 `ERROR` 字样不一定让 prepare 失败；以顶层 `Status:`、exit code、ready surface 和 source-clean 结果为准。
 
 ## 6. 接手 Agent 的最短检查路径

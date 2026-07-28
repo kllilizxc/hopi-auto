@@ -163,16 +163,6 @@ export function AssistantPanel({
     () => assistantStream.requests.flatMap((request) => request.attentions),
     [assistantStream.requests],
   )
-  const needsYouByGroupId = useMemo(
-    () =>
-      new Map(
-        [...needsYouAttentionsByGroupId].map(([groupId, attentions]) => [
-          groupId,
-          attentions.length,
-        ]),
-      ),
-    [needsYouAttentionsByGroupId],
-  )
   const latestNeedsYouRequest = assistantStream.requests.at(-1)
   const latestNeedsYouGroupId = latestNeedsYouRequest
     ? `inbox:${latestNeedsYouRequest.eventId}`
@@ -356,6 +346,23 @@ export function AssistantPanel({
     })
   }
 
+  const submitDecisionPrompt = useCallback(
+    (groupId: string, answer: string) => {
+      const request = assistantStream.requests.find(
+        (candidate) => `inbox:${candidate.eventId}` === groupId,
+      )
+      if (!request?.attentions.length) return
+      submitMessage({
+        text: answer,
+        images: [],
+        attentions: request.attentions,
+        eventId: request.eventId,
+        clearComposer: false,
+      })
+    },
+    [assistantStream.requests, submitMessage],
+  )
+
   const queueImages = (files: File[]) => {
     setImageError(null)
     const selected = files.filter((file) => file.type.startsWith('image/'))
@@ -466,8 +473,10 @@ export function AssistantPanel({
                     : null
               }
               focusRequest={messageFocus?.request ?? 0}
-              needsYouByGroupId={needsYouByGroupId}
+              needsYouAttentionsByGroupId={needsYouAttentionsByGroupId}
+              decisionPromptDisabled={sendPending}
               onReplyNeedsYou={replyToNeedsYouMessage}
+              onSubmitDecisionPrompt={submitDecisionPrompt}
               emptyState={
                 <div className="conversation-empty">
                   {assistantStream.error ? (

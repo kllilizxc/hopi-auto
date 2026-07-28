@@ -199,21 +199,21 @@ Project-target Attention resolves only after deterministic repair validation.
 A read-only Reflection may only prepare one handoff brief. Coordinator confirms the observed digest
 is still current before creating one new internal pending speaking Inbox item as its single gate.
 Reflection cannot publish Project state. A non-empty final response from the speaking thread is an
-informational reply by default; an empty response remains internal. When an exact decision or
-external action is required, `transfer_attention_to_user` stages current open Assistant-owned
-Attention references visible in that conversation. After the model returns, Coordinator first
-exposes and handles that same turn with its complete reply, then acknowledges each selected canonical
-Goal-local or workspace Attention reference from event metadata in its owning-root publication. Both
-paths may set `notifiedAt`; only the request path also writes the handled event's canonical reference
-to `operatorRequest`. A crash before the handled gate leaves the turn internal and pending; a crash
-after it leaves a handled public turn whose normal recovery finishes any missing acknowledgement.
-Recovery never infers visibility, request intent, or Attention identity from reply prose. An optional
-webhook mirrors only the handled public Inbox reply and records its independent
+informational reply by default; an empty response remains internal unless it stages an Attention
+request. When an exact decision or external action is required, `transfer_attention_to_user` stages current open
+Attention references visible in that conversation. Repeated transfer calls on the pending turn
+append references. After the model returns, Coordinator exposes and handles that same turn with its
+complete reply and staged reference set as one Assistant-home gate. Attention remains unchanged. A
+crash before the handled gate leaves the turn pending and safely resumable; a handled turn already
+contains its complete request identity. Recovery never infers visibility, request intent, or
+Attention identity from reply prose. An optional webhook mirrors only the handled public Inbox reply
+and records its independent
 `webhookDeliveredAt`; it never acknowledges raw Attention.
 
 The operator's explicit Reply control creates a new user Inbox event whose immutable `replyTo`
 identifies that handled request event and whose `attentionRefs` identify the same canonical blockers.
-Only this exact correlation clears `operatorRequest`; a location-scoped ordinary message does not.
+This exact correlation supplies context to Assistant; neither it nor a location-scoped ordinary
+message mutates Attention.
 
 ## Process-Crash Reconciliation
 
@@ -251,20 +251,19 @@ Completion uses final Planning Evidence and creates no Attention or content-dige
 Attention has no type discriminator. Its control meaning is:
 
 - `resolvedAt: null` means open
-- a non-null `target` blocks that event, project, Goal, or Work and its defined descendants
+- `target` or `refs` preserve scope and traceability
 - `target: null` is readable legacy completion state; no new Run creates it
-- `notifiedAt` records acknowledged delivery, not resolution
-- `operatorRequest` is null while Assistant owns the next action and otherwise identifies the exact
-  unanswered public Assistant event
+- `summary` is operator-facing while the body retains complete Agent detail
+- optional `decisionPrompt` supplies the shared choice contract
+- `notifiedAt` and `operatorRequest` are legacy compatibility fields
 
-The body carries the question, blocker explanation, or completion message. Models interpret that
-Markdown; the kernel does not parse it into an action. A materially different operator-visible
-message uses a new Attention identity.
+Models interpret Attention; the kernel does not parse its prose into an action. A public Inbox
+`attentionRequest` contains only canonical references and becomes Needs You presentation while any
+referenced Attention remains open.
 
-Assistant delivery is durable before `notifiedAt`: the complete handled public Inbox reply is its
-receipt, and exact canonical Inbox references correlate it to Attention across roots. The optional
-webhook is an at-least-once mirror of that reply; a crash after transport acknowledgement but before
-Inbox `webhookDeliveredAt` may repeat the same event identity without repeating domain effects.
+The complete handled public Inbox turn is the request receipt. The optional webhook is an
+at-least-once mirror of that reply; a crash after transport acknowledgement but before Inbox
+`webhookDeliveredAt` may repeat the same event identity without repeating domain effects.
 
 ## Cross-Root Handoff
 

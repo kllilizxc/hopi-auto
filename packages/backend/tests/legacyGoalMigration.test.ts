@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { renderWorkDocument } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 import { migrateLegacyGoals } from '../src/storage/legacyGoalMigration'
@@ -50,6 +51,55 @@ afterEach(async () => {
 })
 
 describe('legacy Goal migration', () => {
+  test('updates only the old system initial Planning contract and converges', async () => {
+    await rm(join(temporaryRoot, '.hopi/docs/goals/G-1'), { recursive: true, force: true })
+    const publisher = new PublicationCoordinator()
+    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
+    const created = await store.createGoal({
+      goalId: 'G-1',
+      title: 'Canonical Goal',
+      objective: 'Ship the current boundary.',
+    })
+    const work = created.works.get('plan-initial')
+    expect(work).toBeDefined()
+    if (!work) throw new Error('Expected initial Planning Work')
+    const oldBody = work.body
+      .replace(
+        'Clarify the current Goal boundary and accepted Inputs, then update design and only the Engineering Work needed to reach it.',
+        'Clarify the current Goal contract and accepted Inputs, then update design and the smallest complete Engineering Work DAG.',
+      )
+      .replace(
+        'Design and nonterminal Engineering Work reflect the current Goal boundary.',
+        'The design documents and smallest complete Engineering Work DAG are current.',
+      )
+      .replace(
+        'Deferred or removed outcomes do not remain in current Work or completion criteria.',
+        'Each Engineering Work owns one terminal proof boundary.',
+      )
+    await Bun.write(
+      store.paths.absolute(store.paths.workDocument('G-1', 'plan-initial')),
+      renderWorkDocument({ attributes: work.attributes, body: oldBody }),
+    )
+
+    await expect(
+      migrateLegacyGoals(store.paths, publisher, {
+        beforeGateWrite() {
+          throw new Error('crash before template update')
+        },
+      }),
+    ).rejects.toThrow('crash before template update')
+    expect(
+      await Bun.file(store.paths.absolute(store.paths.workDocument('G-1', 'plan-initial'))).text(),
+    ).toContain('smallest complete Engineering Work DAG')
+    expect(await store.migrateLegacyGoals()).toEqual([
+      { goalId: 'G-1', kind: 'planning_template_updated' },
+    ])
+    expect((await store.readPackage('G-1')).works.get('plan-initial')?.body).toContain(
+      'only the Engineering Work needed to reach it',
+    )
+    expect(await store.migrateLegacyGoals()).toEqual([{ goalId: 'G-1', kind: 'already_canonical' }])
+  })
+
   test('converges todo.yml into canonical documents without fabricating completion Evidence', async () => {
     const publisher = new PublicationCoordinator()
     const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)

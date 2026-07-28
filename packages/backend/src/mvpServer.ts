@@ -28,6 +28,7 @@ import {
   goalAttentionReference,
   normalizeInboxAttentionReferences,
   parseAttentionReference,
+  workspaceAttentionReference,
 } from './domain/attentionReference'
 import { workAttentionTarget } from './domain/attentionTarget'
 import {
@@ -1418,6 +1419,8 @@ interface ScopedAssistantAttentionBase {
   id: string
   createdAt: string
   resolvedAt: string | null
+  summary: string
+  decisionPrompt: WorkspaceAttentionDocument['attributes']['decisionPrompt']
   body: string
 }
 
@@ -1444,6 +1447,8 @@ function presentWorkspaceAttention(
     scope: 'workspace',
     ...(projectId ? { projectId } : {}),
     ...attention.attributes,
+    summary: attention.attributes.summary ?? summarizeAttentionBody(attention.body),
+    decisionPrompt: attention.attributes.decisionPrompt ?? null,
     body: attention.body,
   }
 }
@@ -1462,8 +1467,19 @@ function presentGoalAttention(
     createdAt: attention.attributes.createdAt,
     resolvedAt: attention.attributes.resolvedAt,
     notifiedAt: attention.attributes.notifiedAt,
+    summary: attention.attributes.summary ?? summarizeAttentionBody(attention.body),
+    decisionPrompt: attention.attributes.decisionPrompt ?? null,
     body: attention.body,
   }
+}
+
+function summarizeAttentionBody(body: string) {
+  const line =
+    body
+      .split(/\r?\n/u)
+      .map((candidate) => candidate.trim())
+      .find((candidate) => candidate && !candidate.startsWith('#')) ?? 'This item needs attention.'
+  return line.length > 600 ? `${line.slice(0, 597)}...` : line
 }
 
 interface ScopedGoalCompletion {
@@ -1548,19 +1564,23 @@ async function readScopedAssistantProjection(
 }
 
 function projectAssistantOpenRequests(
-  _homeId: string,
+  homeId: string,
   events: ReadonlyMap<string, InboxEventDocument>,
   attentions: Awaited<ReturnType<typeof readScopedAssistantProjection>>['attentions'],
 ) {
-  type WorkspaceAttention = Extract<(typeof attentions)[number], { scope: 'workspace' }>
-  const openById = new Map<string, WorkspaceAttention>()
+  type OpenAttention = (typeof attentions)[number]
+  const openByReference = new Map<string, OpenAttention>()
   for (const attention of attentions) {
-    if (attention.scope !== 'workspace' || attention.resolvedAt !== null) continue
-    openById.set(attention.id, attention)
+    if (attention.resolvedAt !== null) continue
+    const reference =
+      attention.scope === 'goal'
+        ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
+        : workspaceAttentionReference(homeId, attention.id)
+    openByReference.set(reference, attention)
   }
   const latestByAttention = new Map<
     string,
-    { eventId: string; occurredAt: string; attention: WorkspaceAttention }
+    { eventId: string; occurredAt: string; attention: OpenAttention }
   >()
   for (const event of [...events.values()].toSorted((left, right) =>
     left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
@@ -1572,10 +1592,15 @@ function projectAssistantOpenRequests(
     ) {
       continue
     }
-    for (const attentionId of needsYouAttentionIds(event.attributes.reply)) {
-      const attention = openById.get(attentionId)
+    const references = event.attributes.attentionRequest?.attentionRefs ?? [
+      ...needsYouAttentionIds(event.attributes.reply).map((attentionId) =>
+        workspaceAttentionReference(homeId, attentionId),
+      ),
+    ]
+    for (const reference of references) {
+      const attention = openByReference.get(reference)
       if (!attention) continue
-      latestByAttention.set(attentionId, {
+      latestByAttention.set(reference, {
         eventId: event.attributes.id,
         occurredAt: event.attributes.receivedAt,
         attention,
@@ -1588,7 +1613,7 @@ function projectAssistantOpenRequests(
     {
       eventId: string
       occurredAt: string
-      attentions: WorkspaceAttention[]
+      attentions: OpenAttention[]
     }
   >()
   for (const entry of latestByAttention.values()) {

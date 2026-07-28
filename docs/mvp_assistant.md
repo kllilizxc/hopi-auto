@@ -61,9 +61,9 @@ also continues each unresolved Attention revision at most once after a settled t
 turn already covers the conversation or an active Work Attempt will provide the next settlement
 edge.
 
-`NeedsYou` is presentation only. It links public text to one unresolved Project Attention so the UI
-can decorate, count, and focus that message. It does not change ownership, scheduling, resolution,
-or continuation; those follow durable Attention and Project state.
+`transfer_attention_to_user` links a public turn to one or more unresolved Attention records.
+Needs You renders their current operator summaries and optional shared choice UI; complete rationale
+stays in Attention detail. The transfer does not change scheduling or resolution.
 
 Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
 continue changing without advancing the selected Project's cursor; otherwise a cached Project feed
@@ -592,8 +592,9 @@ workflow concept.
 A supervision fork receives exactly the same validated MCP capability as a speaking turn. It may
 inspect, create or revise durable documents, manage Work and Attention, control Preview, or publish a
 concise update. If operator action is required, the fork creates or updates the relevant Attention
-and renders ordinary final text with `<NeedsYou attentionId="...">...</NeedsYou>`. The tag changes
-presentation only; resolving the Attention later renders the same message as ordinary history.
+with an operator summary and optional choices, then transfers its exact canonical reference through
+the current turn. The final text remains an ordinary concise receipt; the UI reads request wording
+from current Attention state.
 
 An empty final response records no public update. A non-empty final response is the complete public
 update and is also retained as an action receipt for the next speaking turn. No handoff tool,
@@ -663,15 +664,17 @@ idempotent. HOPI does not parse reply prose to reconstruct effects.
 ## Attention And Queueing
 
 Attention is the Project Assistant's durable todo set. It has natural-language body and canonical
-refs, but no owner, target, kind, priority, waiting, notification, retry, or operator-request state.
+refs plus a short operator summary and optional decision prompt, but no owner, target, kind, priority,
+waiting, notification, or retry state.
 All unresolved Attention is supplied together; Assistant may create, update, merge, or resolve it.
 An operator message or reply does not mutate Attention automatically.
 
-`<NeedsYou attentionId="...">...</NeedsYou>` is presentation in ordinary final text. While the exact
-Attention remains unresolved, the block renders as `Needs you`; after resolution it renders as
-ordinary Markdown. Reply stores the message and exact Attention reference as context but leaves the
-next action to Assistant judgment. The header count navigates to the newest visible unresolved block.
-There is no notification tool or ownership-transfer protocol.
+`transfer_attention_to_user` stages one or more exact open Attention references on the current public
+turn. While any reference remains unresolved, the turn renders as `Needs you` using each Attention's
+current summary and optional shared choice UI; complete bodies remain available as detail. Reply
+stores the message and exact Attention references as context but leaves the next action to Assistant
+judgment. The header count navigates to the newest visible unresolved request. Legacy `<NeedsYou>`
+blocks remain readable as reference-only history.
 
 Resolution wakes ordinary reconciliation but does not declare any Work or Project executable.
 Deterministic boundaries recheck their own facts and may create a new Attention if the condition

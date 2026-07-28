@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { MessageFeedItem } from '../lib/messageFeed'
+import {
+  decisionQuestionsComplete,
+  formatDecisionAnswers,
+} from './AssistantDecisionPrompt'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 
@@ -81,8 +85,61 @@ test('decorates the exact unresolved Assistant request and restores it after res
     <UnifiedMessageFeed
       feedKey="needs-you"
       items={[request]}
-      needsYouByGroupId={new Map([['inbox:EV-request', 2]])}
+      needsYouAttentionsByGroupId={
+        new Map([
+          [
+            'inbox:EV-request',
+            [
+              {
+                scope: 'workspace',
+                id: 'A-window',
+                createdAt: '2026-07-12T12:00:00.000Z',
+                updatedAt: '2026-07-12T12:00:00.000Z',
+                resolvedAt: null,
+                refs: ['project:P-1'],
+                summary: 'Choose whether to release today or tomorrow.',
+                body: 'The candidate is ready and the release window requires operator authority.',
+                decisionPrompt: {
+                  questions: [
+                    {
+                      id: 'window',
+                      header: 'Release window',
+                      question: 'When should this release happen?',
+                      options: [
+                        {
+                          id: 'today',
+                          label: 'Today',
+                          description: 'Use the current release window.',
+                          recommended: true,
+                        },
+                        {
+                          id: 'tomorrow',
+                          label: 'Tomorrow',
+                          description: 'Wait for the next release window.',
+                        },
+                      ],
+                      allowOther: true,
+                    },
+                  ],
+                },
+              },
+              {
+                scope: 'workspace',
+                id: 'A-audience',
+                createdAt: '2026-07-12T12:00:00.000Z',
+                updatedAt: '2026-07-12T12:00:00.000Z',
+                resolvedAt: null,
+                refs: ['project:P-1'],
+                summary: 'Confirm whether this release is internal only.',
+                body: 'External audience authority is not present in the current Goal.',
+                decisionPrompt: null,
+              },
+            ],
+          ],
+        ])
+      }
       onReplyNeedsYou={() => undefined}
+      onSubmitDecisionPrompt={() => undefined}
       mode="inline"
       emptyState={<span>Empty</span>}
     />,
@@ -91,7 +148,7 @@ test('decorates the exact unresolved Assistant request and restores it after res
     <UnifiedMessageFeed
       feedKey="resolved"
       items={[request]}
-      needsYouByGroupId={new Map()}
+      needsYouAttentionsByGroupId={new Map()}
       onReplyNeedsYou={() => undefined}
       mode="inline"
       emptyState={<span>Empty</span>}
@@ -101,6 +158,12 @@ test('decorates the exact unresolved Assistant request and restores it after res
   expect(marked).toContain('unified-feed-message-row assistant needs-you')
   expect(marked).toContain('Needs you')
   expect(marked).toContain('· 2')
+  expect(marked).toContain('Choose whether to release today or tomorrow.')
+  expect(marked).toContain('Confirm whether this release is internal only.')
+  expect(marked).toContain('Release window')
+  expect(marked).toContain('Today')
+  expect(marked).not.toContain('Which release strategy should I use?')
+  expect(marked).not.toContain('The candidate is ready and the release window')
   expect(marked).toContain('aria-label="Reply to this request"')
   expect(marked).toContain('>Reply<')
   expect(
@@ -122,6 +185,83 @@ test('hides DecisionPrompt protocol JSON from Assistant Markdown', () => {
   expect(rendered).toContain('Choose one.')
   expect(rendered).not.toContain('DecisionPrompt')
   expect(rendered).not.toContain('questions')
+})
+
+test('submits several selected choices as one readable reply', () => {
+  const questions = [
+    {
+      key: 'A-scope:scope',
+      question: {
+        id: 'scope',
+        header: 'Scope',
+        question: 'Which scope applies?',
+        options: [
+          {
+            id: 'current',
+            label: 'Current Goal',
+            description: 'Use the accepted Goal boundary.',
+            detailPrompt: 'Optional context',
+          },
+          { id: 'later', label: 'Later Goal', description: 'Defer it.' },
+        ],
+        allowOther: true,
+      },
+    },
+    {
+      key: 'A-owner:owner',
+      question: {
+        id: 'owner',
+        header: 'Owner',
+        question: 'Who has authority?',
+        options: [
+          { id: 'operator', label: 'Operator', description: 'Use operator authority.' },
+          { id: 'service', label: 'Service', description: 'Use service authority.' },
+        ],
+        allowOther: true,
+      },
+    },
+  ]
+
+  expect(
+    formatDecisionAnswers(
+      questions,
+      { 'A-scope:scope': 'current', 'A-owner:owner': '__other__' },
+      { 'A-scope:scope': 'Extra context', 'A-owner:owner': 'Release manager' },
+    ),
+  ).toBe('1. Scope: Current Goal — Extra context\n2. Owner: Release manager')
+})
+
+test('keeps option detail optional and requires text only for Other', () => {
+  const questions = [
+    {
+      key: 'A-path:path',
+      question: {
+        id: 'path',
+        header: 'Path',
+        question: 'Which path?',
+        options: [
+          {
+            id: 'bridge',
+            label: 'Bridge',
+            description: 'Use the existing bridge.',
+            detailPrompt: 'Optional gateway detail',
+          },
+          { id: 'revise', label: 'Revise', description: 'Revise the contract.' },
+        ],
+        allowOther: true,
+      },
+    },
+  ]
+
+  expect(decisionQuestionsComplete(questions, { 'A-path:path': 'bridge' }, {})).toBe(true)
+  expect(decisionQuestionsComplete(questions, { 'A-path:path': '__other__' }, {})).toBe(false)
+  expect(
+    decisionQuestionsComplete(
+      questions,
+      { 'A-path:path': '__other__' },
+      { 'A-path:path': 'Use the gateway' },
+    ),
+  ).toBe(true)
 })
 
 test('lets Virtuoso follow updates while the reader remains near the bottom', async () => {

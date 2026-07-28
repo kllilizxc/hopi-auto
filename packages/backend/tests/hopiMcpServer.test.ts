@@ -136,7 +136,7 @@ describe('HOPI MCP server', () => {
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.description,
-    ).toContain('durable natural-language Project todo')
+    ).toContain('Attention stores an operator summary, optional choices, complete Agent detail')
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.inputSchema,
     ).toMatchObject({

@@ -10,7 +10,11 @@ import {
   renderGoalDocument,
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
-import { readAndValidateGoalPackage } from '../domain/goalPackage'
+import {
+  type GoalPackage,
+  readAndValidateGoalPackage,
+  validateGoalPackageTransition,
+} from '../domain/goalPackage'
 import { stableIdSchema } from '../domain/stableId'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { hashBytes } from '../publication/publisher'
@@ -46,8 +50,23 @@ type LegacyItem = z.infer<typeof legacyItemSchema>
 
 export interface LegacyGoalMigrationResult {
   goalId: string
-  kind: 'migrated' | 'already_canonical'
+  kind: 'migrated' | 'planning_template_updated' | 'already_canonical'
 }
+
+const INITIAL_PLANNING_TEMPLATE_REPLACEMENTS = [
+  [
+    'Clarify the current Goal contract and accepted Inputs, then update design and the smallest complete Engineering Work DAG.',
+    'Clarify the current Goal boundary and accepted Inputs, then update design and only the Engineering Work needed to reach it.',
+  ],
+  [
+    'The design documents and smallest complete Engineering Work DAG are current.',
+    'Design and nonterminal Engineering Work reflect the current Goal boundary.',
+  ],
+  [
+    'Each Engineering Work owns one terminal proof boundary.',
+    'Deferred or removed outcomes do not remain in current Work or completion criteria.',
+  ],
+] as const
 
 export async function migrateLegacyGoals(
   paths: GoalPackagePaths,
@@ -64,17 +83,42 @@ export async function migrateLegacyGoals(
   for (const goalId of goalIds) {
     const snapshot = await publisher.snapshotTree(paths.publicationRoot, paths.goalRoot(goalId))
     const candidate = publicationCandidateFromSnapshot(snapshot)
+    let canonicalGoal: GoalPackage | null = null
     try {
-      const goalPackage = await readAndValidateGoalPackage(candidate, paths, goalId)
-      const interruptedMigration =
-        (await candidate.exists(`${paths.designRoot(goalId)}/legacy-work.md`)) &&
-        !goalPackage.works.has('plan-migration')
-      if (!interruptedMigration) {
-        results.push({ goalId, kind: 'already_canonical' })
-        continue
-      }
+      canonicalGoal = await readAndValidateGoalPackage(candidate, paths, goalId)
     } catch {
       // A legacy or interrupted migration is handled below from its durable todo.yml source.
+    }
+    if (canonicalGoal) {
+      const interruptedMigration =
+        (await candidate.exists(`${paths.designRoot(goalId)}/legacy-work.md`)) &&
+        !canonicalGoal.works.has('plan-migration')
+      if (!interruptedMigration) {
+        const updatedPlanning = updateSystemInitialPlanningTemplate(canonicalGoal)
+        if (!updatedPlanning) {
+          results.push({ goalId, kind: 'already_canonical' })
+          continue
+        }
+        const path = paths.workDocument(goalId, updatedPlanning.attributes.id)
+        const current = await candidate.readBytes(path)
+        if (!current) throw new Error(`Canonical Goal ${goalId} is missing ${path}`)
+        await publisher.publish(
+          {
+            root: paths.publicationRoot,
+            supportingWrites: [],
+            gateWrite: {
+              path,
+              expectedHash: await hashBytes(current),
+              content: renderWorkDocument(updatedPlanning),
+            },
+            validateCandidate: (next, previous) =>
+              validateGoalPackageTransition(previous, next, paths, goalId).then(() => undefined),
+          },
+          faultHooks,
+        )
+        results.push({ goalId, kind: 'planning_template_updated' })
+        continue
+      }
     }
 
     const sourceByPath = new Map(
@@ -103,6 +147,26 @@ export async function migrateLegacyGoals(
   }
 
   return results
+}
+
+function updateSystemInitialPlanningTemplate(goalPackage: GoalPackage): WorkDocument | null {
+  const work = goalPackage.works.get('plan-initial')
+  if (
+    !work ||
+    work.attributes.kind !== 'planning' ||
+    work.attributes.stage !== 'plan' ||
+    work.attributes.title !== 'Clarify and plan the Goal' ||
+    !INITIAL_PLANNING_TEMPLATE_REPLACEMENTS.every(([before]) => work.body.includes(before))
+  ) {
+    return null
+  }
+  return {
+    attributes: work.attributes,
+    body: INITIAL_PLANNING_TEMPLATE_REPLACEMENTS.reduce(
+      (body, [before, after]) => body.replace(before, after),
+      work.body,
+    ),
+  }
 }
 
 function discoverGoalIds(paths: GoalPackagePaths, files: readonly string[]) {
@@ -274,6 +338,8 @@ function migrateBlocker(
       createdAt: '1970-01-01T00:00:00.000Z',
       resolvedAt: null,
       notifiedAt: null,
+      summary: `Legacy Work ${item.ref} has unresolved imported blockers.`,
+      decisionPrompt: null,
     },
     body: [
       `Legacy Work \`${item.ref}\` had unresolved blockers when imported.`,

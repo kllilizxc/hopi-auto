@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { assistantDecisionPromptSchema } from '../domain/assistantDecisionPrompt'
+import { parseAttentionReference } from '../domain/attentionReference'
 import { PROJECT_LABEL_MAX_LENGTH, optionalProjectLabelSchema } from '../domain/projectLabel'
 import { isNormalizedProjectPath } from '../domain/projectPath'
 import { stableIdSchema } from '../domain/stableId'
@@ -78,6 +80,10 @@ const engineeringWorkSchema = z.preprocess(
   stripLegacyWorkRepos,
   directEngineeringWorkObjectSchema.extend({ kind: z.literal('engineering') }).strict(),
 )
+
+const attentionReferenceSchema = z
+  .string()
+  .refine((reference) => parseAttentionReference(reference) !== null, 'Invalid Attention reference')
 
 function stripLegacyWorkRepos(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
@@ -257,6 +263,8 @@ export const assistantToolSchemas = {
           .object({
             kind: z.literal('create'),
             attentionId: stableIdSchema.optional(),
+            summary: z.string().trim().min(1).max(600),
+            decisionPrompt: assistantDecisionPromptSchema.nullable().optional(),
             body: z.string().trim().min(1).max(16_000),
             refs: z.array(z.string().trim().min(1)).default([]),
           })
@@ -265,6 +273,8 @@ export const assistantToolSchemas = {
           .object({
             kind: z.literal('update'),
             attentionId: stableIdSchema,
+            summary: z.string().trim().min(1).max(600).optional(),
+            decisionPrompt: assistantDecisionPromptSchema.nullable().optional(),
             body: z.string().trim().min(1).max(16_000).optional(),
             refs: z.array(z.string().trim().min(1)).optional(),
           })
@@ -274,6 +284,12 @@ export const assistantToolSchemas = {
             kind: z.literal('resolve'),
             attentionId: stableIdSchema,
             resolution: z.string().trim().min(1).max(2_000),
+          })
+          .strict(),
+        z
+          .object({
+            kind: z.literal('transfer_attention_to_user'),
+            attentionRefs: z.array(attentionReferenceSchema).min(1),
           })
           .strict(),
       ]),

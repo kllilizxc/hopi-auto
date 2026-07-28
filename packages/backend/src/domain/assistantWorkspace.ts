@@ -340,6 +340,15 @@ function validateEventTransition(previous: InboxEventDocument, next: InboxEventD
   if (before.routeClaim && JSON.stringify(before.routeClaim) !== JSON.stringify(after.routeClaim)) {
     throw invalid(`Inbox route claim is immutable: ${before.id}`)
   }
+  if (before.attentionRequest) {
+    const nextReferences = new Set(after.attentionRequest?.attentionRefs ?? [])
+    if (before.attentionRequest.attentionRefs.some((reference) => !nextReferences.has(reference))) {
+      throw invalid(`Inbox Attention request references are append-only: ${before.id}`)
+    }
+  }
+  if (after.status === 'handled' && after.attentionRequest && after.visibility !== 'public') {
+    throw invalid(`Handled Inbox Attention request must be public: ${before.id}`)
+  }
   if (before.status === 'handled' && JSON.stringify(previous) !== JSON.stringify(next)) {
     const { webhookDeliveredAt: _previousWebhookDeliveredAt, ...previousStableAttributes } = before
     const { webhookDeliveredAt: _nextWebhookDeliveredAt, ...nextStableAttributes } = after

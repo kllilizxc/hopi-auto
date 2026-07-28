@@ -116,6 +116,7 @@ const assistantRunner: AssistantModelRunner = {
         change: {
           kind: 'create',
           attentionId: CHECKPOINT_ATTENTION_ID,
+          summary: CHECKPOINT_NEEDS_YOU_MESSAGE,
           body: CHECKPOINT_ATTENTION_BODY,
           refs: [`project:${PROJECT_ID}/goal:${GOAL_ID}/work:${WORK_ID}`],
         },
@@ -125,10 +126,16 @@ const assistantRunner: AssistantModelRunner = {
         attentionId: CHECKPOINT_ATTENTION_ID,
         changed: response.changed === true,
       })
-      return assistantResult(
-        `<NeedsYou attentionId="${CHECKPOINT_ATTENTION_ID}">${CHECKPOINT_NEEDS_YOU_MESSAGE}</NeedsYou>`,
-        mode,
-      )
+      const attentionRef = (response as { value?: { attentionRef?: string } }).value?.attentionRef
+      if (!attentionRef) throw new Error('Expected canonical Attention reference')
+      await callAssistantTool(input, observer, 'hopi_manage_attention', {
+        projectId: PROJECT_ID,
+        change: {
+          kind: 'transfer_attention_to_user',
+          attentionRefs: [attentionRef],
+        },
+      })
+      return assistantResult('Your input is needed.', mode)
     }
     if (mode === 'internal') return assistantResult('', mode)
     throw new Error(`Unexpected public Assistant turn: ${input.eventId}`)
@@ -443,7 +450,7 @@ async function callAssistantTool(
     toolName: name,
   })
   if (!response.ok) throw new Error(`${name} failed with ${response.status}: ${body}`)
-  return JSON.parse(body) as { changed?: boolean }
+  return JSON.parse(body) as { changed?: boolean; value?: unknown }
 }
 
 function assistantResult(reply: string, mode: string) {

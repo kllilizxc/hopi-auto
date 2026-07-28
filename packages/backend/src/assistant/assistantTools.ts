@@ -5,7 +5,11 @@ import {
   isInternalInboxSource,
   workspaceAttentionProjectId,
 } from '../domain/assistantWorkspaceDocuments'
-import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
+import {
+  goalAttentionReference,
+  parseAttentionReference,
+  workspaceAttentionReference,
+} from '../domain/attentionReference'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
   type WorkDocument,
@@ -38,6 +42,7 @@ import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import {
   type AssistantConversationScope,
+  assistantConversationScopeForEvent,
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
@@ -114,6 +119,57 @@ export function createAssistantTools(options: {
   const capabilities = new Map<string, Capability>()
   const assistantDispatchQueues = new Map<string, Promise<void>>()
   const now = options.now ?? (() => new Date())
+
+  async function assertTransferableAttentionReferences(
+    event: InboxEventDocument,
+    projectId: string,
+    references: readonly string[],
+  ) {
+    const scope = assistantConversationScopeForEvent(event)
+    if (scope.kind !== 'project' || scope.projectId !== projectId) {
+      throw new AssistantToolRequestError(
+        'Attention can be transferred only from its Project conversation',
+      )
+    }
+    const workspace = await options.workspace.readWorkspace()
+    for (const reference of references) {
+      const parsed = parseAttentionReference(reference)
+      if (!parsed) {
+        throw new AssistantToolRequestError(`Invalid canonical Attention reference: ${reference}`)
+      }
+      if (parsed.scope === 'workspace') {
+        if (parsed.homeId !== workspace.homeId) {
+          throw new AssistantToolRequestError(
+            `Attention belongs to another Assistant Home: ${reference}`,
+          )
+        }
+        const attention = workspace.attentions.get(parsed.attentionId)
+        if (
+          !attention ||
+          workspaceAttentionProjectId(attention) !== projectId ||
+          attention.attributes.resolvedAt !== null
+        ) {
+          throw new AssistantToolRequestError(
+            `Attention is not open in the current Project: ${reference}`,
+          )
+        }
+        continue
+      }
+      if (parsed.projectId !== projectId) {
+        throw new AssistantToolRequestError(
+          `Attention is outside the current Project: ${reference}`,
+        )
+      }
+      const project = requireProject(options.projects, parsed.projectId)
+      const goalPackage = await project.store.readPackage(parsed.goalId)
+      const attention = goalPackage.attentions.get(parsed.attentionId)
+      if (!attention || attention.attributes.resolvedAt !== null) {
+        throw new AssistantToolRequestError(
+          `Attention is not open in the current Project: ${reference}`,
+        )
+      }
+    }
+  }
 
   async function serializeAssistantDispatch<T>(
     dispatchReference: string,
@@ -995,6 +1051,31 @@ export function createAssistantTools(options: {
           const change = args.change
           const state = await options.workspace.readWorkspace()
           const target = `project:${project.projectId}`
+          if (change.kind === 'transfer_attention_to_user') {
+            const requestedReferences = [...new Set(change.attentionRefs)]
+            await assertTransferableAttentionReferences(
+              event,
+              project.projectId,
+              requestedReferences,
+            )
+            const previousReferences = new Set(
+              event.attributes.attentionRequest?.attentionRefs ?? [],
+            )
+            const staged = await options.workspace.stageAttentionRequest(eventId, {
+              attentionRefs: requestedReferences,
+            })
+            const attentionRefs = staged.attributes.attentionRequest?.attentionRefs ?? []
+            return {
+              summary: `Transferred ${attentionRefs.length} Attention${attentionRefs.length === 1 ? '' : 's'} to the user through this turn.`,
+              changed: requestedReferences.some((reference) => !previousReferences.has(reference)),
+              value: {
+                effect: {
+                  kind: 'attention_transfer_staged',
+                  attentionRefs,
+                },
+              },
+            }
+          }
           if (change.kind === 'create') {
             const attentionId = change.attentionId ?? `A-${crypto.randomUUID()}`
             const existing = state.attentions.get(attentionId)
@@ -1002,6 +1083,9 @@ export function createAssistantTools(options: {
               if (
                 workspaceAttentionProjectId(existing) === project.projectId &&
                 existing.attributes.resolvedAt === null &&
+                existing.attributes.summary === change.summary &&
+                JSON.stringify(existing.attributes.decisionPrompt ?? null) ===
+                  JSON.stringify(change.decisionPrompt ?? null) &&
                 existing.body.trim() === change.body.trim()
               ) {
                 return {
@@ -1024,6 +1108,8 @@ export function createAssistantTools(options: {
                 updatedAt: timestamp,
                 resolvedAt: null,
                 refs: [...new Set([target, ...change.refs])],
+                summary: change.summary,
+                decisionPrompt: change.decisionPrompt ?? null,
               },
               body: `${change.body.trim()}\n`,
             }
@@ -1045,13 +1131,24 @@ export function createAssistantTools(options: {
             )
           }
           if (change.kind === 'update') {
-            if (change.body === undefined && change.refs === undefined) {
-              throw new AssistantToolRequestError('Attention update requires body or refs')
+            if (
+              change.body === undefined &&
+              change.refs === undefined &&
+              change.summary === undefined &&
+              change.decisionPrompt === undefined
+            ) {
+              throw new AssistantToolRequestError(
+                'Attention update requires summary, decisionPrompt, body, or refs',
+              )
             }
             const updated = await options.workspace.updateAttention(change.attentionId, {
               ...(change.body !== undefined ? { body: change.body } : {}),
               ...(change.refs !== undefined
                 ? { refs: [...new Set([target, ...change.refs])] }
+                : {}),
+              ...(change.summary !== undefined ? { summary: change.summary } : {}),
+              ...(change.decisionPrompt !== undefined
+                ? { decisionPrompt: change.decisionPrompt }
                 : {}),
               updatedAt: now(),
             })

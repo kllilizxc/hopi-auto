@@ -235,9 +235,8 @@ Only the explicit Reply action copies `replyTo` and exact Attention references i
 turn. Ordinary page context carries Project and Goal identity only; it does not attach every open
 blocker. The canonical reference identifies the Attention while its owning Project selects the
 persistent Assistant conversation; a Workspace-stored Project Attention must not fall back to the
-Home conversation. `replyTo` names the exact handled public event stored in the Attention's
-`operatorRequest`. It is responsibility provenance, not evidence that the condition is resolved. A
-reply may leave an Attention open when its
+Home conversation. `replyTo` names the exact handled public request event. It is reply provenance,
+not evidence that the condition is resolved. A reply may leave an Attention open when its
 evidence does not clear the condition. Unrelated Attention is never settled as a page-scoped batch.
 Planner and Coordinator do not infer closure from prose or from a Goal revision because an
 environmental or external blocker may survive it.
@@ -843,17 +842,16 @@ ordinary remote URLs retain their normal meaning.
 
 It first reads root `AGENTS.md`; when missing, it silently scans the Repo and includes a concise
 bootstrap file as a supporting write in the same Planning publication. This is not an initialization
-task or separate gate, and an existing file is not automatically replaced. Planner then resolves
-material ambiguity with the grill-me protocol: inspect code and authority before asking, traverse
-dependent decisions in order, group only currently independent material questions, and include a
-recommendation, alternatives, trade-offs, and downstream impact for each. It updates the relevant
-`design/**` document plus `design/decisions.md` with established decisions, then proposes the
-smallest complete Engineering Work set, complete acceptance criteria, all known ordering edges, and
-current contract revisions. Each Work owns one terminal proof boundary. It proposes targeted
-Attention when an answer may materially change that output or when it cannot safely infer operator
-authority; it does not ask merely to satisfy a fixed interview ritual. Design documents record
-durable decisions and contracts, not the current runner's transient environment or a one-Run
-feasibility observation.
+task or separate gate, and an existing file is not automatically replaced. Planner resolves only
+material ambiguity that prevents the current Goal boundary from being represented. It updates the relevant
+`design/**` document plus `design/decisions.md` with established decisions, then proposes only the
+Engineering Work needed to reach the current Goal boundary, with measurable acceptance and real
+ordering edges. Current authority may shrink or replace earlier nonterminal Work. Deferred rollout,
+certification, governance, and hypothetical future variants stay outside current completion unless
+the Goal explicitly includes them. It proposes targeted Attention only when the current boundary
+cannot advance without missing authority; it does not preserve an obsolete requirement merely
+because an earlier plan mentioned it. Design documents record durable decisions and contracts, not
+the current runner's transient environment or a one-Run feasibility observation.
 
 Work cohesion is judged by proof boundary, not product label, shared user story, or runtime process.
 A Work is cohesive when one durable candidate follows one canonical fact chain and Reviewer can
@@ -1130,14 +1128,12 @@ bypass its stable worktree. Project Preview alone owns that variable.
 Reviewer independently checks acceptance criteria, diff, tests, and material runtime behavior.
 It normally reads without editing source. Implementation rejection records findings and returns
 the same Work to `generate`; invalid design returns `attention` for Assistant management. `success`
-means the complete owning Work, including every required external effect and final acceptance
-criterion, is finished. It never means that only the current candidate, phase, checkpoint, or
-prerequisite gate is acceptable. If an accepted intermediate checkpoint must be preserved while a
-user, Assistant, durable runner, or other resource performs remaining required work, Reviewer
-returns targeted `attention`, records the accepted proof in its Evidence, and leaves the same Work
-at `review`. This is the existing Attention pause, not a new phase or Work state. Reviewer success
-keeps the durable stage at `review` only while Coordinator immediately attempts deterministic
-integration under the same Work lease.
+means the received candidate satisfies the current owning Work contract. Reviewer does not extend
+that contract with future rollout, certification, governance, or hypothetical requirements. If the
+current accepted Work itself requires operator authority or an external action outside both
+responsibility boundaries, Reviewer returns targeted `attention`. Reviewer success keeps the durable
+stage at `review` only while Coordinator immediately attempts deterministic integration under the
+same Work lease.
 
 Reviewer verifies the candidate as received. It may execute independent reproduction, recomputation,
 or inspection and retain those results as review evidence, but it does not create a missing
@@ -1755,22 +1751,14 @@ inconsistency after its durable ref. Neither adds another Goal or Work lifecycle
 
 ### Notification
 
-Open targeted Attention appears as **Waiting for Assistant** while `operatorRequest` is null and as
-**Needs you** while that pointer names an unanswered public Assistant request. Both are projections
-of the same Attention document, not additional state. Raw Attention is
-handled through Reflection and the speaking Assistant rather than exposed directly inside
-conversation and Goal views. Goal completion appears from the Goal transition and final Planning
-Evidence as a deterministic **Completed** conversation update; it is presentation of canonical
-completion, not another notification document or required model phrase. Legacy targetless
-completion Attention remains readable through the same presentation.
-An Assistant turn may stage `transfer_attention_to_user` for exact canonical Attention references
-visible in its conversation, then return the complete public question as ordinary text. Coordinator
-publishes the reply before acknowledging every still-current linked Attention. Only the staged
-transfer sets `operatorRequest`; informational delivery leaves ownership with Assistant. Targeted
-Attention may remain open after the speaking turn. Completion resolves in its acknowledgement
-publication. A crash between
-roots leaves a complete public reply and an unacknowledged Attention; ordinary Inbox recovery
-finishes the acknowledgement. HOPI never records delivery before the message exists.
+Open targeted Attention remains an Agent-facing record until the Project Assistant transfers exact
+canonical references in a public turn. That handled turn then projects as **Needs you** while any
+referenced Attention remains open. Its default wording and optional choices come from the current
+Attention documents; their full bodies remain Agent detail. This adds no ownership field to
+Attention and does not change Work readiness. Goal completion appears from the Goal transition and
+final Planning Evidence as a deterministic **Completed** conversation update; it is presentation of
+canonical completion, not another notification document or required model phrase. Legacy targetless
+completion Attention and `<NeedsYou>` messages remain readable.
 
 Completion delivery is an Assistant judgment over current Goal authority, Attention, Evidence, and
 conversation. A Goal-scoped Evidence read exposes resolved artifacts and their browser-facing
