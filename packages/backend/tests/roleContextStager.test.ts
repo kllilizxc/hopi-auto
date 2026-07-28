@@ -531,10 +531,40 @@ describe('RoleContextStager', () => {
 
   test('states the Git, Attention, and Run-scoped runtime boundaries for Engineering passes', async () => {
     const fixture = await createFixture(true)
-    await publishEngineeringWork(fixture)
+    const acceptedInputPath = fixture.store.paths.inputDocument(
+      'goal-1',
+      'H-1',
+      'EV-engineering',
+    )
+    await publishEngineeringWork(
+      fixture,
+      [
+        '## Acceptance Criteria',
+        '',
+        '- The implementation is verified.',
+        '',
+        '## Accepted Inputs',
+        '',
+        `- ${acceptedInputPath}`,
+        '',
+      ].join('\n'),
+    )
     const unrelatedInputPath = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-old')
     await fixture.store.publishGoal('goal-1', {
       supportingWrites: [
+        {
+          path: acceptedInputPath,
+          expectedHash: null,
+          content: renderInputDocument({
+            attributes: {
+              sourceHomeId: 'H-1',
+              sourceEventId: 'EV-engineering',
+              sourceDigest: 'b'.repeat(64),
+              attachments: [],
+            },
+            body: 'Open the host application, mount the child, and connect the local backend.\n',
+          }),
+        },
         {
           path: unrelatedInputPath,
           expectedHash: null,
@@ -665,6 +695,15 @@ describe('RoleContextStager', () => {
         join(generator.contextRoot, 'authority', ...unrelatedInputPath.split('/')),
       ).exists(),
     ).toBe(false)
+    for (const bundle of [generator, reviewer]) {
+      expect(
+        await Bun.file(
+          join(bundle.contextRoot, 'authority', ...acceptedInputPath.split('/')),
+        ).text(),
+      ).toContain(
+        'Open the host application, mount the child, and connect the local backend.',
+      )
+    }
     expect(
       await Bun.file(
         join(

@@ -788,6 +788,11 @@ function selectGuardFiles(
   ])
   const dependencyWork = dependencyContext.workPaths
   const referencedImages = collectReferencedImages(work.body, paths, input.goalId)
+  const acceptedInputs = selectedAcceptedInputPaths(
+    files,
+    `${paths.inputsRoot(input.goalId)}/`,
+    work.body,
+  )
   const latestResolvedAttention = latestResolvedAttentionForTarget(
     files,
     `${paths.attentionRoot(input.goalId)}/`,
@@ -800,6 +805,7 @@ function selectGuardFiles(
     if (file.path === paths.goalDocument(input.goalId)) return true
     if (file.path.startsWith(`${paths.designRoot(input.goalId)}/`)) return true
     if (referencedImages.has(file.path)) return true
+    if (acceptedInputs.has(file.path)) return true
     if (file.path === latestResolvedAttention?.path || file.path === latestResolutionInput)
       return true
     if (file.path === paths.workDocument(input.goalId, input.workId)) return true
@@ -870,16 +876,7 @@ function selectPlannerAuthorityFiles(
     }
   }
 
-  const acceptedInputs = new Set(
-    files.flatMap((file) => {
-      if (!file.content || !file.path.startsWith(inputRoot)) return []
-      const document = parseInputDocument(decode(file.content))
-      return owningWork.body.includes(file.path) ||
-        owningWork.body.includes(document.attributes.sourceEventId)
-        ? [file.path]
-        : []
-    }),
-  )
+  const acceptedInputs = selectedAcceptedInputPaths(files, inputRoot, owningWork.body)
   if (latestResolvedAttention?.document.attributes.resolutionInput) {
     acceptedInputs.add(latestResolvedAttention.document.attributes.resolutionInput)
   }
@@ -899,6 +896,23 @@ function selectPlannerAuthorityFiles(
     if (file.path.startsWith(evidenceRoot) || file.path.startsWith(inputRoot)) return false
     return false
   })
+}
+
+function selectedAcceptedInputPaths(
+  files: readonly PublicationSnapshotFile[],
+  inputRoot: string,
+  workBody: string,
+) {
+  return new Set(
+    files.flatMap((file) => {
+      if (!file.content || !file.path.startsWith(inputRoot)) return []
+      const document = parseInputDocument(decode(file.content))
+      return workBody.includes(file.path) ||
+        workBody.includes(document.attributes.sourceEventId)
+        ? [file.path]
+        : []
+    }),
+  )
 }
 
 function latestResolvedAttentionForTarget(

@@ -803,6 +803,12 @@ an existing nonterminal Planning Work appends the new path instead of creating a
 surface. Updating that Work invalidates any already-running Planner snapshot, so the fresh Run sees
 the exact instruction without searching Input history.
 
+An Engineering Work receives each canonical Input that its own `Accepted Inputs` section references.
+The Work remains the executable contract, while the immutable Input preserves the operator's exact
+wording and provenance at the file path already named by that contract. Generator and Reviewer can
+therefore inspect the original request when a concise Work description may have lost material
+meaning; unrelated and historical Inputs remain outside their staged authority.
+
 Initial Planning Work is a short control envelope that tells Planner to clarify the current Goal and
 accepted Inputs; it never copies the Goal objective into a second canonical document. Reusing a
 nonterminal Planning Work replaces its concise Objective with the latest planning trigger and appends
