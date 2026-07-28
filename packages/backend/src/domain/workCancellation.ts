@@ -1,4 +1,4 @@
-import { isEngineeringWork, isWorkTerminal } from './canonicalDocuments'
+import { isWorkTerminal } from './canonicalDocuments'
 import type { GoalPackage } from './goalPackage'
 
 export class WorkCancellationError extends Error {}
@@ -10,9 +10,7 @@ export function workCancellationClosure(
   const closure = new Set<string>()
   for (const workId of requestedWorkIds) {
     const work = goalPackage.works.get(workId)
-    if (!work || !isEngineeringWork(work.attributes)) {
-      throw new WorkCancellationError(`Cannot cancel missing or non-Engineering Work: ${workId}`)
-    }
+    if (!work) throw new WorkCancellationError(`Cannot cancel missing Work: ${workId}`)
     if (work.attributes.stage === 'done') {
       throw new WorkCancellationError(`Cannot cancel completed Work: ${workId}`)
     }
@@ -24,7 +22,6 @@ export function workCancellationClosure(
     changed = false
     for (const work of goalPackage.works.values()) {
       if (
-        isEngineeringWork(work.attributes) &&
         !isWorkTerminal(work.attributes) &&
         !closure.has(work.attributes.id) &&
         work.attributes.dependsOn.some((dependencyId) => closure.has(dependencyId))

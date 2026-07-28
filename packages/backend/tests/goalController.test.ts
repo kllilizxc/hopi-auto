@@ -179,6 +179,21 @@ describe('GoalController', () => {
     ).toHaveLength(0)
   })
 
+  test('cancels one nonterminal Planning Work', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+
+    const cancelled = await controller.cancelWork('G-1', 'plan-initial')
+    const goalPackage = await store.readPackage('G-1')
+
+    expect(cancelled.map((work) => work.attributes.id)).toEqual(['plan-initial'])
+    expect(goalPackage.goal.attributes.lifecycle).toBe('active')
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      kind: 'planning',
+      stage: 'cancelled',
+    })
+  })
+
   test('changes nonterminal dependencies and rejects a cyclic graph', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })

@@ -538,7 +538,7 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
 | Create Work | Admit the current instruction as one Planning or Engineering Work | Goal Input and exactly one selected Work; Planning never retries Work or resolves Attention implicitly |
 | Control Goal | Pause, resume, cancel, reopen, or reprioritize one Goal | Validated Goal lifecycle or priority transition |
-| Control Work | Continue one Work now or later, change dependencies, or cancel one Engineering Work | One durable queued Attempt, optional `notBefore` and message, or validated cancellation |
+| Control Work | Continue one Work now or later, change dependencies, or cancel one nonterminal Work | One durable queued Attempt, optional `notBefore` and message, or validated cancellation |
 | Manage Attention | Create, edit, resolve, defer, or transfer exact Attention | Attention publication, one deterministic future Assistant event, or one staged operator request |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 
@@ -848,6 +848,19 @@ acknowledged while a referenced Attention remains unchanged or a referenced fail
 same settled Attempt and no durable successor. This is a persistence boundary, not a prescribed
 recovery branch: the Assistant decides whether to continue, revise, cancel, defer or transfer using
 the capabilities available in the current environment.
+
+For a failed Work, a durable successor is visible canonical state: a queued or running Attempt, a
+materially changed or terminal Work, or an open Attention targeted to that exact Work. A broader
+Goal Attention does not identify which failed Work it succeeds. Planning and Engineering Work share
+the same cancellation capability because both already have the canonical `cancelled` terminal stage;
+cancellation remains independent from sibling Work.
+
+Evidence and Attention rationale are durable historical records. They preserve what a prior Run or
+turn observed, but do not claim that an external session, service, credential, network path, or other
+volatile environment fact still has that value. Current external conditions are exposed by the
+provider-native inspection capabilities available to the Assistant and Engineering roles. Expanded
+Assistant state names Evidence bodies `historicalResult` so this temporal boundary remains visible
+at the point of use.
 
 A single conversation turn may call multiple tools and may affect more than one Goal. The old
 single-destination Inbox route claim therefore is not part of the forward Assistant protocol.

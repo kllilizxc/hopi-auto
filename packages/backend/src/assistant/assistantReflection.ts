@@ -561,6 +561,11 @@ function renderWakeEvent(
     ...(attentionRefs.length || workRefs.length
       ? [
           'This event cannot settle while a listed responsibility remains unchanged without a durable successor.',
+          ...(workRefs.length
+            ? [
+                'A Work successor is a queued or running Attempt, material or terminal Work state, or open Attention targeted to that exact Work.',
+              ]
+            : []),
         ]
       : []),
     '',

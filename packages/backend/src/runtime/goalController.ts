@@ -631,9 +631,7 @@ export function createGoalController(
     async cancelWork(goalId, workId) {
       let goalPackage = await store.readPackage(goalId)
       const target = goalPackage.works.get(workId)
-      if (!target || target.attributes.kind !== 'engineering') {
-        throw new GoalControllerError(`Cannot cancel missing or non-Engineering Work: ${workId}`)
-      }
+      if (!target) throw new GoalControllerError(`Cannot cancel missing Work: ${workId}`)
       if (target.attributes.stage === 'done') {
         throw new GoalControllerError(`Cannot cancel completed Work: ${workId}`)
       }

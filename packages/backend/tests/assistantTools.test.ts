@@ -1297,6 +1297,38 @@ describe('Assistant HOPI tools', () => {
     })
   })
 
+  test('cancels nonterminal Planning Work through the same Work control capability', async () => {
+    const fixture = await setup({ trackInterrupts: true })
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-cancel-planning',
+      content: 'This Planning Work is obsolete.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+
+    const cancelled = await fixture.tools.executeForEvent(
+      'EV-cancel-planning',
+      'hopi_control_work',
+      {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: 'plan-initial',
+        action: { kind: 'cancel' },
+      },
+    )
+
+    expect(cancelled.value).toMatchObject({
+      effect: { kind: 'work_cancelled', stage: 'cancelled' },
+    })
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).works.get('plan-initial')?.attributes,
+    ).toMatchObject({
+      kind: 'planning',
+      stage: 'cancelled',
+    })
+    expect(fixture.interruptedWorkTargets).toEqual([{ goalId: 'G-1', workId: 'plan-initial' }])
+  })
+
   test('returns canonical nonterminal state after deferring Planning Work', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -2498,7 +2530,7 @@ describe('Assistant HOPI tools', () => {
           works: Array<{
             attributes: { id: string }
             evidence?: Array<{
-              body: string
+              historicalResult: string
               artifacts: Array<{
                 reference: string
                 available: boolean
@@ -2515,7 +2547,8 @@ describe('Assistant HOPI tools', () => {
     const evidence = detailed.projects[0]?.goals[0]?.works.find(
       (candidate) => candidate.attributes.id === 'W-report',
     )?.evidence
-    expect(evidence?.[0]?.body).toContain('The full report is attached.')
+    expect(evidence?.[0]?.historicalResult).toContain('The full report is attached.')
+    expect(evidence?.[0]).not.toHaveProperty('body')
     expect(evidence?.[0]?.artifacts).toEqual([
       {
         reference: 'artifact:R-report/001-report.md',

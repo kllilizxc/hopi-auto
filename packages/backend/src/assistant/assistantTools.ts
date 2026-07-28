@@ -955,11 +955,6 @@ export function createAssistantTools(options: {
           const goalPackage = await project.store.readPackage(args.goalId)
           const work = goalPackage.works.get(args.workId)
           if (!work) throw new AssistantToolRequestError(`Work not found: ${args.workId}`)
-          if (args.action.kind === 'cancel' && !isEngineeringWork(work.attributes)) {
-            throw new AssistantToolRequestError(
-              `Only Engineering Work can be cancelled: ${args.workId}`,
-            )
-          }
           if (args.action.kind === 'continue') {
             if (!project.reconciler?.requestWorkRun) {
               throw new AssistantToolRequestError('Project runtime cannot queue Work continuation')
@@ -1577,13 +1572,21 @@ function compactWorkStateIndex(value: unknown, includeSummary: boolean) {
     ...(Array.isArray(value.candidateIntegration)
       ? { currentCandidateIntegration: value.candidateIntegration }
       : {}),
-    ...(isRecord(value.evidence) || Array.isArray(value.evidence)
-      ? { evidence: value.evidence }
-      : {}),
+    ...(Array.isArray(value.evidence)
+      ? { evidence: value.evidence.map(compactEvidenceStateIndex) }
+      : isRecord(value.evidence)
+        ? { evidence: value.evidence }
+        : {}),
     ...(isRecord(value.runtime)
       ? { runtime: compactRuntimeStateIndex(value.runtime, includeSummary) }
       : {}),
   }
+}
+
+function compactEvidenceStateIndex(value: unknown) {
+  if (!isRecord(value) || typeof value.body !== 'string') return value
+  const { body, ...rest } = value
+  return { ...rest, historicalResult: body }
 }
 
 function readPublicConversationPage(

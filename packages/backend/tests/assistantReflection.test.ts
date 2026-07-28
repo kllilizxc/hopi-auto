@@ -442,6 +442,7 @@ describe('Assistant wake trigger', () => {
     })
     expect(event?.body).toContain('Assistant-owned Work recovery')
     expect(event?.body).toContain('cannot settle')
+    expect(event?.body).toContain('open Attention targeted to that exact Work')
   })
 
   test('wakes for each published Reviewer reject while the repair Generator is active', async () => {

@@ -128,11 +128,17 @@ reference and timestamp. Restart and repeated reconciliation observe the same ev
 A settled failure wake carries the exact Work recovery reference derived from the persisted Attempt.
 That reference is not another document or workflow state. It records which failed execution currently
 belongs to the Assistant. The internal event is acknowledged only after that Work has a queued or
-running successor, its canonical authority changes, or it becomes terminal. The Assistant remains
-free to choose the consequence; HOPI only prevents a durable failure from disappearing because a
-conversation turn ended without a durable successor. Wake protocol revisions invalidate old
-observation cursors once, so restart recovery also revisits failures acknowledged under an older
-responsibility contract.
+running successor, its canonical authority changes, it becomes terminal, or an open Attention names
+that exact Work as its target. Goal-level Attention does not identify a successor for one failed
+Work. Planning and Engineering Work can both become terminal through the same explicit cancellation
+capability. The Assistant remains free to choose the consequence; HOPI only prevents a durable
+failure from disappearing because a conversation turn ended without a durable successor. Wake
+protocol revisions invalidate old observation cursors once, so restart recovery also revisits
+failures acknowledged under an older responsibility contract.
+
+Evidence and Attention rationale retain historical observations rather than live environment state.
+External sessions and services are current only when observed through the runtime capabilities
+available to the active role.
 
 An existing turn for that conversation already carries the current Attention set, so it suppresses a
 redundant revisit. A running Work Attempt also supplies its own later settlement event, so Assistant
