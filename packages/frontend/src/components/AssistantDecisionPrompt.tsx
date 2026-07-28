@@ -90,26 +90,48 @@ export function AssistantDecisionPrompt({
                   </AppButton>
                 ))}
                 {question.allowOther ? (
-                  <AppButton
-                    aria-pressed={selected === OTHER_OPTION_ID}
-                    className="assistant-decision-option"
-                    onClick={() =>
-                      setSelectedByQuestion((current) => ({
-                        ...current,
-                        [key]: OTHER_OPTION_ID,
-                      }))
-                    }
-                    type="button"
-                    variant="ghost"
+                  <div
+                    className={`assistant-decision-option-container ${
+                      selected === OTHER_OPTION_ID ? 'expanded' : ''
+                    }`}
                   >
-                    <span>
-                      <strong>Other</strong>
-                    </span>
-                    <span>Provide a different answer.</span>
-                  </AppButton>
+                    <AppButton
+                      aria-pressed={selected === OTHER_OPTION_ID}
+                      className="assistant-decision-option"
+                      onClick={() =>
+                        setSelectedByQuestion((current) => ({
+                          ...current,
+                          [key]: OTHER_OPTION_ID,
+                        }))
+                      }
+                      type="button"
+                      variant="ghost"
+                    >
+                      <span>
+                        <strong>Other</strong>
+                      </span>
+                      <span>Provide a different answer.</span>
+                    </AppButton>
+                    {selected === OTHER_OPTION_ID && detailPrompt ? (
+                      <AppTextArea
+                        aria-label={detailPrompt}
+                        className="assistant-decision-question__other"
+                        onChange={(event) =>
+                          setDetailByQuestion((current) => ({
+                            ...current,
+                            [key]: event.target.value,
+                          }))
+                        }
+                        placeholder={detailPrompt}
+                        rows={3}
+                        value={detailByQuestion[key] ?? ''}
+                        autoFocus
+                      />
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-              {detailPrompt ? (
+              {selected !== OTHER_OPTION_ID && detailPrompt ? (
                 <div className="field">
                   <AppTextArea
                     aria-label={detailPrompt}

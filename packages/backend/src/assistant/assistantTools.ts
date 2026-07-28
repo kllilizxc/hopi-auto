@@ -515,6 +515,7 @@ export function createAssistantTools(options: {
               project = await withPreparedProjectRepositories(change.repos, (repos) =>
                 options.home.linkProject({
                   ...(change.projectId ? { projectId: change.projectId } : {}),
+                  ...(change.label ? { label: change.label } : {}),
                   primaryRepoId: change.primaryRepoId,
                   repos,
                 }),
@@ -1496,6 +1497,7 @@ function compactProjectStateIndex(value: unknown) {
   if (!isRecord(value)) return value
   return {
     projectId: value.projectId,
+    ...(typeof value.label === 'string' ? { label: value.label } : {}),
     ...(typeof value.primaryRepoId === 'string' ? { primaryRepoId: value.primaryRepoId } : {}),
     available: value.available,
     releaseHead: value.releaseHead,
@@ -1688,6 +1690,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function presentProjectTopology(project: LinkedProject) {
   return {
     projectId: project.projectId,
+    ...(project.label ? { label: project.label } : {}),
+    ...projectTopology(project),
+  }
+}
+
+function projectTopology(project: LinkedProject) {
+  return {
     primaryRepoId: project.primaryRepoId,
     repos: project.repos
       .map((repo) => ({
@@ -1701,7 +1710,7 @@ function presentProjectTopology(project: LinkedProject) {
 }
 
 function sameProjectTopology(left: LinkedProject | undefined, right: LinkedProject) {
-  return Boolean(left && sameValue(presentProjectTopology(left), presentProjectTopology(right)))
+  return Boolean(left && sameValue(projectTopology(left), projectTopology(right)))
 }
 
 function sameValue(left: unknown, right: unknown) {

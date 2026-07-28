@@ -451,7 +451,7 @@ export function AssistantPanel({
             aria-label={`Reply to newest of ${needsYouAttentions.length} requests needing your reply`}
             title="Reply to newest request"
           >
-            <CountBadge className="assistant-needs-you-count" color="warning">
+            <CountBadge className="needs-you-count assistant-needs-you-count" color="warning">
               {needsYouAttentions.length}
             </CountBadge>
           </AppButton>

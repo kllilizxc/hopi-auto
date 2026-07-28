@@ -94,11 +94,16 @@ export function createGoalPackageStore(
   const paths = createGoalPackagePaths(projectRoot, projectId, projectPath)
   let cacheGeneration: number | null = null
   let cachedReconciliation: ReadonlyMap<string, GoalPackage> | null = null
+  let reconciliationRead: {
+    generation: number
+    promise: Promise<ReadonlyMap<string, GoalPackage>>
+  } | null = null
 
   function alignCache(generation: number) {
     if (cacheGeneration === generation) return
     cacheGeneration = generation
     cachedReconciliation = null
+    if (reconciliationRead?.generation !== generation) reconciliationRead = null
   }
 
   return {
@@ -235,19 +240,30 @@ export function createGoalPackageStore(
       const generation = await publisher.generation(paths.publicationRoot)
       alignCache(generation)
       if (cachedReconciliation) return cachedReconciliation
+      if (reconciliationRead?.generation === generation) return reconciliationRead.promise
 
-      const snapshot = await publisher.snapshotTreeAtGeneration(
-        paths.publicationRoot,
-        paths.goalsRoot,
-      )
-      alignCache(snapshot.generation)
-      const candidate = publicationCandidateFromSnapshot(snapshot)
-      const goalPackages = new Map<string, GoalPackage>()
-      for (const goalId of goalIdsFromSnapshot(snapshot.files, paths.goalsRoot)) {
-        goalPackages.set(goalId, await readAndValidateGoalPackage(candidate, paths, goalId))
+      const promise = (async () => {
+        const snapshot = await publisher.snapshotTreeAtGeneration(
+          paths.publicationRoot,
+          paths.goalsRoot,
+        )
+        const candidate = publicationCandidateFromSnapshot(snapshot)
+        const goalPackages = new Map<string, GoalPackage>()
+        for (const goalId of goalIdsFromSnapshot(snapshot.files, paths.goalsRoot)) {
+          goalPackages.set(goalId, await readAndValidateGoalPackage(candidate, paths, goalId))
+        }
+        if (cacheGeneration === generation || cacheGeneration === snapshot.generation) {
+          alignCache(snapshot.generation)
+          cachedReconciliation = goalPackages
+        }
+        return goalPackages
+      })()
+      reconciliationRead = { generation, promise }
+      try {
+        return await promise
+      } finally {
+        if (reconciliationRead?.promise === promise) reconciliationRead = null
       }
-      cachedReconciliation = goalPackages
-      return goalPackages
     },
     async invalidateCache() {
       alignCache(await publisher.invalidate(paths.publicationRoot))

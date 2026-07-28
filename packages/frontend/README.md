@@ -70,6 +70,12 @@ Resolution restores the ordinary message without adding a status row. Assistant 
 header; the global open count remains as a quiet floating badge only when non-zero. Its Reflection
 entry is hidden in a masked top-right hover/focus region, and the Reflection list adds no title or
 refresh toolbar. Goal and Kanban surfaces retain their derived Work state without a duplicate banner.
+The shared Project switcher projects the same unresolved NeedsYou Attention count onto each direct
+shortcut and overflow option; it does not reuse the broader open-Attention count. It also shows one
+success marker when that browser observes a new Goal completion after establishing its initial
+Project baseline. Activating the Project tab records the currently projected completion identities
+as read and removes only that marker, even when NeedsYou remains. This browser-local read preference
+does not acknowledge Assistant delivery or mutate canonical Goal state.
 
 The UI deliberately has no task drag-and-drop, direct Work mutation, manual reconcile, Assistant
 Action editor, decision graph, planning-request graph, or session-authority screen.
@@ -102,13 +108,20 @@ or captures input from the shell, so navigation that has already mounted remains
 surface catches up. The HMR server remains intentionally unminified, so remote devices use the
 production surface or the explicit remote frontend mode.
 
-Goal and task navigation is cache-first. Returning to a loaded Goal or Attempt renders its cached
-projection immediately and refreshes it in the background. For a first visit, pointer/focus intent
-warms the route and canonical query; an explicit switch keeps the current usable surface mounted
-until the target projection is ready, with the latest navigation intent winning. Opening a Work or
-switching its Attempt follows the same rule for Attempt summaries and message history. A local
-skeleton is reserved for a direct cold URL with no prior surface to preserve, never for routine
-switching.
+Project, Goal, and task navigation is route-first and cache-first. An explicit selection updates the
+URL and selected control immediately. Returning to an exact cached target renders that projection
+and refreshes it in the background; a first visit renders the target's local non-blocking loading
+notice while its route and canonical query load. The previous Project or Goal is never shown under
+the new selection. Pointer, focus, and pointer-down still warm an intended route, but warming never
+gates navigation. Slower reads can populate only their exact query keys, so rapid switching cannot
+restore an earlier route. Target failures remain target-scoped. Opening a Work or switching its
+Attempt follows the same exact-scope rule for Attempt summaries and message history.
+
+The shell, Goal board, Goal docs, Attempt indexes, and message streams may restore bounded,
+expiring `sessionStorage` snapshots on same-tab re-entry or reload. Each snapshot retains its
+canonical update time so React Query treats stale data as stale and revalidates it normally. This is
+an observational cache, not another data source: it is isolated by exact Project/Goal/query identity,
+cannot authorize mutations, and may be discarded at any time.
 
 Smoothness is a product contract. Polling views subscribe to the smallest projection they render and
 avoid notifying React for invisible fetch-status churn; live streams poll only while the related

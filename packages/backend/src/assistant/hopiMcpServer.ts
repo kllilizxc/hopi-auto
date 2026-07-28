@@ -32,8 +32,8 @@ server.registerTool(
   'hopi_manage_project',
   {
     description:
-      'Create a Project, change its Repo bindings, or rerun deterministic recovery validation. Repo bindings are Project-local and selected checkouts remain unmodified.',
-    inputSchema: assistantMcpToolSchemas.hopi_manage_project,
+      'Create a Project with an optional display label, change its Repo bindings, or rerun deterministic recovery validation. Repo bindings are Project-local and selected checkouts remain unmodified.',
+    inputSchema: assistantMcpToolSchemas.hopi_manage_project.shape,
   },
   (args) => callTool('hopi_manage_project', args),
 )

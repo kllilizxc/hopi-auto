@@ -359,7 +359,12 @@ describe('createGoalPackageStore', () => {
     const reader = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
     publisher.snapshotTreeReads = 0
 
-    expect([...(await reader.readReconciliationSnapshot()).keys()]).toEqual(['G-1'])
+    const [first, concurrent] = await Promise.all([
+      reader.readReconciliationSnapshot(),
+      reader.readReconciliationSnapshot(),
+    ])
+    expect([...first.keys()]).toEqual(['G-1'])
+    expect(concurrent).toBe(first)
     expect([...(await reader.readReconciliationSnapshot()).keys()]).toEqual(['G-1'])
     expect(publisher.snapshotTreeReads).toBe(1)
 

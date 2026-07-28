@@ -1,25 +1,22 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useState } from 'react'
 import { selectPeerShortcuts } from '../lib/goalScope'
-import {
-  compactShortcutLimit,
-  compactShortcutRailWidth,
-} from '../lib/peerSwitcherLayout'
+import { compactShortcutLimit, compactShortcutRailWidth } from '../lib/peerSwitcherLayout'
 import { cn } from '../lib/utils'
-import { AppTabs, SelectField } from './ui'
+import { AppTabs, CountBadge, SelectField } from './ui'
 
 const NARROW_SHORTCUT_QUERY = '(max-width: 1180px)'
-const SINGLE_SHORTCUT_QUERY =
-  '(max-width: 660px), (max-width: 900px) and (max-height: 560px)'
+const SINGLE_SHORTCUT_QUERY = '(max-width: 660px), (max-width: 900px) and (max-height: 560px)'
 
 export interface PeerSwitcherItem {
   id: string
   label: string
+  badge?: {
+    count: number
+    label: string
+  }
+  completion?: {
+    label: string
+  }
 }
 
 interface PeerSwitcherProps {
@@ -28,6 +25,7 @@ interface PeerSwitcherProps {
   items: readonly PeerSwitcherItem[]
   label: ReactNode
   moreAriaLabel: string
+  onActivate?: (id: string) => void
   onSelectionChange: (id: string) => void
   onWarm?: (id: string) => void
   placeholder?: string
@@ -54,8 +52,10 @@ function useViewportShortcutLimit(enabled: boolean) {
     ]
     const update = () => setLimit(viewportShortcutLimit())
     update()
-    media.forEach((query) => query.addEventListener('change', update))
-    return () => media.forEach((query) => query.removeEventListener('change', update))
+    for (const query of media) query.addEventListener('change', update)
+    return () => {
+      for (const query of media) query.removeEventListener('change', update)
+    }
   }, [enabled])
 
   return limit
@@ -89,12 +89,21 @@ function useCompactShortcutLimit(itemCount: number, enabled: boolean) {
   return [limit, setContainer] as const
 }
 
+export function peerSwitcherOverflowLabel(item: PeerSwitcherItem) {
+  const annotations = [
+    ...(item.badge?.count && item.badge.count > 0 ? [item.badge.label] : []),
+    ...(item.completion ? [item.completion.label] : []),
+  ]
+  return annotations.length ? `${item.label} · ${annotations.join(' · ')}` : item.label
+}
+
 export function PeerSwitcher({
   ariaLabel,
   className,
   items,
   label,
   moreAriaLabel,
+  onActivate,
   onSelectionChange,
   onWarm,
   placeholder = 'No items',
@@ -138,10 +147,7 @@ export function PeerSwitcher({
         {shortcuts.length ? (
           <AppTabs
             aria-label={ariaLabel}
-            className={cn(
-              'peer-switcher__tabs',
-              variant === 'compact' && 'project-switcher__tabs',
-            )}
+            className={cn('peer-switcher__tabs', variant === 'compact' && 'project-switcher__tabs')}
             style={
               variant === 'compact'
                 ? ({
@@ -161,11 +167,28 @@ export function PeerSwitcher({
                   className="peer-switcher__tab"
                   id={item.id}
                   key={item.id}
+                  onClick={() => onActivate?.(item.id)}
                   onFocus={() => onWarm?.(item.id)}
                   onPointerDown={() => onWarm?.(item.id)}
                   onPointerEnter={() => onWarm?.(item.id)}
                 >
                   <span title={item.label}>{item.label}</span>
+                  {item.badge?.count && item.badge.count > 0 ? (
+                    <CountBadge
+                      aria-label={item.badge.label}
+                      className="needs-you-count peer-switcher__badge"
+                      color="warning"
+                    >
+                      {item.badge.count > 99 ? '99+' : item.badge.count}
+                    </CountBadge>
+                  ) : null}
+                  {item.completion ? (
+                    <span
+                      aria-label={item.completion.label}
+                      className="goal-state-dot done peer-switcher__completion-marker"
+                      role="img"
+                    />
+                  ) : null}
                 </AppTabs.Tab>
               ))}
             </AppTabs.List>
@@ -183,12 +206,15 @@ export function PeerSwitcher({
         {overflowItems.length > 0 && (
           <SelectField
             aria-label={moreAriaLabel}
-            className={cn(
-              'peer-switcher__more',
-              variant === 'compact' && 'project-switcher__more',
-            )}
-            onValueChange={onSelectionChange}
-            options={overflowItems.map((item) => ({ label: item.label, value: item.id }))}
+            className={cn('peer-switcher__more', variant === 'compact' && 'project-switcher__more')}
+            onValueChange={(id) => {
+              onActivate?.(id)
+              onSelectionChange(id)
+            }}
+            options={overflowItems.map((item) => ({
+              label: peerSwitcherOverflowLabel(item),
+              value: item.id,
+            }))}
             popoverClassName={cn(
               'peer-switcher__popover',
               variant === 'compact' && 'project-switcher__popover',

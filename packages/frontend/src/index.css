@@ -1701,18 +1701,6 @@ button:disabled,
   color: var(--amber);
 }
 
-.project-blocked-banner {
-  cursor: default;
-}
-
-.project-blocked-banner p {
-  margin: 3px 0;
-  color: var(--color-warning-200);
-  font-size: 11px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-}
-
 .kanban-scroll {
   flex: 1;
   min-height: 0;
@@ -1925,34 +1913,6 @@ button:disabled,
 
 .preview-dot.failed {
   background: var(--red);
-}
-
-.preview-repair-banner {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  z-index: 25;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 15px;
-  align-items: center;
-  width: min(690px, calc(100% - 36px));
-  padding: 13px 14px;
-  border: 1px solid color-mix(in srgb, var(--color-warning-400) 30%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--color-warning-950) 96%, transparent);
-  box-shadow: var(--shadow);
-}
-
-.preview-repair-banner strong {
-  color: var(--color-warning-100);
-  font-size: 11px;
-}
-
-.preview-repair-banner p {
-  margin: 3px 0 0;
-  color: var(--color-warning-600);
-  font-size: 10px;
 }
 
 /* Work detail */
@@ -3003,6 +2963,15 @@ button:disabled,
   margin: 0 0 14px;
 }
 
+.assistant-decision-option-container {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-decision-option-container .assistant-decision-question__other.app-textarea {
+  min-height: 96px;
+}
+
 .assistant-decision-question__options {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
@@ -3802,7 +3771,7 @@ button:disabled,
   color: var(--color-success-400);
 }
 
-.assistant-needs-you-count.app-count-badge {
+.needs-you-count.app-count-badge {
   display: grid;
   min-width: 18px;
   height: 18px;
@@ -5455,6 +5424,13 @@ samp {
   align-items: center;
 }
 
+.project-title-row,
+.project-label-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .project-initial {
   width: 44px;
   height: 44px;
@@ -5863,8 +5839,7 @@ samp {
   font-size: 11px;
 }
 
-.attention-status-banner,
-.preview-repair-banner {
+.attention-status-banner {
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--color-warning-400) 15%, transparent),

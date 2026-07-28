@@ -26,6 +26,7 @@ export interface ProjectRepoLink {
 
 export interface ProjectLink {
   projectId: string
+  label?: string
   primaryRepoId: string
   repos: ProjectRepoLink[]
 }

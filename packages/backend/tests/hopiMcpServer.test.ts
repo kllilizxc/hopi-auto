@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js'
+import { assistantMcpToolSchemas } from '../src/assistant/assistantToolSchemas'
 
 const transports = new Set<StdioClientTransport>()
 const servers = new Set<Bun.Server<undefined>>()
@@ -41,6 +43,18 @@ describe('HOPI MCP server', () => {
 
     const tools = await client.listTools()
     const result = await client.callTool({ name: 'hopi_read_state', arguments: {} })
+    const manageResult = await client.callTool({
+      name: 'hopi_manage_project',
+      arguments: {
+        change: {
+          kind: 'create',
+          projectId: 'P-customer-portal',
+          label: 'Customer Portal',
+          primaryRepoId: 'main',
+          repos: [{ repoId: 'main', repoPath: '/tmp/customer-portal' }],
+        },
+      },
+    })
 
     const names = tools.tools.map((tool) => tool.name).sort()
     expect(names).toEqual(
@@ -63,6 +77,9 @@ describe('HOPI MCP server', () => {
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
       'recovery validation',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.description).toContain(
+      'optional display label',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_preferences')?.description,
@@ -134,6 +151,14 @@ describe('HOPI MCP server', () => {
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_project')?.inputSchema,
     ).toMatchObject({ properties: { change: expect.any(Object) } })
+    expect(
+      JSON.stringify(
+        toJsonSchemaCompat(assistantMcpToolSchemas.hopi_manage_project, {
+          strictUnions: true,
+          pipeStrategy: 'input',
+        }),
+      ),
+    ).toContain('"label"')
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.inputSchema).toMatchObject(
       {
         properties: { work: expect.any(Object) },
@@ -160,7 +185,23 @@ describe('HOPI MCP server', () => {
     )
     expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)
-    expect(received).toEqual([{ token: 'turn-token', name: 'hopi_read_state', arguments: {} }])
+    expect(manageResult.isError).not.toBe(true)
+    expect(received).toEqual([
+      { token: 'turn-token', name: 'hopi_read_state', arguments: {} },
+      {
+        token: 'turn-token',
+        name: 'hopi_manage_project',
+        arguments: {
+          change: {
+            kind: 'create',
+            projectId: 'P-customer-portal',
+            label: 'Customer Portal',
+            primaryRepoId: 'main',
+            repos: [{ repoId: 'main', repoPath: '/tmp/customer-portal' }],
+          },
+        },
+      },
+    ])
   })
 
   test('exposes the same Project tools to an internal wake', async () => {

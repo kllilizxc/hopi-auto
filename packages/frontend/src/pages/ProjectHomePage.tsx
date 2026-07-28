@@ -2,10 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
   ArrowRight,
+  Check,
   Cpu,
   FolderGit2,
   FolderPlus,
   Link2,
+  Pencil,
   Plus,
   Radio,
   RefreshCw,
@@ -29,39 +31,42 @@ import {
   AppSwitch,
   AppTextField,
   CountBadge,
+  IconButton,
   SelectField,
   StatusChip,
 } from '../components/ui'
 import {
+  type AgentRoleCodingSettings,
   type CodingAgentTransport,
   type CodingReasoningEffort,
   type ConfigurableAgentRole,
-  type AgentRoleCodingSettings,
   type ProjectCodingDefaults,
   type ProjectDirectorySelection,
   type ProjectSummary,
   createProject,
   linkProjectRepo,
   planProjectRepoRebind,
-  readShellState,
   readProjectAgentAccess,
+  readShellState,
   rebindProjectRepo,
   selectProjectDirectory,
   startPreview,
   stopPreview,
   updateAgentRoleSettings,
   updateProjectAgentAccess,
+  updateProjectLabel,
 } from '../lib/api'
 import { buildGoalRoute, buildProjectRoute } from '../lib/goalScope'
 import { readProjectAgentFullAccess, writeProjectAgentFullAccess } from '../lib/projectAgentAccess'
-import { shellPollInterval, STABLE_QUERY_NOTIFY_PROPS } from '../lib/queryPerformance'
-import { preloadAssistantPanel, preloadBoardView } from '../routeModules'
+import { STABLE_QUERY_NOTIFY_PROPS, shellPollInterval } from '../lib/queryPerformance'
 import { excerpt, projectDisplayName } from '../lib/utils'
+import { preloadAssistantPanel, preloadBoardView } from '../routeModules'
 
 export function ProjectHomePage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [repoDrafts, setRepoDrafts] = useState<ProjectRepoDraft[]>([])
+  const [projectLabel, setProjectLabel] = useState('')
   const [directoryNotice, setDirectoryNotice] = useState<string | null>(null)
   const pickerRequestActive = useRef(false)
   const snapshotQuery = useQuery({
@@ -84,6 +89,7 @@ export function ProjectHomePage() {
     },
     onSuccess: ({ projectId, snapshot }) => {
       setRepoDrafts([])
+      setProjectLabel('')
       setDirectoryNotice(null)
       queryClient.setQueryData(['mvp-state'], snapshot)
       navigate(buildProjectRoute(projectId))
@@ -195,6 +201,7 @@ export function ProjectHomePage() {
                   event.preventDefault()
                   if (!primaryRepo || !canCreate) return
                   createMutation.mutate({
+                    ...(projectLabel.trim() ? { label: projectLabel.trim() } : {}),
                     primaryRepoId: primaryRepo.repoId.trim(),
                     repos: repoDrafts.map((repo) => ({
                       repoId: repo.repoId.trim(),
@@ -210,8 +217,17 @@ export function ProjectHomePage() {
                   </span>
                 </div>
                 <p className="panel-intro">
-                  Choose the folders this Project uses. Its primary folder also names it.
+                  Choose the folders this Project uses. Add an optional label or use its primary
+                  folder name.
                 </p>
+                <AppTextField
+                  description="Display only; Project identity and paths stay unchanged."
+                  label="Project label"
+                  maxLength={80}
+                  onValueChange={setProjectLabel}
+                  placeholder={primaryRepo?.displayPath.split(/[\\/]/).filter(Boolean).at(-1)}
+                  value={projectLabel}
+                />
                 <div className="project-create-repos">
                   {repoDrafts.map((repo) => (
                     <div className="project-create-repo" key={repo.key}>
@@ -491,6 +507,8 @@ function AgentSettingsPanel({
 function ProjectCard({ project }: { project: ProjectSummary }) {
   const queryClient = useQueryClient()
   const projectName = projectDisplayName(project)
+  const [editingLabel, setEditingLabel] = useState(false)
+  const [labelDraft, setLabelDraft] = useState('')
   const [showRepoManager, setShowRepoManager] = useState(false)
   const [editingRepoId, setEditingRepoId] = useState<string | null>(null)
   const [nextRepoPath, setNextRepoPath] = useState('')
@@ -503,6 +521,15 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   const [agentAccessError, setAgentAccessError] = useState<string | null>(null)
   const [agentAccessPending, setAgentAccessPending] = useState(false)
   const preloadWorkspace = project.goals.length ? preloadBoardView : preloadAssistantPanel
+  const labelMutation = useMutation({
+    mutationFn: () => updateProjectLabel(project.projectId, labelDraft.trim() || null),
+    onMutate: () => queryClient.cancelQueries({ queryKey: ['mvp-state'] }),
+    onSuccess: (snapshot) => {
+      queryClient.setQueryData(['mvp-state'], snapshot)
+      setEditingLabel(false)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['mvp-state'] }),
+  })
   const linkRepoMutation = useMutation({
     mutationFn: () =>
       linkProjectRepo(project.projectId, {
@@ -583,7 +610,72 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       <div className="project-card-top">
         <span className="project-initial">{projectName.slice(0, 2).toUpperCase()}</span>
         <div>
-          <h2 title={project.projectId}>{projectName}</h2>
+          {editingLabel ? (
+            <AppForm
+              className="project-label-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                const nextLabel = labelDraft.trim()
+                if (nextLabel === (project.label ?? '')) {
+                  setEditingLabel(false)
+                  return
+                }
+                labelMutation.mutate()
+              }}
+            >
+              <AppInput
+                aria-label={`Project label for ${projectName}`}
+                autoFocus
+                maxLength={80}
+                placeholder={projectDisplayName({ ...project, label: undefined })}
+                title="Leave blank to use the Project folder name."
+                value={labelDraft}
+                onChange={(event) => setLabelDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape' || labelMutation.isPending) return
+                  setEditingLabel(false)
+                  labelMutation.reset()
+                }}
+              />
+              <IconButton
+                aria-label={`Save label for ${projectName}`}
+                disabled={labelMutation.isPending}
+                title="Save Project label"
+                type="submit"
+              >
+                {labelMutation.isPending ? <AppSpinner size="sm" /> : <Check />}
+              </IconButton>
+              <IconButton
+                aria-label={`Cancel editing label for ${projectName}`}
+                disabled={labelMutation.isPending}
+                title="Cancel"
+                type="button"
+                onClick={() => {
+                  setEditingLabel(false)
+                  labelMutation.reset()
+                }}
+              >
+                <X />
+              </IconButton>
+            </AppForm>
+          ) : (
+            <div className="project-title-row">
+              <h2 title={project.projectId}>{projectName}</h2>
+              <IconButton
+                aria-label={`Edit label for ${projectName}`}
+                className="project-label-edit"
+                title="Edit Project label"
+                type="button"
+                onClick={() => {
+                  setLabelDraft(project.label ?? '')
+                  setEditingLabel(true)
+                  labelMutation.reset()
+                }}
+              >
+                <Pencil />
+              </IconButton>
+            </div>
+          )}
           <p>
             {project.primaryRepoId} · {scopedRepoPath(project.repoPath, project.projectPath)}
           </p>
@@ -758,12 +850,14 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       </div>
 
       {(linkRepoMutation.error ||
+        labelMutation.error ||
         rebindRepoMutation.error ||
         previewStartMutation.error ||
         previewStopMutation.error ||
         agentAccessError) && (
         <AppAlert className="inline-error">
           {linkRepoMutation.error?.message ??
+            labelMutation.error?.message ??
             rebindRepoMutation.error?.message ??
             previewStartMutation.error?.message ??
             previewStopMutation.error?.message ??

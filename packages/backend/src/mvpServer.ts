@@ -36,6 +36,7 @@ import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
 } from './domain/projectCodingDefaults'
+import { optionalProjectLabelSchema, projectLabelSchema } from './domain/projectLabel'
 import { isNormalizedProjectPath, resolveProjectPath } from './domain/projectPath'
 import { deriveReadableId, stableIdSchema } from './domain/stableId'
 import { type WorkProjection, deriveGoalWorkProjections } from './domain/workProjection'
@@ -102,7 +103,13 @@ const ASSISTANT_FEED_PROJECTION_VERSION = 2
 
 const projectIdentitySchema = z.object({
   projectId: stableIdSchema.optional(),
+  label: optionalProjectLabelSchema,
 })
+const projectLabelUpdateSchema = z
+  .object({
+    label: projectLabelSchema.nullable(),
+  })
+  .strict()
 const projectRepoSchema = z.object({
   repoId: stableIdSchema,
   repoPath: z.string().min(1),
@@ -132,6 +139,7 @@ const projectSchema = z.union([
       const repoId = input.repoId ?? 'primary'
       return {
         projectId: input.projectId,
+        label: input.label,
         primaryRepoId: repoId,
         repos: [{ repoId, repoPath: input.repoPath, projectPath: input.projectPath }],
       }
@@ -244,6 +252,23 @@ export function createServer(options: ServerOptions = {}): MvpServer {
     reloadTail = operation.catch(() => undefined)
     await operation
     return runtimePromise
+  }
+
+  async function updateRuntimeProjectLabel(projectId: string, label: string | null) {
+    const operation = reloadTail.then(async () => {
+      const runtime = await runtimePromise
+      const project = runtime.projects.get(projectId)
+      if (!project) throw new ApiError(404, `Project not found: ${projectId}`)
+      const updated = await runtime.home.updateProjectLabel({ projectId, label })
+      if (updated.label) project.label = updated.label
+      else project.label = undefined
+      return runtime
+    })
+    reloadTail = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return operation
   }
 
   function scheduleTopologyReload() {
@@ -436,12 +461,24 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             await withPreparedProjectRepositories(body.repos, (repos) =>
               current.home.linkProject({
                 ...(body.projectId ? { projectId: body.projectId } : {}),
+                ...(body.label ? { label: body.label } : {}),
                 primaryRepoId: body.primaryRepoId,
                 repos,
               }),
             )
           })
           return json(await presentState(await nextRuntime), 201)
+        }
+        if (
+          request.method === 'PUT' &&
+          parts.length === 4 &&
+          parts[0] === 'api' &&
+          parts[1] === 'projects' &&
+          parts[3] === 'label'
+        ) {
+          const projectId = requirePart(parts, 2)
+          const body = await parseBody(request, projectLabelUpdateSchema)
+          return json(await presentState(await updateRuntimeProjectLabel(projectId, body.label)))
         }
         if (
           (request.method === 'GET' || request.method === 'PUT') &&
@@ -982,6 +1019,15 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
         workspaceAttentionProjectId(attention) === project.projectId &&
         attention.attributes.resolvedAt === null,
     )
+    const projectAssistantAttentions: ScopedAssistantAttention[] = projectAttentions.map(
+      (attention) => ({
+        scope: 'workspace',
+        projectId: project.projectId,
+        ...attention.attributes,
+        operatorRequest: attention.attributes.operatorRequest ?? null,
+        body: attention.body,
+      }),
+    )
     const goals = []
     let goalOpenAttentionCount = 0
     const readableGoalPackages: Array<{
@@ -1019,6 +1065,11 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       ).length
       const openAttentionCount = goalAttentionCount + relatedProjectAttentions.length
       goalOpenAttentionCount += goalAttentionCount
+      const completion = goalCompletionProjection(project.projectId, goalId, goalPackage)
+      const legacyCompletionId = goalPackage.goal.attributes.completionAttentionId
+      const legacyCompletion = legacyCompletionId
+        ? goalPackage.attentions.get(legacyCompletionId)
+        : null
       goals.push({
         id: goalId,
         title: goalPackage.goal.attributes.title,
@@ -1027,13 +1078,34 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
         priority: goalPackage.goal.attributes.priority,
         ...summaries,
         openAttentionCount,
+        completion: completion
+          ? { id: completion.evidenceId, completedAt: completion.completedAt }
+          : legacyCompletion
+            ? {
+                id: legacyCompletion.attributes.id,
+                completedAt: legacyCompletion.attributes.createdAt,
+              }
+            : null,
       })
+      const presentedGoalAttentions = presentGoalAttentions(project.projectId, goalId, goalPackage)
+      projectAssistantAttentions.push(
+        ...presentedGoalAttentions.map((attention) => ({
+          scope: 'goal' as const,
+          ...attention,
+        })),
+      )
       if (includeAttentions) {
-        goalAttentions.push(...presentGoalAttentions(project.projectId, goalId, goalPackage))
+        goalAttentions.push(...presentedGoalAttentions)
       }
     }
+    const needsYouCount = projectAssistantOpenRequests(
+      workspace.homeId,
+      workspace.events,
+      projectAssistantAttentions,
+    ).reduce((count, request) => count + request.attentions.length, 0)
     projects.push({
       projectId: project.projectId,
+      ...(project.label ? { label: project.label } : {}),
       primaryRepoId: project.primaryRepoId,
       repos: project.repos.map((repo) => ({
         repoId: repo.repoId,
@@ -1047,6 +1119,7 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       guidance: await readProjectGuidance(project.sourceRoot),
       preview: runtime.preview.inspect(project.projectId),
       openAttentionCount: goalOpenAttentionCount + projectAttentions.length,
+      needsYouCount,
       goals,
     })
   }

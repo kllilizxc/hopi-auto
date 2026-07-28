@@ -30,6 +30,7 @@ import {
   projectDocumentSchema,
   validateProjectDocument,
 } from '../domain/projectDocument'
+import { normalizeProjectLabel, projectLabelSchema } from '../domain/projectLabel'
 import {
   isNormalizedProjectPath,
   normalizeProjectPath,
@@ -121,6 +122,7 @@ const legacyConfiguredProjectLinksDocumentSchema = z
 const projectLinkSchema = z
   .object({
     projectId: z.string().regex(STABLE_ID_PATTERN),
+    label: projectLabelSchema.optional(),
     primaryRepoId: z.string().regex(STABLE_ID_PATTERN),
     repos: z.array(projectRepoLinkSchema).min(1),
   })
@@ -160,6 +162,7 @@ export interface AssistantHomePaths {
 export type LinkProjectInput =
   | {
       projectId?: string
+      label?: string
       repoPath: string
       repoId?: string
       projectPath?: string
@@ -168,6 +171,7 @@ export type LinkProjectInput =
     }
   | {
       projectId?: string
+      label?: string
       primaryRepoId: string
       repos: ProjectRepoLink[]
       repoPath?: never
@@ -179,6 +183,11 @@ export interface LinkRepoInput {
   repoId: string
   repoPath: string
   projectPath?: string
+}
+
+export interface UpdateProjectLabelInput {
+  projectId: string
+  label: string | null
 }
 
 export interface RebindProjectInput {
@@ -203,6 +212,7 @@ export interface AssistantHomeStore {
   listProjects(): Promise<LinkedProject[]>
   readProject(projectId: string): Promise<LinkedProject>
   linkProject(input: LinkProjectInput): Promise<LinkedProject>
+  updateProjectLabel(input: UpdateProjectLabelInput): Promise<LinkedProject>
   linkRepo(input: LinkRepoInput): Promise<LinkedProject>
   rebindProject(input: RebindProjectInput): Promise<LinkedProject>
   rebindRepo(input: RebindRepoInput): Promise<LinkedProject>
@@ -384,6 +394,7 @@ export function createAssistantHomeStore(
 
         const link: ProjectLink = {
           projectId,
+          ...(requested.label ? { label: requested.label } : {}),
           primaryRepoId,
           repos: inspected
             .map((repo) => repoLink(repo.repoId, repo.inspection))
@@ -429,6 +440,43 @@ export function createAssistantHomeStore(
           'Project links',
         )
         return presentProject(paths, link)
+      })
+    },
+    async updateProjectLabel(input) {
+      assertStableId(input.projectId, 'projectId')
+      await this.initialize()
+      return withFileLock(paths.mutationLockPath, async () => {
+        const links = await readProjectLinks(paths.projectLinksPath)
+        assertUniqueProjectLinks(links.projects)
+        const projectIndex = links.projects.findIndex(
+          (project) => project.projectId === input.projectId,
+        )
+        const link = links.projects[projectIndex]
+        if (!link) {
+          throw new AssistantHomeStoreError(
+            'project_not_found',
+            `Project is not linked: ${input.projectId}`,
+          )
+        }
+        const label = normalizeProjectLabel(input.label ?? undefined)
+        if (link.label === label) return presentProject(paths, link)
+
+        const updatedLink: ProjectLink = {
+          projectId: link.projectId,
+          ...(label ? { label } : {}),
+          primaryRepoId: link.primaryRepoId,
+          repos: link.repos,
+        }
+        links.projects[projectIndex] = updatedLink
+        await publishYamlFile(
+          publisher,
+          { id: 'assistant-home', path: paths.rootDir },
+          paths.projectLinksPath,
+          links,
+          projectLinksDocumentSchema,
+          'Project links',
+        )
+        return presentProject(paths, updatedLink)
       })
     },
     async linkRepo(input) {
@@ -715,6 +763,7 @@ function normalizeLinkProjectInput(input: LinkProjectInput) {
   if ('repos' in input && input.repos) {
     return {
       projectId: input.projectId,
+      label: normalizeProjectLabel(input.label),
       primaryRepoId: input.primaryRepoId,
       repos: input.repos,
     }
@@ -722,6 +771,7 @@ function normalizeLinkProjectInput(input: LinkProjectInput) {
   const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
   return {
     projectId: input.projectId,
+    label: normalizeProjectLabel(input.label),
     primaryRepoId: repoId,
     repos: [{ repoId, repoPath: input.repoPath, projectPath: input.projectPath }],
   }
@@ -1249,6 +1299,7 @@ async function normalizeProjectLinks(
       version: 4,
       projects: raw.projects.map((project) => ({
         projectId: project.projectId,
+        ...('label' in project && project.label ? { label: project.label } : {}),
         primaryRepoId: project.primaryRepoId,
         repos: project.repos.map((repo) => ({
           repoId: repo.repoId,

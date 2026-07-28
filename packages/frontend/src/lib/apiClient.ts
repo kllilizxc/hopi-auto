@@ -170,10 +170,18 @@ export function readWorkAttemptEvents(
 
 export function createProject(input: {
   projectId?: string
+  label?: string
   primaryRepoId: string
   repos: Array<{ repoId: string; repoPath: string; projectPath?: string }>
 }) {
   return apiRequest<AppSnapshot>('/api/projects', { method: 'POST', body: input })
+}
+
+export function updateProjectLabel(projectId: string, label: string | null) {
+  return apiRequest<AppSnapshot>(`/api/projects/${encodeURIComponent(projectId)}/label`, {
+    method: 'PUT',
+    body: { label },
+  })
 }
 
 export function selectProjectDirectory() {

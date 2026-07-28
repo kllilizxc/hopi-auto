@@ -101,6 +101,41 @@ describe('createAssistantHomeStore', () => {
     expect(await store.validateProject('P-1')).toEqual(project)
   })
 
+  test('persists an optional trimmed Project label outside canonical identity', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    const store = createAssistantHomeStore(homeRoot)
+
+    const project = await store.linkProject({
+      projectId: 'P-1',
+      label: '  Finance approvals  ',
+      repoPath,
+    })
+
+    expect(project.label).toBe('Finance approvals')
+    expect((await store.readProject('P-1')).label).toBe('Finance approvals')
+    expect(await readYaml(store.paths.projectLinksPath)).toMatchObject({
+      version: 4,
+      projects: [{ projectId: 'P-1', label: 'Finance approvals' }],
+    })
+    expect(
+      await readYaml(join(project.integrationRoot, '.hopi', 'project.yml')),
+    ).not.toHaveProperty('label')
+
+    expect(
+      await store.updateProjectLabel({
+        projectId: 'P-1',
+        label: '  Finance operations  ',
+      }),
+    ).toMatchObject({ projectId: 'P-1', label: 'Finance operations' })
+    expect((await store.readProject('P-1')).label).toBe('Finance operations')
+
+    expect(await store.updateProjectLabel({ projectId: 'P-1', label: null })).not.toHaveProperty(
+      'label',
+    )
+    expect(await readYaml(store.paths.projectLinksPath)).not.toHaveProperty('projects.0.label')
+  })
+
   test('derives a readable Project ID from the primary selected folder', async () => {
     const store = createAssistantHomeStore(join(temporaryRoot, 'home'))
     const firstRepo = await createRepo(join(temporaryRoot, 'first-monorepo'))

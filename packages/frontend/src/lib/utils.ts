@@ -22,9 +22,12 @@ export function formatTime(value: string) {
 
 export function projectDisplayName(project: {
   projectId: string
+  label?: string
   repoPath: string
   projectPath: string
 }) {
+  const label = project.label?.trim()
+  if (label) return label
   const selectedPath =
     project.projectPath && project.projectPath !== '.' ? project.projectPath : project.repoPath
   const segments = selectedPath.split(/[\\/]+/).filter(Boolean)

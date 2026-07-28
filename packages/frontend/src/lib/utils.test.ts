@@ -2,6 +2,25 @@ import { describe, expect, test } from 'bun:test'
 import { projectDisplayName } from './utils'
 
 describe('Project presentation', () => {
+  test('prefers a non-empty Project label over its folder-derived name', () => {
+    expect(
+      projectDisplayName({
+        projectId: 'P-finance',
+        label: 'Finance approvals',
+        repoPath: '/home/me/Code/backend',
+        projectPath: '.',
+      }),
+    ).toBe('Finance approvals')
+    expect(
+      projectDisplayName({
+        projectId: 'P-finance',
+        label: '   ',
+        repoPath: '/home/me/Code/backend',
+        projectPath: '.',
+      }),
+    ).toBe('backend')
+  })
+
   test('uses the primary Repo folder for a root-scoped Project', () => {
     expect(
       projectDisplayName({

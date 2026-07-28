@@ -6,6 +6,7 @@ import {
   parseProjectAttentionTarget,
   parseWorkAttentionTarget,
 } from '../domain/attentionTarget'
+import { PROJECT_LABEL_MAX_LENGTH, optionalProjectLabelSchema } from '../domain/projectLabel'
 import { isNormalizedProjectPath } from '../domain/projectPath'
 import { stableIdSchema } from '../domain/stableId'
 
@@ -184,6 +185,9 @@ export const assistantToolSchemas = {
           .object({
             kind: z.literal('create'),
             projectId: stableIdSchema.optional(),
+            label: optionalProjectLabelSchema.describe(
+              'Optional display label. Project identity remains projectId.',
+            ),
             primaryRepoId: stableIdSchema,
             repos: z.array(projectRepoSchema).min(1),
           })
@@ -352,31 +356,21 @@ const mcpProjectRepoSchema = z
   .strict()
 const mcpManageProjectSchema = z
   .object({
-    change: z.discriminatedUnion('kind', [
-      z
-        .object({
-          kind: z.literal('create'),
-          projectId: z.string().optional(),
-          primaryRepoId: z.string().min(1),
-          repos: z.array(mcpProjectRepoSchema).min(1),
-        })
-        .strict(),
-      z
-        .object({
-          kind: z.literal('add_repo'),
-          projectId: z.string().min(1),
-          repo: mcpProjectRepoSchema,
-        })
-        .strict(),
-      z
-        .object({
-          kind: z.literal('rebind_repos'),
-          projectId: z.string().min(1),
-          repos: z.array(mcpProjectRepoSchema).min(1),
-        })
-        .strict(),
-      z.object({ kind: z.literal('recover'), projectId: z.string().min(1) }).strict(),
-    ]),
+    change: z
+      .object({
+        kind: z.enum(['create', 'add_repo', 'rebind_repos', 'recover']),
+        projectId: z.string().optional(),
+        label: z
+          .string()
+          .min(1)
+          .max(PROJECT_LABEL_MAX_LENGTH)
+          .describe('Optional display label for create. Project identity remains projectId.')
+          .optional(),
+        primaryRepoId: z.string().optional(),
+        repos: z.array(mcpProjectRepoSchema).optional(),
+        repo: mcpProjectRepoSchema.optional(),
+      })
+      .strict(),
   })
   .strict()
 const mcpCreateGoalSchema = z

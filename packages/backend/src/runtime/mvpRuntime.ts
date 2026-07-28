@@ -45,6 +45,7 @@ import { createWorkspaceAttentionController } from './workspaceAttentionControll
 
 export interface MvpProjectRuntime {
   projectId: string
+  label?: string
   primaryRepoId: string
   repos: LinkedProjectRepo[]
   repoPath: string
@@ -215,6 +216,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     })
     return {
       projectId: linked.projectId,
+      ...(linked.label ? { label: linked.label } : {}),
       primaryRepoId: linked.primaryRepoId,
       repos: [...linked.repos],
       repoPath: linked.repoPath,

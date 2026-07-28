@@ -4,12 +4,13 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { AppLoadingNotice } from './components/ui'
 import { initializeMessageStreamCache } from './lib/messageStreamCache'
+import { initializeNavigationCache } from './lib/navigationCache'
+import { NAVIGATION_CACHE_GC_INTERVAL_MS } from './lib/queryPerformance'
 import {
   loadBoardView,
   loadGoalDocsPage,
   loadProjectHomePage,
 } from './routeModules'
-import { NAVIGATION_CACHE_GC_INTERVAL_MS } from './lib/queryPerformance'
 
 initializeMessageStreamCache()
 
@@ -33,6 +34,7 @@ const queryClient = new QueryClient({
     },
   },
 })
+initializeNavigationCache(queryClient)
 
 function App() {
   return (

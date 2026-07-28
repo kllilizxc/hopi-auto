@@ -1,39 +1,29 @@
 import type { InfiniteData, QueryClient } from '@tanstack/react-query'
 import type { AssistantFeedChanges, AssistantFeedPage, CursorPage } from './apiTypes'
 import { infiniteMessageHistoryQueryKey } from './queryKeys'
-
-const CACHE_VERSION = 1
-const CACHE_INDEX_KEY = 'hopi.message-stream-cache.v1.index'
-const CACHE_ENTRY_PREFIX = 'hopi.message-stream-cache.v1.entry.'
+import {
+  createSessionSnapshotCache,
+  type SessionSnapshot,
+  type SessionSnapshotStorage,
+} from './sessionSnapshotCache'
 
 export const MESSAGE_STREAM_CACHE_MAX_ENTRIES = 12
 export const MESSAGE_STREAM_CACHE_MAX_ENTRY_CHARACTERS = 750_000
 export const MESSAGE_STREAM_CACHE_MAX_TOTAL_CHARACTERS = 3_000_000
 
-export interface MessageStreamSnapshot<T> {
-  savedAt: number
-  value: T
-}
+export type MessageStreamSnapshot<T> = SessionSnapshot<T>
+export type MessageStreamStorage = SessionSnapshotStorage
 
-export interface MessageStreamStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-  removeItem(key: string): void
-}
-
-interface CacheIndexEntry {
-  key: string
-  savedAt: number
-  size: number
-}
-
-interface CacheEntry<T> extends MessageStreamSnapshot<T> {
-  version: typeof CACHE_VERSION
-  key: string
-}
+const messageStreamCache = createSessionSnapshotCache({
+  storageKey: 'hopi.message-stream-cache.v1',
+  version: 1,
+  maxEntries: MESSAGE_STREAM_CACHE_MAX_ENTRIES,
+  maxEntryCharacters: MESSAGE_STREAM_CACHE_MAX_ENTRY_CHARACTERS,
+  maxTotalCharacters: MESSAGE_STREAM_CACHE_MAX_TOTAL_CHARACTERS,
+})
 
 export function initializeMessageStreamCache() {
-  return browserSessionStorage() !== null
+  return messageStreamCache.available()
 }
 
 export function messageStreamSnapshotKey(queryKey: readonly unknown[]) {
@@ -147,118 +137,16 @@ export function mergeAssistantChangesIntoHistory(
 
 export function readMessageStreamSnapshot<T>(
   key: string,
-  storage: MessageStreamStorage | null = browserSessionStorage(),
+  storage?: MessageStreamStorage | null,
 ): MessageStreamSnapshot<T> | null {
-  if (!storage) return null
-  try {
-    const raw = storage.getItem(cacheEntryKey(key))
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<CacheEntry<T>>
-    if (
-      parsed.version !== CACHE_VERSION ||
-      parsed.key !== key ||
-      typeof parsed.savedAt !== 'number' ||
-      !('value' in parsed)
-    ) {
-      return null
-    }
-    return { savedAt: parsed.savedAt, value: parsed.value as T }
-  } catch {
-    return null
-  }
+  return messageStreamCache.read<T>(key, storage)
 }
 
 export function writeMessageStreamSnapshot<T>(
   key: string,
   value: T,
-  storage: MessageStreamStorage | null = browserSessionStorage(),
+  storage?: MessageStreamStorage | null,
   savedAt = Date.now(),
 ) {
-  if (!storage) return false
-
-  let serialized: string
-  try {
-    serialized = JSON.stringify({ version: CACHE_VERSION, key, savedAt, value })
-  } catch {
-    return false
-  }
-  if (serialized.length > MESSAGE_STREAM_CACHE_MAX_ENTRY_CHARACTERS) return false
-
-  const current: CacheIndexEntry = { key, savedAt, size: serialized.length }
-  const entries = [
-    current,
-    ...readCacheIndex(storage)
-      .filter((entry) => entry.key !== key)
-      .sort((left, right) => right.savedAt - left.savedAt),
-  ]
-  let total = entries.reduce((sum, entry) => sum + entry.size, 0)
-  while (
-    entries.length > MESSAGE_STREAM_CACHE_MAX_ENTRIES ||
-    total > MESSAGE_STREAM_CACHE_MAX_TOTAL_CHARACTERS
-  ) {
-    const removed = entries.pop()
-    if (!removed || removed.key === key) return false
-    total -= removed.size
-    safelyRemove(storage, removed.key)
-  }
-
-  while (true) {
-    try {
-      storage.setItem(cacheEntryKey(key), serialized)
-      break
-    } catch {
-      const removed = entries.pop()
-      if (!removed || removed.key === key) return false
-      safelyRemove(storage, removed.key)
-    }
-  }
-
-  try {
-    storage.setItem(CACHE_INDEX_KEY, JSON.stringify(entries))
-    return true
-  } catch {
-    safelyRemove(storage, key)
-    return false
-  }
-}
-
-function browserSessionStorage(): MessageStreamStorage | null {
-  if (typeof window === 'undefined') return null
-  try {
-    return window.sessionStorage
-  } catch {
-    return null
-  }
-}
-
-function cacheEntryKey(key: string) {
-  return `${CACHE_ENTRY_PREFIX}${encodeURIComponent(key)}`
-}
-
-function readCacheIndex(storage: MessageStreamStorage): CacheIndexEntry[] {
-  try {
-    const raw = storage.getItem(CACHE_INDEX_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter(
-      (entry): entry is CacheIndexEntry =>
-        typeof entry === 'object' &&
-        entry !== null &&
-        typeof entry.key === 'string' &&
-        typeof entry.savedAt === 'number' &&
-        typeof entry.size === 'number' &&
-        entry.size >= 0,
-    )
-  } catch {
-    return []
-  }
-}
-
-function safelyRemove(storage: MessageStreamStorage, key: string) {
-  try {
-    storage.removeItem(cacheEntryKey(key))
-  } catch {
-    // A cache that cannot be written or evicted is simply ignored.
-  }
+  return messageStreamCache.write(key, value, storage, savedAt)
 }

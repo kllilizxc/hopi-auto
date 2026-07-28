@@ -63,11 +63,18 @@ test('Project cards control the one Project Preview session and expose every nam
 
 test('Project linking leaves identity generation to the backend', async () => {
   const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+  const api = await Bun.file(new URL('../lib/apiClient.ts', import.meta.url)).text()
 
   expect(source).not.toContain('Project ID')
   expect(source).not.toContain('setProjectId')
   expect(source).not.toContain('Derived when omitted')
-  expect(source).toContain('Its primary folder also names it.')
+  expect(source).toContain('label="Project label"')
+  expect(source).toContain('Project identity and paths stay unchanged.')
+  expect(source).toContain('Edit Project label')
+  expect(source).toContain('updateProjectLabel(project.projectId')
+  expect(source).toContain('labelDraft.trim() || null')
+  expect(api).toContain('label?: string')
+  expect(api).toContain('export function updateProjectLabel')
 })
 
 test('empty Project folders use the same create operation without a confirmation workflow', async () => {

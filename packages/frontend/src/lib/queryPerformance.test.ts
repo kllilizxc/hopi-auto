@@ -13,6 +13,7 @@ import {
 test('polling surfaces share stable intervals and notify only visible state', async () => {
   const contract = await Bun.file(new URL('./queryPerformance.ts', import.meta.url)).text()
   const sources = await Promise.all([
+    Bun.file(new URL('../App.tsx', import.meta.url)).text(),
     Bun.file(new URL('../components/Layout.tsx', import.meta.url)).text(),
     Bun.file(new URL('../pages/ProjectHomePage.tsx', import.meta.url)).text(),
     Bun.file(new URL('../pages/GoalDocsPage.tsx', import.meta.url)).text(),
@@ -41,6 +42,7 @@ test('polling surfaces share stable intervals and notify only visible state', as
   expect(runtime).toContain('readMessageStreamSnapshot')
   expect(runtime).toContain('initialData: persistedHistory')
   expect(runtime).toContain('writeMessageStreamSnapshot')
+  expect(runtime).toContain('initializeNavigationCache(queryClient)')
 })
 
 test('canonical polling stays responsive only while the projection can change actively', () => {

@@ -708,6 +708,7 @@ describe('MVP server', () => {
               change: {
                 kind: 'create',
                 projectId: 'P-via-assistant',
+                label: 'Assistant-created Project',
                 primaryRepoId: 'primary',
                 repos: [{ repoId: 'primary', repoPath: repoRoot }],
               },
@@ -719,7 +720,10 @@ describe('MVP server', () => {
           changed: true,
           value: {
             runtimeRefresh: 'after_current_turn',
-            project: { projectId: 'P-via-assistant' },
+            project: {
+              projectId: 'P-via-assistant',
+              label: 'Assistant-created Project',
+            },
           },
         })
 
@@ -1026,6 +1030,7 @@ describe('MVP server', () => {
     const state = await request(base, '/api/projects', {
       method: 'POST',
       body: {
+        label: '  Customer Portal  ',
         primaryRepoId: 'web',
         repos: [
           {
@@ -1037,7 +1042,32 @@ describe('MVP server', () => {
       },
     })
 
-    expect(state).toMatchObject({ projects: [{ projectId: 'P-product-web' }] })
+    expect(state).toMatchObject({
+      projects: [{ projectId: 'P-product-web', label: 'Customer Portal' }],
+    })
+
+    const renamed = await request(base, '/api/projects/P-product-web/label', {
+      method: 'PUT',
+      body: { label: 'Finance approvals' },
+    })
+    expect(renamed).toMatchObject({
+      projects: [{ projectId: 'P-product-web', label: 'Finance approvals' }],
+    })
+
+    const cleared = await request(base, '/api/projects/P-product-web/label', {
+      method: 'PUT',
+      body: { label: null },
+    })
+    expect(
+      (cleared as { projects: Array<Record<string, unknown>> }).projects[0],
+    ).not.toHaveProperty('label')
+
+    const missing = await fetch(`${base}/api/projects/P-missing/label`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ label: 'Missing' }),
+    })
+    expect(missing.status).toBe(404)
   })
 
   test('derives readable unique Goal IDs from titles without exposing identity input', async () => {
@@ -1606,6 +1636,9 @@ describe('MVP server', () => {
     const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
     activeServers.add(server)
     const base = `http://127.0.0.1:${server.port}`
+    expect(await request(base, '/api/state?view=shell')).toMatchObject({
+      projects: [{ projectId: 'P-1', openAttentionCount: 1, needsYouCount: 1 }],
+    })
     const feed = await request(base, '/api/assistant/feed?projectId=P-1&limit=1')
     expect(feed.requests).toEqual([
       {
@@ -1669,6 +1702,9 @@ describe('MVP server', () => {
     expect((await workspace.readWorkspace()).attentions.get('A-choice')?.attributes).toMatchObject({
       operatorRequest: null,
       resolvedAt: null,
+    })
+    expect(await request(base, '/api/state?view=shell')).toMatchObject({
+      projects: [{ projectId: 'P-1', openAttentionCount: 1, needsYouCount: 0 }],
     })
     expect((await request(base, '/api/assistant/feed?projectId=P-1&limit=2')).requests).toEqual([])
 
@@ -2182,6 +2218,17 @@ describe('MVP server', () => {
         context: { projectId: 'P-1', goalId: 'G-1', attentionId: 'A-complete' },
       },
     })
+    expect(await request(base, '/api/state?view=shell')).toMatchObject({
+      projects: [
+        {
+          projectId: 'P-1',
+          goals: [
+            { id: 'G-1', completion: { id: 'A-complete' } },
+            { id: 'G-2', completion: { id: 'A-complete' } },
+          ],
+        },
+      ],
+    })
 
     const feed = await request(base, '/api/assistant/feed?projectId=P-1')
     const items = feed.items as Array<{
@@ -2236,6 +2283,24 @@ describe('MVP server', () => {
 
     const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
     activeServers.add(server)
+    expect(await request(`http://127.0.0.1:${server.port}`, '/api/state?view=shell')).toMatchObject(
+      {
+        projects: [
+          {
+            projectId: 'P-1',
+            goals: [
+              {
+                id: 'G-modern',
+                completion: {
+                  id: 'E-final',
+                  completedAt: '2026-07-26T11:32:06.638Z',
+                },
+              },
+            ],
+          },
+        ],
+      },
+    )
     const feed = await request(
       `http://127.0.0.1:${server.port}`,
       '/api/assistant/feed?projectId=P-1',

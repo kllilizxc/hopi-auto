@@ -43,6 +43,7 @@ export const DEFAULT_ATTEMPT_STALE_AFTER_MS = 10 * 60 * 1_000
 
 export interface AssistantStateProject {
   projectId: string
+  label?: string
   projectRoot: string
   sourceRoot?: string
   primaryRepoId?: string
@@ -135,6 +136,7 @@ interface DigestRuntime {
 
 interface DigestProject {
   projectId: string
+  label?: string
   available: boolean
   releaseHead: string | null
   error?: string
@@ -439,6 +441,7 @@ export function createAssistantStateReader(options: {
             : undefined
           return {
             projectId: project.projectId,
+            ...(project.label ? { label: project.label } : {}),
             projectRoot: project.projectRoot,
             ...(project.primaryRepoId ? { primaryRepoId: project.primaryRepoId } : {}),
             ...(repos ? { repos } : {}),
@@ -449,6 +452,7 @@ export function createAssistantStateReader(options: {
         } catch (error) {
           return {
             projectId: project.projectId,
+            ...(project.label ? { label: project.label } : {}),
             projectRoot: project.projectRoot,
             ...(project.sourceRoot ? { sourceRoot: project.sourceRoot } : {}),
             available: false,
@@ -1042,6 +1046,7 @@ async function semanticDigest(
     ),
     projects: projects.map((project) => ({
       projectId: project.projectId,
+      ...(project.label ? { label: project.label } : {}),
       available: project.available,
       releaseHead: project.releaseHead,
       ...(project.error ? { error: project.error } : {}),

@@ -22,6 +22,7 @@ import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
 } from './projectCodingDefaults'
+import { projectLabelSchema } from './projectLabel'
 import { isNormalizedProjectPath } from './projectPath'
 import { STABLE_ID_PATTERN, stableIdSchema } from './stableId'
 
@@ -116,6 +117,7 @@ const linksSchema = z
       z
         .object({
           projectId: stableIdSchema,
+          label: projectLabelSchema.optional(),
           primaryRepoId: stableIdSchema,
           repos: z.array(
             z
@@ -198,6 +200,7 @@ export async function readAndValidateAssistantWorkspace(
           }))
         : rawLinks.projects.map((project) => ({
             projectId: project.projectId,
+            ...('label' in project && project.label ? { label: project.label } : {}),
             primaryRepoId: project.primaryRepoId,
             repos: project.repos.map((repo) => ({
               repoId: repo.repoId,

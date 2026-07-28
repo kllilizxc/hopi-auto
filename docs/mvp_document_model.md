@@ -211,10 +211,14 @@ must be exactly `home:<homeId>/event:<eventId>` or `project:<projectId>`.
 required before Coordinator starts and travels with every lossless Assistant-home export; the
 filesystem path of Assistant home is only a current machine binding.
 
-Each version 4 `projects.yml` link owns `{ projectId, primaryRepoId, repos }`. Each Repo entry owns a
-stable Project-local `repoId`, its current-machine `repoPath` Git-checkout locator, and an optional
-portable `projectPath` relative to the Git root. Missing `projectPath` means `.`. The same Git Repo
-may occur in several Projects, while duplicate Git identities remain invalid inside one Project.
+Each version 4 `projects.yml` link owns `{ projectId, label?, primaryRepoId, repos }`. `label` is
+optional Home-local presentation metadata: trimmed non-empty Unicode text up to 80 characters. It
+does not participate in Project identity or Repo topology, and duplicate labels are valid. Each Repo
+entry owns a stable Project-local `repoId`, its current-machine `repoPath` Git-checkout locator, and
+an optional portable `projectPath` relative to the Git root. Replacing or clearing `label` publishes
+only this Home-owned document; clearing removes the field. Missing `projectPath` means `.`. The same
+Git Repo may occur in several Projects, while duplicate Git identities remain invalid inside one
+Project.
 Coordinator derives a Project-qualified Repo-adjacent managed integration path, then resolves the
 Project's source scope inside that managed worktree from `projectPath`. The primary managed root
 remains the canonical Project document root. `repoPath` supplies the Git object database and initial
@@ -224,6 +228,7 @@ HEAD only; HOPI never writes its branch, index, or working tree.
 version: 4
 projects:
   - projectId: product-a
+    label: Storefront
     primaryRepoId: web
     repos:
       - repoId: web

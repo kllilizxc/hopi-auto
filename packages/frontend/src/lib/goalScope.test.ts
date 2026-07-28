@@ -1,21 +1,25 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  type GoalPreferenceStorage,
   buildGoalRoute,
   buildProjectRoute,
   findNewestUnseenGoal,
   orderGoalsByRecency,
   orderProjectsByRecency,
+  projectCompletionIdentities,
   readGoalRouteState,
   readGoalViewState,
   readRecentGoalId,
   readRecentGoals,
   readRecentProjects,
-  rememberRecentProject,
-  rememberRecentGoal,
+  readSeenProjectCompletions,
   rememberGoalViewState,
+  rememberRecentGoal,
+  rememberRecentProject,
+  rememberSeenProjectCompletions,
   resolveProjectGoalId,
   selectPeerShortcuts,
-  type GoalPreferenceStorage,
+  unseenProjectCompletionCount,
 } from './goalScope'
 
 describe('Goal routes', () => {
@@ -103,9 +107,9 @@ describe('recent workspace navigation', () => {
         (project) => project.projectId,
       ),
     ).toEqual(['P-current', 'P-recent'])
-    expect(
-      selectPeerShortcuts(projects, 'P-current', 1, (project) => project.projectId),
-    ).toEqual([{ projectId: 'P-current' }])
+    expect(selectPeerShortcuts(projects, 'P-current', 1, (project) => project.projectId)).toEqual([
+      { projectId: 'P-current' },
+    ])
     expect(
       selectPeerShortcuts(
         [{ id: 'G-recent' }, { id: 'G-current' }, { id: 'G-other' }],
@@ -183,6 +187,38 @@ describe('recent workspace navigation', () => {
     expect(findNewestUnseenGoal(goals, 'P-1', new Set(goals.map((goal) => goal.id)))).toBeNull()
   })
 
+  test('baselines existing completions and detects only later Project completions', () => {
+    const values = new Map<string, string>()
+    const storage: GoalPreferenceStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    }
+    const initialGoals = [
+      { id: 'G-old', completion: { id: 'E-old' } },
+      { id: 'G-active', completion: null },
+    ]
+
+    expect(readSeenProjectCompletions('P-1', storage)).toBeNull()
+    expect(unseenProjectCompletionCount(initialGoals, null)).toBe(0)
+
+    const initialIdentities = projectCompletionIdentities(initialGoals)
+    rememberSeenProjectCompletions('P-1', initialIdentities, storage)
+    expect(
+      unseenProjectCompletionCount(initialGoals, readSeenProjectCompletions('P-1', storage)),
+    ).toBe(0)
+
+    const refreshedGoals = [...initialGoals, { id: 'G-new', completion: { id: 'E-new' } }]
+    expect(
+      unseenProjectCompletionCount(refreshedGoals, readSeenProjectCompletions('P-1', storage)),
+    ).toBe(1)
+
+    rememberSeenProjectCompletions('P-1', projectCompletionIdentities(refreshedGoals), storage)
+    expect(
+      unseenProjectCompletionCount(refreshedGoals, readSeenProjectCompletions('P-1', storage)),
+    ).toBe(0)
+    expect(readSeenProjectCompletions('P-2', storage)).toBeNull()
+  })
+
   test('migrates previous single-Goal preferences into visit history', () => {
     const values = new Map([
       ['hopi.navigation.recent-goal.P-1', 'G-plain'],
@@ -200,7 +236,10 @@ describe('recent workspace navigation', () => {
       setItem: (key, value) => values.set(key, value),
     }
 
-    expect(readRecentGoals('P-1', storage)[0]).toMatchObject({ projectId: 'P-1', goalId: 'G-plain' })
+    expect(readRecentGoals('P-1', storage)[0]).toMatchObject({
+      projectId: 'P-1',
+      goalId: 'G-plain',
+    })
     expect(readRecentGoals('P-2', storage)).toEqual([
       { projectId: 'P-2', goalId: 'G-object', visitedAt: '2026-07-17T10:00:00Z' },
     ])
@@ -225,6 +264,10 @@ describe('recent workspace navigation', () => {
     expect(readRecentProjects(unavailableStorage)).toEqual([])
     expect(() => rememberRecentProject('P-1', unavailableStorage)).not.toThrow()
     expect(() => rememberRecentGoal('P-1', 'G-1', unavailableStorage)).not.toThrow()
+    expect(readSeenProjectCompletions('P-1', unavailableStorage)).toBeNull()
+    expect(() =>
+      rememberSeenProjectCompletions('P-1', ['G-1\u0000E-1'], unavailableStorage),
+    ).not.toThrow()
   })
 
   test('keeps presentation state isolated by Project and Goal', () => {

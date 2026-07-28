@@ -31,6 +31,7 @@ export interface GoalViewState {
 const RECENT_PROJECT_KEY = 'hopi.navigation.recent-project'
 const RECENT_GOAL_KEY_PREFIX = 'hopi.navigation.recent-goal.'
 const GOAL_VIEW_STATE_KEY_PREFIX = 'hopi.view.goal.'
+const SEEN_PROJECT_COMPLETION_KEY_PREFIX = 'hopi.navigation.seen-project-completions.'
 
 export function buildProjectRoute(projectId: string) {
   return `/projects/${encodeURIComponent(projectId)}`
@@ -135,14 +136,55 @@ export function rememberRecentGoal(
 ) {
   const preference = { projectId, goalId, visitedAt: visitedAt.toISOString() }
   const preferences = normalizeRecentGoals(
-    [
-      preference,
-      ...readRecentGoals(projectId, storage).filter((item) => item.goalId !== goalId),
-    ],
+    [preference, ...readRecentGoals(projectId, storage).filter((item) => item.goalId !== goalId)],
     projectId,
   )
   writePreference(storage, recentGoalKey(projectId), preferences)
   return preferences
+}
+
+export function projectCompletionIdentities<
+  T extends { id: string; completion: { id: string } | null },
+>(goals: readonly T[]) {
+  return goals.flatMap((goal) => (goal.completion ? [`${goal.id}\u0000${goal.completion.id}`] : []))
+}
+
+export function readSeenProjectCompletions(
+  projectId: string,
+  storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
+): string[] | null {
+  let raw: string | null
+  try {
+    raw = storage?.getItem(seenProjectCompletionKey(projectId)) ?? null
+  } catch {
+    return null
+  }
+  if (raw === null) return null
+  try {
+    const value = JSON.parse(raw) as unknown
+    if (!Array.isArray(value)) return null
+    return [...new Set(value.filter(isString))]
+  } catch {
+    return null
+  }
+}
+
+export function rememberSeenProjectCompletions(
+  projectId: string,
+  completionIds: readonly string[],
+  storage: GoalPreferenceStorage | null = browserPreferenceStorage(),
+) {
+  const seen = [...new Set(completionIds.filter(isString))]
+  writePreference(storage, seenProjectCompletionKey(projectId), seen)
+  return seen
+}
+
+export function unseenProjectCompletionCount<
+  T extends { id: string; completion: { id: string } | null },
+>(goals: readonly T[], seenCompletionIds: readonly string[] | null) {
+  if (seenCompletionIds === null) return 0
+  const seen = new Set(seenCompletionIds)
+  return projectCompletionIdentities(goals).filter((identity) => !seen.has(identity)).length
 }
 
 export function readGoalViewState(
@@ -210,10 +252,7 @@ export function orderGoalsByRecency<T extends { id: string; createdAt?: string |
     if (preference.projectId !== projectId) continue
     visitedAtByGoal.set(
       preference.goalId,
-      Math.max(
-        visitedAtByGoal.get(preference.goalId) ?? 0,
-        timestamp(preference.visitedAt),
-      ),
+      Math.max(visitedAtByGoal.get(preference.goalId) ?? 0, timestamp(preference.visitedAt)),
     )
   }
   return stableOrder(goals, (goal) =>
@@ -242,15 +281,15 @@ function recentGoalKey(projectId: string) {
   return `${RECENT_GOAL_KEY_PREFIX}${encodeURIComponent(projectId)}`
 }
 
+function seenProjectCompletionKey(projectId: string) {
+  return `${SEEN_PROJECT_COMPLETION_KEY_PREFIX}${encodeURIComponent(projectId)}`
+}
+
 function goalViewStateKey(projectId: string, goalId: string) {
   return `${GOAL_VIEW_STATE_KEY_PREFIX}${encodeURIComponent(projectId)}.${encodeURIComponent(goalId)}`
 }
 
-function writePreference(
-  storage: GoalPreferenceStorage | null,
-  key: string,
-  value: unknown,
-) {
+function writePreference(storage: GoalPreferenceStorage | null, key: string, value: unknown) {
   try {
     storage?.setItem(key, JSON.stringify(value))
   } catch {

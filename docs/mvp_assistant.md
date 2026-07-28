@@ -575,15 +575,17 @@ pickers obtain a host path, navigation changes presentation, and confirmation di
 none is a separate Assistant capability. HOPI does not let Assistant call its own public HTTP UI
 routes or duplicate their mutation logic.
 
-Project management accepts `create`, `add_repo`, or `rebind_repos` as explicit changes. With no
-operator-supplied path, Assistant asks for the Project directory instead of calling the tool. Create
-and add classify the supplied path as part of the same operation: an existing Git Repo is linked,
-while an empty directory or missing leaf whose parent exists is initialized and then linked. A
-selected subdirectory already inside a Git worktree links that existing Repo with its relative
-Project path; HOPI never initializes a nested Repo. Missing ancestors and non-empty non-Git
-directories remain validation failures. Rebind accepts a partial set of moved Repo identities,
-merges unchanged current bindings server-side, and never initializes a replacement path. It may
-change the repository, common directory, or Project-relative scope behind a stable `repoId`.
+Project management accepts `create`, `add_repo`, or `rebind_repos` as explicit changes. `create`
+also accepts the same optional Project `label` as the product UI; it controls presentation only and
+never supplies or changes `projectId`. With no operator-supplied path, Assistant asks for the Project
+directory instead of calling the tool. Create and add classify the supplied path as part of the same
+operation: an existing Git Repo is linked, while an empty directory or missing leaf whose parent
+exists is initialized and then linked. A selected subdirectory already inside a Git worktree links
+that existing Repo with its relative Project path; HOPI never initializes a nested Repo. Missing
+ancestors and non-empty non-Git directories remain validation failures. Rebind accepts a partial set
+of moved Repo identities, merges unchanged current bindings server-side, and never initializes a
+replacement path. It may change the repository, common directory, or Project-relative scope behind
+a stable `repoId`.
 
 Repo rebind executes through one typed Command boundary shared by the product UI, Assistant tool,
 and local CLI adapter. A Command can describe and plan its effects without mutation, then records

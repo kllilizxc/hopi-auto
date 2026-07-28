@@ -293,7 +293,7 @@ test('Assistant Attention chrome stays quiet, aligned, and free of duplicate ico
   expect(cornerRule).toContain('min-height: 54px')
   expect(cornerRule).not.toContain('min-height: 72px')
   expect(assistant.indexOf('className={cn(\'reflection-debug-button\'')).toBeLessThan(
-    assistant.indexOf('className="assistant-needs-you-count"'),
+    assistant.indexOf('assistant-needs-you-count'),
   )
   expect(assistant).toContain('className="composer-context__dismiss"')
   expect(assistant).toContain('Replying to')

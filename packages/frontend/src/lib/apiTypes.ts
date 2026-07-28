@@ -76,6 +76,10 @@ export interface GoalSummary {
   currentSummary: string
   nextSummary: string
   openAttentionCount: number
+  completion: {
+    id: string
+    completedAt: string
+  } | null
 }
 
 export interface ProjectRepoSummary {
@@ -95,6 +99,7 @@ export interface ProjectRebindPlan {
 
 export interface ProjectSummary {
   projectId: string
+  label?: string
   primaryRepoId: string
   repos: ProjectRepoSummary[]
   repoPath: string
@@ -102,6 +107,7 @@ export interface ProjectSummary {
   guidance: string | null
   preview: PreviewSession | null
   openAttentionCount: number
+  needsYouCount: number
   goals: GoalSummary[]
 }
 

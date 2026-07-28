@@ -279,8 +279,14 @@ are:
 
 The ordinary linking UI does not expose `projectId`. The first durable link derives a readable,
 Home-unique identity from the primary selected Project folder; that identity is then persisted and
-never re-derived from a later path or folder rename. Explicit IDs remain available at the API
-boundary for migration and deterministic automation.
+never re-derived from a later path or folder rename. A link may additionally own one optional
+operator-facing `label`: trimmed non-empty Unicode text up to 80 characters. Product surfaces render
+that label before the selected Project folder name, but identity, URLs, release refs, permissions,
+Assistant scope, and Repo topology continue to use `projectId`. Labels need not be unique, and an
+omitted label preserves the existing folder-name fallback. Product UI and Assistant Project creation
+share this input; neither derives `projectId` from the label. The Project card may replace or clear
+its label inline; clearing restores the folder-name fallback without reloading Project execution.
+Explicit IDs remain available at the API boundary for migration and deterministic automation.
 
 The ordinary Assistant Create Goal operation does not expose `goalId` to the operator. New Goals
 derive a Project-local, readable `G-<title>` identity from the Goal title. Unicode letters and
@@ -492,9 +498,16 @@ selected Goal is the page title, nearby Goals are smaller muted peers beside it,
 remain available through the same overflow control. This title variant has no rail border or
 background. The compact Project rail derives its shortcut count from its own available width at the
 readable compact-tab size; it consumes otherwise idle shell space before placing remaining Projects
-in overflow. The compact Project rail and ordinary content tabs retain their sliding selected
-indicator. Attempt history and document indexes remain lists because they select records rather than
-peer views.
+in overflow. A Project with unresolved Attention explicitly transferred to the operator through
+NeedsYou shows that exact Attention count on its shortcut and in overflow; ordinary open Attention
+does not create the badge, and zero omits it. A Goal completion first observed after that browser has
+established its Project baseline adds a success marker to the same Project shortcut and overflow
+option. Activating that Project tab, including an already selected tab, records the currently visible
+completion identities as read and removes only the success marker; a simultaneous NeedsYou count
+remains. Completion read state is a browser-local presentation preference, not Assistant delivery
+acknowledgement or Goal authority. The compact Project rail and ordinary content tabs retain their
+sliding selected indicator. Attempt history and document indexes remain lists because they select
+records rather than peer views.
 
 Browser-local Goal view state contains only presentation preferences: expanded Work progress rows
 and the currently snapped compact Lane, keyed by stable Project and Goal identity. Re-entry restores
@@ -502,19 +515,22 @@ those preferences but never treats them as Work, plan, or Lane authority. Compac
 loading, and initial Goal reads share one bottom-right non-modal loading notice; it does not replace
 the mounted shell or capture pointer input.
 
-Goal and Work-message navigation is stale-while-revalidate. Cached canonical projections render
-immediately and refresh without replacing visible content. When the target has never been read, the
-current surface remains mounted while navigation intent warms the route module and target query;
-only then does the URL and visible surface switch. Work-card and Attempt selection apply the same
-rule to Attempt summaries and paged event history. Navigation requests are ordered so a slower
-earlier preload cannot override the operator's latest selection. Direct cold URLs may use a local
-skeleton because no prior surface exists to preserve.
+Project and Goal navigation commits the operator's selection immediately: the URL, switcher, and
+target surface change before lazy code or canonical data finishes loading. An exact cached target
+projection renders immediately and revalidates in the background. An uncached target renders its own
+non-blocking loading notice; it never keeps the previous Project or Goal visible under the new
+selection. Prefetch on pointer, focus, or pointer-down remains an optimization rather than a
+navigation gate. Rapid selection is route-owned, so slower reads may populate only their exact cache
+keys and cannot restore an earlier route. A target read failure remains on that target instead of
+falling back to the previous surface. Work-card and Attempt selection apply the same exact-scope
+stale-while-revalidate rule to Attempt summaries and paged event history.
 
-Message history additionally keeps a bounded browser-session snapshot keyed by exact stream
-identity. Re-entry or same-tab reload may render the last successfully displayed Assistant, Attempt,
-or Reflection history and the selected Work's Attempt index synchronously while cursor
-synchronization runs in the background. These snapshots are disposable read caches: they cannot
-cross stream scopes, satisfy Evidence, or become conversation, Run, or workflow authority.
+Canonical shell, Goal board, Goal docs, and message history projections additionally keep bounded
+browser-session snapshots keyed by exact query or stream identity. Re-entry or same-tab reload may
+render the last successfully displayed projection synchronously while canonical synchronization
+runs in the background. Snapshots expire, remain isolated by Project and Goal, and are disposable
+read caches: they cannot cross scopes, satisfy Evidence, or become Project, Goal, conversation, Run,
+or workflow authority. Existing backend APIs remain the sole data source.
 
 Read projections are scoped to the surface that renders them. The Kanban projection contains Goal
 header facts, card facts, current Agent plans, and relevant Attention, but excludes design documents,

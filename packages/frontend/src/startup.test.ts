@@ -69,15 +69,21 @@ test('route preloads follow user intent instead of competing with startup', asyn
   expect(startupSources).not.toContain('requestIdleCallback')
 })
 
-test('routine Goal navigation warms data without replacing the current surface', async () => {
+test('Goal navigation commits the route before warming its exact projection', async () => {
   const layout = await Bun.file(new URL('./components/Layout.tsx', import.meta.url)).text()
+  const navigation = layout.slice(
+    layout.indexOf('const navigateToGoalSurface = useCallback('),
+    layout.indexOf('const goalForProject = useCallback('),
+  )
 
   expect(layout).toContain('const prepareGoalSurface = useCallback(')
-  expect(layout).toContain('const cached = queryClient.getQueryData(queryKey) !== undefined')
   expect(layout).toContain('queryClient.prefetchQuery({')
   expect(layout).toContain('await Promise.all([loadSurface, prefetch])')
-  expect(layout).toContain('const request = ++goalNavigationRequest.current')
-  expect(layout).toContain('if (request === goalNavigationRequest.current)')
+  expect(navigation.indexOf('navigate(buildGoalRoute(scope, nextSurface))')).toBeGreaterThan(0)
+  expect(navigation.indexOf('warmGoalSurface(scope, nextSurface)')).toBeGreaterThan(
+    navigation.indexOf('navigate(buildGoalRoute(scope, nextSurface))'),
+  )
+  expect(layout).not.toContain('goalNavigationRequest')
   expect(layout).toContain('navigateToGoalSurface(routeScope, nextSurface)')
 })
 
