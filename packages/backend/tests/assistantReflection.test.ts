@@ -34,10 +34,13 @@ describe('Assistant wake trigger', () => {
       source: 'system',
       visibility: 'internal',
       status: 'pending',
-      context: { projectId: 'P-1' },
+      context: {
+        projectId: 'P-1',
+        observedDigest: '2222222222222222222222222222222222222222222222222222222222222222',
+      },
     })
-    expect(events[0]?.body).toContain('Current Project state and every unresolved Attention')
-    expect(events[0]?.body).not.toContain('"projects"')
+    expect(events[0]?.body).toContain('native fork of the Project speaking Session')
+    expect(events[0]?.body).toContain('material fact identities')
     expect(await fixture.wake.listRuns()).toMatchObject([
       {
         manifest: {
@@ -68,9 +71,8 @@ describe('Assistant wake trigger', () => {
     expect(projectIds).toEqual(['P-1', 'P-2'])
   })
 
-  test('does not loop an unresolved Attention and consumes one scheduled revisit once', async () => {
-    let currentTime = Date.parse('2026-07-25T00:00:00.000Z')
-    const fixture = await setup(['P-1'], () => new Date(currentTime))
+  test('continues unresolved Project Attention until the Assistant presents NeedsYou', async () => {
+    const fixture = await setup(['P-1'])
     await fixture.workspace.createAttention(attention('A-1', 'P-1'))
     fixture.setSnapshot(
       snapshot(['P-1'], {
@@ -84,37 +86,21 @@ describe('Assistant wake trigger', () => {
 
     const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
     if (!event) throw new Error('Expected wake event')
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    expect(event.attributes.context).toMatchObject({
-      projectId: 'P-1',
-      attentionRefs: [`home:${homeId}/attention:A-1`],
-    })
-    expect(event.body).toContain('Assistant-owned responsibility')
-    expect(event.body).toContain('cannot settle')
     await fixture.workspace.handleEvent(event.attributes.id, {
       reply: 'No public update.',
       disposition: 'silent',
     })
     const recoveredWake = fixture.recreateWake()
     expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
-    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
-
-    const revisitAt = new Date(currentTime + 60_000).toISOString()
-    await fixture.workspace.updateAttention('A-1', {
-      revisitAt,
-      updatedAt: new Date(currentTime),
-    })
-    await recoveredWake.acknowledgeProjects(['P-1'])
-    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
-
-    currentTime += 60_000
     expect(await recoveredWake.observe({ settled: true })).toBe('started')
     await recoveredWake.waitForIdle()
-    const revisit = [...(await fixture.workspace.readWorkspace()).events.values()].find(
+
+    const continuation = [...(await fixture.workspace.readWorkspace()).events.values()].find(
       (candidate) => candidate.attributes.id !== event.attributes.id,
     )
-    if (!revisit) throw new Error('Expected scheduled Attention revisit')
-    expect(revisit.attributes).toMatchObject({
+    if (!continuation) throw new Error('Expected Attention continuation')
+    const homeId = (await fixture.workspace.readWorkspace()).homeId
+    expect(continuation.attributes).toMatchObject({
       source: 'system',
       status: 'pending',
       context: {
@@ -123,172 +109,13 @@ describe('Assistant wake trigger', () => {
       },
     })
     expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
-    await fixture.workspace.handleEvent(revisit.attributes.id, {
-      reply: 'The external condition is still unavailable.',
-      disposition: 'silent',
-    })
-    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
-    expect(await fixture.recreateWake().observe({ settled: true })).toBe('unchanged')
-    expect((await recoveredWake.listRuns()).length).toBe(2)
-  })
-
-  test('re-emits actionable responsibility once when upgrading a consumed v2 wake', async () => {
-    const fixture = await setup(['P-1'])
-    await fixture.workspace.createAttention(attention('A-1', 'P-1'))
-    fixture.setSnapshot(
-      snapshot(['P-1'], {
-        workspaceAttentions: [snapshotAttention('A-1', 'P-1')],
-      }),
-    )
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-wake-v2',
-      content: 'Legacy wake.',
-      context: { projectId: 'P-1' },
-    })
-    await fixture.workspace.handleEvent('EV-wake-v2', {
-      reply: 'No operator update.',
-      disposition: 'silent',
-    })
-    const cursorPath = join(
-      fixture.homeRoot,
-      '.hopi',
-      'runtime',
-      'assistant',
-      'wakes',
-      'cursors',
-      'project-P-1.json',
-    )
-    await mkdir(join(cursorPath, '..'), { recursive: true })
-    await Bun.write(
-      cursorPath,
-      `${JSON.stringify({
-        version: 2,
-        scope: { kind: 'project', projectId: 'P-1' },
-        stateDigest: '1'.repeat(64),
-        eventId: 'EV-wake-v2',
-        updatedAt: '2026-07-25T00:00:00.000Z',
-      })}\n`,
-    )
-
-    const upgraded = fixture.recreateWake()
-    expect(await upgraded.observe({ settled: false })).toBe('started')
-    await upgraded.waitForIdle()
-
-    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
-    expect(events).toHaveLength(2)
-    const current = events.find((event) => event.attributes.id !== 'EV-wake-v2')
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    expect(current?.attributes).toMatchObject({
-      status: 'pending',
-      context: {
-        projectId: 'P-1',
-        attentionRefs: [`home:${homeId}/attention:A-1`],
-      },
-    })
-  })
-
-  test('wakes a Goal Attention at its scheduled revisit without a state digest edge', async () => {
-    let currentTime = Date.parse('2026-07-25T00:00:00.000Z')
-    const revisitAt = new Date(currentTime + 60_000).toISOString()
-    const fixture = await setup(['P-1'], () => new Date(currentTime))
-    const current = snapshot(['P-1'])
-    fixture.setSnapshot({
-      ...current,
-      projects: [
-        {
-          projectId: 'P-1',
-          available: true,
-          releaseHead: 'release',
-          goals: [
-            {
-              goal: { attributes: { id: 'G-1' } },
-              attentions: [
-                {
-                  reference: 'project:P-1/goal:G-1/attention:A-goal',
-                  attributes: {
-                    id: 'A-goal',
-                    resolvedAt: null,
-                    operatorRequest: null,
-                    revisitAt,
-                  },
-                },
-              ],
-              works: [],
-            },
-          ],
-        },
-      ],
-    })
-    await fixture.wake.acknowledgeProjects(['P-1'])
-
-    currentTime += 60_000
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
-    await fixture.wake.waitForIdle()
-    const revisit = [...(await fixture.workspace.readWorkspace()).events.values()][0]
-    expect(revisit?.attributes).toMatchObject({
-      source: 'system',
-      status: 'pending',
-      context: {
-        projectId: 'P-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-goal'],
-      },
-    })
-    if (!revisit) throw new Error('Expected Goal Attention revisit')
-    await fixture.workspace.handleEvent(revisit.attributes.id, {
-      reply: 'Checked.',
-      disposition: 'silent',
-    })
-    expect(await fixture.wake.observe({ settled: true })).not.toBe('started')
-    expect(await fixture.wake.observe({ settled: true })).toBe('unchanged')
-  })
-
-  test('does not treat legacy NeedsYou text as an Attention ownership transfer', async () => {
-    let currentTime = Date.parse('2026-07-25T00:00:00.000Z')
-    const fixture = await setup(['P-1'], () => new Date(currentTime))
-    await fixture.workspace.createAttention(attention('A-1', 'P-1'))
-    const state = await fixture.workspace.readWorkspace()
-    const attentionRef = `home:${state.homeId}/attention:A-1`
-    const revisitAt = new Date(currentTime + 60_000).toISOString()
-    await fixture.workspace.updateAttention('A-1', {
-      revisitAt,
-      updatedAt: new Date(currentTime),
-    })
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-question',
-      content: 'Ask for the missing input.',
-      context: { projectId: 'P-1', attentionRefs: [attentionRef] },
-      receivedAt: new Date(currentTime),
-    })
-    await fixture.workspace.handleEvent('EV-question', {
-      reply: '<NeedsYou attentionId="A-1">Restore the external session.</NeedsYou>',
+    await fixture.workspace.handleEvent(continuation.attributes.id, {
+      reply: '<NeedsYou attentionId="A-1">Choose the source.</NeedsYou>',
       disposition: 'notified',
       expose: true,
-      handledAt: new Date(currentTime),
     })
-    await fixture.wake.acknowledgeProjects(['P-1'])
-
-    currentTime += 60_000
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
-    await fixture.wake.waitForIdle()
-    expect((await fixture.workspace.readWorkspace()).events.size).toBe(2)
-
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-answer',
-      content: 'The external session is restored.',
-      context: {
-        projectId: 'P-1',
-        attentionRefs: [attentionRef],
-        replyTo: `home:${state.homeId}/event:EV-question`,
-      },
-      receivedAt: new Date(currentTime),
-    })
-    await fixture.workspace.handleEvent('EV-answer', {
-      reply: 'I will recheck it.',
-      disposition: 'answered',
-      handledAt: new Date(currentTime),
-    })
-    expect(await fixture.wake.observe({ settled: true })).not.toBe('started')
-    expect((await fixture.workspace.readWorkspace()).events.size).toBe(3)
+    expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
+    expect((await recoveredWake.listRuns()).length).toBe(2)
   })
 
   test('lets an active Work Attempt provide the next Attention wake edge', async () => {
@@ -320,10 +147,6 @@ describe('Assistant wake trigger', () => {
           workId: 'W-1',
           responsibility: 'generator',
           runId: 'R-1',
-          status: 'running',
-          requestedAt: '2026-01-01T00:00:00.000Z',
-          startedAt: '2026-01-01T00:00:00.000Z',
-          waitReason: null,
         },
       ],
     })
@@ -343,33 +166,6 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
-  test('routes cross-Project delegated Work settlement back to the source Project', async () => {
-    const fixture = await setup(['P-1', 'P-2'])
-    const running = delegatedAttentionSnapshot(true, '1')
-    fixture.setSnapshot(running)
-
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
-
-    fixture.setSnapshot(delegatedAttentionSnapshot(false, '2'))
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
-    await fixture.wake.waitForIdle()
-
-    const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
-    expect(event?.attributes).toMatchObject({
-      source: 'system',
-      status: 'pending',
-      context: { projectId: 'P-1' },
-    })
-    expect(await fixture.wake.listRuns()).toMatchObject([
-      {
-        manifest: {
-          scope: { kind: 'project', projectId: 'P-1' },
-          status: 'completed',
-        },
-      },
-    ])
-  })
-
   test('defers an ordinary unsettled change but preserves it for the settled edge', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
@@ -381,76 +177,18 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(1)
   })
 
-  test('wakes for a settled failure while another Goal in the same Project is active', async () => {
-    const fixture = await setup(['P-1'])
+  test('preserves a state edge until the Project has a speaking Session to fork', async () => {
+    const fixture = await setup(['P-1'], { speakingSession: false })
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '8'.repeat(64) } }))
 
-    const current = snapshot(['P-1'], {
-      projectDigests: { 'P-1': '8'.repeat(64) },
-    })
-    fixture.setSnapshot({
-      ...current,
-      activeRuns: [
-        {
-          projectId: 'P-1',
-          goalId: 'G-active',
-          workId: 'W-active',
-          responsibility: 'planner',
-          runId: 'R-active',
-          status: 'running',
-          requestedAt: '2026-01-01T00:00:00.000Z',
-          startedAt: '2026-01-01T00:00:00.000Z',
-          waitReason: null,
-        },
-      ],
-      projects: [
-        {
-          projectId: 'P-1',
-          available: true,
-          releaseHead: 'release',
-          goals: [
-            {
-              goalId: 'G-failed',
-              works: [
-                {
-                  attributes: { id: 'W-failed', kind: 'engineering', stage: 'generate' },
-                  projection: { failedPredicates: ['failed_attempt'] },
-                  runtime: {
-                    latestAttempt: {
-                      runId: 'R-failed',
-                      responsibility: 'generator',
-                      status: 'finished',
-                      result: 'fail',
-                      application: 'invalid',
-                    },
-                  },
-                },
-              ],
-            },
-            {
-              goalId: 'G-active',
-              works: [],
-            },
-          ],
-        },
-      ],
-    })
+    expect(await fixture.wake.observe({ settled: true })).toBe('deferred')
+    expect((await fixture.workspace.readWorkspace()).events.size).toBe(0)
 
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    fixture.setSpeakingSession(true)
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
     await fixture.wake.waitForIdle()
-
-    const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
-    expect(event?.attributes).toMatchObject({
-      source: 'system',
-      status: 'pending',
-      context: {
-        projectId: 'P-1',
-        workRefs: ['project:P-1/goal:G-failed/work:W-failed'],
-      },
-    })
-    expect(event?.body).toContain('Assistant-owned Work recovery')
-    expect(event?.body).toContain('cannot settle')
-    expect(event?.body).toContain('open Attention targeted to that exact Work')
+    expect((await fixture.workspace.readWorkspace()).events.size).toBe(1)
   })
 
   test('wakes for each published Reviewer reject while the repair Generator is active', async () => {
@@ -477,6 +215,28 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
+  test('does not create another wake when only the repair Generator changes after one reject', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+
+    fixture.setSnapshot(reviewerRejectSnapshot('R-review-1', 'R-generator-2', '6'))
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+    const firstEvent = [...(await fixture.workspace.readWorkspace()).events.values()][0]
+    if (!firstEvent) throw new Error('Expected Reviewer reject wake')
+    await fixture.workspace.handleEvent(firstEvent.attributes.id, {
+      reply: 'Observed.',
+      disposition: 'silent',
+    })
+
+    fixture.setSnapshot(reviewerRejectSnapshot('R-review-1', 'R-generator-3', '7'))
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+
+    expect((await fixture.workspace.readWorkspace()).events.size).toBe(1)
+    expect(await fixture.wake.listRuns()).toHaveLength(1)
+  })
+
   test('acknowledges the current Assistant effect without consuming a later state edge', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
@@ -493,7 +253,7 @@ describe('Assistant wake trigger', () => {
   })
 })
 
-async function setup(projectIds: string[], now: () => Date = () => new Date()) {
+async function setup(projectIds: string[], options: { speakingSession?: boolean } = {}) {
   const homeRoot = join(temporaryRoot, 'home')
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(homeRoot, publisher)
@@ -508,16 +268,20 @@ async function setup(projectIds: string[], now: () => Date = () => new Date()) {
     read: async () => current,
     readForReflection: async () => current,
   }
-  const wake = createAssistantWake({ homeRoot, workspace, state, now })
+  let speakingSession = options.speakingSession ?? true
+  const canWake = () => speakingSession
+  const wake = createAssistantWake({ homeRoot, workspace, state, canWake })
   return {
-    homeRoot,
     wake,
     workspace,
     setSnapshot(next: AssistantStateSnapshot) {
       current = next
     },
+    setSpeakingSession(value: boolean) {
+      speakingSession = value
+    },
     recreateWake() {
-      return createAssistantWake({ homeRoot, workspace, state, now })
+      return createAssistantWake({ homeRoot, workspace, state, canWake })
     },
   }
 }
@@ -543,7 +307,6 @@ function snapshot(
       projects: projectDigests,
     },
     activeRuns: [],
-    delegations: [],
     workspaceAttentions: overrides.workspaceAttentions ?? [],
     projects: projectIds.map((projectId) => ({
       projectId,
@@ -585,97 +348,6 @@ function snapshotAttention(id: string, projectId: string) {
   }
 }
 
-function delegatedAttentionSnapshot(active: boolean, sourceDigest: string) {
-  const current = snapshot(['P-1', 'P-2'], {
-    projectDigests: {
-      'P-1': sourceDigest.repeat(64),
-      'P-2': '3'.repeat(64),
-    },
-  })
-  const activeRun = active
-    ? {
-        projectId: 'P-2',
-        goalId: 'G-target',
-        workId: 'W-target',
-        responsibility: 'generator' as const,
-        runId: 'R-target',
-        status: 'running' as const,
-        requestedAt: '2026-01-01T00:00:00.000Z',
-        startedAt: '2026-01-01T00:00:00.000Z',
-        waitReason: null,
-      }
-    : null
-  return {
-    ...current,
-    activeRuns: activeRun ? [activeRun] : [],
-    delegations: [
-      {
-        sourceProjectId: 'P-1',
-        sourceGoalId: 'G-source',
-        sourceEventId: 'EV-source',
-        sourceAttentionRefs: ['project:P-1/goal:G-source/attention:A-source'],
-        targetProjectId: 'P-2',
-        targetGoalId: 'G-target',
-        targetWorkId: 'W-target',
-        work: {
-          attributes: {
-            id: 'W-target',
-            kind: 'engineering',
-            stage: active ? 'generate' : 'done',
-          },
-          path: '/tmp/W-target.md',
-          runtime: {
-            latestAttempt: { status: active ? 'running' : 'finished' },
-            recentAttempts: [
-              {
-                runId: 'R-target',
-                responsibility: 'generator',
-                status: active ? 'running' : 'finished',
-                result: active ? null : 'success',
-                application: active ? null : 'published',
-              },
-            ],
-            attemptCount: 1,
-            stale: false,
-          },
-        },
-        activeRun,
-      },
-    ],
-    projects: [
-      {
-        projectId: 'P-1',
-        available: true,
-        releaseHead: 'release',
-        goals: [
-          {
-            goal: { attributes: { id: 'G-source' } },
-            attentions: [
-              {
-                reference: 'project:P-1/goal:G-source/attention:A-source',
-                attributes: {
-                  id: 'A-source',
-                  target: 'project:P-1/goal:G-source',
-                  resolvedAt: null,
-                  operatorRequest: null,
-                  revisitAt: null,
-                },
-              },
-            ],
-            works: [],
-          },
-        ],
-      },
-      {
-        projectId: 'P-2',
-        available: true,
-        releaseHead: 'release',
-        goals: [],
-      },
-    ],
-  }
-}
-
 function reviewerRejectSnapshot(
   reviewerRunId: string,
   generatorRunId: string,
@@ -693,10 +365,6 @@ function reviewerRejectSnapshot(
         workId: 'W-1',
         responsibility: 'generator',
         runId: generatorRunId,
-        status: 'running',
-        requestedAt: '2026-01-01T00:00:00.000Z',
-        startedAt: '2026-01-01T00:00:00.000Z',
-        waitReason: null,
       },
     ],
     projects: [

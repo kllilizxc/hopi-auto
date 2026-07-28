@@ -1803,6 +1803,123 @@ describe('WorkspaceAssistant conversation', () => {
       notifiedAt: expect.any(String),
     })
   })
+
+  test('keeps supervision on a native branch and delivers only its action receipt to speaking', async () => {
+    const seen: Array<{
+      eventId: string
+      invocation: string | undefined
+      sessionId: string | null
+      prompt: string
+    }> = []
+    const fixture = await setup(() => ({
+      async run(input, observer) {
+        seen.push({
+          eventId: input.eventId,
+          invocation: input.invocation,
+          sessionId: input.session?.sessionId ?? null,
+          prompt: input.prompt,
+        })
+        if (input.invocation === 'supervision') {
+          await observer?.onSession?.(codexSession('thread-branch'))
+          return {
+            reply: 'Adjusted the Work contract.',
+            session: codexSession('thread-branch'),
+          }
+        }
+        await observer?.onSession?.(codexSession('thread-parent'))
+        return {
+          reply: input.eventId === 'EV-user-1' ? 'Started.' : 'Current state is aligned.',
+          session: codexSession('thread-parent'),
+        }
+      },
+    }))
+    const context = { projectId: 'P-1' }
+    const scope = { kind: 'project', projectId: 'P-1' } as const
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-user-1',
+      content: 'Start.',
+      context,
+    })
+    await fixture.assistant.process('EV-user-1')
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-wake-1',
+      content: 'A Reviewer rejected the current candidate.',
+      context,
+    })
+    await fixture.assistant.process('EV-wake-1')
+
+    expect(await fixture.conversation.readSession({ kind: 'project', projectId: 'P-1' })).toEqual(
+      codexSession('thread-parent'),
+    )
+    expect(await fixture.conversation.readPendingActionReceipts(scope)).toMatchObject([
+      {
+        eventId: 'EV-wake-1',
+        kind: 'reply',
+        summary: 'Adjusted the Work contract.',
+      },
+    ])
+
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-user-2',
+      content: 'What changed?',
+      context,
+    })
+    await fixture.assistant.process('EV-user-2')
+
+    expect(seen).toMatchObject([
+      { eventId: 'EV-user-1', invocation: 'speaking', sessionId: null },
+      { eventId: 'EV-wake-1', invocation: 'supervision', sessionId: 'thread-parent' },
+      { eventId: 'EV-user-2', invocation: 'speaking', sessionId: 'thread-parent' },
+    ])
+    expect(seen[2]?.prompt).toContain('Confirmed actions completed by supervision forks')
+    expect(seen[2]?.prompt).toContain('Adjusted the Work contract.')
+    expect(await fixture.conversation.readPendingActionReceipts(scope)).toEqual([])
+  })
+
+  test('accepts a transient retry-only internal handoff without a second model call', async () => {
+    let calls = 0
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        calls += 1
+        await tools.execute(input.toolToken, 'hopi_control_work', {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          workId: 'plan-initial',
+          action: { kind: 'retry' },
+        })
+        return { reply: '', session: codexSession('thread-atomic-retry') }
+      },
+    }))
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const attention = await publishTestWorkAttention(
+      fixture.goalStore,
+      'G-1',
+      'plan-initial',
+      3,
+      'stream disconnected before completion',
+    )
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-atomic-retry',
+      content: 'The transient blocker is clear; retry the Work.',
+      context: {
+        projectId: 'P-1',
+        goalId: 'G-1',
+        attentionRefs: [`project:P-1/goal:G-1/attention:${attention.attributes.id}`],
+      },
+    })
+
+    await fixture.assistant.process('EV-atomic-retry')
+
+    expect(calls).toBe(1)
+    expect((await fixture.workspace.readEvent('EV-atomic-retry'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'internal',
+    })
+    const current = (await fixture.goalStore.readPackage('G-1')).attentions.get(
+      attention.attributes.id,
+    )
+    expect(current?.attributes.resolvedAt).toBeNull()
+  })
 })
 
 async function setup(

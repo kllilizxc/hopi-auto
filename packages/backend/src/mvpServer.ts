@@ -1806,37 +1806,7 @@ async function receiveUserEvent(
   runtime: MvpRuntime,
   input: Parameters<MvpRuntime['workspace']['receiveEvent']>[0],
 ) {
-  const event = await runtime.workspace.receiveEvent(input)
-  const replyTo = event.attributes.context?.replyTo
-  if (replyTo) {
-    const workspace = await runtime.workspace.readWorkspace()
-    for (const reference of normalizeInboxAttentionReferences(event.attributes.context ?? {})) {
-      const parsed = parseAttentionReference(reference)
-      if (!parsed) continue
-      if (parsed.scope === 'workspace') {
-        const attention =
-          parsed.homeId === workspace.homeId
-            ? workspace.attentions.get(parsed.attentionId)
-            : undefined
-        if ((attention?.attributes.operatorRequest ?? null) !== replyTo) continue
-        await runtime.workspace.updateAttention(parsed.attentionId, {
-          operatorRequest: null,
-          updatedAt: new Date(event.attributes.receivedAt),
-        })
-        continue
-      }
-      const project = runtime.projects.get(parsed.projectId)
-      if (!project) continue
-      await clearGoalAttentionOperatorRequest(
-        project.store,
-        parsed.goalId,
-        parsed.attentionId,
-        replyTo,
-      )
-    }
-  }
-  runtime.coordinator.interruptInternalAssistant()
-  return event
+  return runtime.workspace.receiveEvent(input)
 }
 
 async function executeDirectUserCommand(

@@ -1,12 +1,7 @@
-import { attentionRevisitTimestamp } from '../assistant/assistantAttentionRevisit'
 import type { AssistantReflection } from '../assistant/assistantReflection'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
-import {
-  type InboxEventAttributes,
-  workspaceAttentionProjectId,
-} from '../domain/assistantWorkspaceDocuments'
-import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
+import type { InboxEventAttributes } from '../domain/assistantWorkspaceDocuments'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
 import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
@@ -64,12 +59,11 @@ export interface CoordinatorReconciler {
   protectAssistantProject(eventId: string, projectId: string): void
   settleAssistantTurn(eventId: string): Promise<void>
   setProjectEligible(projectId: string, eligible: boolean): void
-  interruptInternalAssistant(): void
   health(): CoordinatorHealth
 }
 
 interface ActiveAssistantTurn {
-  source: InboxEventAttributes['source']
+  scopeKey: string
   controller: AbortController
   promise: Promise<void>
 }
@@ -87,13 +81,6 @@ interface GoalCandidate {
   decision: ReturnType<typeof decideGoalReconciliation>
 }
 
-interface AssistantRetry {
-  failures: number
-  retryAt: number
-}
-
-const INTERNAL_ASSISTANT_RETRY_BASE_MS = 30_000
-const INTERNAL_ASSISTANT_RETRY_MAX_MS = 15 * 60_000
 const COORDINATOR_RETRY_BASE_MS = 1_000
 const COORDINATOR_RETRY_MAX_MS = 30_000
 
@@ -106,7 +93,6 @@ export function createCoordinatorReconciler(
   const eligibleProjects = new Set(options.projects.map((project) => project.projectId))
   const reservations = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
-  const assistantRetries = new Map<string, AssistantRetry>()
   const assistantTurnBarriers = new Map<string, AssistantTurnBarrier>()
   const projectActivityVersions = new Map<string, number>()
   let wakeTimer: ReturnType<typeof setTimeout> | null = null
@@ -139,12 +125,6 @@ export function createCoordinatorReconciler(
     setProjectEligible(projectId, eligible) {
       if (eligible) eligibleProjects.add(projectId)
       else eligibleProjects.delete(projectId)
-      this.wake()
-    },
-    interruptInternalAssistant() {
-      for (const entry of assistantActive.values()) {
-        if (entry.source !== 'user') entry.controller.abort()
-      }
       this.wake()
     },
     start() {
@@ -270,15 +250,13 @@ export function createCoordinatorReconciler(
       const run = reconcileTick(epoch)
         .then(async (result) => {
           if (result.kind !== 'assistant_started') armDeadline(result.nextWakeAt ?? null)
-          if (epoch === reconcileEpoch && options.reflection && assistantActive.size === 0) {
+          if (epoch === reconcileEpoch && options.reflection) {
             const workspace = await options.workspace.readWorkspaceForControl()
-            if (
-              eligiblePendingEvents(workspace, assistantActive, assistantRetries, now().getTime())
-                .length === 0
-            ) {
+            if (eligiblePendingEvents(workspace, assistantActive).length === 0) {
               await options.reflection.observe({
                 settled:
                   result.kind === 'idle' && !startedWithReservation && reservations.size === 0,
+                busyScopeKeys: [...assistantActive.values()].map((entry) => entry.scopeKey),
               })
             }
           }
@@ -349,11 +327,8 @@ export function createCoordinatorReconciler(
   async function reconcileTick(epoch: number): Promise<CoordinatorReconcileTick> {
     const workspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
-    const observedAt = now().getTime()
     const event =
-      directAssistantCommands === 0 && assistantActive.size === 0
-        ? eligiblePendingEvent(workspace, assistantActive, assistantRetries, observedAt)
-        : undefined
+      directAssistantCommands === 0 ? eligiblePendingEvent(workspace, assistantActive) : undefined
     if (event) {
       const controller = new AbortController()
       const context = event.attributes.context
@@ -362,25 +337,9 @@ export function createCoordinatorReconciler(
       }
       const promise = options.assistant
         .process(event.attributes.id, controller.signal)
-        .then(() => {
-          assistantRetries.delete(event.attributes.id)
-        })
+        .then(() => undefined)
         .catch(async (error) => {
           if (controller.signal.aborted) return
-          if (event.attributes.source !== 'user') {
-            const previous = assistantRetries.get(event.attributes.id)
-            const failures = (previous?.failures ?? 0) + 1
-            assistantRetries.set(event.attributes.id, {
-              failures,
-              retryAt:
-                now().getTime() +
-                Math.min(
-                  INTERNAL_ASSISTANT_RETRY_BASE_MS * 2 ** Math.min(failures - 1, 20),
-                  INTERNAL_ASSISTANT_RETRY_MAX_MS,
-                ),
-            })
-            return
-          }
           await options.workspace.handleEvent(event.attributes.id, {
             reply: `Assistant unavailable: ${errorMessage(error)}`,
             disposition: 'operational-failed',
@@ -389,8 +348,8 @@ export function createCoordinatorReconciler(
           })
         })
         .finally(() => {
-          assistantActive.delete(event.attributes.id)
           return coordinator.settleAssistantTurn(event.attributes.id).finally(() => {
+            assistantActive.delete(event.attributes.id)
             coordinator.wake()
           })
         })
@@ -398,7 +357,7 @@ export function createCoordinatorReconciler(
           recordOperationalFailure(`Assistant turn ${event.attributes.id} failed`, error)
         })
       assistantActive.set(event.attributes.id, {
-        source: event.attributes.source,
+        scopeKey: assistantEventScopeKey(event),
         controller,
         promise,
       })
@@ -408,21 +367,7 @@ export function createCoordinatorReconciler(
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const passCounts = reservationPassCounts(reservations)
     const candidates: GoalCandidate[] = []
-    let nextWakeAt = nextAssistantRetryAt(workspace, assistantActive, assistantRetries, observedAt)
-    for (const attention of workspace.attentions.values()) {
-      const revisitAt = attentionRevisitTimestamp({
-        reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
-        id: attention.attributes.id,
-        projectId: workspaceAttentionProjectId(attention),
-        resolvedAt: attention.attributes.resolvedAt,
-        operatorRequest: attention.attributes.operatorRequest ?? null,
-        revisitAt: attention.attributes.revisitAt ?? null,
-        workspace,
-      })
-      if (revisitAt !== null && revisitAt > observedAt) {
-        nextWakeAt = nextWakeAt === null ? revisitAt : Math.min(nextWakeAt, revisitAt)
-      }
-    }
+    let nextWakeAt: number | null = null
     for (const project of options.projects) {
       if (!eligibleProjects.has(project.projectId)) continue
       try {
@@ -430,20 +375,6 @@ export function createCoordinatorReconciler(
           ? await project.store.readReconciliationSnapshot()
           : await readReconciliationPackages(project.store)
         for (const [goalId, goalPackage] of reconciliationPackages) {
-          for (const attention of goalPackage.attentions.values()) {
-            const revisitAt = attentionRevisitTimestamp({
-              reference: goalAttentionReference(project.projectId, goalId, attention.attributes.id),
-              id: attention.attributes.id,
-              projectId: project.projectId,
-              resolvedAt: attention.attributes.resolvedAt,
-              operatorRequest: attention.attributes.operatorRequest ?? null,
-              revisitAt: attention.attributes.revisitAt ?? null,
-              workspace,
-            })
-            if (revisitAt !== null && revisitAt > observedAt) {
-              nextWakeAt = nextWakeAt === null ? revisitAt : Math.min(nextWakeAt, revisitAt)
-            }
-          }
           if (goalPackage.goal.attributes.lifecycle === 'active') {
             for (const work of goalPackage.works.values()) {
               const notBefore = work.attributes.notBefore
@@ -680,27 +611,24 @@ async function readReconciliationPackages(store: GoalPackageStore) {
   return goalPackages
 }
 
-function eligiblePendingEvent<T>(
+function eligiblePendingEvent(
   workspace: AssistantWorkspace,
-  active: ReadonlyMap<string, T>,
-  retries: ReadonlyMap<string, AssistantRetry>,
-  observedAt: number,
+  active: ReadonlyMap<string, Pick<ActiveAssistantTurn, 'scopeKey'>>,
 ) {
-  return eligiblePendingEvents(workspace, active, retries, observedAt)[0]
+  return eligiblePendingEvents(workspace, active)[0]
 }
 
-function eligiblePendingEvents<T>(
+function eligiblePendingEvents(
   workspace: AssistantWorkspace,
-  active: ReadonlyMap<string, T>,
-  retries: ReadonlyMap<string, AssistantRetry>,
-  observedAt: number,
+  active: ReadonlyMap<string, Pick<ActiveAssistantTurn, 'scopeKey'>>,
 ) {
+  const activeScopeKeys = new Set([...active.values()].map((entry) => entry.scopeKey))
   return [...workspace.events.values()]
     .filter(
       (event) =>
         event.attributes.status === 'pending' &&
         !active.has(event.attributes.id) &&
-        (retries.get(event.attributes.id)?.retryAt ?? Number.NEGATIVE_INFINITY) <= observedAt,
+        !activeScopeKeys.has(assistantEventScopeKey(event)),
     )
     .sort(
       (left, right) =>
@@ -710,20 +638,10 @@ function eligiblePendingEvents<T>(
     )
 }
 
-function nextAssistantRetryAt<T>(
-  workspace: AssistantWorkspace,
-  active: ReadonlyMap<string, T>,
-  retries: ReadonlyMap<string, AssistantRetry>,
-  observedAt: number,
-) {
-  let next: number | null = null
-  for (const event of workspace.events.values()) {
-    if (event.attributes.status !== 'pending' || active.has(event.attributes.id)) continue
-    const retryAt = retries.get(event.attributes.id)?.retryAt
-    if (retryAt === undefined || retryAt <= observedAt) continue
-    next = next === null ? retryAt : Math.min(next, retryAt)
-  }
-  return next
+function assistantEventScopeKey(event: { attributes: Pick<InboxEventAttributes, 'context'> }) {
+  return event.attributes.context?.projectId
+    ? `project:${event.attributes.context.projectId}`
+    : 'home'
 }
 
 function inboxSourceRank(source: InboxEventAttributes['source']) {

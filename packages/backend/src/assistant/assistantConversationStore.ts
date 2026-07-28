@@ -1,4 +1,4 @@
-import { appendFile, mkdir, rm } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
@@ -43,9 +43,24 @@ const storedEventSchema = z
   })
   .passthrough()
 
+const actionReceiptSchema = z
+  .object({
+    version: z.literal(1),
+    receiptId: z.string().min(1),
+    scope: z.string().min(1),
+    eventId: z.string().min(1),
+    kind: z.enum(['tool', 'reply']),
+    summary: z.string().min(1),
+    detail: z.string().nullable(),
+    createdAt: z.string().datetime({ offset: true }),
+    deliveredAt: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict()
+
 export type AssistantTurnStatus = z.infer<typeof turnStatusSchema>
 export type AssistantTurnManifest = z.infer<typeof turnManifestSchema>
 export type AssistantTurnEvent = AgentRuntimeEvent & { eventId: string; createdAt: string }
+export type AssistantActionReceipt = z.infer<typeof actionReceiptSchema>
 
 export interface AssistantTurnRuntime {
   manifest: AssistantTurnManifest
@@ -74,6 +89,15 @@ export interface AssistantConversationStore {
   ): Promise<void>
   clearSession(scope: AssistantConversationScope): Promise<void>
   clearSessions(): Promise<void>
+  recordActionReceipt(
+    scope: AssistantConversationScope,
+    receipt: Omit<AssistantActionReceipt, 'version' | 'scope' | 'createdAt' | 'deliveredAt'>,
+  ): Promise<AssistantActionReceipt>
+  readPendingActionReceipts(scope: AssistantConversationScope): Promise<AssistantActionReceipt[]>
+  acknowledgeActionReceipts(
+    scope: AssistantConversationScope,
+    receiptIds: readonly string[],
+  ): Promise<void>
 }
 
 export function createAssistantConversationStore(
@@ -83,6 +107,7 @@ export function createAssistantConversationStore(
   const root = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant')
   const turnsRoot = join(root, 'turns')
   const legacySessionPath = join(root, 'session.json')
+  const receiptsRoot = join(root, 'receipts')
   const sessionPath = (scope: AssistantConversationScope) =>
     scope.kind === 'home'
       ? join(root, 'sessions', 'home.json')
@@ -92,6 +117,12 @@ export function createAssistantConversationStore(
   const turnRoot = (eventId: string) => join(turnsRoot, assertLocalId(eventId))
   const manifestPath = (eventId: string) => join(turnRoot(eventId), 'turn.json')
   const eventsPath = (eventId: string) => join(turnRoot(eventId), 'events.jsonl')
+  const receiptScopeRoot = (scope: AssistantConversationScope) =>
+    scope.kind === 'home'
+      ? join(receiptsRoot, 'home')
+      : join(receiptsRoot, 'projects', projectSessionId(scope.projectId))
+  const receiptPath = (scope: AssistantConversationScope, receiptId: string) =>
+    join(receiptScopeRoot(scope), `${assertLocalId(receiptId)}.json`)
 
   return {
     async interruptRunning() {
@@ -229,6 +260,59 @@ export function createAssistantConversationStore(
       await rm(join(root, 'sessions'), { recursive: true, force: true })
       await rm(legacySessionPath, { force: true })
     },
+
+    async recordActionReceipt(scope, receipt) {
+      const path = receiptPath(scope, receipt.receiptId)
+      const existing = await readJson(path, actionReceiptSchema)
+      if (existing) return existing
+      const stored = actionReceiptSchema.parse({
+        version: 1,
+        ...receipt,
+        scope: assistantConversationScopeKey(scope),
+        createdAt: now().toISOString(),
+        deliveredAt: null,
+      })
+      await writeJson(path, stored)
+      return stored
+    },
+
+    async readPendingActionReceipts(scope) {
+      const directory = receiptScopeRoot(scope)
+      const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+      const receipts = await Promise.all(
+        entries
+          .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+          .map((entry) => readJson(join(directory, entry.name), actionReceiptSchema)),
+      )
+      return receipts
+        .filter(
+          (receipt): receipt is AssistantActionReceipt =>
+            receipt !== null &&
+            receipt.scope === assistantConversationScopeKey(scope) &&
+            receipt.deliveredAt === null,
+        )
+        .sort(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.receiptId.localeCompare(right.receiptId),
+        )
+    },
+
+    async acknowledgeActionReceipts(scope, receiptIds) {
+      const deliveredAt = now().toISOString()
+      for (const receiptId of [...new Set(receiptIds)]) {
+        const path = receiptPath(scope, receiptId)
+        const receipt = await readJson(path, actionReceiptSchema)
+        if (
+          !receipt ||
+          receipt.scope !== assistantConversationScopeKey(scope) ||
+          receipt.deliveredAt !== null
+        ) {
+          continue
+        }
+        await writeJson(path, { ...receipt, deliveredAt })
+      }
+    },
   }
 }
 
@@ -262,7 +346,9 @@ async function readJson<T>(path: string, schema: z.ZodType<T>) {
 
 async function writeJson(path: string, value: unknown) {
   await mkdir(dirname(path), { recursive: true })
-  await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`)
+  const temporary = `${path}.${crypto.randomUUID()}.tmp`
+  await Bun.write(temporary, `${JSON.stringify(value, null, 2)}\n`)
+  await rename(temporary, path)
 }
 
 function assertLocalId(value: string) {

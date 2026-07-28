@@ -111,6 +111,11 @@ export function createAssistantTools(options: {
   onProjectRecoveryRequested?: (projectId: string) => Promise<{ eligible: boolean; error?: string }>
   onGoalEffect?: (eventId: string, projectId: string, goalId: string) => void
   onProjectDispatchEffect?: (eventId: string, projectId: string) => void
+  onToolEffect?: (
+    eventId: string,
+    name: MainAssistantToolName,
+    result: AssistantToolResult,
+  ) => void | Promise<void>
   now?: () => Date
 }): AssistantTools {
   const commands = options.commands ?? createCommandRunner(options.home)
@@ -403,7 +408,10 @@ export function createAssistantTools(options: {
       if (!mainAssistantToolNames.includes(name as never)) {
         throw new AssistantToolRequestError(`Assistant cannot call ${name}`)
       }
-      return this.executeForEvent(capability.eventId, name as MainAssistantToolName, input)
+      const toolName = name as MainAssistantToolName
+      const result = await this.executeForEvent(capability.eventId, toolName, input)
+      if (result.changed) await options.onToolEffect?.(capability.eventId, toolName, result)
+      return result
     },
 
     async executeForEvent(eventId, name, input) {

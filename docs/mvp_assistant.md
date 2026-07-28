@@ -1,7 +1,7 @@
 # HOPI MVP Assistant
 
 Status: forward Assistant authority
-Last updated: 2026-07-26
+Last updated: 2026-07-28
 
 > [Project Owner And Attention](./mvp_project_owner.md) supersedes this document wherever it
 > describes a separate Reflection Agent, Attention targets/owners/waiting states, operator-request
@@ -21,12 +21,11 @@ executed by one Home-configured model adapter with a small set of HOPI tools. It
 an intent parser, a staged-diff protocol, or a special workflow responsibility.
 
 ```text
-User message -> explicit page scope -> durable conversation turn -> scoped vendor session -> ordinary reply
-                                                               \-> optional HOPI tool calls
-                                                        -> canonical documents
-                                                        -> Reconciler
+User message -> durable Project queue -> persistent speaking session -> reply / HOPI tools
 
-semantic state change -> disposable Reflection -> optional internal brief -> speaking session
+material Project fact -> coalesced wake -> native speaking-session fork -> actions or silence
+                                                                  \-> action receipts
+action receipts -> next user turn in speaking session
 ```
 
 A greeting, question, acknowledgement, or discussion receives an ordinary conversational answer.
@@ -50,24 +49,21 @@ surfaces, not a deterministic intent classifier or a mandatory workflow decision
 
 The MVP has one operator-facing Assistant identity with one Home conversation and one conversation
 per linked Project. Goal surfaces in the same Project share its conversation. The page selects the
-scope explicitly; message text is never classified to choose or migrate a session. The operator may
-submit more messages while a turn is running, and durable pending turns wait in one Home-wide receipt
-order. One Assistant turn runs at a time across all scopes. Goal responsibility Runs and the internal
-Reflection loop remain independent and may run concurrently.
+scope explicitly; message text is never classified to choose or migrate a session. Each Project
+serializes its own Assistant invocations while different Projects may run concurrently. Submitted
+user messages become durable and visible immediately, wait behind an already active Project
+invocation, and run before queued wake work.
 
-The current Reflection implementation is the deterministic wake recorder defined by
-[Project Owner And Attention](./mvp_project_owner.md), not the legacy read-only model described later
-in this document. At an idle boundary it coalesces material state changes into a durable internal
-turn. An unresolved Attention is not itself a repeating wake signal: its creation or another
-semantic state change wakes Assistant once, while an active Work Attempt supplies its own later
-settlement edge. When progress depends on facts outside HOPI state, Assistant may set that
-Attention's one-shot `revisitAt`. At that instant HOPI publishes one deterministic internal Inbox
-event in the same Project session. The instant is consumed by that event across reconciliation and
-restart; if another check is useful, Assistant chooses another instant.
+The current Reflection implementation is only the deterministic wake recorder defined by
+[Project Owner And Attention](./mvp_project_owner.md). At an idle boundary it coalesces material
+Project facts and starts the same Assistant in a native fork of that Project's speaking session. It
+also continues unresolved Attention after a settled turn unless the current reply presents that
+Attention through `NeedsYou`, another turn already covers the conversation, or an active Work
+Attempt will provide the next settlement edge.
 
-`operatorRequest` is the only operator-ownership fact. `transfer_attention_to_user` stages the
-current event as the public request; after its ordinary final reply is durable, Coordinator records
-that exact event reference on each selected Attention. Reply text contains no workflow markup.
+`NeedsYou` has one operational effect in addition to presentation: it declares that no available
+Assistant or Project action can advance the referenced Attention before an operator response. An
+optional accelerator does not satisfy that condition and therefore does not pause continuation.
 
 Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
 continue changing without advancing the selected Project's cursor; otherwise a cached Project feed
@@ -104,126 +100,37 @@ character limit, run a summarizer, or require fixed headings. Technical evidence
 in Kanban and Attempt details, while the Assistant conversation stays focused on conclusions and
 actions.
 
-## Speaking Thread And Reflection
+## Speaking Session And Supervision Fork
 
-The scoped persistent Assistant conversations form the **speaking thread**. They share one product
-identity, tool authority, Inbox, and global turn queue. The active Home or Project session is the only
-model session that may call mutating HOPI tools, publish an operator-facing reply, or decide that the
-operator should be interrupted. Session scope supplies the default working context but does not
-restrict explicit cross-Project reads or validated HOPI tool targets.
+The scoped persistent conversations form the **speaking sessions**. Session scope supplies the
+default working context but does not restrict explicit cross-Project reads or validated HOPI tool
+targets.
 
-Reflection is a disposable, read-only model Run that lets the Assistant notice progress or trouble
-without waiting for a new user message. It is an internal runtime mechanism, not a second product
-Assistant, responsibility pass, Work stage, durable workflow entity, or Kanban concept. A Reflection
-is a logical fork: it receives a compact reason for waking, semantic facts changed since the last
-assessed snapshot, and bounded receipts for the latest public Assistant updates. A receipt identifies
-the handled Inbox event, its Project/Goal and Attention references, and the final reply that the
-operator already received. It is delivery knowledge, not public conversation history: user turns,
-internal Reflection briefs, tool streams, and unrelated provider context remain absent. This lets
-Reflection distinguish a newly discovered consequence from the state transition caused by delivering
-that same consequence, including across delayed Attention settlement or process restart. Reflection
-can reread bounded scoped state only after the delta identifies a concrete candidate. Old Reflection
-briefs are not fed back into later Reflection prompts. The implementation does not require a model
-vendor to clone a live session.
+A material Project fact runs the same Assistant in a provider-native fork of that Project's speaking
+session. The fork has ordinary tool and communication authority. It is not read-only, is not another
+role, and does not hand a recommendation to a second model. Its branch history is discarded after
+settlement.
 
-Reflection is a single read-only background analyst. User input never interrupts its model Run.
-Its observation checkpoint has the same scope as the speaking conversation: one for Home and one
-for each Project. Every Run owns one immutable scoped semantic snapshot; changes in that scope while
-it runs make the result stale, while unrelated Project changes do not. Coordinator lets a stale
-process finish, discards its prepared handoff, and assesses the latest scoped snapshot. Reflection
-follows one small protocol:
+Confirmed fork effects are appended as durable action receipts. The next successful user turn in
+the speaking session receives and acknowledges the pending receipts. An empty fork with only
+read-only investigation leaves no receipt and no speaking-session context. Raw fork transcripts
+remain debug evidence only.
 
-1. A meaningful state digest change records that a newer snapshot has not yet been assessed; it does
-   not by itself start a model Run. Ordinary log appends remain outside the digest.
-2. A snapshot is immediately eligible when it contains an Assistant-owned Attention, an unavailable
-   Project, a stale running Attempt, or a settled failed Attempt that needs Assistant recovery.
-   A Run still active in the same Project suppresses only ordinary intermediate churn; it does not
-   own or explain a settled failure from another Work or Goal. Otherwise the snapshot becomes
-   eligible only after Coordinator has no deterministic action to take in an idle reconciliation
-   tick that begins and ends with no responsibility Run active. Requiring a quiescent tick prevents
-   a Run that finishes during an old scan from being mistaken for settled state before its result is
-   reconciled. Normal automatic progress therefore coalesces across Planning, Generation, Review,
-   C1, and final Planning. This immediate rule also applies to the first snapshot after process
-   startup; only a non-urgent first snapshot establishes the silent baseline.
-3. At most one Reflection model Run executes per Home, so scoped observations remain globally
-   serialized without creating model concurrency. Changes coalesce through the current digest
-   within their Home or Project scope instead of forming an event queue. Assessing one scope never
-   advances another scope's checkpoint. A failed model transport never marks that scope's digest
-   assessed and enters a scope-local exponential backoff that survives later semantic changes.
-   Those changes keep coalescing behind the same delay instead of resetting retries; after a small
-   failure threshold, HOPI probes that scope only at the capped interval until one Reflection
-   succeeds and clears the backoff. Other scopes remain eligible.
-4. Reflection first decides from the supplied trigger and compact delta. Work facts contain control
-   state, a bounded latest-Run outcome, and a small newest-first Attempt index. That index exposes
-   repeated unchanged actions without imposing a retry count or recovery policy; the model judges
-   whether new facts make another invocation useful. It may reread bounded scoped HOPI state and
-   follow an exact diagnostic path only when a concrete anomaly needs revalidation. It does not scan
-   the HOPI archive speculatively. It cannot mutate canonical state or speak to the operator.
-5. If no response or action is useful, it ends silently. Whether Assistant action is useful and
-   whether the operator needs a public update are separate judgments: Reflection hands recoverable
-   internal work to the speaking thread even when that thread should act silently. A successful Reflection transport may
-   express that result with an empty final message; empty output is `No action` in Reflection mode,
-   not a failed model Run. Public user turns still require a non-empty reply; an internal speaking
-   turn may remain silent, publish one informational final response, or transfer selected Attention
-   before returning one exact question for a decision or external action. Selected targeted Attention may
-   remain open when its concrete repair is still running or no available tool can complete it;
-   narration, authorization, or intent is never resolution. Only an explicit `handoff_to_main` call creates an
-   internal brief. Reflection selects any Attention references it means to hand off; Coordinator
-   validates but never infers or expands that selection. The observation scope supplies the default
-   conversation route; the model may narrow it to a Goal or selected Attention. Coordinator
-   publishes a brief only after confirming the observed scoped digest is still current; it does not
-   accept an `actions[]` plan.
-6. The brief becomes a durable internal speaking Inbox item, not another model session. The same
-   persistent speaking thread used for user turns rereads current state and
-   decides whether to call normal HOPI tools, remain silent, or publish one explicit notification
-   rewritten under the operator-facing communication policy. Internal IDs and diagnostics from the
-   brief are not copied into that reply by default.
+Each Project has one serialized Assistant queue. User turns wait rather than interrupting an active
+fork and are selected before later wakes. Wake facts coalesce behind active work. Other Projects have
+independent queues and may run concurrently.
 
-An eligible pending internal Inbox item is the durable ownership boundary for that assessment, so
-Coordinator does not start another Reflection while that item can still run. Event-target Attention
-instead makes the item ineligible: the original item remains pending for revalidation after the
-blocker is resolved, but it must not suppress Reflection of newer semantic state. Reflection may
-therefore hand off the Assistant-owned blocker or an unrelated new Goal Attention without retrying
-the blocked item. Exact Attention references and `operatorRequest` preserve ownership independently
-from informational delivery history.
-This bounds failure without allowing one blocked internal item to stop workspace-wide observation.
-When several urgent candidates coexist, Reflection normally restores an event-target speaking-turn
-blocker before background Goal follow-up because it directly delays conversation. The model may
-choose a more consequential urgent issue instead; this is prioritization guidance, not another
-Coordinator queue or hard-coded Attention kind.
-The consecutive-handoff guard follows the same ownership boundary: a handled speaking turn is
-observable progress and resets the chain. Only a later handoff whose immediate predecessor is still
-pending or Attention-blocked extends the chain. This catches recursive delivery failure without
-mistaking several successfully handled state changes for a loop.
-
-The semantic digest covers Goal lifecycle and revision, Work stage, dependency and recovery facts,
-Attention lifecycle, Attempt completion/interruption, project availability, and C1 integration. It
-excludes raw transcript growth and presentation-only changes. It is a lossless coalescing key, not a
-list of model-call triggers. The single eligibility rule is whether HOPI needs immediate attention or
-can still make deterministic automatic progress. A time-derived stale-Run observation is included
-because a hung process may produce no state transition.
+The semantic observation covers Goal lifecycle and revision, Work stage and dependencies, Attention,
+terminal Attempt results, current responsibility activity, project availability, and C1 integration.
+It excludes raw transcript growth and presentation-only changes. A stable material-event identity
+prevents one Reviewer rejection from waking again merely because its next Generator started.
 
 One state observation scans durable Run manifests once and derives one immutable, request-scoped
 Attempt index. Every Goal and Work lookup in that observation reuses the index; no Work starts its
 own archive scan, and the index is discarded after the observation rather than becoming cached
 authority with invalidation rules. The Attempt manifest is the sole public authority for Run
-lifecycle: only `status: running` is an active Run, and a terminal manifest disappears from every
-active-Run projection immediately even if Coordinator is still unwinding cleanup. Coordinator's
-in-memory dispatch reservation remains private scheduling state and is never merged into Assistant,
-API, Reflection, or Kanban Run state. Only a running Attempt reads mutable event and transcript
-activity needed for stale-Run detection. Manifest reads use bounded concurrency so a larger Run
-archive increases work linearly without creating an unbounded native-I/O allocation burst.
-
-New user input has strict speaking priority. It may interrupt a Reflection-sourced internal speaking
-turn, which remains pending and is revalidated later, but it never interrupts the read-only
-Reflection Run. A user effect that changes canonical state invalidates the Reflection snapshot; the
-finished stale result is discarded before any internal Inbox publication.
-
-One eligible state digest is assessed at most once after a successful model Run. A digest deferred
-while automatic work is progressing is not assessed and may become
-eligible unchanged when the system reaches a settled boundary.
-Internal handoffs are bounded; if repeated handoff-and-action cycles do not converge, HOPI creates
-event-target Attention rather than recursively waking itself forever.
+lifecycle: only `status: running` is an active Run. Bounded manifest reads keep larger histories
+linear without creating an unbounded native-I/O allocation burst.
 
 ## Context Is Not Authority
 
@@ -249,25 +156,12 @@ scope filter the same compact navigation and control projection: selecting a Goa
 implicitly expand bodies, historical arrays, or detailed Attempt paths. Exact bodies remain readable
 from returned canonical and diagnostic paths when the current question requires them. This keeps one
 directly consumable state shape without adding pagination or a query language.
-Every open Attention projection includes its complete canonical `reference`. Tools copy that value
-verbatim; models never reconstruct a reference from an Attention ID, target, or surrounding Project
-state. Current diagnostic projections are observations computed at the response's `observedAt`.
-`hopi_manage_attention` uses the same identity everywhere: creation names one canonical Project,
-Goal, or Work target, while edit and resolution name the canonical Attention reference returned by
-state. Project-target Attention is stored in Assistant Home; Goal- and Work-target Attention is
-stored with its Goal. Storage location is not part of the model-facing operation.
-An Attention body is the immutable rationale recorded when that Attention was created; keeping the
-Attention open means it has not yet been resolved, not that every diagnostic claim in that rationale
-is still current. The Assistant compares the current observations with that historical rationale and
-may resolve an Attention whose premise no longer holds. The Assistant tool projection makes this
-temporal boundary structural: live candidate integration appears as `currentCandidateIntegration`,
-while the immutable Attention body appears as `creationRationale`. These names affect only the model
-view; canonical documents and product APIs retain their domain fields. A `ready` result means the
-current task and release inputs can pass the C1 source merge without Generator source repair; it
-does not mean the Work is schedulable while an unrelated gate remains open. HOPI has no separate
-candidate “reprojection” state or Coordinator action outside this preflight. When it is ready and an
-Attention is the only failed readiness predicate, resolving that Attention removes the only gate and
-allows normal reconciliation to choose the next responsibility.
+Every open Attention projection includes its complete canonical `reference`, current body, refs, and
+timestamps. Tools copy that value verbatim; models never reconstruct a reference from an Attention
+ID or surrounding Project state. Current diagnostic projections are observations computed at the
+response's `observedAt`. Assistant compares them with the todo and may update or resolve it when its
+premise or next action changes. Live candidate integration remains
+`currentCandidateIntegration`; Attention is not folded into Work readiness.
 An explicit `includeEvidence: true` Goal read expands the bounded Evidence bodies and resolved
 artifact projections needed for a deliverable answer. Historical Planning, resolved Attention, and
 other Evidence remain first-class Project documents and are read from exact paths only when needed.
@@ -276,8 +170,8 @@ second history store.
 
 `hopi_read_conversation` is a separate bounded, read-only view of durable public exchanges. It reads
 Home by default or one explicit Project, supports text filtering and backward cursor pagination, and
-returns user text plus final Assistant replies. Reflection contributes only its public final reply;
-its brief, reasoning, tool stream, and provider-session data remain private. Reading another Project
+returns user text plus final Assistant replies. Supervision contributes only its public final reply;
+its wake facts, reasoning, tool stream, and branch-session data remain private. Reading another Project
 does not resume or mutate that Project's provider session and does not change the current turn's
 scope or default write context.
 
@@ -287,7 +181,6 @@ body, and page context as the final `currentTurn` field of its result. This is a
 not intent parsing or an action schema: the configured model still decides the reply and tools, but
 it must continue the current event rather than completing a prior turn suggested by stale
 conversation context.
-Reflection state reads have no operator `currentTurn` and remain unchanged.
 
 ## Image Attachments And Goal References
 
@@ -324,13 +217,13 @@ that later responsibilities can locate only by searching Assistant home.
 
 ## Durable Conversation And Runtime Session
 
-Each accepted user message is first written as one durable public Inbox turn. A useful Reflection
-handoff is written through the same store as one durable internal Inbox turn. The turn owns its exact
-source content, attachments, optional page context, final Assistant reply, and terminal disposition.
+Each accepted user message is first written as one durable public Inbox turn. A coalesced wake is
+written through the same store as one durable internal Inbox turn. The turn owns its exact source
+content, attachments, optional page context, final Assistant reply, and terminal disposition.
 `pending | handled` remains sufficient durable state:
 
-- `pending` means the turn is queued, running, interrupted, or blocked by targeted Attention;
-  those distinctions are derived from runtime facts and Attention.
+- `pending` means the turn is queued, running, or retained for restart; those distinctions are
+  derived from runtime facts.
 - `handled` means a final Assistant reply is durable. It does not imply that the model called a tool.
 
 A deterministic product control may execute a known HOPI tool directly and mirror its command and
@@ -344,10 +237,10 @@ The free-form disposition is diagnostic only: speaking turns use `answered` when
 observed and `tools-used` when one was. It never claims that a side effect was applied; durable
 documents and the recorded tool result remain the only evidence of an effect.
 
-`source: user | reflection` preserves provenance. `visibility: public | internal` controls only the
-conversation projection. User turns are always public. Reflection turns begin internal; a non-empty
-final response publishes them while an empty response leaves them hidden. These fields do not grant
-mutation authority.
+`source: user | system | reflection` preserves provenance; `reflection` remains a compatibility
+value for old records. `visibility: public | internal` controls only the conversation projection.
+User turns are always public. Wake turns begin internal; a non-empty final response publishes them
+while an empty response leaves them hidden. These fields do not grant mutation authority.
 
 The vendor-qualified session cache and normalized live events are runtime data under
 `.hopi/runtime/assistant/`. Home uses `sessions/home.json`; each Project uses
@@ -361,14 +254,10 @@ to a Project by guesswork. A model change within one transport may reuse a compa
 because the next invocation still receives the current configured model.
 
 The same adapter keeps vendor-native automatic context compaction enabled for the speaking
-Assistant, internal handoff turns, and disposable Reflection runs. Compaction continues the same
-vendor Session when one exists and is invisible to the model-facing HOPI contract: no Assistant
-tool, prompt rule, Inbox item, or canonical summary represents it. The vendor owns the trigger and
-summary format. HOPI normalizes a provider compaction boundary into non-presentable runtime status
-and retains the raw provider event in the ordinary transcript, so diagnostics can distinguish
-compaction from an ever-growing un-compacted Session. This observation does not create semantic
-state or expose the vendor summary to the model. This MVP does not add a custom threshold, summary,
-post-compaction quality check, or rebuild policy.
+Assistant. A supervision branch is a native fork of the current speaking session, so it inherits the
+provider's cached prefix without appending its turn or compaction result to the parent. Compaction is
+invisible to the model-facing HOPI contract: no Assistant tool, prompt rule, Inbox item, or canonical
+summary represents it. HOPI retains the raw provider boundary in runtime diagnostics.
 
 A vendor session must also remain attached to the stable HOPI Assistant workspace and adapter
 runtime contract under which HOPI created it. The session manifest therefore stores a runtime digest
@@ -377,18 +266,23 @@ digest is an incompatible cache and follows the same single rebuild path. This i
 created before workspace affinity became part of the contract without querying or rewriting vendor
 session storage on every turn.
 
-Losing or invalidating vendor session state does not lose product truth: HOPI starts a new session
-from the durable Home instructions, a fixed character budget of the newest public user-visible
-exchanges in that same Home or Project scope, and the oldest pending turn in that scope. Internal
-Reflection briefs are not reconstructed as conversation memory; only their public final updates
-belong to the selected scope.
+Losing or invalidating vendor session state does not lose product truth: a user turn starts a new
+speaking session from the durable Home instructions, a fixed character budget of the newest public
+user-visible exchanges in that same Home or Project scope, pending action receipts, and that turn.
+A wake does not emulate fork by rebuilding this prompt. Without a compatible speaking session it
+records the transport capability failure; a later user turn can establish the speaking session.
 Long-lived decisions belong in Project, Goal, design, Input, Work, Evidence, or preference documents
 rather than an unbounded vendor thread transcript.
+
+Action receipts live under `.hopi/runtime/assistant/receipts/`. Successful mutating HOPI tools append
+their confirmed result before returning it to the fork. A public fork reply appends one reply receipt
+when the turn settles. A speaking turn reads the Project's unacknowledged receipts and advances the
+receipt cursor only after its provider turn and public reply are durable.
 
 For each speaking turn, normalized Assistant messages, tool calls, tool results, status, and errors
 append to runtime `events.jsonl`; process output appends to `transcript.log`. Before either stream or
 the final public reply is persisted, exact values inherited through secret-like environment names
-are replaced with one redaction marker. Reflection and responsibility Runs use the same boundary.
+are replaced with one redaction marker. Supervision forks and responsibility Runs use the same boundary.
 The UI may poll or stream public turn events while a turn is pending. The final Assistant message is
 copied into the Inbox turn before it becomes handled. Runtime events improve observability but never
 authorize a Goal or Work transition.
@@ -410,15 +304,9 @@ conversation shows a bounded, safe error summary and at most the latest retry st
 The Assistant runs in a stable HOPI-owned runtime directory, not a user checkout, task worktree, or
 managed project root. Each invocation resolves one exact execution envelope from the transport,
 Project access preference, mode, roots, and network policy, then uses it to configure the provider
-process. Every built-in provider injects the same small ownership contract at its system or
-developer-instruction boundary before the model chooses a skill or tool: Assistant owns Project
-conversation and orchestration; Engineering Work owns linked-source implementation, verification,
-Evidence, and recovery across every Repo bound to that Project; provider-native execution remains an
-inspection or incidental-operation surface rather than an alternative delivery path. The ordinary
-turn prompt contains conversation, current state, preferences, and the current Inbox event, not a
-second copy of that role contract. The model observes the actual native capabilities and HOPI tool
-surface instead of a potentially stale execution-envelope description. Project-local
-unrestricted access defaults off, and Reflection remains read-only. This is execution capability,
+process. The prompt does not repeat that envelope: the model observes the actual native capabilities
+and HOPI tool surface instead of a second, potentially stale description. Project-local
+unrestricted access defaults off. Speaking and supervision use the same Project access. This is execution capability,
 not product authority: canonical mutations are accepted only through HOPI tools and source delivery
 is accepted only through Engineering Work publication. The runtime root remains provider scratch
 space: its paths are neither canonical nor operator-addressable. Canonical Evidence with an
@@ -449,36 +337,27 @@ for model tool calls, not a second durable workflow or an Assistant-specific Act
 OpenCode receives the stable workspace through both the process working directory and `PWD`, plus
 the generated configuration through an explicit `OPENCODE_CONFIG` path. Before every OpenCode model
 invocation, its native MCP inspection must report the injected
-`hopi` server connected. Failure is a startup error, not model input: the turn stays pending and no
-unverified model reply can substitute for the missing capability.
+`hopi` server connected. Failure is a startup error, not model input, and no unverified model reply
+can substitute for the missing capability. OpenCode speaking sessions remain supported, but the MVP
+reports supervision unavailable because this adapter has no verified provider-native fork.
 
 The non-interactive vendor invocation permits the injected `hopi` MCP server plus the local
 execution described by its resolved execution envelope. The default Project setting keeps provider
-access bounded; the Project-local full-access switch makes future non-Reflection invocations
-unrestricted. The backend persists and resolves that setting at invocation start; browser
+access bounded; the Project-local full-access switch makes future speaking and supervision
+invocations unrestricted. The backend persists and resolves that setting at invocation start; browser
 localStorage mirrors it for the Project UI but does not authorize execution by itself. Unrelated
 personal MCP servers and provider configuration remain excluded.
-The speaking Assistant may use the capabilities present in that envelope. Provider apps, plugins,
+The Assistant may use the capabilities present in that envelope. Provider apps, plugins,
 memories, and workflow tools remain excluded because they introduce competing product authority
-rather than execution capability. Reflection has only HOPI read/handoff authority and receives no
-provider skill catalog. Responsibility Agents remain free to use execution capabilities within
-accepted Work. The MCP process has only a single-turn capability token, and the backend revokes that
-token when the turn ends. Every built-in vendor adapter disables its interactive approval layer: Codex
+rather than execution capability. Responsibility Agents remain free to use execution capabilities
+within accepted Work. The MCP process has only a single-turn capability token, and the backend
+revokes that token when the turn ends. Every built-in vendor adapter disables its interactive approval layer: Codex
 uses `never`, Claude bypasses permission prompts, and OpenCode uses deterministic `allow` or `deny`
 rules. This removes an impossible unattended UI prompt without becoming the authorization boundary.
-The speaking Assistant has one orchestration surface: HOPI. A provider's native subagent or workflow
-namespace is excluded from the Assistant environment rather than discouraged through prompt text.
-For Codex, the adapter disables the stable `multi_agent` feature through the CLI's native feature
-switch rather than writing into the provider's versioned agent-role configuration table. If the
-configured Codex binary cannot represent that environment, its invocation
-fails through the normal provider error path; HOPI does not resume with a competing orchestration
-surface. Changing this provider boundary advances the adapter runtime revision, so sessions created
-with a different tool surface are rebuilt from durable scoped conversation history.
 Server-side capability validation, canonical target validation,
 responsibility result validation, controllers, and the publisher form a blacklist of effects HOPI
 will reject. Provider sandboxing enforces the resolved envelope; these product boundaries do not
-pretend to infer semantic intent from shell commands. Reflection is always read-only because it has
-read and handoff authority but no execution responsibility.
+pretend to infer semantic intent from shell commands.
 
 The initial session context contains only durable operating rules and current cross-Project user
 preferences. Operation-specific preconditions and effects live with the corresponding tool
@@ -486,21 +365,22 @@ description, schema, and backend validator instead of being repeated as an Assis
 The context does not require a fixed action shape or output file. Its digest is derived from the
 stable instructions and preference digest, so changing either transparently rebuilds each scoped
 Session on its next use from matching durable conversation history rather than leaving a restarted
-backend on stale behavior. Subsequent turns send only the current Inbox event envelope and use
-normal compatible scoped vendor session resume. A public turn's final model answer is the operator-facing
-reply. For an internal turn, a non-empty final answer is likewise the complete informational update;
-an empty answer keeps the turn internal. No notification tool duplicates that native response.
+backend on stale behavior. Subsequent speaking turns use normal compatible scoped vendor session
+resume. A public turn's final model answer is the operator-facing reply. For a supervision turn, a
+non-empty final answer is likewise the complete informational update; an empty answer keeps the turn
+internal. No notification tool duplicates that native response.
 
-Once one speaking invocation reaches terminal failure, the Inbox turn stays pending under one
-event-target Attention. Coordinator does not rerun the same failed invocation: a later operator or
-Assistant decision may explicitly retry after the condition changes. This keeps transport failure at
-the execution boundary instead of turning it into a hidden workflow retry policy.
+Once an invocation reaches terminal provider failure, Coordinator records one visible
+`operational-failed` result on that Inbox event and does not rerun it automatically. A process
+interruption instead leaves the event pending for restart. This keeps transport failure at the
+execution boundary without inventing Attention or a hidden retry policy.
 
 The current-turn envelope contains the immutable Inbox ID, source, body, optional Project/Goal page
-context, and attachment references. It contains no automatic execution-environment or canonical-state
-snapshot. The model decides whether the message needs current HOPI facts and calls
-`hopi_read_state` or `hopi_read_conversation` only then. Goal and Project tools expose validated
-preconditions and effects. The Assistant aims for an effect whose scope, durability, and
+context, attachment references, and a bounded current-state projection. A supervision turn receives
+the material wake facts, complete latest terminal result, recent Attempt sequence, and canonical
+paths needed to inspect deeper evidence. The model calls `hopi_read_state` or
+`hopi_read_conversation` when it needs a narrower or newer view. Goal and Project tools expose
+validated preconditions and effects. The Assistant aims for an effect whose scope, durability, and
 accessibility match the operator's intent; conversation reports that effect but does not substitute
 for it. No deterministic classifier maps prose, tool failures, or page context to a required
 operation. Current tool validation remains authoritative when thread memory is stale.
@@ -511,17 +391,17 @@ Speaking Assistant receives the current Assistant-home `preference.md` content a
 scoped vendor Session is created or rebuilt. This document contains only durable cross-Project
 defaults. A compatible resumed Session already owns that initial context, so HOPI does not repeat the
 document on every turn. The model applies relevant defaults to its communication and judgment, while
-the current turn and explicit Project or Goal authority always win. Reflection analysis does not
-receive or modify this document.
+the current turn and explicit Project or Goal authority always win. A supervision fork inherits the
+same preference context and may update it through the same validated tool.
 
-Speaking Assistant is the sole preference writer. It uses model judgment rather than keywords,
+Assistant is the sole preference writer. It uses model judgment rather than keywords,
 classification fields, or a fixed feedback workflow to distinguish a reusable preference from a
 one-off request. A write replaces the complete free-Markdown document using the exact digest from
 the current turn; stale writes fail without partial change. There is no Preference agent, structured
 preference record, or preference lifecycle.
 
-A preference write records a default only. It does not wake Reflection, request Planning, interrupt
-a Run, or mutate a Goal. When the same instruction should also change current delivery, Assistant
+A preference write records a default only. It does not request Planning, interrupt a Run, or mutate
+a Goal. When the same instruction should also change current delivery, Assistant
 separately uses the existing design and Planning tools in that turn. This keeps remembering and
 acting as two explicit effects instead of introducing a hidden trigger between them.
 
@@ -538,8 +418,8 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Write design | Create or update Goal-local `design/**` Markdown | Design documents and explicitly adopted reference images |
 | Create Work | Admit the current instruction as one Planning or Engineering Work | Goal Input and exactly one selected Work; Planning never retries Work or resolves Attention implicitly |
 | Control Goal | Pause, resume, cancel, reopen, or reprioritize one Goal | Validated Goal lifecycle or priority transition |
-| Control Work | Continue one Work now or later, change dependencies, or cancel one nonterminal Work | One durable queued Attempt, optional `notBefore` and message, or validated cancellation |
-| Manage Attention | Create, edit, resolve, defer, or transfer exact Attention | Attention publication, one deterministic future Assistant event, or one staged operator request |
+| Control Work | Retry or defer one Work, or cancel one Engineering Work | One transient retry reservation, a `notBefore` Work update, or validated cancellation |
+| Manage Attention | Create, update, or resolve one Project todo | Assistant-owned durable Attention |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
@@ -550,23 +430,12 @@ not infer execution success from a retry request or reconstruct state from prose
 derived continuation, Kanban predicates, and unrelated open Attention; Assistant reads current state
 only when the next decision actually needs them.
 
-A failed Preview retains its diagnosis on the disposable Project Preview session. An operator Start
-is already an ordinary request for a working Project Preview, even when preparation or startup
-outlives the initiating HTTP response. If that initial Start fails, its result therefore becomes one
-ordinary user Inbox turn with immutable Project context, the desired Project capability, and the
-observed failure paths and logs. It is not reduced to a system notification, because doing so would
-discard the intent carried by the operator command. Assistant already has ordinary Goal, design, and
-Planning-or-Engineering Work capabilities for its own judgment; the turn states no workflow choice
-and Preview has no special repair operation or repair workflow.
-
-Project Preview is one local managed runtime. Its surfaces are opaque named entries announced by the
-Project adapter. HOPI presents every entry without inferring application hierarchy, runtime
-dependencies, or relationships between entries.
-
-An Assistant-initiated Start returns the same diagnosis directly in the tool result and does not
-create a second Inbox turn. Failures after Preview has become running, and stops caused by release
-change or runtime recovery, remain internal Project system events because they are environment
-changes rather than new operator commands.
+A failed Preview retains its diagnosis on the disposable Project Preview session. The UI can
+therefore offer an ordinary Assistant turn with Project context and optional Goal context even when
+preparation or startup outlives the initiating HTTP request. That turn states the observed failure
+and desired Project capability, not a workflow choice. Assistant already has ordinary Goal, design,
+and Planning-or-Engineering Work capabilities for its own judgment; Preview has no special repair
+operation or repair workflow.
 
 Every work-domain operation shared by the product UI and speaking Assistant uses the same domain
 validator and document store. Host configuration is deliberately outside that parity: model and
@@ -575,17 +444,15 @@ pickers obtain a host path, navigation changes presentation, and confirmation di
 none is a separate Assistant capability. HOPI does not let Assistant call its own public HTTP UI
 routes or duplicate their mutation logic.
 
-Project management accepts `create`, `add_repo`, or `rebind_repos` as explicit changes. `create`
-also accepts the same optional Project `label` as the product UI; it controls presentation only and
-never supplies or changes `projectId`. With no operator-supplied path, Assistant asks for the Project
-directory instead of calling the tool. Create and add classify the supplied path as part of the same
-operation: an existing Git Repo is linked, while an empty directory or missing leaf whose parent
-exists is initialized and then linked. A selected subdirectory already inside a Git worktree links
-that existing Repo with its relative Project path; HOPI never initializes a nested Repo. Missing
-ancestors and non-empty non-Git directories remain validation failures. Rebind accepts a partial set
-of moved Repo identities, merges unchanged current bindings server-side, and never initializes a
-replacement path. It may change the repository, common directory, or Project-relative scope behind
-a stable `repoId`.
+Project management accepts `create`, `add_repo`, or `rebind_repos` as explicit changes. With no
+operator-supplied path, Assistant asks for the Project directory instead of calling the tool. Create
+and add classify the supplied path as part of the same operation: an existing Git Repo is linked,
+while an empty directory or missing leaf whose parent exists is initialized and then linked. A
+selected subdirectory already inside a Git worktree links that existing Repo with its relative
+Project path; HOPI never initializes a nested Repo. Missing ancestors and non-empty non-Git
+directories remain validation failures. Rebind accepts a partial set of moved Repo identities,
+merges unchanged current bindings server-side, and never initializes a replacement path. It may
+change the repository, common directory, or Project-relative scope behind a stable `repoId`.
 
 Repo rebind executes through one typed Command boundary shared by the product UI, Assistant tool,
 and local CLI adapter. A Command can describe and plan its effects without mutation, then records
@@ -597,24 +464,24 @@ state; execution replans before assigning the durable operation ID. The in-proce
 only the affected Project ineligible and waits for its active responsibility Runs before publishing.
 Direct Git commands are not an alternate topology publication path.
 
-Project management and preference writes require a public user turn. An internal Reflection handoff
-may diagnose Project state and ask the operator for a missing path, but cannot originate a new
-Project binding or preference.
+Speaking and supervision turns receive the same tool surface. The source Inbox event, current
+canonical state, and ordinary validator determine whether a requested effect is valid; HOPI does not
+maintain a second semantic allowlist for background supervision.
 
-Project topology writes are durable before runtime topology changes. When the speaking Assistant
+Project topology writes are durable before runtime topology changes. When Assistant
 links or rebinds a Project or Repo, the current turn is allowed to publish its final reply first;
 HOPI then rebuilds the Project runtime from the updated Assistant-home documents. This post-turn
 refresh prevents a successful tool call from stopping its own Assistant session. A crash between the
 write and refresh is harmless because restart reads the same durable Project links.
 
-The changed Project is nevertheless visible to later HOPI tool calls in that same speaking turn.
+The changed Project is nevertheless visible to later HOPI tool calls in that same turn.
 This lets Assistant call Manage Project and then Create Goal as two ordinary semantic operations;
 execution and reconciliation still begin only from the rebuilt runtime after the final reply.
 
 Create Goal and Create Work share one optional reference input containing an existing durable Inbox
 attachment reference and a free-form purpose. Write design expresses the same adoption as an
 attachment change alongside document changes. These are MCP tool arguments, not model-produced
-Action results or a workflow schema. The speaking Assistant selects them; the backend only validates
+Action results or a workflow schema. Assistant selects them; the backend only validates
 provenance and performs deterministic copy and Markdown publication.
 
 `Create Goal` is complete admission of the current user instruction: its required `firstWork`
@@ -642,14 +509,6 @@ idempotent and reject a different or second direct Work. If the instruction need
 Work, the direct admission boundary rejects the second effect. Direct admission never claims Goal
 completion; final Planning remains unchanged.
 
-When the admitted Work belongs to a different Project than its source Inbox event,
-`hopi_read_state` exposes it as a derived delegation in the source Project state. The projection
-contains the source event and Attention references plus the target Project, Goal, Work, current
-stage, active Run, and latest Attempt diagnosis. It is derived from `assistantDispatch` and the
-durable Inbox event rather than copied into either Project. Its active Run participates in the
-source conversation's liveness; settlement changes the source Project digest and wakes Assistant
-without prescribing the follow-up decision.
-
 Creating Planning Work is an authority boundary, not a general way to remember conversation. It
 adopts the current turn as Goal Input and may invalidate an active Planner. Assistant therefore leaves
 a non-blocking suggestion conversation-only unless the operator intends it to change the current plan
@@ -657,16 +516,16 @@ or delivery. `Write design` is the corresponding explicit adoption when the requ
 is documentation rather than implementation; it does not mechanically request Planning.
 
 Starting Planning never retries, resets, cancels Engineering Work, or settles Attention. Open
-Attention therefore remains the scheduling gate until Assistant explicitly resolves its exact
-reference after judging the represented condition clear. Planner's empty proposal means only that
-Planning changed no canonical contract or DAG; it does not claim that Coordinator will retry a
-blocked responsibility.
+Attention therefore remains a durable Assistant todo until Assistant explicitly resolves its exact
+reference after judging the represented condition clear; it does not become a separate scheduling
+gate. Planner's empty proposal means only that Planning changed no canonical contract or DAG; it
+does not claim that Coordinator will retry a blocked responsibility.
 
 Goal delivery and other HOPI effects are asynchronous after admission. Once a mutating tool reports
 that the requested effect is accepted, the Assistant replies to the current user immediately from
 that result. It does not sleep, poll state, or wait for Planner, Generator, Reviewer, C1, Preview, or
-Reflection in the same speaking turn. Later completion, blocking, or decision-worthy state is
-reported through the existing read-only Reflection path. This keeps one rule for every
+supervision in the same speaking turn. Later completion, blocking, or decision-worthy state is
+reported through the ordinary Project wake and supervision-fork path. This keeps one rule for every
 long-running effect and avoids a second progress-watching workflow inside conversation.
 
 Asynchrony begins after the speaking turn settles, not between related tool calls inside that turn.
@@ -685,11 +544,10 @@ Goal's exact canonical design prefix, the tool strips it instead of creating a n
 any other control-root nesting is invalid. Repeated writes to the same normalized path in one call
 collapse to the final content, so one logical document has one publication target.
 
-Page context supplies only the selected Project and Goal identities. HOPI does not automatically
-project Goal lifecycle, Work, Attention, Runs, Evidence, or execution-environment facts into every
-turn. When those facts can change the answer or action, Assistant reads their current bounded
-projection through the existing tools. This removes a parallel state feed and its stale-state
-interpretation rules without weakening mutation validation.
+Page context supplies only the selected Project and Goal identities. The current turn also receives
+a bounded state projection; when omitted detail or newer facts can change the answer or action,
+Assistant reads the exact current scope through the existing tools. The projection is an index into
+document truth, not a parallel authority.
 
 The available effects remain facts of the architecture. Assistant runtime writes do not integrate
 linked source; Engineering Work, Reviewer, and C1 own that delivery path. Goal and Work tools expose
@@ -707,7 +565,7 @@ capability.
 
 A bounded model-visible field is an index, never the only copy of diagnostic truth. Whenever HOPI
 truncates an Attention, Attempt, Evidence, or other file-backed diagnostic, the same projection names
-the exact readable source path. Reflection and the speaking Assistant may inspect that source when
+the exact readable source path. Assistant may inspect that source when
 the omitted detail can change ownership or the next action. Compact text without a readable source
 is valid only when the complete value is already present.
 
@@ -729,65 +587,18 @@ linked in an operator reply. This lets Assistant select the semantic deliverable
 from a design, Work, or latest Attempt path and without exposing machine-local storage as navigation.
 Ordinary Goal reads retain only the compact Evidence index, and workspace-wide reads omit Evidence
 detail. `includeEvidence` is one bounded read choice made by the model, not a query language or a new
-workflow concept. Reflection always receives the compact form because it revalidates control state
-rather than consuming delivery payloads.
+workflow concept.
 
-Reflection receives a narrower MCP capability containing only state read and `handoff_to_main`.
-`handoff_to_main` may create one internal Inbox turn and has no Project or Goal effect. The speaking
-thread receives its ordinary Goal, Work, and Attention tools. Capability mode is server-owned and
-cannot be selected by the model. A non-empty
-final response from that internal turn is an informational update by default; an empty response stays
-internal. Tool choice, rather than parsing message prose, owns only the operator-wait transition.
+A supervision fork receives exactly the same validated MCP capability as a speaking turn. It may
+inspect, create or revise durable documents, manage Work and Attention, control Preview, or publish a
+concise update. If operator action is required, the fork creates or updates the relevant Attention
+and renders ordinary final text with `<NeedsYou attentionId="...">...</NeedsYou>`. The tag changes
+presentation only; resolving the Attention later renders the same message as ordinary history.
 
-Every response paired with `transfer_attention_to_user` is a self-contained decision request, not merely a list of choices. It
-preserves enough material cause and consequence from the internal brief for the operator to
-understand what changed, why HOPI cannot safely continue, what answer or action is needed, and the
-non-obvious effect of viable alternatives. It includes a recommendation when HOPI has one. This is
-expressed proportionally in ordinary language: concise means omitting irrelevant history, internal
-IDs, and process narration, not omitting the causal context needed to decide. HOPI does not add a
-request schema, prose parser, or frontend reconstruction rule.
-
-When a Reflection brief exists specifically to deliver Attention, Reflection supplies exact
-Assistant-owned canonical references as Inbox context. The speaking Assistant may select any open
-Assistant-owned references visible in that conversation. `transfer_attention_to_user` contains those
-references and optional structured choices; the model's final response is the complete
-operator-facing question. It rejects an empty final reply, stale, resolved, operator-owned,
-targetless, or out-of-context selection.
-Legacy targetless completion Attention may still be delivered as an informational compatibility
-update, but it is never transferred to the operator. New completion updates derive from Goal
-lifecycle and final Planning Evidence rather than Attention.
-One handoff may select multiple coherent Attention records visible in the same conversation. The
-Assistant copies canonical references from current state; Coordinator enforces conversation
-isolation rather than prescribing which open condition the model should choose.
-An internal Reflection handoff is advisory, not a second durable request from the operator. If the
-speaking Assistant still fails after its normal one-time Session recovery, Coordinator terminates
-that internal Inbox event with the failure retained in its turn record and creates no event-target
-Attention. The underlying canonical state remains unchanged and can be assessed by a later semantic
-change. A failed public user event still receives event-target Attention so user intent cannot be
-lost. This boundary prevents Reflection from recursively reflecting on its own delivery failure.
-Goal-local and workspace Attention use the same mechanism. After the speaking model returns,
-Coordinator treats a non-empty final response as the one public informational reply and an empty
-response as an internal no-op. When `transfer_attention_to_user` was staged, that same final response
-is instead the one public request; an empty response is invalid. Coordinator publishes the reply
-before publishing `notifiedAt` and the exact handled-event `operatorRequest` for each selected
-still-current reference. Recovery of an already handled public turn finishes any missing
-acknowledgement. Targeted Attention remains open; legacy completion Attention is
-notified and resolved only for compatibility. The optional webhook
-then mirrors only this handled public reply and records `webhookDeliveredAt` on the Inbox event. It
-does not deliver raw Attention or control `notifiedAt`. This reuses Inbox context and existing
-documents instead of adding a notification ledger or parsing brief text.
-
-`transfer_attention_to_user` durably stages ownership intent on the pending event; it does not
-publish at call time. Transferring keeps selected Attention open and keeps their targets
-unscheduled until the exact reply. After final text is available, Coordinator revalidates every
-selected reference before publishing the reply and ownership acknowledgement.
-
-Attention is a state fact, not a command protocol. A handoff may remain **Waiting for Assistant**
-after an ordinary turn when its evidence is insufficient to resolve it or its repair is still in
-progress. Coordinator records the turn normally; a later semantic state change or Assistant turn
-decides the next action. It never adds a forced closure turn: forcing settlement can turn mere
-authorization into false completion. Ordinary reference, ownership, completion-artifact, and tool
-safety validation still applies.
+An empty final response records no public update. A non-empty final response is the complete public
+update and is also retained as an action receipt for the next speaking turn. No handoff tool,
+notification tool, ownership transfer, waiting state, or response schema sits between the fork and
+that result.
 
 ## Tool Safety And Recovery
 
@@ -798,40 +609,31 @@ operation arguments.
 Mutation tools follow these rules:
 
 - validate the target and current canonical state immediately before publication
-- preserve the exact user turn as Goal Input when the effect belongs to a Goal
+- preserve the exact source Inbox turn as Goal Input when the effect belongs to a Goal
 - use domain identity and expected current content for idempotency
 - return stable document references and a concise result to Assistant
 - reject stale, invalid, or unauthorized requests without partially advancing a control gate
 
-Each Goal or Work control is one atomic operation, not a required pair of model calls. Work
-`continue` optionally records a source-traced message, sets `notBefore`, and durably queues the
-current responsibility's next Attempt. That Attempt is not a child of the speaking turn and survives
-Coordinator restart. Conversely, shell processes started directly inside an Assistant turn end with
-that turn. Cancellation terminates queued and running Attempts and settles only Attention for Work
-it makes terminal.
+Each Goal or Work control is one atomic operation, not a required pair of model calls. A Work retry
+reserves the current responsibility's next independent Attempt against unchanged Work and does not
+rewrite Work or Attention. That Attempt is not a child of the speaking turn; its settlement produces
+the normal Project state edge. Conversely, shell processes started directly inside an Assistant turn
+end with that turn. Cancellation settles only Attention for the Work it makes terminal. Deferral
+changes scheduling time only. No control operation closes a Goal, Project, or unrelated Work
+Attention.
 
 The Assistant chooses ordinary operations from the verified state: it creates Engineering Work for
 a bounded direct change; writes design and creates Planning Work when authority or decomposition changes;
 uses Goal or Work Control for lifecycle changes; and resolves Attention only after the owning condition has
-actually cleared. An explicit user reply is evidence for that judgment, never a forced lifecycle
-classification. Reconciliation derives responsibility from canonical Work while the queued Attempt
-durably records requested execution.
+actually cleared. An explicit user reply is evidence for that judgment, never a forced
+`continue`/`retry`/`revise`/`cancel` classification. There is no stored continuation object:
+ordinary reconciliation derives the next responsibility from canonical Work facts.
 
-Attention resolution is its own Assistant judgment. Resolving a Goal-local Attention through
-`hopi_manage_attention` publishes the current Inbox turn as Goal Input and appends the resolution in
-the same Goal publication whose final gate is `resolvedAt`. A Project Attention resolution remains
-an Assistant-home publication. Tool calls do not infer resolution from reply wording, call order,
-an Attention ID, or a Planner summary.
-
-An open targeted Attention is the scheduling gate for its target. Resolving it publishes
-`resolvedAt` immediately, removes that gate, and may make the target eligible for dispatch; a later
-operator request neither reopens it nor retracts a Run already admitted from the resolved state.
-`transfer_attention_to_user` instead stages the public request and, after the final response is
-durable, records `operatorRequest` on each still-open reference without resolving it. The same open
-Attention then projects **Needs you** and continues to block scheduling while the answer is absent.
-These causal effects are tool and environment semantics; HOPI does not infer intent from reply text
-or call order. Failed Attempts need no synthetic Attention: their settled Work hash pauses automatic
-redispatch until `continue` durably queues the next Attempt or material Work facts change.
+Attention is durable Assistant memory, not a scheduling gate. Resolving it publishes `resolvedAt`
+immediately and ends its idle continuation; Work readiness remains derived from Goal, Work, Attempt,
+dependency, and Project facts. A settled failed Attempt supplies a material wake fact without
+manufacturing Attention. Assistant judges whether to retry, revise authority, change dependencies,
+message a Work, ask the operator, or take no action.
 
 An expected domain precondition failure, such as requesting Planning for a terminal Goal before
 reopening it, is a recoverable tool error. The internal HTTP boundary returns a conflict response
@@ -848,95 +650,36 @@ fail-closed boundaries, which create a new Project Attention. A successful shell
 not resolution, and Assistant must not report the Project unblocked unless the Attention tool call
 succeeds.
 
-The deterministic wake records exact canonical references for both kinds of current responsibility:
-Attention references and failed Work references. A responsibility-bearing internal turn cannot be
-acknowledged while a referenced Attention remains unchanged or a referenced failed Work still has the
-same settled Attempt and no durable successor. This is a persistence boundary, not a prescribed
-recovery branch: the Assistant decides whether to continue, revise, cancel, defer or transfer using
-the capabilities available in the current environment.
-
-For a failed Work, a durable successor is visible canonical state: a queued or running Attempt, a
-materially changed or terminal Work, or an open Attention targeted to that exact Work. A broader
-Goal Attention does not identify which failed Work it succeeds. Planning and Engineering Work share
-the same cancellation capability because both already have the canonical `cancelled` terminal stage;
-cancellation remains independent from sibling Work.
-
-Evidence and Attention rationale are durable historical records. They preserve what a prior Run or
-turn observed, but do not claim that an external session, service, credential, network path, or other
-volatile environment fact still has that value. Current external conditions are exposed by the
-provider-native inspection capabilities available to the Assistant and Engineering roles. Expanded
-Assistant state names Evidence bodies `historicalResult` so this temporal boundary remains visible
-at the point of use.
-
 A single conversation turn may call multiple tools and may affect more than one Goal. The old
 single-destination Inbox route claim therefore is not part of the forward Assistant protocol.
 Historical route claims remain readable only for migration and provenance.
 
-If the process stops after a tool succeeds but before the final reply, the Inbox turn stays pending.
-An uncommitted `attentionRequest` belongs only to that model invocation and is cleared before a
-retry; it is not user ownership without the matching durable final reply. On resume, Assistant sees
-the durable canonical tool effects through current HOPI state and judges responsibility again.
-Repeated tool calls are safe because Goal Input identity, Goal/Work lifecycle guards, content
-hashes, and existing target documents make the operations idempotent. HOPI does not add a generic
-operation database or parse reply prose to reconstruct effects.
+If the process stops after a tool succeeds but before the final reply, the Inbox turn stays pending
+and the confirmed mutation already has an action receipt. On resume, Assistant also sees the durable
+effect through current HOPI state. Repeated tool calls are safe because Goal Input identity,
+Goal/Work lifecycle guards, content hashes, and existing target documents make the operations
+idempotent. HOPI does not parse reply prose to reconstruct effects.
 
-## Attention And Interruption
+## Attention And Queueing
 
-Assistant ambiguity is handled conversationally whenever an ordinary answer is enough. Targeted
-Attention is reserved for a durable condition that blocks unattended progress or for repeated
-Assistant/tool failure that cannot be completed safely.
+Attention is the Project Assistant's durable todo set. It has natural-language body and canonical
+refs, but no owner, target, kind, priority, waiting, notification, retry, or operator-request state.
+All unresolved Attention is supplied together; Assistant may create, update, merge, or resolve it.
+An operator message or reply does not mutate Attention automatically.
 
-Needs-you and Goal completion updates appear in the same Assistant thread as system updates. A new
-Goal completion update is a read projection of the `done` Goal and its final Planning Evidence; it
-does not require a targetless Attention or prescribed Assistant wording. Legacy targetless
-completion Attention remains readable through the same visual surface. Replying
-with that message's explicit `Reply` action sends a normal user turn with `replyTo` and the exact
-Attention references in context. An ordinary composer submission carries only selected Project and
-Goal context and never guesses Attention references from currently open blockers. Assistant may read
-current state and call the appropriate HOPI tool; no prose answer parser exists.
+`<NeedsYou attentionId="...">...</NeedsYou>` is presentation in ordinary final text. While the exact
+Attention remains unresolved, the block renders as `Needs you`; after resolution it renders as
+ordinary Markdown. Reply stores the message and exact Attention reference as context but leaves the
+next action to Assistant judgment. The header count navigates to the newest visible unresolved block.
+There is no notification tool or ownership-transfer protocol.
 
-The canonical Attention reference, not `replyTo`, is the durable authority of an explicit reply.
-`replyTo` preserves conversational provenance and normally matches the latest `operatorRequest`, but
-it is not a lock: a newer notification may replace `operatorRequest` while an already received user
-reply waits in FIFO. At processing time Coordinator revalidates the same exact open Attention and
-returns it to Assistant ownership even when that notification pointer changed. The speaking
-Assistant still rereads current state before applying the answer, so accepting the queued reply does
-not apply stale prose mechanically or let it affect another Attention.
+Resolution wakes ordinary reconciliation but does not declare any Work or Project executable.
+Deterministic boundaries recheck their own facts and may create a new Attention if the condition
+recurs.
 
-An unresolved notified Attention decorates the exact Assistant message that asked the question with
-one quiet warning surface, a small `Needs you` label, and one text-only `Reply` action. The surface
-uses a uniform boundary rather than a separate accent rail. Multiple open references from the same
-message share that presentation and reply context. Resolution removes the decoration and returns the
-message to ordinary conversation styling; it does not append a synthetic resolved row. The composer
-shows reply context as lightweight text with one icon-only dismiss action, not another warning chip.
-The drawer identifies its active conversation as `Assistant · Home` or `Assistant · <Project>`; a
-non-zero unresolved count follows the Reflection entry in the same compact, top-edge floating
-control row. Kanban keeps its Work badge and focus projection but does not repeat Needs-you as a
-separate page banner. Selecting the count focuses the newest unresolved public request in the
-conversation and enters that exact message's reply context. This is the same exact-reference action
-as selecting the message's `Reply`; it never attaches another open Attention from the page or
-Project.
-
-A **Needs you** projection must navigate to the exact public Assistant turn that acknowledged its
-canonical Attention reference. The conversation loads older pages when necessary and focuses that
-turn; Goal surfaces do not copy the reply, expose the internal Attention body, or persist another
-notification link.
-
-An Attention reference is exact reply authority, not ambient page context. For an explicit reply,
-Assistant must finish the turn with every referenced operator request either resolved, transferred
-back to Assistant ownership while a represented revision proceeds, or replaced by a new request.
-Unrelated open Attention remains untouched. For ordinary turns, Assistant may still resolve a blocker
-that a successful named effect demonstrably cleared, but no page-scoped bulk reconciliation is
-required and no open reference is attached automatically.
-
-Resolution is Assistant judgment, not a safety capability. Resolving Project Attention requests a
-fresh Coordinator reconciliation and does not itself declare the Project executable. Each backend
-boundary rechecks its own durable and safety preconditions before acting; a remaining failure creates
-ordinary Project Attention again without importing a separate Attention kind or validation model.
-
-After the configured bounded Assistant retry count, HOPI creates event-target Attention and stops
-retrying that turn until the operator responds or the condition changes. A visible error replaces
-an indefinite loading indicator.
+User input never interrupts an active supervision fork. Its Inbox receipt is visible immediately and
+the Project queue runs it next. Process stop may interrupt either invocation; the retained pending
+turn or unobserved wake facts provide restart recovery without manufacturing Attention.
 
 ## UI Behavior
 
@@ -951,7 +694,7 @@ Goal surface appears on the right. An existing Project route resolves to its mos
 Cross-Project navigation changes the conversation and discards any unsent draft, while navigation
 between Goals in one Project preserves the shared Project conversation. Feed history, incremental
 updates, activity, completion, Needs-you, and browser cache are projected only for that scope. Home
-includes Workspace Attention and global Reflection activity; a Project includes only its own events
+includes Workspace Attention and global wake activity; a Project includes only its own events
 and Goal Attention. The synchronization cursor still advances across global updates so an unrelated
 Project cannot trap a scoped client on an old cursor.
 
@@ -973,9 +716,9 @@ Within that scope, the drawer shows one chronological conversation:
 - Conversation activity is one rebuildable tail projection, never an Inbox message, runtime event,
   or durable status row. It is rendered at most once and only after the newest conversation row.
   A running public speaking turn shows `Working`. When no public turn is running, an active
-  Reflection or Reflection-sourced internal speaking turn shows `Thinking` without exposing its
-  hidden prompt, messages, or tools. `Waiting to start` is used when public work is queued but no
-  speaking or Reflection activity is running. The projection disappears when none of those owners
+  supervision fork shows `Thinking` without exposing its hidden prompt, messages, or tools. `Waiting
+  to start` is used when public work is queued but no speaking or supervision activity is running.
+  The projection disappears when none of those owners
   remains active
 - live activity synchronization is independent of chronological pagination. The Server projects a
   change cursor from existing Inbox handling timestamps, turn manifests, and runtime events; the
@@ -997,9 +740,9 @@ Within that scope, the drawer shows one chronological conversation:
   remain compact diagnostics rather than chat commands the operator must understand
 - the final Assistant message replaces the running presentation when the turn is handled
 - later user messages may be submitted without waiting for the current turn
-- internal Reflection turns and their diagnostics are hidden
-- a Reflection-driven reply appears only when the speaking thread explicitly promotes it; no fake
-  user bubble is shown for that update
+- internal supervision turns and their diagnostics are hidden
+- a supervision reply appears only when its fork returns a non-empty final response; no fake user
+  bubble is shown for that update
 - operator-facing replies contain conclusions and required actions; internal process belongs in the
   existing collapsed activity and Attempt views
 - Assistant replies and their action/completion projections render through one shared,
@@ -1014,8 +757,9 @@ Within that scope, the drawer shows one chronological conversation:
 - targeted Attention is pinned as one direct request without displaying its internal identifier;
   replying preserves every open identifier associated with that exact message invisibly as context
 
-Every `Virtuoso`-backed stream, including Assistant conversation, Attempt activity, Reflection Runs,
-and Reflection event activity, is the sole authority for its row visibility and height. Its
+Every `Virtuoso`-backed stream, including Assistant conversation, Attempt activity, wake records
+exposed through the legacy Reflection debug view, and wake event activity, is the sole authority for
+its row visibility and height. Its
 variable-height rows do not add browser `content-visibility` estimates that can fight scroll
 anchoring.
 

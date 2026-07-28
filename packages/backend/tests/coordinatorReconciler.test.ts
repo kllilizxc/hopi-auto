@@ -116,6 +116,60 @@ describe('CoordinatorReconciler', () => {
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.status).toBe('handled')
   })
 
+  test('serializes each Project Assistant without blocking another Project', async () => {
+    const fixture = await workspaceFixture()
+    await Bun.write(
+      fixture.home.paths.projectLinksPath,
+      [
+        'version: 1',
+        'projects:',
+        '  - projectId: P-1',
+        '    repoPath: /tmp/project-one',
+        '  - projectId: P-2',
+        '    repoPath: /tmp/project-two',
+        '',
+      ].join('\n'),
+    )
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-P1',
+      content: 'First Project.',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-P2',
+      content: 'Second Project.',
+      context: { projectId: 'P-2' },
+    })
+    const releases = new Map<string, () => void>()
+    const started: string[] = []
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process(eventId) {
+          started.push(eventId)
+          await new Promise<void>((resolve) => releases.set(eventId, resolve))
+          await fixture.workspace.handleEvent(eventId, {
+            reply: `Handled ${eventId}`,
+            disposition: 'answered',
+          })
+          return { kind: 'answered' as const, eventId }
+        },
+      },
+      attentions: fixture.attentions,
+      projects: [],
+    })
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    expect(started).toEqual(['EV-P1', 'EV-P2'])
+
+    releases.get('EV-P1')?.()
+    releases.get('EV-P2')?.()
+    await coordinator.waitForIdle()
+    expect((await fixture.workspace.readEvent('EV-P1'))?.attributes.status).toBe('handled')
+    expect((await fixture.workspace.readEvent('EV-P2'))?.attributes.status).toBe('handled')
+  })
+
   test('does not dispatch a deterministic direct command receipt before acknowledgement', async () => {
     const fixture = await workspaceFixture()
     const processed: string[] = []
@@ -525,7 +579,7 @@ describe('CoordinatorReconciler', () => {
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
     await coordinator.waitForIdle()
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
-    expect(observations).toEqual([true])
+    expect(observations).toEqual([false, true])
   })
 
   test('does not let an Attention suppress an internal turn or the following wake observation', async () => {
@@ -569,7 +623,7 @@ describe('CoordinatorReconciler', () => {
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
     await coordinator.waitForIdle()
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
-    expect(observations).toEqual([true])
+    expect(observations).toEqual([false, true])
   })
 
   test('prioritizes public user turns over older internal Reflection handoffs', async () => {
@@ -609,27 +663,26 @@ describe('CoordinatorReconciler', () => {
     expect(processed).toEqual(['EV-user', 'EV-reflection'])
   })
 
-  test('preempts a running internal Assistant turn when public user input arrives', async () => {
+  test('queues public user input behind a running Project supervision turn', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveReflectionEvent({
       eventId: 'EV-reflection',
       content: 'Internal repair assessment.',
     })
     const started: string[] = []
-    let reflectionAttempts = 0
+    let releaseReflection: () => void = () => undefined
+    const reflectionSettled = new Promise<void>((resolve) => {
+      releaseReflection = resolve
+    })
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: {
         async process(eventId, signal) {
           started.push(eventId)
-          if (eventId === 'EV-reflection' && reflectionAttempts++ === 0) {
-            await new Promise<void>((_resolve, reject) => {
-              if (!signal) throw new Error('Expected an Assistant turn signal')
-              if (signal.aborted) return reject(new Error('interrupted'))
-              signal.addEventListener('abort', () => reject(new Error('interrupted')), {
-                once: true,
-              })
-            })
+          if (eventId === 'EV-reflection') {
+            if (!signal) throw new Error('Expected an Assistant turn signal')
+            await reflectionSettled
+            expect(signal.aborted).toBeFalse()
           }
           await fixture.workspace.handleEvent(eventId, {
             reply: `Handled ${eventId}`,
@@ -645,15 +698,17 @@ describe('CoordinatorReconciler', () => {
     expect(await coordinator.reconcileOnce()).toMatchObject({ kind: 'assistant_started' })
     await Bun.sleep(0)
     await fixture.workspace.receiveEvent({ eventId: 'EV-user', content: 'Operator input.' })
-    coordinator.interruptInternalAssistant()
-    await coordinator.waitForIdle()
+    coordinator.wake()
+    await Bun.sleep(10)
+    expect(started).toEqual(['EV-reflection'])
+    expect((await fixture.workspace.readEvent('EV-user'))?.attributes.status).toBe('pending')
 
+    releaseReflection()
+    await Bun.sleep(20)
     await coordinator.reconcileOnce()
     await coordinator.waitForIdle()
-    await coordinator.reconcileOnce()
-    await coordinator.waitForIdle()
 
-    expect(started).toEqual(['EV-reflection', 'EV-user', 'EV-reflection'])
+    expect(started).toEqual(['EV-reflection', 'EV-user'])
     expect((await fixture.workspace.readEvent('EV-user'))?.attributes.status).toBe('handled')
     expect((await fixture.workspace.readEvent('EV-reflection'))?.attributes.status).toBe('handled')
     expect((await fixture.workspace.readWorkspace()).attentions.size).toBe(0)

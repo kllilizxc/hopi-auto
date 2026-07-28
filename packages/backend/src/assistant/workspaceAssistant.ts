@@ -22,7 +22,6 @@ import {
   withNativeCompactionEnabled,
 } from '../agent/vendorTransport'
 import type { AssistantPreferenceDocument } from '../domain/assistantPreference'
-import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import {
   type InboxEventDocument,
   isInternalInboxSource,
@@ -41,16 +40,16 @@ import { createProcessGroupTerminator } from '../runtime/processGroup'
 import { runtimeCacheRoot } from '../runtime/runPaths'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import {
+  type AssistantConversationScope,
   assistantConversationScopeForEvent,
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
-import {
-  assistantResponsibilityState,
-  assistantWorkResponsibilityState,
-} from './assistantResponsibility'
+import type { AssistantActionReceipt } from './assistantConversationStore'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
+import { assistantSupervisionProjection } from './assistantSupervisionContext'
 import { type AssistantTools, assistantStateProjection } from './assistantTools'
+import { runCodexAssistantFork } from './codexAssistantFork'
 
 export interface AssistantModelInput {
   eventId: string
@@ -70,6 +69,7 @@ export interface AssistantModelInput {
   signal?: AbortSignal
   executionPlan?: AssistantModelExecutionPlan
   browserEnvironment?: AssistantBrowserEnvironment
+  invocation?: 'speaking' | 'supervision'
 }
 
 export interface AssistantModelPreparationInput {
@@ -111,6 +111,7 @@ export interface AssistantModelRunner {
 
 export interface WorkspaceAssistant {
   process(eventId: string, signal?: AbortSignal): Promise<WorkspaceAssistantResult>
+  hasSpeakingSession?(scope: AssistantConversationScope): Promise<boolean>
 }
 
 export type WorkspaceAssistantResult = { kind: 'answered'; eventId: string }
@@ -118,8 +119,7 @@ export type WorkspaceAssistantResult = { kind: 'answered'; eventId: string }
 export class WorkspaceAssistantError extends Error {}
 
 export class AssistantSessionUnavailableError extends WorkspaceAssistantError {}
-
-class UnsettledAssistantResponsibilityError extends WorkspaceAssistantError {}
+export class AssistantNativeForkUnavailableError extends WorkspaceAssistantError {}
 
 export function createConfiguredAssistantModelRunner(options: {
   resolveConfig(): RoleTransportConfig | Promise<RoleTransportConfig>
@@ -177,6 +177,17 @@ export function createConfiguredAssistantModelRunner(options: {
       }
       const transport = config.transport
       const session = input.session?.transport === transport ? input.session : null
+      const supervision = input.invocation === 'supervision'
+      if (supervision && !session) {
+        throw new AssistantNativeForkUnavailableError(
+          `The ${transport} Assistant cannot supervise without a compatible speaking session`,
+        )
+      }
+      if (supervision && transport === 'opencode') {
+        throw new AssistantNativeForkUnavailableError(
+          'The configured OpenCode transport does not expose a verified native session fork',
+        )
+      }
       const invocation = {
         ...input,
         fullAccess: plan.fullAccess ?? false,
@@ -205,7 +216,10 @@ export function createConfiguredAssistantModelRunner(options: {
 
       if (input.signal?.aborted)
         throw new WorkspaceAssistantError('Assistant model run interrupted')
-      const command = buildAssistantCommand(config, invocation)
+      const command =
+        supervision && transport === 'codex'
+          ? assistantCodexForkCommand(config, invocation)
+          : buildAssistantCommand(config, invocation)
       const providerEnvironment =
         transport === 'claude' ? await readClaudeProviderEnvironment() : {}
       const processEnvironment = withNativeCompactionEnabled(transport, {
@@ -230,6 +244,32 @@ export function createConfiguredAssistantModelRunner(options: {
           : {}),
       })
       const redact = createEnvironmentSecretRedactor(processEnvironment)
+      if (supervision && transport === 'codex' && session) {
+        const fork = await runCodexAssistantFork(
+          {
+            command,
+            cwd: input.cwd,
+            environment: processEnvironment,
+            parentSessionId: session.sessionId,
+            prompt: invocation.prompt,
+            imageFiles: input.imageFiles,
+            model: config.model,
+            reasoningEffort: config.reasoningEffort,
+            fullAccess: invocation.fullAccess,
+            transcriptFile: input.transcriptFile,
+            lastMessageFile: input.lastMessageFile,
+            signal: input.signal,
+          },
+          {
+            onEvent: (event) => observer?.onEvent?.(event),
+            onSession: (sessionId) => observer?.onSession?.({ transport, sessionId }),
+          },
+        )
+        return {
+          reply: redact(fork.reply).trim(),
+          session: { transport, sessionId: fork.sessionId },
+        }
+      }
       const child = Bun.spawn(command, {
         cwd: input.cwd,
         stdout: 'pipe',
@@ -437,18 +477,18 @@ export function createWorkspaceAssistant(input: {
   const workspaceRoot = join(resolve(input.homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
   const runtimeDigest = workspaceAssistantRuntimeDigest(input.homeRoot)
   return {
+    async hasSpeakingSession(scope) {
+      const workspaceState = await input.workspace.readWorkspace()
+      const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
+      return (await input.conversation.readSession(scope, contextDigest, runtimeDigest)) !== null
+    },
+
     async process(eventId, signal) {
-      let workspaceState = await input.workspace.readWorkspace()
-      let event = workspaceState.events.get(eventId)
+      const workspaceState = await input.workspace.readWorkspace()
+      const event = workspaceState.events.get(eventId)
       if (!event) throw new WorkspaceAssistantError(`Inbox turn not found: ${eventId}`)
       if (event.attributes.status === 'handled') {
         return { kind: 'answered', eventId }
-      }
-      if (event.attributes.attentionRequest) {
-        await input.workspace.clearPendingAttentionRequest(eventId)
-        workspaceState = await input.workspace.readWorkspace()
-        event = workspaceState.events.get(eventId)
-        if (!event) throw new WorkspaceAssistantError(`Inbox turn not found: ${eventId}`)
       }
       const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
 
@@ -468,6 +508,7 @@ export function createWorkspaceAssistant(input: {
       )
       const toolToken = input.tools.issue(eventId)
       let usedTool = false
+      const internal = isInternalInboxSource(event.attributes.source)
 
       const observer: AssistantModelObserver = {
         onEvent: async (runtimeEvent) => {
@@ -476,8 +517,23 @@ export function createWorkspaceAssistant(input: {
           }
           await input.conversation.record(eventId, runtimeEvent)
         },
-        onSession: (session) =>
-          input.conversation.writeSession(conversationScope, session, contextDigest, runtimeDigest),
+        onSession: async (session) => {
+          if (internal) {
+            await input.conversation.record(eventId, {
+              kind: 'message',
+              level: 'info',
+              role: 'coordinator',
+              content: `Forked speaking Session into native ${session.transport} branch ${session.sessionId}.`,
+            })
+            return
+          }
+          await input.conversation.writeSession(
+            conversationScope,
+            session,
+            contextDigest,
+            runtimeDigest,
+          )
+        },
       }
 
       try {
@@ -486,7 +542,10 @@ export function createWorkspaceAssistant(input: {
           conversationScope.kind === 'project' ? conversationScope.projectId : undefined
         const toolMode = isInternalInboxSource(event.attributes.source) ? 'internal' : 'main'
         const stateSnapshot = input.state
-          ? await input.state.read(projectId ? { projectId } : {})
+          ? await input.state.read({
+              ...(projectId ? { projectId } : {}),
+              ...(internal ? { attemptHistoryLimit: 12 } : {}),
+            })
           : undefined
         const preparation = {
           ...(projectId ? { projectId } : {}),
@@ -509,12 +568,16 @@ export function createWorkspaceAssistant(input: {
           contextDigest,
           runtimeDigest,
         )
+        const pendingActionReceipts = internal
+          ? []
+          : await input.conversation.readPendingActionReceipts(conversationScope)
         const rebuildPrompt = renderNewConversation(
           workspaceState.events,
           event,
           workspaceState.preference,
           stateSnapshot,
           conversationScope,
+          pendingActionReceipts,
         )
         let result: AssistantModelResult
         try {
@@ -522,7 +585,9 @@ export function createWorkspaceAssistant(input: {
             {
               eventId,
               ...(projectId ? { projectId } : {}),
-              prompt: session ? renderTurn(event, stateSnapshot) : rebuildPrompt,
+              prompt: session
+                ? renderTurn(event, stateSnapshot, pendingActionReceipts)
+                : rebuildPrompt,
               rebuildPrompt,
               session,
               cwd: conversationWorkspace,
@@ -535,11 +600,14 @@ export function createWorkspaceAssistant(input: {
               toolMode,
               executionPlan,
               signal,
+              invocation: internal ? 'supervision' : 'speaking',
             },
             observer,
           )
         } catch (error) {
-          if (!session || !(error instanceof AssistantSessionUnavailableError)) throw error
+          if (internal || !session || !(error instanceof AssistantSessionUnavailableError)) {
+            throw error
+          }
           await input.conversation.record(eventId, {
             kind: 'message',
             level: 'info',
@@ -566,76 +634,55 @@ export function createWorkspaceAssistant(input: {
               toolMode,
               executionPlan,
               signal,
+              invocation: 'speaking',
             },
             observer,
           )
         }
 
         const reply = result.reply.trim()
-        const internal = isInternalInboxSource(event.attributes.source)
-        const stagedEvent = await input.workspace.readEvent(eventId)
-        const attentionRequest = stagedEvent?.attributes.attentionRequest ?? null
-        if (!reply && (!internal || attentionRequest)) {
+        if (!reply && !internal) {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }
-        if (internal) {
-          const responsibilityRefs = normalizeInboxAttentionReferences(
-            event.attributes.context ?? {},
+        if (!internal) {
+          await input.conversation.writeSession(
+            conversationScope,
+            result.session,
+            contextDigest,
+            runtimeDigest,
           )
-          if (responsibilityRefs.length > 0 && (!input.state || !stateSnapshot)) {
-            throw new WorkspaceAssistantError(
-              'Assistant responsibility validation requires current HOPI state',
-            )
-          }
-          if (input.state && stateSnapshot) {
-            const [currentState, currentWorkspace] = await Promise.all([
-              input.state.read(projectId ? { projectId } : {}),
-              input.workspace.readWorkspaceForControl(),
-            ])
-            assertAssistantResponsibilitiesAdvanced({
-              event,
-              stagedEvent,
-              beforeState: stateSnapshot,
-              afterState: currentState,
-              beforeWorkspace: workspaceState,
-              afterWorkspace: currentWorkspace,
-            })
-          }
+        } else if (reply) {
+          await input.conversation.recordActionReceipt(conversationScope, {
+            receiptId: await assistantActionReceiptId(eventId, 'reply', reply),
+            eventId,
+            kind: 'reply',
+            summary: boundedReceiptText(reply),
+            detail: null,
+          })
         }
-        await input.conversation.writeSession(
-          conversationScope,
-          result.session,
-          contextDigest,
-          runtimeDigest,
-        )
         await input.workspace.handleEvent(eventId, {
           reply: reply || 'No operator update.',
-          disposition: attentionRequest
-            ? 'operator-requested'
-            : internal
-              ? reply
-                ? 'notified'
-                : usedTool
-                  ? 'tools-used'
-                  : 'silent'
+          disposition: internal
+            ? reply
+              ? 'notified'
               : usedTool
                 ? 'tools-used'
-                : 'answered',
+                : 'silent'
+            : usedTool
+              ? 'tools-used'
+              : 'answered',
           handledAt: now(),
-          expose: internal && Boolean(reply || attentionRequest),
+          expose: internal && Boolean(reply),
         })
-        if (attentionRequest) {
-          await input.tools.acknowledgeEventAttentionRequest(eventId, now())
-        }
         await input.conversation.complete(eventId)
+        if (!internal && pendingActionReceipts.length > 0) {
+          await input.conversation.acknowledgeActionReceipts(
+            conversationScope,
+            pendingActionReceipts.map((receipt) => receipt.receiptId),
+          )
+        }
         return { kind: 'answered', eventId }
       } catch (error) {
-        if (error instanceof UnsettledAssistantResponsibilityError) {
-          await Promise.all([
-            input.conversation.clearSession(conversationScope),
-            input.workspace.clearPendingAttentionRequest(eventId),
-          ])
-        }
         await input.conversation.fail(eventId, errorMessage(error))
         throw error
       } finally {
@@ -643,55 +690,6 @@ export function createWorkspaceAssistant(input: {
         await input.onTurnSettled?.(eventId)
       }
     },
-  }
-}
-
-function assertAssistantResponsibilitiesAdvanced(input: {
-  event: InboxEventDocument
-  stagedEvent: InboxEventDocument | null
-  beforeState: AssistantStateSnapshot
-  afterState: AssistantStateSnapshot
-  beforeWorkspace: AssistantWorkspace
-  afterWorkspace: AssistantWorkspace
-}) {
-  const references = normalizeInboxAttentionReferences(input.event.attributes.context ?? {})
-  const workReferences = input.event.attributes.context?.workRefs ?? []
-  if (references.length === 0 && workReferences.length === 0) return
-  const transferred = new Set(input.stagedEvent?.attributes.attentionRequest?.attentionRefs ?? [])
-  const unchanged: string[] = []
-  for (const reference of references) {
-    const before = assistantResponsibilityState(reference, input.beforeState, input.beforeWorkspace)
-    if (!before?.assistantOwned || before.hasDurableSuccessor) continue
-    if (transferred.has(reference)) continue
-    const after = assistantResponsibilityState(reference, input.afterState, input.afterWorkspace)
-    if (
-      !after ||
-      !after.assistantOwned ||
-      after.hasDurableSuccessor ||
-      after.fingerprint !== before.fingerprint
-    ) {
-      continue
-    }
-    unchanged.push(reference)
-  }
-  for (const reference of workReferences) {
-    const before = assistantWorkResponsibilityState(reference, input.beforeState)
-    if (!before?.assistantOwned || before.hasDurableSuccessor) continue
-    const after = assistantWorkResponsibilityState(reference, input.afterState)
-    if (
-      !after ||
-      !after.assistantOwned ||
-      after.hasDurableSuccessor ||
-      after.fingerprint !== before.fingerprint
-    ) {
-      continue
-    }
-    unchanged.push(reference)
-  }
-  if (unchanged.length > 0) {
-    throw new UnsettledAssistantResponsibilityError(
-      `Internal event cannot settle because canonical Assistant responsibility is unchanged: ${unchanged.join(', ')}`,
-    )
   }
 }
 
@@ -869,7 +867,10 @@ function assistantClaudeCommand(
     'stream-json',
     '--verbose',
   )
-  if (input.session) command.push('--resume', input.session.sessionId)
+  if (input.session) {
+    command.push('--resume', input.session.sessionId)
+    if (input.invocation === 'supervision') command.push('--fork-session')
+  }
   if (!input.fullAccess) {
     const readableDirectories = new Set(input.readableRoots ?? [])
     if (input.browserEnvironment) {
@@ -951,6 +952,30 @@ function assistantCodexCommand(
   config: Extract<RoleTransportConfig, { transport: 'codex' }>,
   input: AssistantModelInput,
 ) {
+  const command = assistantCodexBaseCommand(config, input)
+  command.push('exec')
+  if (input.session) command.push('resume')
+  for (const imageFile of input.imageFiles ?? []) command.push('-i', imageFile)
+  command.push('--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--json')
+  command.push('-o', input.lastMessageFile)
+  if (input.session) command.push(input.session.sessionId)
+  command.push('-')
+  return command
+}
+
+function assistantCodexForkCommand(
+  config: Extract<RoleTransportConfig, { transport: 'codex' }>,
+  input: AssistantModelInput,
+) {
+  const command = assistantCodexBaseCommand(config, input)
+  command.push('app-server', '--stdio')
+  return command
+}
+
+function assistantCodexBaseCommand(
+  config: Extract<RoleTransportConfig, { transport: 'codex' }>,
+  input: AssistantModelInput,
+) {
   const command = [config.binary ?? 'codex']
   appendCodexHttpsOnlyConfig(command)
   appendCodexShellEnvironmentConfig(command)
@@ -983,13 +1008,6 @@ function assistantCodexCommand(
   )
   if (config.model) command.push('-m', config.model)
   if (config.profile) command.push('-p', config.profile)
-  command.push('exec')
-  if (input.session) command.push('resume')
-  for (const imageFile of input.imageFiles ?? []) command.push('-i', imageFile)
-  command.push('--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--json')
-  command.push('-o', input.lastMessageFile)
-  if (input.session) command.push(input.session.sessionId)
-  command.push('-')
   return command
 }
 
@@ -1078,6 +1096,7 @@ function renderNewConversation(
   preference: AssistantPreferenceDocument,
   state?: AssistantStateSnapshot,
   scope = assistantConversationScopeForEvent(current),
+  actionReceipts: readonly AssistantActionReceipt[] = [],
 ) {
   const historyEvents = [...events.values()]
     .filter(
@@ -1105,11 +1124,15 @@ function renderNewConversation(
       : []),
     '## Current turn',
     '',
-    renderTurn(current, state),
+    renderTurn(current, state, actionReceipts),
   ].join('\n')
 }
 
-function renderTurn(event: InboxEventDocument, state?: AssistantStateSnapshot) {
+function renderTurn(
+  event: InboxEventDocument,
+  state?: AssistantStateSnapshot,
+  actionReceipts: readonly AssistantActionReceipt[] = [],
+) {
   const context = event.attributes.context
   if (isInternalInboxSource(event.attributes.source)) {
     return [
@@ -1117,10 +1140,7 @@ function renderTurn(event: InboxEventDocument, state?: AssistantStateSnapshot) {
       '[Project system event. This is not operator input.]',
       'A non-empty final response becomes the public update; an empty response remains internal.',
       context ? `[Suggested context: ${renderInboxContext(context)}]` : '[Home context]',
-      event.attributes.attentionRequest
-        ? `[Staged responsibility transfer: ${event.attributes.attentionRequest.attentionRefs.join(', ')}. It becomes user-owned only when this turn persists a non-empty final reply.]`
-        : '',
-      renderCurrentState(state),
+      renderCurrentSupervisionState(state),
       event.body,
     ]
       .filter(Boolean)
@@ -1129,12 +1149,38 @@ function renderTurn(event: InboxEventDocument, state?: AssistantStateSnapshot) {
   return [
     `[Current user Inbox turn ${event.attributes.id}; answer this event, not an earlier turn.]`,
     context ? `[Preferred page context: ${renderInboxContext(context)}]` : '[Home context]',
+    renderActionReceipts(actionReceipts),
     renderCurrentState(state),
     renderAttachmentReferences(event),
     event.body,
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function renderCurrentSupervisionState(state: AssistantStateSnapshot | undefined) {
+  if (!state) return ''
+  const encoded = JSON.stringify(assistantSupervisionProjection(state), null, 2)
+  const bounded = encoded.length > 60_000 ? `${encoded.slice(0, 60_000)}\n... truncated` : encoded
+  return [
+    '[Current supervision facts; canonical paths inside this projection remain the source references.]',
+    '```json',
+    bounded,
+    '```',
+  ].join('\n')
+}
+
+function renderActionReceipts(receipts: readonly AssistantActionReceipt[]) {
+  if (receipts.length === 0) return ''
+  return [
+    '[Confirmed actions completed by supervision forks since this speaking Session last ran]',
+    ...receipts.map((receipt) =>
+      [
+        `- ${receipt.receiptId} / ${receipt.kind}: ${receipt.summary}`,
+        ...(receipt.detail ? [`  Result: ${receipt.detail}`] : []),
+      ].join('\n'),
+    ),
+  ].join('\n')
 }
 
 function renderPreference(preference: AssistantPreferenceDocument) {
@@ -1236,6 +1282,21 @@ function boundedConversationHistory(events: InboxEventDocument[], characterBudge
     used += size
   }
   return selected.toReversed().flat()
+}
+
+async function assistantActionReceiptId(eventId: string, kind: string, value: string) {
+  const bytes = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(`${eventId}\u0000${kind}\u0000${value}`),
+    ),
+  )
+  const digest = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `AR-${digest.slice(0, 32)}`
+}
+
+function boundedReceiptText(value: string) {
+  return value.length > 4_000 ? `${value.slice(0, 4_000)}...` : value
 }
 
 async function consumeLines(

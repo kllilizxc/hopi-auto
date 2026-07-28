@@ -11,6 +11,7 @@ import {
   writeAgentAdapterConfig,
 } from '../agent/adapterConfig'
 import { ensureDefaultAgentAdapterConfig } from '../agent/defaultAdapterConfig'
+import { assistantConversationScopeForEvent } from '../assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../assistant/assistantConversationStore'
 import { createAssistantReflection } from '../assistant/assistantReflection'
 import { createAssistantStateReader } from '../assistant/assistantState'
@@ -21,6 +22,7 @@ import {
   createWorkspaceAssistant,
 } from '../assistant/workspaceAssistant'
 import { createProjectCommandRunner } from '../commands/projectCommandRunner'
+import { isInternalInboxSource } from '../domain/assistantWorkspaceDocuments'
 import type { LinkedProject, LinkedProjectRepo } from '../domain/project'
 import type { ProjectCodingDefaultsInput } from '../domain/projectCodingDefaults'
 import { resolveProjectPath } from '../domain/projectPath'
@@ -290,6 +292,22 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     onProjectRecoveryRequested: (projectId) => restoreProjectEligibility(projectId),
     onGoalEffect: (eventId, projectId, goalId) => protectAssistantGoal(eventId, projectId, goalId),
     onProjectDispatchEffect: (eventId, projectId) => protectAssistantProject(eventId, projectId),
+    onToolEffect: async (eventId, name, result) => {
+      const event = await workspace.readEvent(eventId)
+      if (!event || !isInternalInboxSource(event.attributes.source)) return
+      const detail = boundedReceiptDetail(result.value)
+      await assistantConversation.recordActionReceipt(assistantConversationScopeForEvent(event), {
+        receiptId: await actionReceiptId(
+          eventId,
+          'tool',
+          `${name}\u0000${result.summary}\u0000${detail}`,
+        ),
+        eventId,
+        kind: 'tool',
+        summary: `${name}: ${result.summary}`,
+        detail,
+      })
+    },
   })
   await migrateLegacyAttentionOwnership({
     workspace,
@@ -313,6 +331,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     homeRoot: options.homeRoot,
     workspace,
     state: assistantState,
+    canWake: async (scope) => (await assistant.hasSpeakingSession?.(scope)) ?? false,
     onWake: () => wakeCoordinator(),
   })
   const delivery = options.attentionTransport
@@ -447,6 +466,23 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     readAgentRoleCodingDefaults: readAgentRoleModelSettings,
     updateAgentRoleCodingDefaults: updateAgentRoleModelSettings,
   }
+}
+
+async function actionReceiptId(eventId: string, kind: string, value: string) {
+  const bytes = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(`${eventId}\u0000${kind}\u0000${value}`),
+    ),
+  )
+  const digest = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `AR-${digest.slice(0, 32)}`
+}
+
+function boundedReceiptDetail(value: unknown) {
+  const encoded = JSON.stringify(value)
+  if (!encoded) return null
+  return encoded.length > 4_000 ? `${encoded.slice(0, 4_000)}...` : encoded
 }
 
 export function requireProject(

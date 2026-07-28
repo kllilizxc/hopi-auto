@@ -66,6 +66,7 @@ export interface AssistantStateReadInput {
   projectId?: string
   goalId?: string
   includeEvidence?: boolean
+  attemptHistoryLimit?: number
 }
 
 export interface AssistantStateSnapshot {
@@ -323,6 +324,7 @@ export function createAssistantStateReader(options: {
                       attemptStore: options.attempts,
                       observedAt,
                       staleAfterMs,
+                      attemptHistoryLimit: input.attemptHistoryLimit ?? 3,
                     })
                     const evidence = input.goalId
                       ? input.includeEvidence
@@ -375,6 +377,7 @@ export function createAssistantStateReader(options: {
                       attemptStore: options.attempts,
                       observedAt,
                       staleAfterMs,
+                      attemptHistoryLimit: input.attemptHistoryLimit ?? 3,
                     }),
                     evidence: readWorkEvidenceSummary({
                       project,
@@ -553,7 +556,7 @@ export function createAssistantStateReader(options: {
       ) {
         return reflectionCache.snapshot
       }
-      const snapshot = await read()
+      const snapshot = await read({ attemptHistoryLimit: 12 })
       const after = await reflectionSourceToken()
       if (before && after === before && snapshot.activeRuns.length === 0) {
         reflectionCache = { token: before, snapshot }
@@ -693,6 +696,7 @@ async function readWorkRuntime(input: {
   attemptStore: RunAttemptStore
   observedAt: Date
   staleAfterMs: number
+  attemptHistoryLimit: number
 }) {
   const attempts = input.attemptSnapshot.list(input.projectId, input.goalId, input.workId)
   const latest = attempts[0] ?? null
@@ -728,7 +732,7 @@ async function readWorkRuntime(input: {
   )
   const worktreePath = join(resolve(input.projectRoot, '..'), 'work', input.goalId, input.workId)
   const recentAttempts = await Promise.all(
-    attempts.slice(0, 3).map(async (attempt) => ({
+    attempts.slice(0, input.attemptHistoryLimit).map(async (attempt) => ({
       ...compactAttemptIndex(attempt),
       artifactPreservation: await readArtifactPreservation({
         homeRoot: input.homeRoot,
@@ -907,8 +911,8 @@ function boundedAttempt(attempt: RunAttemptSummary) {
   return {
     ...attempt,
     summary:
-      attempt.summary && attempt.summary.length > 1_000
-        ? `${attempt.summary.slice(0, 1_000)}...`
+      attempt.summary && attempt.summary.length > 4_000
+        ? `${attempt.summary.slice(0, 4_000)}...`
         : attempt.summary,
   }
 }
@@ -923,8 +927,8 @@ function compactAttemptIndex(attempt: RunAttemptSummary) {
     startedAt: attempt.startedAt,
     endedAt: attempt.endedAt,
     summary:
-      attempt.summary && attempt.summary.length > 240
-        ? `${attempt.summary.slice(0, 240)}...`
+      attempt.summary && attempt.summary.length > 1_000
+        ? `${attempt.summary.slice(0, 1_000)}...`
         : attempt.summary,
   }
 }

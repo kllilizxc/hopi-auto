@@ -3,7 +3,6 @@ import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
 import type { WorkspaceAttentionDocument } from '../src/domain/assistantWorkspaceDocuments'
-import { workspaceAttentionReference } from '../src/domain/attentionReference'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { type MvpRuntime, createMvpRuntime } from '../src/runtime/mvpRuntime'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -20,99 +19,36 @@ afterEach(async () => {
 })
 
 describe('Project Assistant wake and Attention E2E', () => {
-  test('runs one scheduled Attention revisit and transfers responsibility without looping', async () => {
-    const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
-    let runtime: MvpRuntime
-    let attentionRef = ''
-    runtime = await setupRuntime({
+  test('drains unresolved Attention through native forks of one speaking session', async () => {
+    const calls: Array<{
+      mode: string | undefined
+      invocation: string | undefined
+      sessionId: string | null
+    }> = []
+    let supervisionCalls = 0
+    const runtime = await setupRuntime({
       async run(input) {
-        calls.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
-        await runtime.assistantTools.execute(input.toolToken, 'hopi_manage_attention', {
-          change: {
-            kind: 'transfer_attention_to_user',
-            attentionRefs: [attentionRef],
-          },
+        calls.push({
+          mode: input.toolMode,
+          invocation: input.invocation,
+          sessionId: input.session?.sessionId ?? null,
         })
+        if (input.invocation !== 'supervision') {
+          return {
+            reply: 'I will supervise this Project.',
+            session: codexSession('project-session'),
+          }
+        }
+        supervisionCalls += 1
         return {
-          reply: 'Which release window should I use?',
-          session: codexSession('project-session'),
+          reply:
+            supervisionCalls === 1
+              ? 'The Project todo remains in progress.'
+              : '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>',
+          session: codexSession(`fork-${supervisionCalls}`),
         }
       },
     })
-
-    try {
-      await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
-      await runtime.workspace.receiveEvent({
-        eventId: 'EV-schedule',
-        content: 'Check this Attention later.',
-        context: { projectId: 'P-1' },
-      })
-      const homeId = (await runtime.workspace.readWorkspace()).homeId
-      attentionRef = workspaceAttentionReference(homeId, 'A-choice')
-      const revisitAt = new Date(Date.now() + 100).toISOString()
-      await runtime.assistantTools.executeForEvent('EV-schedule', 'hopi_manage_attention', {
-        change: {
-          kind: 'defer_attention',
-          attentionRef,
-          until: revisitAt,
-        },
-      })
-      await runtime.workspace.handleEvent('EV-schedule', {
-        reply: 'Scheduled.',
-        disposition: 'tools-used',
-      })
-      await runtime.reflection.acknowledgeProjects(['P-1'])
-      runtime.coordinator.start()
-      await runtime.coordinator.waitForIdle()
-      await waitUntil(() => calls.length === 1)
-      await runtime.coordinator.waitForIdle()
-
-      expect(calls).toEqual([{ mode: 'internal', sessionId: null }])
-      const events = [...(await runtime.workspace.readWorkspace()).events.values()].toSorted(
-        (left, right) => left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
-      )
-      expect(events).toHaveLength(2)
-      expect(events.every((event) => event.attributes.status === 'handled')).toBe(true)
-      expect(events[1]?.attributes.context?.attentionRefs).toHaveLength(1)
-      expect(
-        (await runtime.workspace.readWorkspace()).attentions.get('A-choice')?.attributes
-          .operatorRequest,
-      ).toMatch(/\/event:/)
-
-      runtime.coordinator.wake()
-      await runtime.coordinator.waitForIdle()
-      expect(calls).toHaveLength(1)
-    } finally {
-      await runtime.coordinator.stop()
-      await runtime.preview.stopAll()
-    }
-  })
-
-  test('uses one persistent Project session for user speech and internal supervision', async () => {
-    const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
-    let runtime: MvpRuntime
-    let attentionRef = ''
-    const runner: AssistantModelRunner = {
-      async run(input) {
-        calls.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
-        if (input.toolMode === 'internal') {
-          await runtime.assistantTools.execute(input.toolToken, 'hopi_manage_attention', {
-            change: {
-              kind: 'transfer_attention_to_user',
-              attentionRefs: [attentionRef],
-            },
-          })
-        }
-        return {
-          reply:
-            input.toolMode === 'internal'
-              ? 'Choose the release window.'
-              : 'I will supervise this Project.',
-          session: codexSession('project-session'),
-        }
-      },
-    }
-    runtime = await setupRuntime(runner)
 
     try {
       await runtime.workspace.receiveEvent({
@@ -122,10 +58,56 @@ describe('Project Assistant wake and Attention E2E', () => {
       })
       await runtime.assistant.process('EV-user')
       await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
-      attentionRef = workspaceAttentionReference(
-        (await runtime.workspace.readWorkspace()).homeId,
-        'A-choice',
-      )
+      runtime.coordinator.start()
+      await runtime.coordinator.waitForIdle()
+
+      expect(calls).toEqual([
+        { mode: 'main', invocation: 'speaking', sessionId: null },
+        { mode: 'internal', invocation: 'supervision', sessionId: 'project-session' },
+        { mode: 'internal', invocation: 'supervision', sessionId: 'project-session' },
+      ])
+      const events = [...(await runtime.workspace.readWorkspace()).events.values()]
+        .filter((event) => event.attributes.source === 'system')
+        .toSorted((left, right) =>
+          left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
+        )
+      expect(events).toHaveLength(2)
+      expect(events.every((event) => event.attributes.status === 'handled')).toBe(true)
+      expect(events[1]?.attributes.context?.attentionRefs).toHaveLength(1)
+
+      runtime.coordinator.wake()
+      await runtime.coordinator.waitForIdle()
+      expect(calls).toHaveLength(3)
+    } finally {
+      await runtime.coordinator.stop()
+      await runtime.preview.stopAll()
+    }
+  })
+
+  test('uses one persistent Project session for user speech and internal supervision', async () => {
+    const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
+    const runner: AssistantModelRunner = {
+      async run(input) {
+        calls.push({ mode: input.toolMode, sessionId: input.session?.sessionId ?? null })
+        return {
+          reply:
+            input.toolMode === 'internal'
+              ? '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>'
+              : 'I will supervise this Project.',
+          session: codexSession('project-session'),
+        }
+      },
+    }
+    const runtime = await setupRuntime(runner)
+
+    try {
+      await runtime.workspace.receiveEvent({
+        eventId: 'EV-user',
+        content: 'Track this Project.',
+        context: { projectId: 'P-1' },
+      })
+      await runtime.assistant.process('EV-user')
+      await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
 
       expect(await runtime.reflection.observe({ settled: false })).toBe('started')
       await runtime.reflection.waitForIdle()
@@ -144,9 +126,70 @@ describe('Project Assistant wake and Attention E2E', () => {
       ).toMatchObject({
         visibility: 'public',
         status: 'handled',
-        reply: 'Choose the release window.',
-        disposition: 'operator-requested',
+        reply: '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>',
       })
+    } finally {
+      await runtime.coordinator.stop()
+      await runtime.preview.stopAll()
+    }
+  })
+
+  test('delivers a confirmed supervision tool effect to the next speaking turn', async () => {
+    let runtime: MvpRuntime | null = null
+    let receiptPrompt = ''
+    const runner: AssistantModelRunner = {
+      async run(input) {
+        if (input.invocation === 'supervision') {
+          if (!runtime) throw new Error('Runtime is not bound')
+          const preference = (await runtime.workspace.readWorkspace()).preference
+          await runtime.assistantTools.execute(input.toolToken, 'hopi_write_preferences', {
+            content: '# Preferences\n\n- Prefer concise status updates.\n',
+            expectedDigest: preference.digest,
+          })
+          return { reply: '', session: codexSession('fork-session') }
+        }
+        if (input.eventId === 'EV-user-receipt') receiptPrompt = input.prompt
+        return {
+          reply: 'Speaking turn complete.',
+          session: codexSession('project-session'),
+        }
+      },
+    }
+    runtime = await setupRuntime(runner)
+
+    try {
+      await runtime.workspace.receiveEvent({
+        eventId: 'EV-user-bootstrap',
+        content: 'Track this Project.',
+        context: { projectId: 'P-1' },
+      })
+      await runtime.assistant.process('EV-user-bootstrap')
+      await runtime.workspace.receiveSystemEvent({
+        eventId: 'EV-supervision-tool',
+        content: 'A Project preference needs correction.',
+        context: { projectId: 'P-1' },
+      })
+      await runtime.assistant.process('EV-supervision-tool')
+
+      const scope = { kind: 'project', projectId: 'P-1' } as const
+      expect(await runtime.assistantConversation.readPendingActionReceipts(scope)).toMatchObject([
+        {
+          eventId: 'EV-supervision-tool',
+          kind: 'tool',
+          summary: expect.stringContaining('hopi_write_preferences'),
+        },
+      ])
+
+      await runtime.workspace.receiveEvent({
+        eventId: 'EV-user-receipt',
+        content: 'What changed?',
+        context: { projectId: 'P-1' },
+      })
+      await runtime.assistant.process('EV-user-receipt')
+
+      expect(receiptPrompt).toContain('Confirmed actions completed by supervision forks')
+      expect(receiptPrompt).toContain('hopi_write_preferences')
+      expect(await runtime.assistantConversation.readPendingActionReceipts(scope)).toEqual([])
     } finally {
       await runtime.coordinator.stop()
       await runtime.preview.stopAll()
@@ -182,9 +225,10 @@ describe('Project Assistant wake and Attention E2E', () => {
         context: { projectId: 'P-1' },
       })
       await runtime.assistantTools.executeForEvent('EV-settle', 'hopi_manage_attention', {
+        projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionRef: workspaceAttentionReference(homeId, 'A-choice'),
+          attentionId: 'A-choice',
           resolution: 'Choice B was applied.',
         },
       })
@@ -246,14 +290,6 @@ async function git(cwd: string, args: string[]) {
     child.exited,
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
-}
-
-async function waitUntil(predicate: () => boolean, timeoutMs = 2_000) {
-  const deadline = Date.now() + timeoutMs
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for scheduled Attention revisit')
-    await Bun.sleep(10)
-  }
 }
 
 function codexSession(sessionId: string) {

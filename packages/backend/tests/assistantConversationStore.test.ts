@@ -150,4 +150,36 @@ describe('AssistantConversationStore session cache', () => {
     })
     expect(await Bun.file(turnEventsPath('EV-resume')).text()).not.toContain('\0')
   })
+
+  test('retains fork action receipts until one speaking turn acknowledges them', async () => {
+    const store = createAssistantConversationStore(temporaryRoot, {
+      now: () => new Date('2026-07-28T00:00:00Z'),
+    })
+    const scope = { kind: 'project', projectId: 'P-A' } as const
+    await store.recordActionReceipt(scope, {
+      receiptId: 'AR-tool-1',
+      eventId: 'EV-wake-1',
+      kind: 'tool',
+      summary: 'Updated Work dependencies.',
+      detail: '{"workId":"W-1"}',
+    })
+    await store.recordActionReceipt(scope, {
+      receiptId: 'AR-tool-1',
+      eventId: 'EV-wake-1',
+      kind: 'tool',
+      summary: 'Updated Work dependencies.',
+      detail: '{"workId":"W-1"}',
+    })
+
+    expect(await store.readPendingActionReceipts(scope)).toMatchObject([
+      {
+        receiptId: 'AR-tool-1',
+        eventId: 'EV-wake-1',
+        deliveredAt: null,
+      },
+    ])
+
+    await store.acknowledgeActionReceipts(scope, ['AR-tool-1'])
+    expect(await store.readPendingActionReceipts(scope)).toEqual([])
+  })
 })
