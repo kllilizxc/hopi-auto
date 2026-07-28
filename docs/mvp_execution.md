@@ -296,7 +296,7 @@ dispatch:
 
 concurrency:
   planner: 3
-  generator: 3
+  generator: 5
   reviewer: 3
 ```
 
@@ -307,7 +307,7 @@ integration postcondition succeeds; integration behavior is Coordinator code, no
 Concurrency remains three independent profile fields because the responsibilities may need different
 resource limits later. Each limit is global to one Coordinator Home across every linked Project and
 Goal; it is not multiplied per Goal or Project, and one responsibility does not consume another's
-reserved capacity. The current `3 / 3 / 3` values permit bounded multi-Goal progress without adding
+reserved capacity. The current `3 / 5 / 3` values permit bounded multi-Goal progress without adding
 dynamic resource scheduling.
 The profile has no hooks, expression language, inheritance, project variables, arbitrary actions,
 or workflow editor.
@@ -1252,9 +1252,12 @@ complete validated managed integration root plus the accepted task changes. No s
 index, or uncommitted file participates in C1 construction or managed materialization.
 
 For a multi-Repo responsibility, `context.md` labels the primary Repo release only as the canonical
-authority snapshot. `repos.json` supplies the common Project release ref and each Project Repo's
-own release head. Commit identities are meaningful only inside that Repo's Git object database;
-Agents are not expected to resolve the primary commit from a secondary Repo.
+authority snapshot. `repos.json` is a `candidate` projection: its paths are the complete task
+workspace and its heads are the commits checked out at those exact paths. The context separately
+names the common Project release ref and each Repo's base release head. Project Preview receives a
+`release` projection whose paths and heads both identify the managed integration roots. Commit
+identities are meaningful only inside that Repo's Git object database; Agents are not expected to
+resolve the primary commit from a secondary Repo.
 
 The guarded ref move to C1 is the one irreversible integration boundary and is independent of
 `publish(bundle)`; success is reported only after Git confirms ref durability. A conflict, failed
@@ -1327,13 +1330,19 @@ adapter routing, or lifecycle state. When present, it is foreground, non-interac
 prepares only its own checkout, and may populate ignored dependencies and caches without modifying
 tracked or non-ignored source.
 
-Every Engineering Run receives a runtime-only `HOPI_REPOS_FILE` containing all Project task roots,
-plus the Home-owned persistent `HOPI_CACHE_DIR`. Generator and Reviewer use the accepted Work,
-design, source, and actual candidate delta to decide which Repo setup and verification commands are
-material. Coordinator does not execute Repo preparation before either responsibility, does not
-require no-op adapters in unrelated Repos, and does not convert setup availability into a hidden
-Work gate. A missing entrypoint is simply an environment fact; an Agent may create one when the
-accepted outcome actually needs that durable capability.
+Every Engineering Run receives a runtime-only `HOPI_REPOS_FILE` containing a self-consistent
+`candidate` projection of all Project task roots, plus the Home-owned persistent `HOPI_CACHE_DIR`.
+The projection head for each Repo is the commit checked out at the supplied path; it is never copied
+from an older release while the path names a newer candidate. Generator and Reviewer use the
+accepted Work, design, source, and actual candidate delta to decide which Repo setup and
+verification commands are material.
+
+When the primary Repo exposes `scripts/hopi/prepare`, Coordinator runs it once against that candidate
+projection and records the result as Run context before the responsibility starts. Preparation
+failure remains an environment fact available to the responsibility; it is not a hidden Work gate
+and does not prevent the responsibility from using the supplied environment. HOPI does not require
+no-op adapters in unrelated Repos. A missing entrypoint is simply an environment fact; an Agent may
+create one when the accepted outcome actually needs that durable capability.
 
 A task worktree is a disposable source projection. Reviewer clean materialization and later recovery
 may replace it completely, including ignored and uncommitted runtime data. `HOPI_CACHE_DIR` is the
@@ -1460,6 +1469,9 @@ Concurrency rules:
 
 - Planner, Generator, and Reviewer each use their own profile-defined global capacity across all
   Projects and Goals in the Coordinator Home
+- queued and running Attempts are both projected with their stable Run identity and lifecycle
+  timestamps; a queued Attempt reports `capacity` only when the corresponding global pass capacity
+  is observably full
 - one writing pass at a time per task worktree
 - read-only work may run in parallel
 - independent writers require separate Work and worktrees

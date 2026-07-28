@@ -859,7 +859,8 @@ async function prepareResponsibilityProject(input: {
         repoId: repo.repoId,
         path: repo.path,
       })),
-      releaseHeads: input.context.repoReleaseHeads,
+      releaseHeads: input.context.repoProjectionHeads,
+      projection: input.context.repoProjection,
     })
   } catch (error) {
     const logs = `Unexpected Project preparation failure: ${errorMessage(error)}`

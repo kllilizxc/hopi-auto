@@ -267,6 +267,7 @@ describe('PreviewManager', () => {
       [
         appendOrder('web'),
         'const manifest = await Bun.file(process.env.HOPI_REPOS_FILE).json()',
+        'if (manifest.projection !== "release") process.exit(4)',
         'if (manifest.releaseHeads?.web !== "release-web" || manifest.releaseHeads?.api !== "release-api") process.exit(3)',
       ].join('\n'),
     )

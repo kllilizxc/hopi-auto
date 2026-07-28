@@ -58,6 +58,7 @@ export interface MvpProjectRuntime {
 
 export interface MvpRuntime {
   homeRoot: string
+  concurrency: Readonly<Record<'planner' | 'generator' | 'reviewer', number>>
   publisher: PublicationCoordinator
   home: ReturnType<typeof createAssistantHomeStore>
   workspace: ReturnType<typeof createAssistantWorkspaceStore>
@@ -424,6 +425,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
 
   return {
     homeRoot: options.homeRoot,
+    concurrency: profile.concurrency,
     publisher,
     home,
     workspace,

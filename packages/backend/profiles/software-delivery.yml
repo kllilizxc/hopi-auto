@@ -16,5 +16,5 @@ dispatch:
 
 concurrency:
   planner: 3
-  generator: 3
+  generator: 5
   reviewer: 3

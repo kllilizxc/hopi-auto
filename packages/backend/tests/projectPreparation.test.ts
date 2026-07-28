@@ -132,6 +132,7 @@ describe('ProjectPreparer', () => {
       cacheDir: fixture.cache,
       primaryRepoId: 'web',
       releaseHeads: { web: 'release-web', api: 'release-api' },
+      projection: 'candidate',
       repoRoots: [
         { repoId: 'web', path: fixture.repo },
         { repoId: 'api', path: api },
@@ -141,6 +142,7 @@ describe('ProjectPreparer', () => {
     expect(result.kind).toBe('ready')
     expect(result.logs).toContain(`api=${api}`)
     expect(await Bun.file(result.reposFile).json()).toMatchObject({
+      projection: 'candidate',
       primaryRepoId: 'web',
       repoOrder: ['web', 'api'],
       releaseHeads: { web: 'release-web', api: 'release-api' },
@@ -156,6 +158,7 @@ describe('ProjectPreparer', () => {
       cacheDir: fixture.cache,
       primaryRepoId: 'web',
       releaseHeads: { web: 'release-web', api: 'release-api' },
+      projection: 'candidate',
       repoRoots: [
         { repoId: 'web', path: fixture.repo },
         { repoId: 'api', path: api },

@@ -221,6 +221,7 @@ export function createPreviewManager(
       primaryRepoId: input.primaryRepoId,
       repoRoots: input.repoRoots,
       releaseHeads: input.releaseHeads,
+      projection: 'release',
     })
     if (isStopped(operation)) return stoppedResult(operation.session, now)
     operation.session.preparation = {

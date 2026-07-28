@@ -846,6 +846,8 @@ async function createFixture() {
     resultFile,
     releaseHead: 'a'.repeat(40),
     repoReleaseHeads: { primary: 'a'.repeat(40) },
+    repoProjectionHeads: { primary: 'a'.repeat(40) },
+    repoProjection: 'candidate',
     goalHash: 'a'.repeat(64),
     workHash: 'b'.repeat(64),
     authorityFiles: [],

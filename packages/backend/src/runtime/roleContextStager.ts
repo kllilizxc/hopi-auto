@@ -72,6 +72,8 @@ export interface RoleContextBundle extends TransportContextBundle {
   resultFile: string
   releaseHead: string
   repoReleaseHeads: Readonly<Record<string, string>>
+  repoProjectionHeads: Readonly<Record<string, string>>
+  repoProjection: 'candidate' | 'release'
   goalHash: string
   workHash: string
   authorityFiles: readonly Pick<PublicationSnapshotFile, 'path' | 'hash'>[]
@@ -174,6 +176,15 @@ export function createRoleContextStager(
           repoRoots.map(async (repo) => [
             repo.repoId,
             await gitOutput(repo.path, ['rev-parse', releaseRef]),
+          ]),
+        ),
+      )
+      const repoProjection = input.responsibility === 'planner' ? 'release' : 'candidate'
+      const repoProjectionHeads = Object.fromEntries(
+        await Promise.all(
+          repoRoots.map(async (repo) => [
+            repo.repoId,
+            await gitOutput(repo.path, ['rev-parse', 'HEAD']),
           ]),
         ),
       )
@@ -313,10 +324,11 @@ export function createRoleContextStager(
         reposFile,
         `${JSON.stringify(
           {
+            projection: repoProjection,
             primaryRepoId,
             releaseRef,
             repos: Object.fromEntries(repoRoots.map((repo) => [repo.repoId, repo.path])),
-            releaseHeads: repoReleaseHeads,
+            releaseHeads: repoProjectionHeads,
           },
           null,
           2,
@@ -336,6 +348,8 @@ export function createRoleContextStager(
           releaseHead,
           releaseRef,
           repoReleaseHeads,
+          repoProjectionHeads,
+          repoProjection,
           snapshot: authorityFiles,
           evidencePaths,
           artifactManifestFile,
@@ -396,6 +410,8 @@ export function createRoleContextStager(
         resultFile,
         releaseHead,
         repoReleaseHeads,
+        repoProjectionHeads,
+        repoProjection,
         goalHash: requiredHash(goalFile, goalPath),
         workHash: requiredHash(workFile, workPath),
         authorityFiles: authorityFiles.map(({ path, hash }) => ({
@@ -1164,6 +1180,8 @@ function renderContextManifest(
     releaseHead: string
     releaseRef: string
     repoReleaseHeads: Readonly<Record<string, string>>
+    repoProjectionHeads: Readonly<Record<string, string>>
+    repoProjection: 'candidate' | 'release'
     snapshot: PublicationSnapshot['files']
     evidencePaths: readonly string[]
     artifactManifestFile?: string
@@ -1196,6 +1214,7 @@ function renderContextManifest(
     `- Project primary Repo: ${context.primaryRepoId}`,
     `- Project source scope: ${context.projectPath}`,
     `- Repo workspace manifest: ${context.reposFile}`,
+    `- Repo workspace projection: ${context.repoProjection}`,
     `- Project release ref in each Repo: ${context.releaseRef}`,
     ...(context.artifactManifestFile
       ? [`- Evidence artifact manifest: ${context.artifactManifestFile}`]
@@ -1209,7 +1228,8 @@ function renderContextManifest(
     ...context.repoRoots.map((repo) =>
       [
         `- Repo ${repo.repoId}${repo.primary ? ' (primary)' : ''}: ${repo.path}`,
-        `  Release head: ${context.repoReleaseHeads[repo.repoId] ?? 'unavailable'}`,
+        `  Projection head: ${context.repoProjectionHeads[repo.repoId] ?? 'unavailable'}`,
+        `  Base release head: ${context.repoReleaseHeads[repo.repoId] ?? 'unavailable'}`,
       ].join('\n'),
     ),
     ...(context.bootstrapSourceRoot

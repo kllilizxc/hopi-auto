@@ -291,7 +291,15 @@ export interface AppSnapshot {
   }
   projects: ProjectSummary[]
   attentions: AttentionView[]
-  activeRuns: Array<{ key: string; responsibility: Responsibility }>
+  activeRuns: Array<{
+    key: string
+    runId: string
+    responsibility: Responsibility
+    status: 'queued' | 'running'
+    requestedAt: string
+    startedAt: string | null
+    waitReason: 'capacity' | null
+  }>
 }
 
 export type AgentRuntimeTransport = 'process' | 'codex' | 'claude' | 'opencode'
@@ -326,6 +334,15 @@ export interface WorkView {
   completedAt: string | null
   body: string
   agentPlan: WorkAgentPlan | null
+  activeAttempt: {
+    key: string
+    runId: string
+    responsibility: Responsibility
+    status: 'queued' | 'running'
+    requestedAt: string
+    startedAt: string | null
+    waitReason: 'capacity' | null
+  } | null
   blockedBy: string | null
   projection: {
     workId: string

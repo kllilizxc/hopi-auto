@@ -76,6 +76,7 @@ import {
 import type { RunAttemptDiagnostics } from './runtime/runAttemptDiagnostics'
 import type { RunAttemptStore, RunAttemptSummary } from './runtime/runAttemptStore'
 import { type RunCostEntry, summarizeRunCosts } from './runtime/runCostProjection'
+import { settledFailureWorkIds } from './runtime/settledAttemptFailure'
 import { AssistantHomeStoreError } from './storage/assistantHomeStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
 import { createProjectAgentAccessStore } from './storage/projectAgentAccessStore'
@@ -968,6 +969,7 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
     runtime.attempts.snapshot(),
   ])
   const runningAttempts = attemptSnapshot.running()
+  const queuedAttempts = attemptSnapshot.queued()
   const agentRoleSettings = Object.fromEntries(agentRoleSettingEntries) as Record<
     ConfigurableAgentRole,
     Awaited<ReturnType<MvpRuntime['readAgentRoleCodingDefaults']>>
@@ -1003,8 +1005,11 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
         projectEligible: true,
         liveRunWorkIds: liveWorkIds,
-        settledFailureWorkIds:
-          (await project.reconciler.settledFailureWorkIds?.(goalId, goalPackage)) ?? new Set(),
+        settledFailureWorkIds: await settledFailureWorkIds(
+          goalPackage,
+          attemptSnapshot.listGoal(project.projectId, goalId),
+          attemptWorkIds(queuedAttempts, project.projectId, goalId),
+        ),
         passCapacity: { planner: true, generator: true, reviewer: true },
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
@@ -1062,10 +1067,9 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
           ...goalAttentions.map((attention) => ({ scope: 'goal', ...attention })),
         ]
       : [],
-    activeRuns: runningAttempts.map((attempt) => ({
-      key: `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`,
-      responsibility: attempt.responsibility,
-    })),
+    activeRuns: [...runningAttempts, ...queuedAttempts].map((attempt) =>
+      presentActiveAttempt(attempt, runningAttempts, runtime.concurrency),
+    ),
   }
 }
 
@@ -1104,6 +1108,36 @@ function goalCreatedAt(goalPackage: GoalPackage, events: ReadonlyMap<string, Inb
     }
   }
   return earliest?.value ?? null
+}
+
+function attemptWorkIds(attempts: readonly RunAttemptSummary[], projectId: string, goalId: string) {
+  return new Set(
+    attempts
+      .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
+      .map((attempt) => attempt.workId),
+  )
+}
+
+function presentActiveAttempt(
+  attempt: RunAttemptSummary,
+  runningAttempts: readonly RunAttemptSummary[],
+  concurrency: MvpRuntime['concurrency'],
+) {
+  const runningCount = runningAttempts.filter(
+    (running) => running.responsibility === attempt.responsibility,
+  ).length
+  return {
+    key: `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`,
+    runId: attempt.runId,
+    responsibility: attempt.responsibility,
+    status: attempt.status === 'queued' ? ('queued' as const) : ('running' as const),
+    requestedAt: attempt.requestedAt,
+    startedAt: attempt.startedAt,
+    waitReason:
+      attempt.status === 'queued' && runningCount >= concurrency[attempt.responsibility]
+        ? ('capacity' as const)
+        : null,
+  }
 }
 
 async function presentAssistantFeed(
@@ -1795,7 +1829,7 @@ async function presentGoal(
       })),
     }
   }
-  const [workspace, designSnapshot, attemptsByWork] = await Promise.all([
+  const [workspace, designSnapshot, attemptSnapshot] = await Promise.all([
     runtime.workspace.readWorkspace(),
     view === 'full'
       ? runtime.publisher.snapshotTree(
@@ -1803,8 +1837,15 @@ async function presentGoal(
           project.store.paths.designRoot(goalId),
         )
       : null,
-    runtime.attempts.listGoal(projectId, goalId),
+    runtime.attempts.snapshot(),
   ])
+  const attemptsByWork = attemptSnapshot.listGoal(projectId, goalId)
+  const runningAttempts = attemptSnapshot.running()
+  const activeAttemptByWork = new Map(
+    [...runningAttempts, ...attemptSnapshot.queued()]
+      .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
+      .map((attempt) => [attempt.workId, attempt] as const),
+  )
   const liveWorkIds = new Set(
     [...attemptsByWork.entries()].flatMap(([workId, attempts]) =>
       attempts.some((attempt) => attempt.status === 'running') ? [workId] : [],
@@ -1818,8 +1859,11 @@ async function presentGoal(
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
     projectEligible: true,
     liveRunWorkIds: liveWorkIds,
-    settledFailureWorkIds:
-      (await project.reconciler.settledFailureWorkIds?.(goalId, goalPackage)) ?? new Set(),
+    settledFailureWorkIds: await settledFailureWorkIds(
+      goalPackage,
+      attemptsByWork,
+      attemptWorkIds(attemptSnapshot.queued(), projectId, goalId),
+    ),
     passCapacity: { planner: true, generator: true, reviewer: true },
   })
   const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
@@ -1835,11 +1879,15 @@ async function presentGoal(
     goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
     works: [...goalPackage.works.values()].map((work) => {
       const workAttempts = attemptsByWork.get(work.attributes.id) ?? []
+      const activeAttempt = activeAttemptByWork.get(work.attributes.id) ?? null
       return {
         ...work.attributes,
         ...(view === 'full' ? { body: work.body } : {}),
         projection: projectionByWork.get(work.attributes.id),
         blockedBy: presentWorkBlocker(work, projectionByWork, goalPackage),
+        activeAttempt: activeAttempt
+          ? presentActiveAttempt(activeAttempt, runningAttempts, runtime.concurrency)
+          : null,
         agentPlan: agentPlanByWork.get(work.attributes.id) ?? null,
         runAttemptCount: workAttempts.length,
         completedAt: deriveWorkCompletedAt(work.attributes, workAttempts),

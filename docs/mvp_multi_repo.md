@@ -182,6 +182,7 @@ one runtime manifest:
 
 ```json
 {
+  "projection": "candidate",
   "primaryRepoId": "web",
   "releaseRef": "refs/heads/hopi/project/P-1/release",
   "repos": {
@@ -189,20 +190,25 @@ one runtime manifest:
     "api": "/code/.hopi-worktrees/product-api/work/G-1/W-1"
   },
   "releaseHeads": {
-    "web": "<web-release-commit>",
-    "api": "<api-release-commit>"
+    "web": "<web-candidate-commit>",
+    "api": "<api-candidate-commit>"
   }
 }
 ```
 
 The Generator process cwd is the primary root; the runtime manifest names every other Project root
 explicitly.
-`releaseHeads` identifies the commit in each Repo's own Git object database; the primary authority
-snapshot is labeled separately and is never presented as a secondary Repo commit. Project membership
-defines the available environment, not a provider filesystem allowlist or mandatory execution list.
-Prompts name every Repo ID and path. Coordinator inspects every Project task root after Generator,
-but creates checkpoints only where Git reports a source delta. Reviewer can read all roots and
-chooses proof according to the Work, cross-Repo contract, and actual candidate changes.
+`projection` identifies what the manifest paths materialize. For the `candidate` projection,
+`releaseHeads` is the backward-compatible field carrying the commit actually checked out at each
+task root; the base Project release heads remain separately labeled in `context.md`. For the
+`release` projection used by Preview, the same field identifies each managed integration head.
+The field never describes a different tree from the path beside it. Commit identities remain local
+to each Repo's Git object database, and the primary authority snapshot is never presented as a
+secondary Repo commit. Project membership defines the available environment, not a provider
+filesystem allowlist or mandatory execution list. Prompts name every Repo ID and path. Coordinator
+inspects every Project task root after Generator, but creates checkpoints only where Git reports a
+source delta. Reviewer can read all roots and chooses proof according to the Work, cross-Repo
+contract, and actual candidate changes.
 
 `dependsOn` continues to express known semantic ordering. HOPI does not infer file locks or serialize
 all Work sharing a Repo. Concurrent Work branches may proceed; C1 revalidates every Project Repo
@@ -222,7 +228,8 @@ HOPI_REPO_ROOT=<current-checkout-root>
 HOPI_REPOS_FILE=<runtime-json-path>
 ```
 
-The Preview manifest names every managed integration root. A script prepares only its own cwd; the
+The Preview manifest declares `projection: release` and names every managed integration root. A
+script prepares only its own cwd; the
 manifest may inform cross-Repo compatibility checks but never delegates another Repo's setup. Every
 Preview preparation must succeed before the primary Preview adapter starts. Missing preparation is
 therefore a Preview capability failure, not a reason to block an unrelated Engineering Run. HOPI

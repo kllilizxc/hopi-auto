@@ -29,6 +29,8 @@ export interface ProjectPreparationRepoRoot {
   path: string
 }
 
+export type ProjectPreparationProjection = 'candidate' | 'release'
+
 export interface ProjectPreparer {
   prepare(input: {
     projectRoot: string
@@ -38,6 +40,7 @@ export interface ProjectPreparer {
     primaryRepoId?: string
     repoRoots?: readonly ProjectPreparationRepoRoot[]
     releaseHeads?: Readonly<Record<string, string>>
+    projection?: ProjectPreparationProjection
   }): Promise<ProjectPreparationResult>
 }
 
@@ -73,6 +76,7 @@ export function createProjectPreparer(): ProjectPreparer {
         reposFile,
         `${JSON.stringify(
           {
+            projection: input.projection ?? 'release',
             primaryRepoId: input.primaryRepoId ?? repoRoots[0]?.repoId ?? 'primary',
             repoOrder: repoRoots.map((repo) => repo.repoId),
             repos: Object.fromEntries(repoRoots.map((repo) => [repo.repoId, repo.path])),

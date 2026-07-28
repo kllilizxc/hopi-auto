@@ -320,6 +320,10 @@ describe('Assistant wake trigger', () => {
           workId: 'W-1',
           responsibility: 'generator',
           runId: 'R-1',
+          status: 'running',
+          requestedAt: '2026-01-01T00:00:00.000Z',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          waitReason: null,
         },
       ],
     })
@@ -393,6 +397,10 @@ describe('Assistant wake trigger', () => {
           workId: 'W-active',
           responsibility: 'planner',
           runId: 'R-active',
+          status: 'running',
+          requestedAt: '2026-01-01T00:00:00.000Z',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          waitReason: null,
         },
       ],
       projects: [
@@ -591,6 +599,10 @@ function delegatedAttentionSnapshot(active: boolean, sourceDigest: string) {
         workId: 'W-target',
         responsibility: 'generator' as const,
         runId: 'R-target',
+        status: 'running' as const,
+        requestedAt: '2026-01-01T00:00:00.000Z',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        waitReason: null,
       }
     : null
   return {
@@ -681,6 +693,10 @@ function reviewerRejectSnapshot(
         workId: 'W-1',
         responsibility: 'generator',
         runId: generatorRunId,
+        status: 'running',
+        requestedAt: '2026-01-01T00:00:00.000Z',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        waitReason: null,
       },
     ],
     projects: [

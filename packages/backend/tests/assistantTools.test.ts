@@ -2075,13 +2075,17 @@ describe('Assistant HOPI tools', () => {
         },
       },
     ])
-    expect(state.activeRuns).toContainEqual({
-      projectId: 'P-2',
-      goalId: 'G-runtime',
-      workId,
-      responsibility: 'generator',
-      runId: 'R-delegated',
-    })
+    expect(state.activeRuns).toContainEqual(
+      expect.objectContaining({
+        projectId: 'P-2',
+        goalId: 'G-runtime',
+        workId,
+        responsibility: 'generator',
+        runId: 'R-delegated',
+        status: 'running',
+        waitReason: null,
+      }),
+    )
   })
 
   test('keeps selected checkout state outside the Project state contract', async () => {
@@ -2222,6 +2226,23 @@ describe('Assistant HOPI tools', () => {
   test('reads current control state without inlining durable history', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.attempts.reserve({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'plan-initial',
+      runId: 'R-live',
+      responsibility: 'planner',
+      workHash: 'a'.repeat(64),
+    })
+    expect((await fixture.state.read({ projectId: 'P-1', goalId: 'G-1' })).activeRuns).toEqual([
+      expect.objectContaining({
+        runId: 'R-live',
+        status: 'queued',
+        requestedAt: expect.any(String),
+        startedAt: null,
+        waitReason: null,
+      }),
+    ])
     const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-live')
     const attempt = await fixture.attempts.start({
       projectId: 'P-1',
@@ -2275,13 +2296,15 @@ describe('Assistant HOPI tools', () => {
       }>
     }
     expect(current.activeRuns).toEqual([
-      {
+      expect.objectContaining({
         projectId: 'P-1',
         goalId: 'G-1',
         workId: 'plan-initial',
         responsibility: 'planner',
         runId: 'R-live',
-      },
+        status: 'running',
+        waitReason: null,
+      }),
     ])
     expect(current.currentTurn).toEqual({
       eventId: 'EV-read',

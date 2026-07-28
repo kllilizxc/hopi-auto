@@ -25,7 +25,7 @@ describe('software delivery profile', () => {
     expect(profile).toMatchObject({
       version: 1,
       id: 'software-delivery-v1',
-      concurrency: { planner: 3, generator: 3, reviewer: 3 },
+      concurrency: { planner: 3, generator: 5, reviewer: 3 },
     })
     expect(responsibilityFor('planning', 'plan')).toBe('planner')
     expect(responsibilityFor('engineering', 'generate')).toBe('generator')
@@ -42,13 +42,13 @@ describe('software delivery profile', () => {
       path,
       builtIn
         .replace('planner: 3', 'planner: 2')
-        .replace('generator: 3', 'generator: 5')
+        .replace('generator: 5', 'generator: 6')
         .replace('reviewer: 3', 'reviewer: 4'),
     )
 
     expect((await readSoftwareDeliveryProfile(path)).concurrency).toEqual({
       planner: 2,
-      generator: 5,
+      generator: 6,
       reviewer: 4,
     })
   })

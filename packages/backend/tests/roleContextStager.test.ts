@@ -95,6 +95,7 @@ describe('RoleContextStager', () => {
     })
     const repoManifest = await Bun.file(bundle.reposFile).json()
     expect(repoManifest).toEqual({
+      projection: 'release',
       primaryRepoId: 'primary',
       releaseRef: projectReleaseRef('project-1'),
       repos: { primary: fixture.projectRoot },
@@ -103,7 +104,9 @@ describe('RoleContextStager', () => {
     const context = await Bun.file(bundle.contextFile).text()
     expect(context).toContain(`Primary authority release snapshot: ${bundle.releaseHead}`)
     expect(context).toContain(`Project release ref in each Repo: ${projectReleaseRef('project-1')}`)
-    expect(context).toContain(`Release head: ${bundle.releaseHead}`)
+    expect(context).toContain('Repo workspace projection: release')
+    expect(context).toContain(`Projection head: ${bundle.releaseHead}`)
+    expect(context).toContain(`Base release head: ${bundle.releaseHead}`)
     expect(context).not.toContain('Integration target snapshot:')
     expect(prompt).not.toContain('repos: [<one-or-more-listed-repo-ids>]')
     expect(proposalCapabilities.writable).toContainEqual({
@@ -616,6 +619,47 @@ describe('RoleContextStager', () => {
         ),
       ).exists(),
     ).toBe(true)
+  })
+
+  test('binds Engineering Repo paths to their exact candidate heads instead of older release heads', async () => {
+    const fixture = await createFixture(true)
+    await publishEngineeringWork(fixture)
+    const taskRoot = join(dirname(fixture.homeRoot), 'candidate-worktree')
+    await git(fixture.projectRoot, [
+      'worktree',
+      'add',
+      '-b',
+      'hopi/test-candidate',
+      taskRoot,
+      'HEAD',
+    ])
+    await Bun.write(join(taskRoot, 'src', 'candidate.ts'), 'export const candidate = true\n')
+    await git(taskRoot, ['add', '.'])
+    await git(taskRoot, ['commit', '-m', 'candidate source'])
+    const candidateHead = await gitText(taskRoot, ['rev-parse', 'HEAD'])
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-candidate-projection',
+      responsibility: 'generator',
+      repoRoots: [{ repoId: 'primary', path: taskRoot, primary: true }],
+    })
+    const manifest = await Bun.file(bundle.reposFile).json()
+    const context = await Bun.file(bundle.contextFile).text()
+
+    expect(bundle.repoProjection).toBe('candidate')
+    expect(bundle.repoProjectionHeads).toEqual({ primary: candidateHead })
+    expect(bundle.repoReleaseHeads.primary).not.toBe(candidateHead)
+    expect(manifest).toMatchObject({
+      projection: 'candidate',
+      repos: { primary: taskRoot },
+      releaseHeads: { primary: candidateHead },
+    })
+    expect(context).toContain(`Projection head: ${candidateHead}`)
+    expect(context).toContain(`Base release head: ${bundle.repoReleaseHeads.primary}`)
   })
 
   test('projects the latest reproducer without repeating prior Generator claims', async () => {
@@ -1185,6 +1229,21 @@ async function git(cwd: string, args: string[]) {
     child.exited,
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
+}
+
+async function gitText(cwd: string, args: string[]) {
+  const child = Bun.spawn(['git', ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) throw new Error(stderr || stdout)
+  return stdout.trim()
 }
 
 function pngBytes(marker: number) {

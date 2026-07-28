@@ -95,6 +95,40 @@ describe('MVP server', () => {
     await request(base, '/api/state')
 
     const attempts = createRunAttemptStore(homeRoot)
+    await attempts.reserve({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'plan-initial',
+      runId: 'R-live',
+      responsibility: 'planner',
+      workHash: 'a'.repeat(64),
+    })
+    expect(await request(base, '/api/state')).toMatchObject({
+      activeRuns: [
+        {
+          key: 'P-1/G-1/plan-initial',
+          runId: 'R-live',
+          responsibility: 'planner',
+          status: 'queued',
+          requestedAt: expect.any(String),
+          startedAt: null,
+          waitReason: null,
+        },
+      ],
+    })
+    expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
+      works: [
+        {
+          activeAttempt: {
+            runId: 'R-live',
+            status: 'queued',
+            requestedAt: expect.any(String),
+            startedAt: null,
+            waitReason: null,
+          },
+        },
+      ],
+    })
     const recorder = await attempts.start({
       projectId: 'P-1',
       goalId: 'G-1',
@@ -108,12 +142,28 @@ describe('MVP server', () => {
       activeRuns: [
         {
           key: 'P-1/G-1/plan-initial',
+          runId: 'R-live',
           responsibility: 'planner',
+          status: 'running',
+          requestedAt: expect.any(String),
+          startedAt: expect.any(String),
+          waitReason: null,
         },
       ],
     })
     expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
-      works: [{ projection: { primaryBadge: 'working' } }],
+      works: [
+        {
+          projection: { primaryBadge: 'working' },
+          activeAttempt: {
+            runId: 'R-live',
+            status: 'running',
+            requestedAt: expect.any(String),
+            startedAt: expect.any(String),
+            waitReason: null,
+          },
+        },
+      ],
     })
 
     await recorder.finish({
@@ -125,6 +175,58 @@ describe('MVP server', () => {
     expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
       works: [{ projection: { primaryBadge: 'queued' } }],
     })
+  })
+
+  test('reports capacity only when a queued responsibility has filled its global slots', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    await createGoalPackageStore(linked.integrationRoot, 'P-1', publisher).createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+    })
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+    await request(base, '/api/state')
+    const attempts = createRunAttemptStore(homeRoot)
+    const recorders = []
+    for (let index = 0; index < 5; index += 1) {
+      const runId = `R-generator-${index}`
+      recorders.push(
+        await attempts.start({
+          projectId: 'P-1',
+          goalId: 'G-1',
+          workId: `W-running-${index}`,
+          runId,
+          responsibility: 'generator',
+          runRoot: runStoragePath(homeRoot, runId),
+        }),
+      )
+    }
+    await attempts.reserve({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-capacity',
+      runId: 'R-capacity',
+      responsibility: 'generator',
+      workHash: 'b'.repeat(64),
+    })
+
+    const state = (await request(base, '/api/state')) as {
+      activeRuns: Array<{ runId: string; status: string; waitReason: string | null }>
+    }
+    expect(state.activeRuns.find((run) => run.runId === 'R-capacity')).toEqual(
+      expect.objectContaining({
+        status: 'queued',
+        waitReason: 'capacity',
+      }),
+    )
+
+    await Promise.all(recorders.map((recorder) => recorder.interrupt(new Error('test cleanup'))))
   })
 
   test('projects one prioritized conversation activity from public and hidden model work', () => {

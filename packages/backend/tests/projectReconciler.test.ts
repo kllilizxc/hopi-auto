@@ -780,6 +780,8 @@ describe('ProjectReconciler', () => {
       prepareScript: [
         '#!/usr/bin/env bun',
         'const manifest = await Bun.file(process.env.HOPI_REPOS_FILE).json()',
+        'const head = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: manifest.repos.primary }).stdout.toString().trim()',
+        'if (manifest.projection !== "candidate" || manifest.releaseHeads.primary !== head) process.exit(8)',
         'console.log(`repos=${manifest.repoOrder.join(",")}`)',
         'process.exit(7)',
         '',

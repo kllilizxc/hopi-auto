@@ -832,6 +832,13 @@ const WorkCard = memo(function WorkCard({
       )}
       <div className="work-card-meta">
         <span className="work-card-attempts">Attempts {work.runAttemptCount}</span>
+        {work.activeAttempt?.status === 'queued' && (
+          <span className="work-card-blocker">
+            {work.activeAttempt.waitReason === 'capacity'
+              ? 'Queued · waiting for capacity'
+              : 'Queued'}
+          </span>
+        )}
         {work.blockedBy && (
           <span className="work-card-blocker" title={work.blockedBy}>
             Blocked by {work.blockedBy}
@@ -1232,6 +1239,24 @@ function WorkContract({
                 {item}
               </StatusChip>
             ))}
+          </div>
+        </section>
+      )}
+      {work.activeAttempt && (
+        <section>
+          <h2>Execution</h2>
+          <div className="chip-list">
+            <StatusChip size="sm" variant="soft">
+              {work.activeAttempt.status}
+            </StatusChip>
+            <StatusChip size="sm" variant="soft">
+              {work.activeAttempt.responsibility}
+            </StatusChip>
+            {work.activeAttempt.waitReason && (
+              <StatusChip color="warning" size="sm" variant="soft">
+                waiting for {work.activeAttempt.waitReason}
+              </StatusChip>
+            )}
           </div>
         </section>
       )}

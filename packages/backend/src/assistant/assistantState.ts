@@ -86,6 +86,10 @@ export interface AssistantStateActiveRun {
   workId: string
   responsibility: Responsibility
   runId: string
+  status: 'queued' | 'running'
+  requestedAt: string
+  startedAt: string | null
+  waitReason: 'capacity' | null
 }
 
 export interface AssistantStateDelegation {
@@ -173,18 +177,31 @@ export function createAssistantStateReader(options: {
       options.attempts.snapshot(),
     ])
     const runningAttempts = attemptSnapshot.running()
+    const activeAttempts = [...runningAttempts, ...attemptSnapshot.queued()]
     const activeCounts = responsibilityCounts(runningAttempts)
     const runningAttemptsByWork = new Map<string, RunAttemptSummary>()
     for (const attempt of runningAttempts) {
       const key = `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`
       if (!runningAttemptsByWork.has(key)) runningAttemptsByWork.set(key, attempt)
     }
-    const activeRunViews: AssistantStateActiveRun[] = []
+    const activeAttemptsByWork = new Map<string, RunAttemptSummary>()
+    for (const attempt of activeAttempts) {
+      const key = `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`
+      if (!activeAttemptsByWork.has(key)) activeAttemptsByWork.set(key, attempt)
+    }
     const selected = input.projectId
       ? [requireProject(options.projects, input.projectId)]
       : [...options.projects.values()].sort((left, right) =>
           left.projectId.localeCompare(right.projectId),
         )
+    const selectedProjectIds = new Set(selected.map((project) => project.projectId))
+    const activeRunViews = activeAttempts
+      .filter(
+        (attempt) =>
+          selectedProjectIds.has(attempt.projectId) &&
+          (!input.goalId || attempt.goalId === input.goalId),
+      )
+      .map((attempt) => presentActiveAttempt(attempt, activeCounts, options.concurrency))
     const workspaceAttentions = [...workspace.attentions.values()]
       .filter((attention) => attention.attributes.resolvedAt === null)
       .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
@@ -305,15 +322,6 @@ export function createAssistantStateReader(options: {
                       observedAt,
                       staleAfterMs,
                     })
-                    if (runningAttempt) {
-                      activeRunViews.push({
-                        projectId: project.projectId,
-                        goalId,
-                        workId: work.attributes.id,
-                        responsibility: runningAttempt.responsibility,
-                        runId: runningAttempt.runId,
-                      })
-                    }
                     const evidence = input.goalId
                       ? input.includeEvidence
                         ? await readWorkEvidence({
@@ -462,6 +470,9 @@ export function createAssistantStateReader(options: {
       sourceProjectId: input.projectId,
       sourceGoalId: input.goalId,
       runningAttemptsByWork,
+      activeAttemptsByWork,
+      activeCounts,
+      concurrency: options.concurrency,
       attemptSnapshot,
       attemptStore: options.attempts,
       homeRoot,
@@ -920,6 +931,9 @@ async function readCrossProjectDelegations(input: {
   sourceProjectId?: string
   sourceGoalId?: string
   runningAttemptsByWork: ReadonlyMap<string, RunAttemptSummary>
+  activeAttemptsByWork: ReadonlyMap<string, RunAttemptSummary>
+  activeCounts: Readonly<Record<Responsibility, number>>
+  concurrency?: Readonly<Record<Responsibility, number>>
   attemptSnapshot: RunAttemptSnapshot
   attemptStore: RunAttemptStore
   homeRoot: string
@@ -968,6 +982,7 @@ async function readCrossProjectDelegations(input: {
               (async () => {
                 const key = `${targetProject.projectId}/${goalId}/${work.attributes.id}`
                 const runningAttempt = input.runningAttemptsByWork.get(key) ?? null
+                const activeAttempt = input.activeAttemptsByWork.get(key) ?? null
                 const runtime = await readWorkRuntime({
                   homeRoot: input.homeRoot,
                   projectRoot: targetProject.projectRoot,
@@ -995,14 +1010,8 @@ async function readCrossProjectDelegations(input: {
                     ),
                     runtime,
                   },
-                  activeRun: runningAttempt
-                    ? {
-                        projectId: targetProject.projectId,
-                        goalId,
-                        workId: work.attributes.id,
-                        responsibility: runningAttempt.responsibility,
-                        runId: runningAttempt.runId,
-                      }
+                  activeRun: activeAttempt
+                    ? presentActiveAttempt(activeAttempt, input.activeCounts, input.concurrency)
                     : null,
                 })
               })(),
@@ -1081,6 +1090,29 @@ function uniqueActiveRuns(runs: AssistantStateActiveRun[]) {
       left.goalId.localeCompare(right.goalId) ||
       left.workId.localeCompare(right.workId),
   )
+}
+
+function presentActiveAttempt(
+  attempt: RunAttemptSummary,
+  runningCounts: Readonly<Record<Responsibility, number>>,
+  concurrency?: Readonly<Record<Responsibility, number>>,
+): AssistantStateActiveRun {
+  return {
+    projectId: attempt.projectId,
+    goalId: attempt.goalId,
+    workId: attempt.workId,
+    responsibility: attempt.responsibility,
+    runId: attempt.runId,
+    status: attempt.status === 'queued' ? 'queued' : 'running',
+    requestedAt: attempt.requestedAt,
+    startedAt: attempt.startedAt,
+    waitReason:
+      attempt.status === 'queued' &&
+      runningCounts[attempt.responsibility] >=
+        (concurrency?.[attempt.responsibility] ?? Number.POSITIVE_INFINITY)
+        ? 'capacity'
+        : null,
+  }
 }
 
 function latestTerminalAttempt(runtime: DigestRuntime) {
