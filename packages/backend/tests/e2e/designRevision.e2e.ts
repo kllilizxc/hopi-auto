@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type {
   RoleRunInput,
   RoleRunObserver,
@@ -12,11 +12,7 @@ import type {
   AssistantModelResult,
   AssistantModelRunner,
 } from '../../src/assistant/workspaceAssistant'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   assertAcceptedRelease,
@@ -73,6 +69,11 @@ try {
           run.key === `${PROJECT_ID}/${GOAL_ID}/${WORK_ID}` && run.responsibility === 'generator',
       ),
     { timeoutMs: 30_000, description: 'initial Generator before material design revision' },
+  )
+  await waitForValue(
+    async () => roles.runs,
+    (runs) => runs.some((run) => run.responsibility === 'generator' && run.revision === 1),
+    { timeoutMs: 30_000, description: 'initial Generator responsibility execution' },
   )
 
   await requestJson(baseUrl, '/api/inbox', {
@@ -318,7 +319,10 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
   )
   const engineering = works.find((work) => work.attributes.id === WORK_ID)
   await mkdir(workRoot, { recursive: true })
-  if (!engineering) {
+  if (
+    !engineering ||
+    engineering.attributes.contractRevision < planning.attributes.contractRevision
+  ) {
     await Bun.write(
       join(workRoot, `${WORK_ID}.md`),
       renderWorkDocument({
@@ -333,22 +337,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           evidenceRefs: [],
         },
         body: `## Acceptance Criteria\n\n- Feature exports revision ${planning.attributes.contractRevision}.\n`,
-      }),
-    )
-  } else if (engineering.attributes.stage === 'done') {
-    const attentionPath = join(goalRoot, 'attention', `A-complete-${input.runId}.md`)
-    await mkdir(dirname(attentionPath), { recursive: true })
-    await Bun.write(
-      attentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: `A-complete-${input.runId}`,
-          target: null,
-          createdAt: '2026-07-14T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nRevision 2 is the accepted release.\n',
       }),
     )
   }

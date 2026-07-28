@@ -1024,9 +1024,11 @@ describe('ProjectReconciler', () => {
       { responsibility: 'generator', sessionId: null },
       { responsibility: 'generator', sessionId: 'session-W-1-generator' },
     ])
+    const firstRunView = fixture.runner.runViewsByRun[0]
+    if (!firstRunView) throw new Error('Expected the first Generator Run view')
     expect(fixture.runner.runViewsByRun.map(({ path }) => path)).toEqual([
-      fixture.runner.runViewsByRun[0]?.path,
-      fixture.runner.runViewsByRun[0]?.path,
+      firstRunView.path,
+      firstRunView.path,
     ])
     expect(fixture.runner.runViewsByRun.every(({ ownsCurrentRun }) => ownsCurrentRun)).toBe(true)
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
