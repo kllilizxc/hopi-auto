@@ -64,6 +64,7 @@ export interface AssistantWorkspaceStore {
     eventId: string,
     request: InboxAttentionRequest,
   ): Promise<InboxEventDocument>
+  clearPendingAttentionRequest(eventId: string): Promise<InboxEventDocument>
   migrateHandledAttentionRequest(
     eventId: string,
     request: InboxAttentionRequest,
@@ -213,6 +214,18 @@ export function createAssistantWorkspaceStore(
         )
       }
       event.attributes.attentionRequest = request
+      await publishEvent(this, publisher, eventId, source, event)
+      return event
+    },
+    async clearPendingAttentionRequest(eventId) {
+      const { source, event } = await requireEvent(this, homeRoot, eventId)
+      if (event.attributes.status !== 'pending') {
+        throw new AssistantWorkspaceStoreError(
+          'Handled Inbox event cannot clear pending Attention transfer',
+        )
+      }
+      if (!event.attributes.attentionRequest) return event
+      event.attributes.attentionRequest = null
       await publishEvent(this, publisher, eventId, source, event)
       return event
     },

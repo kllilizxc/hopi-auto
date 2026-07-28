@@ -1663,11 +1663,21 @@ describe('WorkspaceAssistant conversation', () => {
     let calls = 0
     const failed = settledFailureSnapshot('finished')
     let current = failed
+    let stagedWorkspace: ReturnType<typeof createAssistantWorkspaceStore> | null = null
     const fixture = await setup(
       () => ({
-        async run(_input, observer) {
+        async run(input, observer) {
           calls += 1
           await observer?.onSession?.(codexSession(`thread-work-recovery-${calls}`))
+          if (calls === 1) {
+            await stagedWorkspace?.stageAttentionRequest(input.eventId, {
+              attentionRefs: [goalAttentionReference('P-1', 'G-1', 'stale-transfer')],
+            })
+            return {
+              reply: 'The stale transfer cannot settle this Work.',
+              session: codexSession('thread-work-recovery-1'),
+            }
+          }
           if (calls === 2) current = settledFailureSnapshot('queued')
           return { reply: '', session: codexSession(`thread-work-recovery-${calls}`) }
         },
@@ -1680,6 +1690,7 @@ describe('WorkspaceAssistant conversation', () => {
         },
       },
     )
+    stagedWorkspace = fixture.workspace
     const workRef = 'project:P-1/goal:G-1/work:W-failed'
     await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-work-recovery',
@@ -1693,6 +1704,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect((await fixture.workspace.readEvent('EV-work-recovery'))?.attributes.status).toBe(
       'pending',
     )
+    expect(
+      (await fixture.workspace.readEvent('EV-work-recovery'))?.attributes.attentionRequest,
+    ).toBeNull()
 
     await fixture.assistant.process('EV-work-recovery')
 
@@ -1700,6 +1714,33 @@ describe('WorkspaceAssistant conversation', () => {
     expect((await fixture.workspace.readEvent('EV-work-recovery'))?.attributes).toMatchObject({
       status: 'handled',
       visibility: 'internal',
+    })
+  })
+
+  test('clears a staged transfer left by an interrupted invocation before retry context', async () => {
+    let prompt = ''
+    const fixture = await setup(() => ({
+      async run(input) {
+        prompt = input.prompt
+        return { reply: '', session: codexSession('thread-clean-transfer-retry') }
+      },
+    }))
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-stale-transfer',
+      content: 'Retry this internal event.',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.workspace.stageAttentionRequest('EV-stale-transfer', {
+      attentionRefs: [goalAttentionReference('P-1', 'G-1', 'stale-transfer')],
+    })
+
+    await fixture.assistant.process('EV-stale-transfer')
+
+    expect(prompt).not.toContain('Staged responsibility transfer')
+    expect((await fixture.workspace.readEvent('EV-stale-transfer'))?.attributes).toMatchObject({
+      status: 'handled',
+      visibility: 'internal',
+      attentionRequest: null,
     })
   })
 

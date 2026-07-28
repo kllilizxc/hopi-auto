@@ -438,13 +438,19 @@ export function createWorkspaceAssistant(input: {
   const runtimeDigest = workspaceAssistantRuntimeDigest(input.homeRoot)
   return {
     async process(eventId, signal) {
-      const workspaceState = await input.workspace.readWorkspace()
-      const event = workspaceState.events.get(eventId)
+      let workspaceState = await input.workspace.readWorkspace()
+      let event = workspaceState.events.get(eventId)
       if (!event) throw new WorkspaceAssistantError(`Inbox turn not found: ${eventId}`)
-      const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
       if (event.attributes.status === 'handled') {
         return { kind: 'answered', eventId }
       }
+      if (event.attributes.attentionRequest) {
+        await input.workspace.clearPendingAttentionRequest(eventId)
+        workspaceState = await input.workspace.readWorkspace()
+        event = workspaceState.events.get(eventId)
+        if (!event) throw new WorkspaceAssistantError(`Inbox turn not found: ${eventId}`)
+      }
+      const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
 
       await input.conversation.begin(eventId)
       const conversationScope = assistantConversationScopeForEvent(event)
@@ -625,7 +631,10 @@ export function createWorkspaceAssistant(input: {
         return { kind: 'answered', eventId }
       } catch (error) {
         if (error instanceof UnsettledAssistantResponsibilityError) {
-          await input.conversation.clearSession(conversationScope)
+          await Promise.all([
+            input.conversation.clearSession(conversationScope),
+            input.workspace.clearPendingAttentionRequest(eventId),
+          ])
         }
         await input.conversation.fail(eventId, errorMessage(error))
         throw error

@@ -125,6 +125,11 @@ repeating event. When the condition depends on facts outside HOPI state, Assista
 future `revisitAt`; HOPI derives one deterministic internal Inbox event from the exact Attention
 reference and timestamp. Restart and repeated reconciliation observe the same event identity.
 
+A staged Attention transfer belongs to one Assistant invocation. It becomes user ownership only
+with that invocation's durable non-empty final reply. Failure, interruption, or restart clears the
+uncommitted staging before another invocation observes the event, so a rejected handoff cannot turn
+subsequent retries into a transfer loop.
+
 A settled failure wake carries the exact Work recovery reference derived from the persisted Attempt.
 That reference is not another document or workflow state. It records which failed execution currently
 belongs to the Assistant. The internal event is acknowledged only after that Work has a queued or

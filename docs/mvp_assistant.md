@@ -867,10 +867,12 @@ single-destination Inbox route claim therefore is not part of the forward Assist
 Historical route claims remain readable only for migration and provenance.
 
 If the process stops after a tool succeeds but before the final reply, the Inbox turn stays pending.
-On resume, Assistant sees the durable tool result through current HOPI state. Repeated tool calls are
-safe because Goal Input identity, Goal/Work lifecycle guards, content hashes, and existing target
-documents make the operations idempotent. HOPI does not add a generic operation database or parse
-reply prose to reconstruct effects.
+An uncommitted `attentionRequest` belongs only to that model invocation and is cleared before a
+retry; it is not user ownership without the matching durable final reply. On resume, Assistant sees
+the durable canonical tool effects through current HOPI state and judges responsibility again.
+Repeated tool calls are safe because Goal Input identity, Goal/Work lifecycle guards, content
+hashes, and existing target documents make the operations idempotent. HOPI does not add a generic
+operation database or parse reply prose to reconstruct effects.
 
 ## Attention And Interruption
 
