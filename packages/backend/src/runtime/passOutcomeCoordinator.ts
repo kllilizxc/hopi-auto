@@ -331,6 +331,24 @@ async function readPassProposal(
     }
   }
 
+  if (input.responsibility === 'planner') {
+    const availableGoalDocuments = new Set([
+      ...baseline.keys(),
+      ...snapshot.files.map((file) => file.path),
+    ])
+    for (const reference of input.outcome.artifacts) {
+      if (
+        reference.startsWith(`${goalRoot}/`) &&
+        reference.endsWith('.md') &&
+        !availableGoalDocuments.has(reference)
+      ) {
+        throw new PassProposalError(
+          `Planner result names a Goal document outside the current authority and proposal: ${reference}`,
+        )
+      }
+    }
+  }
+
   return {
     changedWrites,
     bootstrapAgentsWrite,

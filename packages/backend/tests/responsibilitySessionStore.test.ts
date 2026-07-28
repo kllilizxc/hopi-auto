@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { createResponsibilitySessionStore } from '../src/runtime/responsibilitySessionStore'
+import {
+  bindResponsibilitySessionRunView,
+  createResponsibilitySessionStore,
+} from '../src/runtime/responsibilitySessionStore'
 
 const temporaryRoots: string[] = []
 
@@ -117,6 +120,26 @@ describe('ResponsibilitySessionStore', () => {
       assignmentHash: 'c'.repeat(64),
       session: null,
     })
+  })
+
+  test('atomically rebinds one stable current view without changing older Run directories', async () => {
+    const root = await temporaryRoot()
+    const workspace = join(root, 'workspace')
+    const firstRun = join(root, 'runs', 'R-1')
+    const secondRun = join(root, 'runs', 'R-2')
+    await mkdir(firstRun, { recursive: true })
+    await mkdir(secondRun, { recursive: true })
+    await Bun.write(join(firstRun, 'result.json'), 'first')
+    await Bun.write(join(secondRun, 'result.json'), 'second')
+
+    const current = await bindResponsibilitySessionRunView(workspace, firstRun)
+    expect(await readlink(current)).toBe(firstRun)
+    expect(await Bun.file(join(current, 'result.json')).text()).toBe('first')
+
+    expect(await bindResponsibilitySessionRunView(workspace, secondRun)).toBe(current)
+    expect(await readlink(current)).toBe(secondRun)
+    expect(await Bun.file(join(current, 'result.json')).text()).toBe('second')
+    expect(await Bun.file(join(firstRun, 'result.json')).text()).toBe('first')
   })
 })
 

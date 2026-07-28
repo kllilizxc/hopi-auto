@@ -585,10 +585,16 @@ Each Attempt still owns an independent Run directory for authority snapshots, pr
 events, transcript, and promoted artifacts. Agents address those current-Run resources through
 stable environment names such as `$HOPI_CONTEXT_FILE`, `$HOPI_AUTHORITY_ROOT`,
 `$HOPI_PROPOSAL_ROOT`, `$HOPI_OUTCOME_FILE`, `$HOPI_REPOS_FILE`, and `$HOPI_RUN_DIR`; semantic
-prompts do not embed their changing absolute paths. Stable contract and role sections precede
-current Evidence and repair observations, so a necessary Run-local change does not invalidate the
-reusable prompt prefix. Independent Run storage therefore remains an audit boundary, not a model
-conversation or cache boundary.
+prompts and staged context do not embed their changing physical paths. For a resumable
+responsibility Session, these names resolve through one stable `current` view inside the
+responsibility workspace. Before invocation, Coordinator atomically points that view at the new
+immutable Run directory. The Agent therefore keeps one valid environment across Attempts while every
+write still lands directly in the owning Run's proposal, result, transcript, or artifact directory.
+Replacing the view never changes an older Run directory. Existing vendor conversations whose
+execution identity predates this boundary are rebuilt once instead of retaining remembered physical
+Run paths. Stable contract and role sections precede current Evidence and repair observations, so a
+necessary Run-local change does not invalidate the reusable prompt prefix. Independent Run storage
+therefore remains an audit boundary, not a model conversation or cache boundary.
 
 Vendor conversation reuse additionally requires an exact execution compatibility identity covering
 transport, model, reasoning variant, the effective bounded or unrestricted execution boundary, the
@@ -961,14 +967,14 @@ body and allocates the first free numeric-suffixed ID before publication. This c
 deterministic, consumes no retry, and does not expose resolved Attention history merely to reserve
 names.
 
-The Planner process starts in its Run root because `context.md`, `repos.json`, `result.json`, and the
-sparse overlay are siblings there. A canonical proposal path is written exactly once beneath the
-`proposal/` child, for example `proposal/.hopi/docs/...`; Planner never treats the proposal directory
-itself as cwd and then adds a second `proposal/` prefix. Engineering processes start at the assigned
-Repo's `projectPath` inside their task worktree. Git checkpointing and integration still own the
-complete task worktree, but C1 deterministically rejects a task commit that changes a path outside
-that Repo's selected Project scope. This is one fixed path convention, not role-configurable
-behavior.
+The Planner process starts in its stable responsibility workspace. Its `current` view exposes
+`context.md`, `repos.json`, `result.json`, and the sparse overlay from exactly one current Run. A
+canonical proposal path is written exactly once beneath `$HOPI_PROPOSAL_ROOT`, for example
+`.hopi/docs/...`; the physical `runs/<runId>` location is not part of the model environment.
+Engineering processes start at the assigned Repo's `projectPath` inside their task worktree. Git
+checkpointing and integration still own the complete task worktree, but C1 deterministically rejects
+a task commit that changes a path outside that Repo's selected Project scope. This is one fixed path
+convention, not role-configurable behavior.
 
 Planner never consumes an unconsumed or stale responsibility result, reconstructs Evidence from Run
 directories, or advances Engineering Work to `review` or `done`. Runtime files remain diagnostics;
@@ -1000,7 +1006,10 @@ rather than blindly launching the same Planner. A successful
 proposal either leaves nonterminal Engineering Work to execute or, during final Planning, completes
 the Goal. `success` with no nonterminal Engineering Work is itself Planner's semantic completion
 judgment; Coordinator verifies the release evidence and publishes the Goal transition without
-inventing another model decision.
+inventing another model decision. A Goal-package document named by the Planner's result must exist
+in either the immutable current authority or this Run's sparse proposal. A reference to a document
+written into another Run, a stale Session path, or no persisted document is an invalid application;
+it cannot serve as Evidence or make an empty current proposal complete the Goal.
 
 ### Generator
 

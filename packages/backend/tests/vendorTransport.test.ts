@@ -381,11 +381,13 @@ describe('resolveConfiguredTransportCommand', () => {
     }
   })
 
-  test('uses stable aliases in the execution prompt while retaining current Run paths in env', async () => {
+  test('uses the stable responsibility view for every current-Run environment path', async () => {
     const runRoot = '/tmp/hopi/runtime/runs/R-current'
+    const runViewRoot = '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace/current'
     const scopedBundle = {
       ...bundle,
       runRoot,
+      runViewRoot,
       runtimeScratchDir: '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace',
       authorityRoot: `${runRoot}/context/authority`,
       proposalRoot: `${runRoot}/proposal`,
@@ -411,10 +413,10 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.stdin).toContain('$HOPI_SESSION_WORKSPACE')
     expect(command.stdin).not.toContain(runRoot)
     expect(command.env).toMatchObject({
-      HOPI_RUN_DIR: runRoot,
-      HOPI_AUTHORITY_ROOT: scopedBundle.authorityRoot,
-      HOPI_PROPOSAL_ROOT: scopedBundle.proposalRoot,
-      HOPI_ATTENTION_PROPOSAL_DIR: scopedBundle.attentionProposalDir,
+      HOPI_RUN_DIR: runViewRoot,
+      HOPI_AUTHORITY_ROOT: `${runViewRoot}/context/authority`,
+      HOPI_PROPOSAL_ROOT: `${runViewRoot}/proposal`,
+      HOPI_ATTENTION_PROPOSAL_DIR: `${runViewRoot}/proposal/attention`,
       HOPI_PRIMARY_REPO_ROOT: scopedBundle.primaryRepoRoot,
     })
   })

@@ -107,6 +107,10 @@ describe('RoleContextStager', () => {
     expect(context).toContain('Repo workspace projection: release')
     expect(context).toContain(`Projection head: ${bundle.releaseHead}`)
     expect(context).toContain(`Base release head: ${bundle.releaseHead}`)
+    expect(context).toContain('Immutable authority root: $HOPI_AUTHORITY_ROOT')
+    expect(context).toContain('Writable proposal root: $HOPI_PROPOSAL_ROOT')
+    expect(context).toContain('Repo workspace manifest: $HOPI_REPOS_FILE')
+    expect(context).not.toContain(bundle.runRoot)
     expect(context).not.toContain('Integration target snapshot:')
     expect(prompt).not.toContain('repos: [<one-or-more-listed-repo-ids>]')
     expect(proposalCapabilities.writable).toContainEqual({

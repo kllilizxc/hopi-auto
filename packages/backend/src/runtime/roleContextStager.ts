@@ -1204,24 +1204,24 @@ function renderContextManifest(
     `- Run: ${input.runId}`,
     `- Responsibility: ${input.responsibility}`,
     `- Primary authority release snapshot: ${context.releaseHead}`,
-    `- Immutable authority root: ${context.authorityRoot}`,
-    `- Writable proposal root: ${context.proposalRoot}`,
-    `- Writable Run artifact output: ${context.artifactOutputDir}`,
-    `- Proposal capabilities: ${context.proposalCapabilitiesFile}`,
-    `- Terminal result schema: ${context.resultSchemaFile}`,
-    `- Responsibility session workspace: ${context.runtimeScratchDir}`,
-    `- Reusable runtime cache: ${context.runtimeCacheDir}`,
+    '- Immutable authority root: $HOPI_AUTHORITY_ROOT',
+    '- Writable proposal root: $HOPI_PROPOSAL_ROOT',
+    '- Writable Run artifact output: $HOPI_ARTIFACT_DIR',
+    '- Proposal capabilities: $HOPI_PROPOSAL_CAPABILITIES_FILE',
+    '- Terminal result schema: $HOPI_RESULT_SCHEMA_FILE',
+    '- Responsibility session workspace: $HOPI_SESSION_WORKSPACE',
+    '- Reusable runtime cache: $HOPI_CACHE_DIR',
     `- Project primary Repo: ${context.primaryRepoId}`,
     `- Project source scope: ${context.projectPath}`,
-    `- Repo workspace manifest: ${context.reposFile}`,
+    '- Repo workspace manifest: $HOPI_REPOS_FILE',
     `- Repo workspace projection: ${context.repoProjection}`,
     `- Project release ref in each Repo: ${context.releaseRef}`,
     ...(context.artifactManifestFile
-      ? [`- Evidence artifact manifest: ${context.artifactManifestFile}`]
+      ? ['- Evidence artifact manifest: $HOPI_EVIDENCE_ARTIFACTS_FILE']
       : []),
     ...(context.operatorPreference
       ? [
-          `- Operator preference snapshot: ${context.operatorPreference.path} (${context.operatorPreference.digest})`,
+          `- Operator preference snapshot: $HOPI_OPERATOR_PREFERENCE_FILE (${context.operatorPreference.digest})`,
         ]
       : []),
     ...(context.apiOrigin ? [`- HOPI public API origin: ${context.apiOrigin}`] : []),
@@ -1233,7 +1233,7 @@ function renderContextManifest(
       ].join('\n'),
     ),
     ...(context.bootstrapSourceRoot
-      ? [`- Read-only bootstrap source snapshot: ${context.bootstrapSourceRoot}`]
+      ? ['- Read-only bootstrap source snapshot: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),
     '',
     '## Authority Files',

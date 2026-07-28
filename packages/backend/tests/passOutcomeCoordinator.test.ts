@@ -750,6 +750,27 @@ describe('PassOutcomeCoordinator', () => {
     })
   })
 
+  test('rejects a Planner result that names a Work absent from current authority and proposal', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-stale-proposal', 'planner')
+    const missingWork = fixture.store.paths.workDocument('goal-1', 'W-written-to-another-run')
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-stale-proposal', 'planner', context, 'success', [
+        missingWork,
+      ]),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toEqual({
+      kind: 'invalid',
+      reason: `Planner result names a Goal document outside the current authority and proposal: ${missingWork}`,
+    })
+    expect(goalPackage.goal.attributes.lifecycle).toBe('active')
+    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('plan')
+    expect(goalPackage.works.has('W-written-to-another-run')).toBe(false)
+  })
+
   test('rejects Planner writes to Planning Work without converting invalid output to Evidence', async () => {
     const fixture = await createFixture()
     const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')

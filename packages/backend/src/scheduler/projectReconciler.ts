@@ -26,6 +26,7 @@ import {
   createProjectPreparer,
 } from '../runtime/projectPreparation'
 import {
+  bindResponsibilitySessionRunView,
   type ResponsibilitySessionStore,
   createResponsibilitySessionStore,
 } from '../runtime/responsibilitySessionStore'
@@ -481,6 +482,10 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             responsibility,
           ),
         })
+        const runViewRoot = await bindResponsibilitySessionRunView(
+          responsibilitySession.workspaceDir,
+          context.runRoot,
+        )
         const preparation =
           responsibility === 'planner'
             ? null
@@ -524,7 +529,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                   responsibilitySession.workspaceDir)
                 : responsibilitySession.workspaceDir,
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
-            context,
+            context: { ...context, runViewRoot },
             session: responsibilitySession.session,
             signal: runController.signal,
           },

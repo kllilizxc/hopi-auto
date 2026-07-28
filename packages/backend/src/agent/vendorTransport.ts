@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import { readClaudeProviderEnvironment } from './claudeSettingsEnvironment'
 import { type ExecutionEnvelope, injectExecutionEnvelope } from './executionEnvelope'
@@ -26,6 +26,7 @@ export interface TransportCommand {
 
 export interface TransportContextBundle {
   runRoot?: string
+  runViewRoot?: string
   runtimeScratchDir: string
   runtimeCacheDir: string
   authorityRoot?: string
@@ -596,36 +597,41 @@ function roleOutcomeJsonSchema(role: string | undefined) {
 }
 
 function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTransportInvocation) {
+  const runPath = (path: string) => agentVisibleRunPath(bundle, path)
   return {
     HOPI_RUN_SCRATCH: bundle.runtimeScratchDir,
     HOPI_SESSION_WORKSPACE: bundle.runtimeScratchDir,
     HOPI_CACHE_DIR: bundle.runtimeCacheDir,
-    ...(bundle.runRoot ? { HOPI_RUN_DIR: bundle.runRoot } : {}),
-    ...(bundle.authorityRoot ? { HOPI_AUTHORITY_ROOT: bundle.authorityRoot } : {}),
-    ...(bundle.proposalRoot ? { HOPI_PROPOSAL_ROOT: bundle.proposalRoot } : {}),
+    ...(bundle.runRoot ? { HOPI_RUN_DIR: runPath(bundle.runRoot) } : {}),
+    ...(bundle.authorityRoot ? { HOPI_AUTHORITY_ROOT: runPath(bundle.authorityRoot) } : {}),
+    ...(bundle.proposalRoot ? { HOPI_PROPOSAL_ROOT: runPath(bundle.proposalRoot) } : {}),
     ...(bundle.attentionProposalDir
-      ? { HOPI_ATTENTION_PROPOSAL_DIR: bundle.attentionProposalDir }
+      ? { HOPI_ATTENTION_PROPOSAL_DIR: runPath(bundle.attentionProposalDir) }
       : {}),
-    ...(bundle.artifactOutputDir ? { HOPI_ARTIFACT_DIR: bundle.artifactOutputDir } : {}),
+    ...(bundle.artifactOutputDir
+      ? { HOPI_ARTIFACT_DIR: runPath(bundle.artifactOutputDir) }
+      : {}),
     ...(bundle.proposalCapabilitiesFile
-      ? { HOPI_PROPOSAL_CAPABILITIES_FILE: bundle.proposalCapabilitiesFile }
+      ? { HOPI_PROPOSAL_CAPABILITIES_FILE: runPath(bundle.proposalCapabilitiesFile) }
       : {}),
-    ...(bundle.resultSchemaFile ? { HOPI_RESULT_SCHEMA_FILE: bundle.resultSchemaFile } : {}),
+    ...(bundle.resultSchemaFile
+      ? { HOPI_RESULT_SCHEMA_FILE: runPath(bundle.resultSchemaFile) }
+      : {}),
     ...(bundle.primaryRepoRoot ? { HOPI_PRIMARY_REPO_ROOT: bundle.primaryRepoRoot } : {}),
     ...(bundle.bootstrapSourceRoot
-      ? { HOPI_BOOTSTRAP_SOURCE_ROOT: bundle.bootstrapSourceRoot }
+      ? { HOPI_BOOTSTRAP_SOURCE_ROOT: runPath(bundle.bootstrapSourceRoot) }
       : {}),
     ...(bundle.operatorPreferenceFile
-      ? { HOPI_OPERATOR_PREFERENCE_FILE: bundle.operatorPreferenceFile }
+      ? { HOPI_OPERATOR_PREFERENCE_FILE: runPath(bundle.operatorPreferenceFile) }
       : {}),
-    HOPI_CONTEXT_FILE: bundle.contextFile,
+    HOPI_CONTEXT_FILE: runPath(bundle.contextFile),
     ...(bundle.artifactManifestFile
-      ? { HOPI_EVIDENCE_ARTIFACTS_FILE: bundle.artifactManifestFile }
+      ? { HOPI_EVIDENCE_ARTIFACTS_FILE: runPath(bundle.artifactManifestFile) }
       : {}),
-    HOPI_OUTCOME_FILE: bundle.outcomeFile,
-    HOPI_GOAL_FILE: bundle.goalFile,
-    HOPI_DESIGN_FILE: bundle.designFile,
-    HOPI_PROMPT_FILE: bundle.promptFile,
+    HOPI_OUTCOME_FILE: runPath(bundle.outcomeFile),
+    HOPI_GOAL_FILE: runPath(bundle.goalFile),
+    HOPI_DESIGN_FILE: runPath(bundle.designFile),
+    HOPI_PROMPT_FILE: runPath(bundle.promptFile),
     HOPI_BROWSER_HARNESS_DIR: bundle.browserHarnessDir,
     ...(bundle.browserHarnessCommand
       ? { HOPI_BROWSER_HARNESS_COMMAND: bundle.browserHarnessCommand }
@@ -634,9 +640,11 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
       ? { HOPI_BROWSER_HARNESS_BACKEND_COMMAND: bundle.browserHarnessBackendCommand }
       : {}),
     ...(bundle.browserHome ? { HOPI_BROWSER_HOME: bundle.browserHome } : {}),
-    ...(bundle.browserTargetsFile ? { HOPI_BROWSER_TARGETS_FILE: bundle.browserTargetsFile } : {}),
-    HOPI_BROWSER_HARNESS_ARTIFACT_DIR: bundle.browserHarnessArtifactDir,
-    ...(bundle.reposFile ? { HOPI_REPOS_FILE: bundle.reposFile } : {}),
+    ...(bundle.browserTargetsFile
+      ? { HOPI_BROWSER_TARGETS_FILE: runPath(bundle.browserTargetsFile) }
+      : {}),
+    HOPI_BROWSER_HARNESS_ARTIFACT_DIR: runPath(bundle.browserHarnessArtifactDir),
+    ...(bundle.reposFile ? { HOPI_REPOS_FILE: runPath(bundle.reposFile) } : {}),
     ...(bundle.apiOrigin ? { HOPI_API_ORIGIN: bundle.apiOrigin } : {}),
     HOPI_GOAL_KEY: input.goalKey,
     HOPI_GOAL_ID: input.goalKey,
@@ -649,20 +657,30 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
   }
 }
 
+function agentVisibleRunPath(bundle: TransportContextBundle, path: string) {
+  if (!bundle.runRoot || !bundle.runViewRoot) return path
+  const suffix = relative(resolve(bundle.runRoot), resolve(path))
+  if (suffix === '') return resolve(bundle.runViewRoot)
+  if (suffix === '..' || suffix.startsWith(`..${sep}`)) return path
+  return join(resolve(bundle.runViewRoot), suffix)
+}
+
 function placeholderValues(options: {
   bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
 }) {
+  const runPath = (path: string | undefined) =>
+    path ? agentVisibleRunPath(options.bundle, path) : ''
   return {
-    CONTEXT_FILE: options.bundle.contextFile,
-    EVIDENCE_ARTIFACTS_FILE: options.bundle.artifactManifestFile ?? '',
-    OUTCOME_FILE: options.bundle.outcomeFile,
-    GOAL_FILE: options.bundle.goalFile,
-    DESIGN_FILE: options.bundle.designFile,
-    PROMPT_FILE: options.bundle.promptFile,
+    CONTEXT_FILE: runPath(options.bundle.contextFile),
+    EVIDENCE_ARTIFACTS_FILE: runPath(options.bundle.artifactManifestFile),
+    OUTCOME_FILE: runPath(options.bundle.outcomeFile),
+    GOAL_FILE: runPath(options.bundle.goalFile),
+    DESIGN_FILE: runPath(options.bundle.designFile),
+    PROMPT_FILE: runPath(options.bundle.promptFile),
     BROWSER_HARNESS_DIR: options.bundle.browserHarnessDir,
     BROWSER_HARNESS_COMMAND: options.bundle.browserHarnessCommand ?? '',
-    BROWSER_HARNESS_ARTIFACT_DIR: options.bundle.browserHarnessArtifactDir,
+    BROWSER_HARNESS_ARTIFACT_DIR: runPath(options.bundle.browserHarnessArtifactDir),
     API_ORIGIN: options.bundle.apiOrigin ?? '',
     GOAL_KEY: options.input.goalKey,
     GOAL_ID: options.input.goalKey,

@@ -276,7 +276,7 @@ export function roleSessionCompatibilityKey(
         ? 'workspace-write'
         : config.sandbox
     return JSON.stringify({
-      version: 5,
+      version: 6,
       transport: config.transport,
       binary: config.binary ?? 'codex',
       cwdMode: config.cwdMode,
@@ -291,7 +291,7 @@ export function roleSessionCompatibilityKey(
   }
   if (config.transport === 'claude') {
     return JSON.stringify({
-      version: 3,
+      version: 4,
       transport: config.transport,
       binary: config.binary ?? 'claude',
       cwdMode: config.cwdMode,
@@ -302,7 +302,7 @@ export function roleSessionCompatibilityKey(
     })
   }
   return JSON.stringify({
-    version: 3,
+    version: 4,
     transport: config.transport,
     binary: config.binary ?? 'opencode',
     cwdMode: config.cwdMode,

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { chmod, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type {
@@ -1024,6 +1024,11 @@ describe('ProjectReconciler', () => {
       { responsibility: 'generator', sessionId: null },
       { responsibility: 'generator', sessionId: 'session-W-1-generator' },
     ])
+    expect(fixture.runner.runViewsByRun.map(({ path }) => path)).toEqual([
+      fixture.runner.runViewsByRun[0]?.path,
+      fixture.runner.runViewsByRun[0]?.path,
+    ])
+    expect(fixture.runner.runViewsByRun.every(({ ownsCurrentRun }) => ownsCurrentRun)).toBe(true)
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
     expect(attempts).toHaveLength(2)
     expect(attempts[0]?.workHash).toBe(attempts[1]?.workHash)
@@ -1152,6 +1157,7 @@ class DeliveryScriptRunner implements RoleRunner {
     path: string
     markerFound: boolean
   }> = []
+  readonly runViewsByRun: Array<{ path: string; ownsCurrentRun: boolean }> = []
   readonly plannerCwds: string[] = []
   readonly plannerRunRoots: string[] = []
   readonly generatorCwds: string[] = []
@@ -1198,6 +1204,12 @@ class DeliveryScriptRunner implements RoleRunner {
       responsibility: input.responsibility,
       path: input.context.runtimeScratchDir,
       markerFound,
+    })
+    if (!input.context.runViewRoot) throw new Error('Responsibility Run view is missing')
+    this.runViewsByRun.push({
+      path: input.context.runViewRoot,
+      ownsCurrentRun:
+        (await realpath(input.context.runViewRoot)) === (await realpath(input.context.runRoot)),
     })
     if (!markerFound) {
       await Bun.write(continuityMarker, `${input.responsibility} continuity\n`)

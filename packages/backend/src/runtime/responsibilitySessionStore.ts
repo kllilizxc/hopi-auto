@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rename, rm, symlink } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { VendorSession } from '../agent/vendorAssistantOutput'
@@ -69,6 +69,27 @@ export interface ResponsibilitySessionStore {
   ): Promise<void>
   invalidateVendor(key: ResponsibilitySessionKey, scope: ResponsibilitySessionScope): Promise<void>
   clearWork(key: ResponsibilityWorkKey): Promise<void>
+}
+
+export async function bindResponsibilitySessionRunView(
+  workspaceDir: string,
+  runRoot: string,
+): Promise<string> {
+  const workspace = resolve(workspaceDir)
+  const target = resolve(runRoot)
+  const current = join(workspace, 'current')
+  const pending = join(workspace, `.current-${crypto.randomUUID()}`)
+  await mkdir(workspace, { recursive: true })
+  await symlink(target, pending, 'dir')
+  try {
+    await rename(pending, current)
+  } catch {
+    await rm(current, { recursive: true, force: true })
+    await rename(pending, current)
+  } finally {
+    await rm(pending, { recursive: true, force: true })
+  }
+  return current
 }
 
 export function createResponsibilitySessionStore(homeRoot: string): ResponsibilitySessionStore {
