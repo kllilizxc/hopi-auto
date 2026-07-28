@@ -1,5 +1,6 @@
-import { mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { constants } from 'node:fs'
+import { access, mkdir } from 'node:fs/promises'
+import { basename, dirname, isAbsolute } from 'node:path'
 import { z } from 'zod'
 import {
   DEFAULT_PROJECT_CODING_DEFAULTS,
@@ -124,12 +125,63 @@ export async function writeAgentAdapterConfig(path: string, config: AgentAdapter
 export async function readAndMigrateAgentAdapterConfig(path: string) {
   const raw = await Bun.file(path).text()
   const source = JSON.parse(raw) as unknown
-  const normalized = normalizeAgentAdapterConfig(source)
+  const normalized = await recoverUnavailableBuiltInBinaries(normalizeAgentAdapterConfig(source))
   const normalizedText = `${JSON.stringify(normalized, null, 2)}\n`
   if (normalizedText !== raw) {
     await writeAgentAdapterConfig(path, normalized)
   }
   return normalized
+}
+
+async function recoverUnavailableBuiltInBinaries(
+  config: AgentAdapterConfig,
+): Promise<AgentAdapterConfig> {
+  const assistant = config.assistant
+    ? await recoverUnavailableBuiltInBinary(config.assistant)
+    : undefined
+  const roles = Object.fromEntries(
+    await Promise.all(
+      Object.entries(config.roles).map(async ([role, value]) => [
+        role,
+        value ? await recoverUnavailableBuiltInBinary(value) : value,
+      ]),
+    ),
+  ) as AgentAdapterConfig['roles']
+  return {
+    ...config,
+    ...(assistant ? { assistant } : {}),
+    roles,
+  }
+}
+
+async function recoverUnavailableBuiltInBinary<T extends RoleTransportConfig>(
+  config: T,
+): Promise<T> {
+  if ('cmd' in config) return config
+  const binary = config.binary
+  if (
+    !binary ||
+    !isAbsolute(binary) ||
+    executableName(binary) !== config.transport ||
+    (await isExecutable(binary))
+  ) {
+    return config
+  }
+  const { binary: _binary, ...portable } = config
+  return portable as T
+}
+
+function executableName(path: string) {
+  return basename(path).replace(/\.exe$/i, '')
+}
+
+async function isExecutable(path: string) {
+  try {
+    await access(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function resolveAssistantTransportConfig(config: AgentAdapterConfig): RoleTransportConfig {

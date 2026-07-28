@@ -974,8 +974,8 @@ function appendCodexAssistantProviderConfig(command: string[]) {
     `developer_instructions=${JSON.stringify(workspaceAssistantDeveloperInstructions())}`,
     '-c',
     'include_apps_instructions=false',
-    '-c',
-    'agents.enabled=false',
+    '--disable',
+    'multi_agent',
   )
   for (const feature of CODEX_ASSISTANT_DISABLED_PRODUCT_FEATURES) {
     command.push('--disable', feature)
@@ -1029,7 +1029,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 15
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 16
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')

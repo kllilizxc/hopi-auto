@@ -326,6 +326,13 @@ default. Compatible advanced adapter fields remain intact when only the model or
 changes. UI and API settings address one of these four roles; models cannot change execution
 configuration through HOPI tools. There is no Project-scoped or Assistant-only settings path.
 
+Built-in transports are portable command capabilities (`codex`, `claude`, or `opencode`), resolved
+from the current Coordinator environment when an invocation starts. An explicit working binary path
+remains an exact advanced override. When an older Home configuration points one of those built-in
+names at an absolute path that is no longer executable, configuration migration removes only that
+stale path override so the same transport resolves from the current environment. Custom executable
+names are never guessed or rewritten.
+
 The workspace Assistant and disposable Reflection use the same explicit Home `assistant`
 configuration. It may select Codex, Claude, or OpenCode; when absent, it inherits compatible Home
 defaults. The speaking Assistant's resumable session belongs to Home rather than any Project;

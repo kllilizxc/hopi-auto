@@ -884,8 +884,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).not.toContain('skills.include_instructions=false')
     expect(args).not.toContain('skills.bundled.enabled=false')
     expect(args).toContain('include_apps_instructions=false')
-    expect(args).toContain('agents.enabled=false')
-    expect(args[args.indexOf('agents.enabled=false') - 1]).toBe('-c')
+    expect(args).not.toContain('agents.enabled=false')
     expect(args).not.toContain('include_collaboration_mode_instructions=false')
     const developerInstructions = args.find((arg) => arg.startsWith('developer_instructions='))
     expect(developerInstructions).toContain('Role: HOPI Project owner')
@@ -897,9 +896,8 @@ describe('WorkspaceAssistant conversation', () => {
       expect(args).toContain(feature)
       expect(args[args.indexOf(feature) - 1]).toBe('--disable')
     }
-    expect(
-      args.findIndex((arg, index) => arg === 'multi_agent' && args[index - 1] === '--disable'),
-    ).toBe(-1)
+    expect(args).toContain('multi_agent')
+    expect(args[args.indexOf('multi_agent') - 1]).toBe('--disable')
     for (const feature of [
       'browser_use',
       'computer_use',

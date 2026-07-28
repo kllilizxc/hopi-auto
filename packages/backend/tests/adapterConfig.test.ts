@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   normalizeAgentAdapterConfig,
+  readAndMigrateAgentAdapterConfig,
   readAgentRoleCodingDefaults,
   readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
@@ -10,6 +14,52 @@ import {
 } from '../src/agent/adapterConfig'
 
 describe('agent adapter config normalization', () => {
+  test('re-resolves an unavailable built-in binary path from the current environment', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hopi-adapter-config-'))
+    const path = join(root, 'agent-adapters.json')
+    try {
+      await Bun.write(
+        path,
+        `${JSON.stringify(
+          {
+            version: 3,
+            defaults: {
+              transport: 'codex',
+              model: 'gpt-5.4',
+              reasoningEffort: 'xhigh',
+            },
+            assistant: {
+              transport: 'codex',
+              cwdMode: 'root',
+              binary: join(root, 'missing', 'codex'),
+              sandbox: 'workspace-write',
+              approvalPolicy: 'never',
+            },
+            roles: {
+              reviewer: {
+                transport: 'codex',
+                cwdMode: 'worktree',
+                binary: join(root, 'missing', 'company-codex'),
+                sandbox: 'workspace-write',
+                approvalPolicy: 'never',
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      )
+
+      const migrated = await readAndMigrateAgentAdapterConfig(path)
+
+      expect(migrated.assistant).not.toHaveProperty('binary')
+      expect(migrated.roles.reviewer?.binary).toBe(join(root, 'missing', 'company-codex'))
+      expect(await Bun.file(path).json()).toEqual(migrated)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   test('migrates legacy generated codex defaults into a defaults-only v3 config', () => {
     expect(
       normalizeAgentAdapterConfig({

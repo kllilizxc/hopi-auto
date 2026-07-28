@@ -468,8 +468,9 @@ uses `never`, Claude bypasses permission prompts, and OpenCode uses deterministi
 rules. This removes an impossible unattended UI prompt without becoming the authorization boundary.
 The speaking Assistant has one orchestration surface: HOPI. A provider's native subagent or workflow
 namespace is excluded from the Assistant environment rather than discouraged through prompt text.
-For Codex, the adapter disables multi-agent tools through its native `agents.enabled=false`
-configuration. If the configured Codex binary cannot represent that environment, its invocation
+For Codex, the adapter disables the stable `multi_agent` feature through the CLI's native feature
+switch rather than writing into the provider's versioned agent-role configuration table. If the
+configured Codex binary cannot represent that environment, its invocation
 fails through the normal provider error path; HOPI does not resume with a competing orchestration
 surface. Changing this provider boundary advances the adapter runtime revision, so sessions created
 with a different tool surface are rebuilt from durable scoped conversation history.
