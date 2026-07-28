@@ -221,6 +221,13 @@ records ownership on each still-open reference without resolving it, so the same
 the scheduling blocker until the reported condition clears. Assistant receives these consequences
 as environment and tool semantics rather than a prescribed call sequence.
 
+A pass that publishes targeted Attention settles the unchanged owning Work exactly like any other
+failed or attention outcome: Coordinator must not immediately create another Attempt for that Work.
+The durable Attempt application may be recorded as either the legacy `published` form or the
+targeted `attention` form; both preserve the same scheduling consequence until Assistant explicitly
+continues the Work or changes its contract. Attention presentation itself remains outside Work
+readiness, so there is still only one recovery gate: the settled Attempt.
+
 Only the explicit Reply action copies `replyTo` and exact Attention references into a user Inbox
 turn. Ordinary page context carries Project and Goal identity only; it does not attach every open
 blocker. The canonical reference identifies the Attention while its owning Project selects the

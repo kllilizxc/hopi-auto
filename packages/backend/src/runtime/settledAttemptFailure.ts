@@ -39,6 +39,7 @@ function isSettledFailure(attempt: RunAttemptSummary) {
   if (attempt.application === 'operational_failure' || attempt.application === 'invalid') {
     return true
   }
+  if (attempt.application === 'attention') return true
   return (
     attempt.application === 'published' &&
     (attempt.result === 'fail' || attempt.result === 'attention')
