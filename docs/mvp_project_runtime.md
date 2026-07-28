@@ -83,6 +83,12 @@ HOPI_PREVIEW_URL=<url>
 HOPI considers Preview `running` only after the announced transports are reachable. Reachability is
 not proof that a Goal is complete or that a surface is semantically correct.
 
+One Preview session may announce any number of surfaces. A surface is only an opaque named entry
+that the operator can open; HOPI does not infer application hierarchy, service dependencies, or
+relationships between entries. The Project adapter starts whatever the Project needs and announces
+all currently available entries together. The product UI exposes them through one Preview control
+whose menu opens the selected surface.
+
 The Preview child is a process-group leader. Stop, release replacement, restart recovery, and failed
 startup terminate the complete process group.
 

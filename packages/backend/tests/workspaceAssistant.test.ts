@@ -995,7 +995,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
     expect(seen[0]?.prompt).toContain(
-      'Project Preview is a local composed product runtime',
+      'Project Preview is one local managed runtime',
     )
     expect(seen[0]?.prompt).toContain('omit internals unless asked or decision-relevant')
     expect(seen[0]?.prompt).toContain('Only HOPI operatorUrl is linkable')

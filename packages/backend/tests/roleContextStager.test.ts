@@ -86,10 +86,10 @@ describe('RoleContextStager', () => {
     expect(prompt).not.toContain('plan separate Work for independent outcomes')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
-    expect(prompt).toContain('Project Preview is a local managed runtime')
-    expect(prompt).toContain('not a remote deployment')
-    expect(prompt).toContain('surface is the product-flow entrypoint')
-    expect(prompt).toContain('scripts/hopi/preview may compose linked apps and services')
+    expect(prompt).toContain('Project Preview is one local managed runtime')
+    expect(prompt).toContain('not a deployment')
+    expect(prompt).toContain('announces all opaque named surfaces together')
+    expect(prompt).toContain('does not infer relationships')
     expect(prompt).toContain(
       '.hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology',
     )

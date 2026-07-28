@@ -1019,7 +1019,7 @@ const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
-  'Project Preview is a local composed product runtime: surfaces are operator-facing entrypoints, while linked apps and services are dependencies.',
+  'Project Preview is one local managed runtime. The Project adapter announces all opaque named surfaces together; HOPI only presents them.',
   'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
   'Attention remains Assistant-owned until hopi_manage_attention records a resolution, future revisit, or transfer; a responsibility-bearing internal event cannot settle while its canonical successor state is unchanged.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',

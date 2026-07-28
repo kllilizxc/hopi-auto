@@ -1361,7 +1361,7 @@ function renderResponsibilityPrompt(
     'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published; any other proposal is rejected.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
     '$HOPI_REPOS_FILE is the complete Project source-root map; roots may contain source, knowledge, or both, and list existing Repo guidance. Other source and Work runtimes are outside this assignment.',
-    'Project Preview is a local managed runtime, not a remote deployment. Its surface is the product-flow entrypoint; scripts/hopi/preview may compose linked apps and services behind it.',
+    'Project Preview is one local managed runtime, not a deployment. scripts/hopi/preview announces all opaque named surfaces together; HOPI does not infer relationships between them.',
     'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
     ...(paths.hasImages
       ? ['Attached images are Goal assets with their authority-defined purpose.']

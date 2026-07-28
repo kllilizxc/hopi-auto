@@ -50,8 +50,12 @@ test('Project paths display the selected Git subdirectory without changing the R
 
 test('Project cards control the one Project Preview session and expose every named surface', async () => {
   const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+  const control = await Bun.file(
+    new URL('../components/ProjectPreviewControl.tsx', import.meta.url),
+  ).text()
 
-  expect(source).toContain('project.preview.surfaces.map')
+  expect(source).toContain('<ProjectPreviewControl')
+  expect(control).toContain('surfaces.map((surface)')
   expect(source).toContain('startPreview(project.projectId)')
   expect(source).toContain('stopPreview(project.projectId)')
   expect(source).not.toContain('requestPreviewRepair')

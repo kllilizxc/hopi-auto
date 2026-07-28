@@ -4,11 +4,9 @@ import {
   ChevronDown,
   CirclePause,
   CirclePlay,
-  ExternalLink,
   FileText,
   Inbox,
   MessageSquareText,
-  Square,
   X,
 } from 'lucide-react'
 import {
@@ -27,13 +25,12 @@ import { Navigate, useParams } from 'react-router-dom'
 import { useShell } from '../components/Layout'
 import { MessageFeedSkeleton } from '../components/MessageFeedSkeleton'
 import { PeerSwitcher } from '../components/PeerSwitcher'
+import { ProjectPreviewControl } from '../components/ProjectPreviewControl'
 import {
   AppAlert,
   AppBreathingIndicator,
   AppButton,
-  AppButtonGroup,
   AppDisclosure,
-  AppLink,
   AppLoadingNotice,
   AppModal,
   AppRouterLink,
@@ -42,7 +39,6 @@ import {
   AppTabs,
   AnimatedShinyText,
   CountBadge,
-  IconButton,
   SelectField,
   StatusChip,
   WorkingIndicator,
@@ -575,48 +571,17 @@ export function BoardView() {
               <CirclePlay /> Resume
             </AppButton>
           )}
-          <AppButtonGroup className="preview-compact-control" aria-label="Project Preview controls">
-            {project.preview?.status === 'running' &&
-              project.preview.surfaces.map((surface) => (
-                <AppLink
-                  className="preview-compact-open"
-                  href={surface.url}
-                  key={surface.id}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={`Open ${surface.label}`}
-                >
-                  <span className="preview-dot running" /> {surface.label} <ExternalLink />
-                </AppLink>
-              ))}
-            {project.preview?.status === 'running' ? (
-              <IconButton
-                className="icon-button preview-stop-button"
-                type="button"
-                onClick={() => previewStopMutation.mutate()}
-                disabled={previewStopMutation.isPending}
-                aria-label="Stop Preview"
-                title="Stop Preview"
-              >
-                {previewStopMutation.isPending ? <AppSpinner size="sm" /> : <Square />}
-              </IconButton>
-            ) : (
-              <AppButton
-                className="secondary-button preview-start-button"
-                type="button"
-                onClick={() => previewStartMutation.mutate()}
-                disabled={previewStartMutation.isPending || project.preview?.status === 'starting'}
-                title={project.preview?.error ?? 'Start Project Preview'}
-              >
-                {previewStartMutation.isPending || project.preview?.status === 'starting' ? (
-                  <AppSpinner size="sm" />
-                ) : (
-                  <CirclePlay />
-                )}
-                Project Preview
-              </AppButton>
-            )}
-          </AppButtonGroup>
+          <ProjectPreviewControl
+            ariaLabel="Project Preview"
+            error={project.preview?.error}
+            onStart={() => previewStartMutation.mutate()}
+            onStop={() => previewStopMutation.mutate()}
+            startLabel="Project Preview"
+            startPending={previewStartMutation.isPending}
+            status={project.preview?.status}
+            stopPending={previewStopMutation.isPending}
+            surfaces={project.preview?.surfaces}
+          />
         </div>
       </header>
 

@@ -2,9 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
   ArrowRight,
-  CirclePlay,
   Cpu,
-  ExternalLink,
   FolderGit2,
   FolderPlus,
   Link2,
@@ -12,20 +10,18 @@ import {
   Radio,
   RefreshCw,
   Settings2,
-  Square,
   Star,
   X,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ProjectPreviewControl } from '../components/ProjectPreviewControl'
 import {
   AppAlert,
   AppButton,
-  AppButtonGroup,
   AppCard,
   AppForm,
   AppInput,
-  AppLink,
   AppRouterLink,
   AppScrollShadow,
   AppSpinner,
@@ -33,7 +29,6 @@ import {
   AppSwitch,
   AppTextField,
   CountBadge,
-  IconButton,
   SelectField,
   StatusChip,
 } from '../components/ui'
@@ -615,53 +610,18 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 
       <div className="project-preview-row">
         <small>Project Preview</small>
-        <AppButtonGroup
-          className="preview-compact-control project-preview-control"
-          aria-label={`${projectName} Project Preview controls`}
-        >
-          {project.preview?.status === 'running' &&
-            project.preview.surfaces.map((surface) => (
-              <AppLink
-                className="preview-compact-open"
-                href={surface.url}
-                key={surface.id}
-                target="_blank"
-                rel="noreferrer"
-                title={`Open ${surface.label}`}
-              >
-                <span className="preview-dot running" /> {surface.label} <ExternalLink />
-              </AppLink>
-            ))}
-          {project.preview?.status === 'running' ? (
-            <IconButton
-              className="icon-button preview-stop-button"
-              type="button"
-              onClick={() => previewStopMutation.mutate()}
-              disabled={previewStopMutation.isPending}
-              aria-label={`Stop ${projectName} Preview`}
-              title="Stop Project Preview"
-            >
-              {previewStopMutation.isPending ? <AppSpinner size="sm" /> : <Square />}
-            </IconButton>
-          ) : (
-            <AppButton
-              className="secondary-button preview-start-button"
-              type="button"
-              onClick={() => previewStartMutation.mutate()}
-              disabled={
-                previewStartMutation.isPending || project.preview?.status === 'starting'
-              }
-              title={project.preview?.error ?? 'Start Project Preview'}
-            >
-              {previewStartMutation.isPending || project.preview?.status === 'starting' ? (
-                <AppSpinner size="sm" />
-              ) : (
-                <CirclePlay />
-              )}
-              Start
-            </AppButton>
-          )}
-        </AppButtonGroup>
+        <ProjectPreviewControl
+          ariaLabel={`${projectName} Project Preview`}
+          className="project-preview-control"
+          error={project.preview?.error}
+          onStart={() => previewStartMutation.mutate()}
+          onStop={() => previewStopMutation.mutate()}
+          startLabel="Start"
+          startPending={previewStartMutation.isPending}
+          status={project.preview?.status}
+          stopPending={previewStopMutation.isPending}
+          surfaces={project.preview?.surfaces}
+        />
       </div>
 
       <p className="project-guidance">

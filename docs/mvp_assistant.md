@@ -559,10 +559,9 @@ discard the intent carried by the operator command. Assistant already has ordina
 Planning-or-Engineering Work capabilities for its own judgment; the turn states no workflow choice
 and Preview has no special repair operation or repair workflow.
 
-Project Preview is a local composed product runtime. Its surfaces are operator-facing entrypoints;
-linked applications and services are runtime dependencies discovered from Project source and
-guidance. This environment fact is available to Assistant and responsibility Agents without
-prescribing which processes a particular Project needs.
+Project Preview is one local managed runtime. Its surfaces are opaque named entries announced by the
+Project adapter. HOPI presents every entry without inferring application hierarchy, runtime
+dependencies, or relationships between entries.
 
 An Assistant-initiated Start returns the same diagnosis directly in the tool result and does not
 create a second Inbox turn. Failures after Preview has become running, and stops caused by release
