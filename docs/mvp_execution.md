@@ -108,6 +108,19 @@ is never read as authority, and is disposable after the process exits. The trans
 lock are released automatically on crash without libc-specific FFI or an external `flock`
 executable.
 
+The lock prevents a second writer; it is not a liveness signal. Coordinator startup records the
+current process identity beside the lock so the local service command can stop that exact instance,
+wait for its OS lock to disappear, and then start one replacement. Ordinary startup never kills or
+steals from an existing owner. A lightweight health endpoint reports process identity, runtime
+readiness, and the latest Coordinator tick without reading Project state.
+
+One rejected background operation must not terminate the HTTP process. Every detached Coordinator,
+Assistant, Reflection, delivery, and responsibility continuation ends at an explicit runtime error
+boundary. The boundary records the failure, leaves canonical state unchanged, and retries the
+Coordinator with bounded backoff. Existing Project validation paths may still make only the affected
+Project ineligible. Integrity failures remain visible; they are isolated rather than converted into
+process failure or an unobserved Promise rejection.
+
 The supported Coordinator hosts are macOS, Linux, and WSL. WSL is the Windows deployment boundary;
 a native `win32` process is rejected at startup because the Project contracts rely on POSIX
 executable bits, signals, shell adapters, and Git worktree behavior. The UI may still run in a

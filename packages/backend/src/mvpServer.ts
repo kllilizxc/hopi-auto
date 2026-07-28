@@ -83,6 +83,7 @@ import { createProjectAgentAccessStore } from './storage/projectAgentAccessStore
 export interface ServerOptions {
   rootDir?: string
   port?: number
+  instanceId?: string
   publisher?: PublicationCoordinator
   attempts?: RunAttemptStore
   roleRunner?: RoleRunner
@@ -190,6 +191,7 @@ const inboxSchema = z
 export function createServer(options: ServerOptions = {}): MvpServer {
   assertSupportedPlatform(process.platform)
   const homeRoot = options.rootDir ?? process.cwd()
+  const serverStartedAt = new Date().toISOString()
   const serverRef: { current: Bun.Server<undefined> | null } = {
     current: null,
   }
@@ -215,6 +217,10 @@ export function createServer(options: ServerOptions = {}): MvpServer {
     start: false,
   }
   let runtimePromise = createMvpRuntime(runtimeOptions)
+  let observedRuntime: MvpRuntime | null = null
+  let runtimeInitializationError: { at: string; message: string } | null = null
+  let runtimeGeneration = 0
+  observeRuntime(runtimePromise)
   let reloadTail: Promise<void> = Promise.resolve()
   const pickDirectory = createSingleFlight(options.directoryPicker ?? selectHostDirectory)
 
@@ -230,6 +236,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         throw error
       }
       runtimePromise = createMvpRuntime(runtimeOptions)
+      observeRuntime(runtimePromise)
       const next = await runtimePromise
       if (options.startCoordinator !== false) next.coordinator.start()
     })
@@ -250,6 +257,25 @@ export function createServer(options: ServerOptions = {}): MvpServer {
     }, 0)
   }
 
+  function observeRuntime(promise: Promise<MvpRuntime>) {
+    const generation = ++runtimeGeneration
+    observedRuntime = null
+    runtimeInitializationError = null
+    void promise.then(
+      (runtime) => {
+        if (generation !== runtimeGeneration) return
+        observedRuntime = runtime
+      },
+      (error) => {
+        if (generation !== runtimeGeneration) return
+        runtimeInitializationError = {
+          at: new Date().toISOString(),
+          message: errorMessage(error),
+        }
+      },
+    )
+  }
+
   const server = Bun.serve({
     reusePort: false,
     routes: {
@@ -263,6 +289,23 @@ export function createServer(options: ServerOptions = {}): MvpServer {
       const url = new URL(request.url)
       const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
       try {
+        if (request.method === 'GET' && url.pathname === '/api/health') {
+          const coordinator = observedRuntime?.coordinator.health() ?? null
+          return json({
+            status: runtimeInitializationError
+              ? 'degraded'
+              : observedRuntime
+                ? coordinator?.status === 'degraded'
+                  ? 'degraded'
+                  : 'ok'
+                : 'starting',
+            pid: process.pid,
+            instanceId: options.instanceId ?? null,
+            startedAt: serverStartedAt,
+            runtimeError: runtimeInitializationError,
+            coordinator,
+          })
+        }
         const runtime = await runtimePromise
         if (request.method === 'POST' && url.pathname === '/api/internal/assistant-tool') {
           const body = await parseBody(request, assistantToolRequestSchema)
@@ -864,7 +907,9 @@ export function createServer(options: ServerOptions = {}): MvpServer {
   })
   serverRef.current = server
   if (options.startCoordinator !== false) {
-    void runtimePromise.then((runtime) => runtime.coordinator.start())
+    void runtimePromise
+      .then((runtime) => runtime.coordinator.start())
+      .catch((error) => console.error('[mvp runtime startup error]', error))
   }
   let shutdownPromise: Promise<void> | null = null
   return Object.assign(server, {
@@ -2262,18 +2307,34 @@ if (import.meta.main) {
   }
   const instanceLock = await acquireCoordinatorInstanceLock(
     join(homeRoot, '.hopi', 'runtime', 'coordinator.lock'),
+    {
+      kind: 'coordinator',
+      port: process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000,
+    },
   )
   const server = createServer({
     rootDir: homeRoot,
     port: process.env.PORT ? Number.parseInt(process.env.PORT, 10) : undefined,
+    instanceId: instanceLock.owner.instanceId,
   })
   let stopping = false
   const stop = async () => {
     if (stopping) return
     stopping = true
-    await server.shutdown()
-    await instanceLock.release()
-    process.exit(0)
+    let exitCode = 0
+    try {
+      await server.shutdown()
+    } catch (error) {
+      exitCode = 1
+      console.error('[mvp shutdown error]', error)
+    }
+    try {
+      await instanceLock.release()
+    } catch (error) {
+      exitCode = 1
+      console.error('[mvp lock release error]', error)
+    }
+    process.exit(exitCode)
   }
   process.on('SIGINT', () => void stop())
   process.on('SIGTERM', () => void stop())

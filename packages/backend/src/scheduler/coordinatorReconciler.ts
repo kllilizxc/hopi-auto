@@ -32,12 +32,24 @@ export interface CoordinatorReconcilerOptions {
   concurrency: Readonly<Record<Responsibility, number>>
   delivery?: AttentionDeliveryWorker
   now?: () => Date
+  reconcileRetryBaseMs?: number
+  reconcileRetryMaxMs?: number
 }
 
 export interface CoordinatorReconcileTick {
   kind: 'assistant_started' | 'deterministic_action' | 'passes_started' | 'delivery' | 'idle'
   count?: number
   nextWakeAt?: number | null
+}
+
+export interface CoordinatorHealth {
+  status: 'stopped' | 'ok' | 'degraded'
+  startedAt: string | null
+  lastTickStartedAt: string | null
+  lastTickSucceededAt: string | null
+  lastError: { at: string; message: string } | null
+  consecutiveFailures: number
+  retryAt: string | null
 }
 
 export interface CoordinatorReconciler {
@@ -53,6 +65,7 @@ export interface CoordinatorReconciler {
   settleAssistantTurn(eventId: string): Promise<void>
   setProjectEligible(projectId: string, eligible: boolean): void
   interruptInternalAssistant(): void
+  health(): CoordinatorHealth
 }
 
 interface ActiveAssistantTurn {
@@ -81,11 +94,15 @@ interface AssistantRetry {
 
 const INTERNAL_ASSISTANT_RETRY_BASE_MS = 30_000
 const INTERNAL_ASSISTANT_RETRY_MAX_MS = 15 * 60_000
+const COORDINATOR_RETRY_BASE_MS = 1_000
+const COORDINATOR_RETRY_MAX_MS = 30_000
 
 export function createCoordinatorReconciler(
   options: CoordinatorReconcilerOptions,
 ): CoordinatorReconciler {
   const now = options.now ?? (() => new Date())
+  const retryBaseMs = options.reconcileRetryBaseMs ?? COORDINATOR_RETRY_BASE_MS
+  const retryMaxMs = options.reconcileRetryMaxMs ?? COORDINATOR_RETRY_MAX_MS
   const eligibleProjects = new Set(options.projects.map((project) => project.projectId))
   const reservations = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
@@ -100,8 +117,25 @@ export function createCoordinatorReconciler(
   let reconcileEpoch = 0
   let reconciling: Promise<CoordinatorReconcileTick> | null = null
   let directAssistantCommands = 0
+  let startedAt: string | null = null
+  let lastTickStartedAt: string | null = null
+  let lastTickSucceededAt: string | null = null
+  let lastError: CoordinatorHealth['lastError'] = null
+  let consecutiveFailures = 0
+  let retryAt: string | null = null
 
   const coordinator: CoordinatorReconciler = {
+    health() {
+      return {
+        status: stopped ? 'stopped' : consecutiveFailures > 0 ? 'degraded' : 'ok',
+        startedAt,
+        lastTickStartedAt,
+        lastTickSucceededAt,
+        lastError,
+        consecutiveFailures,
+        retryAt,
+      }
+    },
     setProjectEligible(projectId, eligible) {
       if (eligible) eligibleProjects.add(projectId)
       else eligibleProjects.delete(projectId)
@@ -116,6 +150,7 @@ export function createCoordinatorReconciler(
     start() {
       if (!stopped) return
       stopped = false
+      startedAt ??= now().toISOString()
       this.wake()
     },
     async stop() {
@@ -127,6 +162,7 @@ export function createCoordinatorReconciler(
       wakeTimer = null
       deadlineTimer = null
       deadlineAt = null
+      retryAt = null
       for (const project of options.projects) project.reconciler.interruptRuns()
       for (const entry of assistantActive.values()) entry.controller.abort()
       await options.reflection?.stop()
@@ -230,6 +266,7 @@ export function createCoordinatorReconciler(
       if (reconciling) return reconciling
       const epoch = reconcileEpoch
       const startedWithReservation = reservations.size > 0
+      lastTickStartedAt = now().toISOString()
       const run = reconcileTick(epoch)
         .then(async (result) => {
           if (result.kind !== 'assistant_started') armDeadline(result.nextWakeAt ?? null)
@@ -255,24 +292,44 @@ export function createCoordinatorReconciler(
           ) {
             wakePending = true
           }
+          lastTickSucceededAt = now().toISOString()
+          consecutiveFailures = 0
+          retryAt = null
           return result
+        })
+        .catch((error) => {
+          recordOperationalFailure('Coordinator reconciliation failed', error)
+          throw error
         })
         .finally(() => {
           reconciling = null
-          scheduleWake()
         })
       reconciling = run
+      void run.then(
+        () => scheduleWake(),
+        () => {
+          if (stopped) return
+          wakePending = true
+          const delay = Math.min(
+            retryBaseMs * 2 ** Math.min(Math.max(0, consecutiveFailures - 1), 20),
+            retryMaxMs,
+          )
+          retryAt = new Date(now().getTime() + delay).toISOString()
+          scheduleWake(delay)
+        },
+      )
       return run
     },
   }
 
-  function scheduleWake() {
+  function scheduleWake(delay = 0) {
     if (stopped || !wakePending || wakeTimer || reconciling) return
     wakeTimer = setTimeout(() => {
       wakeTimer = null
       wakePending = false
-      void coordinator.reconcileOnce()
-    }, 0)
+      retryAt = null
+      void coordinator.reconcileOnce().catch(() => undefined)
+    }, delay)
   }
 
   function armDeadline(nextAt: number | null) {
@@ -336,6 +393,9 @@ export function createCoordinatorReconciler(
           return coordinator.settleAssistantTurn(event.attributes.id).finally(() => {
             coordinator.wake()
           })
+        })
+        .catch((error) => {
+          recordOperationalFailure(`Assistant turn ${event.attributes.id} failed`, error)
         })
       assistantActive.set(event.attributes.id, {
         source: event.attributes.source,
@@ -483,9 +543,10 @@ export function createCoordinatorReconciler(
       if (!eligibleProjects.has(candidate.project.projectId)) continue
       if (goalDispatchBlocked(candidate.project.projectId, candidate.goalId)) continue
       const responsibility = candidate.decision.responsibility
+      const workId = candidate.decision.workId
       const limit = options.concurrency[responsibility]
       if (reserved[responsibility] >= limit) continue
-      const key = `${candidate.project.projectId}/${candidate.goalId}/${candidate.decision.workId}`
+      const key = `${candidate.project.projectId}/${candidate.goalId}/${workId}`
       if (reservations.has(key)) continue
       reserved[responsibility] += 1
       markProjectActivity(candidate.project.projectId)
@@ -511,6 +572,12 @@ export function createCoordinatorReconciler(
           reservations.delete(key)
           markProjectActivity(candidate.project.projectId)
           coordinator.wake()
+        })
+        .catch((error) => {
+          recordOperationalFailure(
+            `Coordinator continuation ${candidate.project.projectId}/${candidate.goalId}/${workId} failed`,
+            error,
+          )
         })
       reservations.set(key, { responsibility, promise })
       started += 1
@@ -570,12 +637,24 @@ export function createCoordinatorReconciler(
   }
 
   async function reportProjectFailure(projectId: string, message: string) {
-    await recordProjectSystemEvent(options.workspace, {
-      projectId,
-      summary: 'Project execution stopped at a deterministic integrity boundary.',
-      details: [message],
-      receivedAt: now(),
-    })
+    try {
+      await recordProjectSystemEvent(options.workspace, {
+        projectId,
+        summary: 'Project execution stopped at a deterministic integrity boundary.',
+        details: [message],
+        receivedAt: now(),
+      })
+    } catch (error) {
+      recordOperationalFailure(`Cannot record Project failure for ${projectId}`, error)
+    }
+  }
+
+  function recordOperationalFailure(context: string, error: unknown) {
+    const at = now().toISOString()
+    const message = `${context}: ${errorMessage(error)}`
+    lastError = { at, message }
+    consecutiveFailures += 1
+    console.error(`[coordinator operational error] ${message}`)
   }
 
   function goalDispatchBlocked(projectId: string, goalId: string) {

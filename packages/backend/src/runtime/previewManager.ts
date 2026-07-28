@@ -328,20 +328,22 @@ export function createPreviewManager(
     operation.session.status = 'running'
     operation.session.failureReason = null
     await persistSession(operation.session)
-    void child.exited.then(async (exitCode) => {
-      if (operation.session.status === 'stopped') return
-      operation.session.status = 'failed'
-      operation.session.surfaces = []
-      operation.session.processId = null
-      operation.session.error = `Preview adapter exited unexpectedly with code ${exitCode}`
-      operation.session.endedAt = now().toISOString()
-      await settlePreviewLogs(operation)
-      operation.session.failureReason = 'startup_failed'
-      await persistSession(operation.session)
-      await emitEvent(operation.session, 'startup_failed', operation.session.error, {
-        kind: 'lifecycle',
+    void child.exited
+      .then(async (exitCode) => {
+        if (operation.session.status === 'stopped') return
+        operation.session.status = 'failed'
+        operation.session.surfaces = []
+        operation.session.processId = null
+        operation.session.error = `Preview adapter exited unexpectedly with code ${exitCode}`
+        operation.session.endedAt = now().toISOString()
+        await settlePreviewLogs(operation)
+        operation.session.failureReason = 'startup_failed'
+        await persistSession(operation.session)
+        await emitEvent(operation.session, 'startup_failed', operation.session.error, {
+          kind: 'lifecycle',
+        })
       })
-    })
+      .catch((error) => console.error('[preview lifecycle error]', error))
     return { kind: 'started', session: operation.session }
   }
 

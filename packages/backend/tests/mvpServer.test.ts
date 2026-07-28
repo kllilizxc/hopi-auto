@@ -48,6 +48,36 @@ afterEach(async () => {
 })
 
 describe('MVP server', () => {
+  test('serves lightweight process and Coordinator health without projecting Project state', async () => {
+    const server = createServer({
+      rootDir: join(temporaryRoot, 'home'),
+      port: 0,
+      instanceId: 'instance-test',
+      startCoordinator: false,
+    })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+    let health: Record<string, unknown> = {}
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      health = await request(base, '/api/health')
+      if (health.status === 'ok') break
+      await Bun.sleep(5)
+    }
+
+    expect(health).toMatchObject({
+      status: 'ok',
+      pid: process.pid,
+      instanceId: 'instance-test',
+      startedAt: expect.any(String),
+      runtimeError: null,
+      coordinator: {
+        status: 'stopped',
+        consecutiveFailures: 0,
+      },
+    })
+  })
+
   test('derives every public active-Run projection from durable Attempt manifests', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))

@@ -38,6 +38,8 @@ kernel has one ordering rule instead of a registry of operation-specific protoco
 The deployment runs one Coordinator:
 
 - It holds one advisory OS instance lock under Assistant home for its lifetime.
+- It records diagnostic owner identity beside that lock; the owner record grants no authority and a
+  stale record cannot keep a lock alive.
 - One global in-memory mutex serializes every publication and every canonical control snapshot.
 - Model calls, tests, Runs, and task-worktree edits occur outside the mutex.
 - Responsibility passes and subprocesses never write canonical control documents directly.

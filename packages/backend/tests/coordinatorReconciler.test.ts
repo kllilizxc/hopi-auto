@@ -35,6 +35,56 @@ afterEach(async () => {
 })
 
 describe('CoordinatorReconciler', () => {
+  test('contains a detached reconciliation failure and recovers with backoff', async () => {
+    const fixture = await workspaceFixture()
+    let reads = 0
+    let releaseRetry: (() => void) | undefined
+    const retryGate = new Promise<void>((resolve) => {
+      releaseRetry = resolve
+    })
+    const workspace = new Proxy(fixture.workspace, {
+      get(target, property, receiver) {
+        if (property !== 'readWorkspaceForControl') return Reflect.get(target, property, receiver)
+        return async () => {
+          reads += 1
+          if (reads === 1) throw new Error('transient control snapshot failure')
+          await retryGate
+          return target.readWorkspaceForControl()
+        }
+      },
+    })
+    const coordinator = createCoordinatorReconciler({
+      workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
+      attentions: fixture.attentions,
+      projects: [],
+      reconcileRetryBaseMs: 100,
+      reconcileRetryMaxMs: 100,
+    })
+
+    coordinator.start()
+    await waitUntil(() => coordinator.health().status === 'degraded')
+    expect(coordinator.health()).toMatchObject({
+      status: 'degraded',
+      consecutiveFailures: 1,
+      lastError: {
+        message: 'Coordinator reconciliation failed: transient control snapshot failure',
+      },
+      retryAt: expect.any(String),
+    })
+
+    releaseRetry?.()
+    await waitUntil(() => coordinator.health().lastTickSucceededAt !== null)
+    expect(coordinator.health()).toMatchObject({
+      status: 'ok',
+      consecutiveFailures: 0,
+      lastError: {
+        message: 'Coordinator reconciliation failed: transient control snapshot failure',
+      },
+    })
+    await coordinator.stop()
+  })
+
   test('accepts multiple messages while processing Assistant turns in FIFO order', async () => {
     const fixture = await workspaceFixture()
     await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'First.' })

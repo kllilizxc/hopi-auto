@@ -629,7 +629,11 @@ async function executeProcessWithTempDir(
     child.stdin.end()
   }
   await observer?.onHeartbeat?.()
-  const heartbeat = setInterval(() => void observer?.onHeartbeat?.(), heartbeatMs)
+  const heartbeat = setInterval(() => {
+    void Promise.resolve(observer?.onHeartbeat?.()).catch((error) =>
+      console.error('[role heartbeat error]', error),
+    )
+  }, heartbeatMs)
   const stderr = new BoundedLineTail()
   let observedSessionId = session?.sessionId ?? null
   let sessionInvalid = false
