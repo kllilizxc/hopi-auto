@@ -161,16 +161,9 @@ try {
   await waitForValue(
     async () => {
       const state = await requestJson<LiveState>(harness?.baseUrl ?? '', '/api/state')
-      const goal = state.projects
-        .find((project) => project.projectId === PROJECT_ID)
-        ?.goals.find((candidate) => candidate.id === goalId)
-      const unexpected = state.attentions.find(
-        (attention) =>
-          typeof attention.target === 'string' &&
-          attention.resolvedAt === null &&
-          typeof attention.notifiedAt === 'string',
-      )
-      if (unexpected) throw new Error(`Unexpected operator Attention: ${unexpected.id}`)
+      const project = state.projects.find((candidate) => candidate.projectId === PROJECT_ID)
+      const goal = project?.goals.find((candidate) => candidate.id === goalId)
+      if (project?.needsYouCount) throw new Error('Unexpected operator Attention')
       return { goal, activeRuns: state.activeRuns }
     },
     (value) => value.goal?.lifecycle === 'done' && value.activeRuns.length === 0,

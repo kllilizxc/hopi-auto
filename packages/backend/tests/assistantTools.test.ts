@@ -13,7 +13,6 @@ import {
   isEngineeringWork,
   isPlanningWork,
   parseWorkDocument,
-  renderAttentionDocument,
   renderEvidenceDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
@@ -555,7 +554,7 @@ describe('Assistant HOPI tools', () => {
     ])
   })
 
-  test('rejects direct admission for inactive Goals and ignores legacy Repo subsets', async () => {
+  test('rejects direct admission for inactive Goals and unknown Repo subsets', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Improve it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
@@ -580,61 +579,14 @@ describe('Assistant HOPI tools', () => {
     await fixture.goalStore.createGoal({ goalId: 'G-2', title: 'Goal 2', objective: 'Improve it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-2')
     await fixture.workspace.receiveEvent({ eventId: 'EV-repo', content: 'Use another Repo.' })
-    await fixture.tools.executeForEvent('EV-repo', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-2',
-      work: { ...baseWork, repos: ['missing-repo'] },
-    })
-    const packageState = await fixture.goalStore.readPackage('G-2')
-    expect(packageState.inputs).toHaveLength(1)
-    expect(
-      [...packageState.works.values()].find((work) => work.attributes.kind === 'engineering')
-        ?.attributes,
-    ).not.toHaveProperty('repos')
-  })
-
-  test('atomically supersedes an obsolete completion proposal when direct Work is admitted', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Improve it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    const attentionId = 'A-old-completion'
-    await fixture.goalStore.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: fixture.goalStore.paths.attentionDocument('G-1', attentionId),
-        expectedHash: null,
-        content: renderAttentionDocument({
-          attributes: {
-            id: attentionId,
-            target: null,
-            createdAt: '2026-07-19T00:00:00Z',
-            resolvedAt: null,
-            notifiedAt: null,
-          },
-          body: '## Completion\n\nThe previous delivery appeared complete.\n',
-        }),
-      },
-    })
-    await fixture.workspace.receiveEvent({ eventId: 'EV-more', content: 'Add one more increment.' })
-
-    await fixture.tools.executeForEvent('EV-more', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: {
-        kind: 'engineering',
-        title: 'Add one more increment',
-        objective: 'Deliver the requested increment within the current Goal.',
-        acceptanceCriteria: ['The new increment works as requested.'],
-      },
-    })
-
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.attentions.get(attentionId)?.attributes.resolvedAt).not.toBeNull()
-    expect(goalPackage.attentions.get(attentionId)?.body).toContain(
-      'Superseded by a newly admitted Engineering Work.',
-    )
-    expect(goalPackage.works.has('W-add-one-more-increment')).toBe(true)
-    expect(goalPackage.inputs).toHaveLength(1)
+    await expect(
+      fixture.tools.executeForEvent('EV-repo', 'hopi_create_work', {
+        projectId: 'P-1',
+        goalId: 'G-2',
+        work: { ...baseWork, repos: ['missing-repo'] },
+      }),
+    ).rejects.toThrow('Unrecognized key')
+    expect((await fixture.goalStore.readPackage('G-2')).inputs).toHaveLength(0)
   })
 
   test('atomically adopts only selected Inbox images before initial Planning', async () => {
@@ -1930,7 +1882,7 @@ describe('Assistant HOPI tools', () => {
       projectRoot: delegatedLink.integrationRoot,
       sourceRoot: delegatedLink.integrationRoot,
       store: delegatedStore,
-      controller: createGoalController(delegatedStore, { verifyCompletion: () => false }),
+      controller: createGoalController(delegatedStore, {}),
       reconciler: {
         interruptRuns() {},
         async requestWorkRun() {
@@ -2037,7 +1989,7 @@ describe('Assistant HOPI tools', () => {
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
     await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-1')
-    const task = await createStableWorktreeManager(fixture.homeRoot).prepare({
+    const task = await createStableWorktreeManager().prepare({
       projectRoot: fixture.goalStore.paths.projectRoot,
       projectId: 'P-1',
       goalId: 'G-1',
@@ -2582,7 +2534,6 @@ describe('Assistant HOPI tools', () => {
     await Bun.write(
       join(runRoot, 'artifacts.json'),
       `${JSON.stringify({
-        version: 1,
         runId: 'R-1',
         artifacts: [],
         unavailable: [
@@ -2759,7 +2710,7 @@ async function setup(
   const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
   const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
   const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
-  const controller = createGoalController(goalStore, { verifyCompletion: () => false })
+  const controller = createGoalController(goalStore, {})
   const interruptedGoalIds: string[] = []
   const interruptedWorkTargets: Array<{ goalId: string; workId: string }> = []
   const restoredProjectIds: string[] = []

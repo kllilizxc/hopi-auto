@@ -16,12 +16,6 @@ afterEach(async () => {
 })
 
 describe('durable JSONL recovery', () => {
-  test('retains a valid record after legacy leading NUL crash padding', async () => {
-    await Bun.write(eventsPath, '{"id":1}\n\0\0\0{"id":2}\n')
-
-    expect(await readDurableJsonLines(eventsPath, parseId)).toEqual([1, 2])
-  })
-
   test('keeps rejecting NUL corruption inside a durable record', async () => {
     await Bun.write(eventsPath, '{"id":\0 1}\n')
 

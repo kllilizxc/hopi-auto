@@ -96,10 +96,6 @@ try {
   )
   const attention = initialRequest.attention
   assert.ok(attention)
-  assert.match(
-    initialRequest.event?.reply ?? '',
-    new RegExp(`<NeedsYou\\s+attentionId=["']${attention.id}["']>`),
-  )
   await recordAction(harness, 'attention_notified', {
     attentionId: attention.id,
   })

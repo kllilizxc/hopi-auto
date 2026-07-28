@@ -28,16 +28,13 @@ const directEngineeringWorkObjectSchema = z
   })
   .strict()
 
-const firstWorkSchema = z.preprocess(
-  stripLegacyWorkRepos,
-  z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('planning') }).strict(),
-    directEngineeringWorkObjectSchema
-      .omit({ dependsOn: true })
-      .extend({ kind: z.literal('engineering') })
-      .strict(),
-  ]),
-)
+const firstWorkSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('planning') }).strict(),
+  directEngineeringWorkObjectSchema
+    .omit({ dependsOn: true })
+    .extend({ kind: z.literal('engineering') })
+    .strict(),
+])
 
 export const publicAssistantToolNames = [
   'hopi_read_state',
@@ -76,22 +73,13 @@ const planningWorkSchema = z.discriminatedUnion('mode', [
     .strict(),
 ])
 
-const engineeringWorkSchema = z.preprocess(
-  stripLegacyWorkRepos,
-  directEngineeringWorkObjectSchema.extend({ kind: z.literal('engineering') }).strict(),
-)
+const engineeringWorkSchema = directEngineeringWorkObjectSchema
+  .extend({ kind: z.literal('engineering') })
+  .strict()
 
 const attentionReferenceSchema = z
   .string()
   .refine((reference) => parseAttentionReference(reference) !== null, 'Invalid Attention reference')
-
-function stripLegacyWorkRepos(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const work = value as Record<string, unknown>
-  if (work.kind !== 'engineering' || !Object.hasOwn(work, 'repos')) return value
-  const { repos: _legacyRepos, ...current } = work
-  return current
-}
 
 const goalActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pause') }).strict(),

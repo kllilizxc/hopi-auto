@@ -297,11 +297,7 @@ export function ProjectHomePage() {
                   onFocus={preloadAssistantPanel}
                   onPointerDown={preloadAssistantPanel}
                   onPointerEnter={preloadAssistantPanel}
-                  disabled={
-                    !canCreate ||
-                    createMutation.isPending ||
-                    pickerMutation.isPending
-                  }
+                  disabled={!canCreate || createMutation.isPending || pickerMutation.isPending}
                 >
                   {createMutation.isPending ? <AppSpinner size="sm" /> : <Plus />}
                   Link project
@@ -311,7 +307,6 @@ export function ProjectHomePage() {
           </section>
         </div>
       </AppScrollShadow>
-
     </>
   )
 }
@@ -547,9 +542,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       const repoId = editingRepoId ?? ''
       const path = nextRepoPath.trim()
       const plan = await planProjectRepoRebind(project.projectId, repoId, path)
-      setRebindPlanSummary(
-        [plan.summary, ...plan.warnings].filter(Boolean).join(' '),
-      )
+      setRebindPlanSummary([plan.summary, ...plan.warnings].filter(Boolean).join(' '))
       return rebindProjectRepo(project.projectId, repoId, path)
     },
     onSuccess: async () => {
@@ -901,24 +894,11 @@ interface CodingDefaultsDraft {
   reasoningEffort: CodingReasoningEffort
 }
 
-const FALLBACK_CODING_DEFAULTS: ProjectCodingDefaults = {
-  transport: 'codex',
-  model: 'gpt-5.4',
-  reasoningEffort: 'xhigh',
-}
-
-export function resolveCodingDefaults(defaults: ProjectCodingDefaults | undefined) {
-  return defaults ?? FALLBACK_CODING_DEFAULTS
-}
-
-export function codingDefaultsToDraft(
-  defaults: ProjectCodingDefaults | undefined,
-): CodingDefaultsDraft {
-  const resolved = resolveCodingDefaults(defaults)
+export function codingDefaultsToDraft(defaults: ProjectCodingDefaults): CodingDefaultsDraft {
   return {
-    transport: resolved.transport,
-    model: resolved.model ?? '',
-    reasoningEffort: resolved.transport === 'codex' ? resolved.reasoningEffort : 'xhigh',
+    transport: defaults.transport,
+    model: defaults.model ?? '',
+    reasoningEffort: defaults.transport === 'codex' ? defaults.reasoningEffort : 'xhigh',
   }
 }
 
@@ -944,12 +924,11 @@ function changeDraftTransport(
   return draft.transport === transport ? draft : { ...draft, transport, model: '' }
 }
 
-export function formatCodingDefaults(defaults: ProjectCodingDefaults | undefined) {
-  const resolved = resolveCodingDefaults(defaults)
-  const model = resolved.model ?? 'provider default'
-  return resolved.transport === 'codex'
-    ? `${model} · ${resolved.reasoningEffort}`
-    : `${resolved.transport} · ${model}`
+export function formatCodingDefaults(defaults: ProjectCodingDefaults) {
+  const model = defaults.model ?? 'provider default'
+  return defaults.transport === 'codex'
+    ? `${model} · ${defaults.reasoningEffort}`
+    : `${defaults.transport} · ${model}`
 }
 
 function assistantModelPlaceholder(transport: CodingAgentTransport) {

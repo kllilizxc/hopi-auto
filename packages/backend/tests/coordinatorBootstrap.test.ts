@@ -84,7 +84,9 @@ describe('bootstrapCoordinator', () => {
     const fixture = await setup()
     await Bun.write(
       join(fixture.projectRoot, '.hopi', 'project.yml'),
-      'version: 1\nprojectId: another\n',
+      ['projectId: another', 'primaryRepoId: primary', 'repos:', '  - repoId: primary', ''].join(
+        '\n',
+      ),
     )
 
     const first = await fixture.bootstrap()
@@ -121,7 +123,7 @@ describe('bootstrapCoordinator', () => {
 
   test('fails closed when Assistant-home truth is invalid', async () => {
     const fixture = await setup()
-    await Bun.write(fixture.home.paths.homeDocumentPath, 'version: 1\nhomeId: invalid id\n')
+    await Bun.write(fixture.home.paths.homeDocumentPath, 'homeId: invalid id\n')
 
     await expect(fixture.bootstrap()).rejects.toBeInstanceOf(CoordinatorBootError)
   })

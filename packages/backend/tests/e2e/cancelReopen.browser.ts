@@ -1,12 +1,8 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   assertAcceptedRelease,
@@ -198,24 +194,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
     !works.some((work) => work.attributes.id === REOPENED_WORK)
   ) {
     await writeWork(workRoot, REOPENED_WORK, planning.attributes.contractRevision, [])
-  } else if (
-    works.some((work) => work.attributes.id === REOPENED_WORK && work.attributes.stage === 'done')
-  ) {
-    const attentionPath = join(goalRoot, 'attention', `A-complete-${input.runId}.md`)
-    await mkdir(dirname(attentionPath), { recursive: true })
-    await Bun.write(
-      attentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: `A-complete-${input.runId}`,
-          target: null,
-          createdAt: '2026-07-14T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nReopened contract delivered.\n',
-      }),
-    )
   }
   return success('Planner published the current contract plan.')
 }

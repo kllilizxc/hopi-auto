@@ -23,8 +23,6 @@ describe('software delivery profile', () => {
     const profile = await readSoftwareDeliveryProfile()
 
     expect(profile).toMatchObject({
-      version: 1,
-      id: 'software-delivery-v1',
       concurrency: { planner: 3, generator: 5, reviewer: 3 },
     })
     expect(responsibilityFor('planning', 'plan')).toBe('planner')
@@ -57,9 +55,7 @@ describe('software delivery profile', () => {
     const path = join(temporaryRoot, 'profile.yml')
     await Bun.write(
       path,
-      `version: 1
-id: software-delivery-v1
-dispatch: []
+      `dispatch: []
 concurrency: { planner: 2, generator: 8, reviewer: 2 }
 `,
     )

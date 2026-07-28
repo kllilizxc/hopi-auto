@@ -4,7 +4,6 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 export interface CoordinatorLockOwner {
-  version: 1
   instanceId: string
   kind: 'coordinator' | 'command'
   pid: number
@@ -43,7 +42,6 @@ export async function acquireCoordinatorInstanceLock(
   }
 
   const owner: CoordinatorLockOwner = {
-    version: 1,
     instanceId: randomUUID(),
     kind: options.kind ?? 'command',
     pid: process.pid,
@@ -95,7 +93,6 @@ export async function readCoordinatorLockOwner(
     ) as Partial<CoordinatorLockOwner>
     const pid = value.pid
     if (
-      value.version !== 1 ||
       typeof value.instanceId !== 'string' ||
       !['coordinator', 'command'].includes(value.kind ?? '') ||
       !Number.isSafeInteger(pid) ||
@@ -108,7 +105,6 @@ export async function readCoordinatorLockOwner(
       return null
     }
     return {
-      version: 1,
       instanceId: value.instanceId,
       kind: value.kind as CoordinatorLockOwner['kind'],
       pid: pid as number,

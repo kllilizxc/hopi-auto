@@ -41,7 +41,7 @@ export const PREFLIGHT_STEPS: RegressionStep[] = [
   artifactStep('HOPI-E2E-012', 'contract', 'e2e:revision:012'),
   artifactStep('HOPI-E2E-016', 'contract', 'e2e:restart:016'),
   artifactStep('HOPI-E2E-020', 'browser', 'e2e:config:020'),
-  artifactStep('HOPI-E2E-030', 'contract', 'e2e:migration:030'),
+  artifactStep('HOPI-E2E-030', 'contract', 'e2e:relocation:030'),
   artifactStep('HOPI-E2E-031', 'browser', 'e2e:source:031'),
   artifactStep('HOPI-E2E-021', 'browser', 'e2e:browser:021'),
   artifactStep('HOPI-E2E-025', 'contract', 'e2e:webhook:025'),

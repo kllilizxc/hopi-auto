@@ -24,7 +24,6 @@ import type {
   PublicationWrite,
 } from '../publication/types'
 import { createGoalPackagePaths } from './goalPackagePaths'
-import { migrateLegacyGoals } from './legacyGoalMigration'
 
 export interface CreateCanonicalGoalInput {
   goalId: string
@@ -68,7 +67,6 @@ export interface GoalPackageStore {
   readPackage(goalId: string): Promise<GoalPackage>
   readReconciliationSnapshot(): Promise<ReadonlyMap<string, GoalPackage>>
   invalidateCache(): Promise<void>
-  migrateLegacyGoals(): Promise<readonly { goalId: string; kind: string }[]>
   publishGoal(
     goalId: string,
     publication: {
@@ -268,9 +266,6 @@ export function createGoalPackageStore(
     async invalidateCache() {
       alignCache(await publisher.invalidate(paths.publicationRoot))
     },
-    async migrateLegacyGoals() {
-      return migrateLegacyGoals(paths, publisher)
-    },
     async publishGoal(goalId, publication) {
       const goalRoot = `${paths.goalRoot(goalId)}/`
       for (const write of [
@@ -338,7 +333,6 @@ function initialGoalDocument(input: CreateCanonicalGoalInput): GoalDocument {
       lifecycle: 'active',
       priority: input.priority ?? 0,
       contractRevision: 1,
-      completionAttentionId: null,
     },
     body: [
       '## Objective',

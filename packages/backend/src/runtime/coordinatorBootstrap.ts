@@ -109,7 +109,6 @@ export async function recoverCoordinatorProject(
       throw new Error(`Project runtime Repo ${runtimeRepo.repoId} disagrees with its link`)
     }
   }
-  await project.store.migrateLegacyGoals()
   await validateManagedProjection(project)
 }
 

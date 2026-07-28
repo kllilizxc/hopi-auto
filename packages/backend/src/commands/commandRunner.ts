@@ -103,12 +103,7 @@ export function createCommandRunner(
               'publish project.yml before projects.yml',
               'reload the Project runtime after publication',
             ],
-      warnings:
-        changedRepoIds.length === 0
-          ? []
-          : [
-              'Obsolete managed task worktrees are not migrated automatically and remain available as recovery evidence.',
-            ],
+      warnings: [],
       changedRepoIds,
       input: normalizedInput,
       before,

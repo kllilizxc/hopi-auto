@@ -28,13 +28,5 @@
 - [`local_runtime_problem_catalog.md`](./local_runtime_problem_catalog.md): deduplicated local
   production-history problem catalog, current open records, evidence paths, code ownership, and
   downstream Project incidents for zero-context debugging.
-- [`mvp_alignment_plan.md`](./mvp_alignment_plan.md): implementation evidence and cutover checklist;
-  it is not a design authority.
 
-## Historical Reference
-
-`unified_design.md`, `agent-handoff.md`, `zero-context-continuation.md`, the Phase 1 documents,
-deep dives, and `superpowers/**` preserve pre-MVP rationale. Their references to Assistant Actions,
-decisions, planning requests, `todo.yml`, per-Run worktrees, merger, old server routes, the Vite
-runtime, or writable React workflow screens are intentionally historical. Do not use them to infer
-current state or extend the product.
+Documents outside Current Authority are background only and never define runtime behavior.

@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { assistantDecisionPromptSchema } from './assistantDecisionPrompt'
-import { parseAttentionReference } from './attentionReference'
 import { parseWorkAttentionTarget } from './attentionTarget'
 import { inboxEventReferenceSchema } from './inboxEventReference'
 import {
@@ -13,7 +12,6 @@ import { STABLE_ID_SOURCE, stableIdSchema } from './stableId'
 export const INBOX_STATUSES = ['pending', 'handled'] as const
 export const INBOX_SOURCES = ['user', 'system', 'reflection'] as const
 export const INBOX_VISIBILITIES = ['public', 'internal'] as const
-export const ROUTE_MODES = ['existing', 'create'] as const
 
 const attentionReferenceSchema = z
   .string()
@@ -40,20 +38,11 @@ export const inboxAttentionRequestSchema = z
     }
   })
 
-export const inboxRouteClaimSchema = z
-  .object({
-    projectId: stableIdSchema,
-    goalId: stableIdSchema,
-    mode: z.enum(ROUTE_MODES),
-  })
-  .strict()
-
 export const inboxContextSchema = z
   .object({
     projectId: stableIdSchema.optional(),
     goalId: stableIdSchema.optional(),
-    attentionId: stableIdSchema.optional(),
-    attentionRefs: z.array(z.union([stableIdSchema, attentionReferenceSchema])).optional(),
+    attentionRefs: z.array(attentionReferenceSchema).optional(),
     workRefs: z
       .array(
         z.string().refine((value) => parseWorkAttentionTarget(value) !== null, {
@@ -104,39 +93,25 @@ export const inboxContextSchema = z
         message: 'Inbox Work references must belong to the located Project',
       })
     }
-    if (
-      !context.projectId &&
-      context.attentionRefs?.some((reference) => !parseAttentionReference(reference))
-    ) {
-      refinement.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Workspace Inbox context requires canonical Attention references',
-      })
-    }
   })
 
 export const inboxEventAttributesSchema = z
-  .preprocess(
-    stripLegacyInboxEventFields,
-    z
-      .object({
-        id: stableIdSchema,
-        receivedAt: timestampSchema,
-        status: z.enum(INBOX_STATUSES),
-        source: z.enum(INBOX_SOURCES).default('user'),
-        visibility: z.enum(INBOX_VISIBILITIES).default('public'),
-        sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
-        attachments: z.array(z.string().min(1)),
-        context: inboxContextSchema.nullable().optional(),
-        routeClaim: inboxRouteClaimSchema.nullable().optional(),
-        attentionRequest: inboxAttentionRequestSchema.nullable().optional(),
-        handledAt: timestampSchema.nullable(),
-        reply: z.string().min(1).nullable(),
-        disposition: z.string().min(1).nullable(),
-        webhookDeliveredAt: timestampSchema.nullable().optional(),
-      })
-      .strict(),
-  )
+  .object({
+    id: stableIdSchema,
+    receivedAt: timestampSchema,
+    status: z.enum(INBOX_STATUSES),
+    source: z.enum(INBOX_SOURCES),
+    visibility: z.enum(INBOX_VISIBILITIES),
+    sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    attachments: z.array(z.string().min(1)),
+    context: inboxContextSchema.nullable().optional(),
+    attentionRequest: inboxAttentionRequestSchema.nullable().optional(),
+    handledAt: timestampSchema.nullable(),
+    reply: z.string().min(1).nullable(),
+    disposition: z.string().min(1).nullable(),
+    webhookDeliveredAt: timestampSchema.nullable().optional(),
+  })
+  .strict()
   .superRefine((event, context) => {
     if (event.source === 'user' && event.visibility !== 'public') {
       context.addIssue({
@@ -166,22 +141,18 @@ export const inboxEventAttributesSchema = z
     }
   })
 
-export const workspaceAttentionAttributesSchema = z.preprocess(
-  normalizeWorkspaceAttention,
-  z
-    .object({
-      id: stableIdSchema,
-      createdAt: timestampSchema,
-      updatedAt: timestampSchema,
-      resolvedAt: timestampSchema.nullable(),
-      refs: z.array(z.string().trim().min(1)),
-      summary: z.string().trim().min(1).max(600).optional(),
-      decisionPrompt: assistantDecisionPromptSchema.nullable().optional(),
-    })
-    .strict(),
-)
+export const workspaceAttentionAttributesSchema = z
+  .object({
+    id: stableIdSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+    resolvedAt: timestampSchema.nullable(),
+    refs: z.array(z.string().trim().min(1)),
+    summary: z.string().trim().min(1).max(600),
+    decisionPrompt: assistantDecisionPromptSchema.nullable().optional(),
+  })
+  .strict()
 
-export type InboxRouteClaim = z.infer<typeof inboxRouteClaimSchema>
 export type InboxContext = z.infer<typeof inboxContextSchema>
 export type InboxAttentionRequest = z.infer<typeof inboxAttentionRequestSchema>
 export type InboxEventAttributes = z.infer<typeof inboxEventAttributesSchema>
@@ -222,42 +193,4 @@ export async function inboxSourceDigest(content: string, attachments: readonly s
   )
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', payload))
   return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
-}
-
-function normalizeWorkspaceAttention(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const attributes = value as Record<string, unknown>
-  const createdAt = attributes.createdAt
-  const target = typeof attributes.target === 'string' ? attributes.target : null
-  const refs = Array.isArray(attributes.refs)
-    ? attributes.refs.filter((reference): reference is string => typeof reference === 'string')
-    : []
-  return {
-    id: attributes.id,
-    createdAt,
-    updatedAt: attributes.updatedAt ?? createdAt,
-    resolvedAt: attributes.resolvedAt,
-    refs: [...new Set([...(target ? [target] : []), ...refs])],
-    ...(typeof attributes.summary === 'string' ? { summary: attributes.summary } : {}),
-    ...(Object.hasOwn(attributes, 'decisionPrompt')
-      ? { decisionPrompt: attributes.decisionPrompt }
-      : {}),
-  }
-}
-
-function stripLegacyInboxEventFields(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const attributes = value as Record<string, unknown>
-  const request =
-    attributes.attentionRequest &&
-    typeof attributes.attentionRequest === 'object' &&
-    !Array.isArray(attributes.attentionRequest)
-      ? (attributes.attentionRequest as Record<string, unknown>)
-      : null
-  return {
-    ...attributes,
-    ...(request && Array.isArray(request.attentionRefs)
-      ? { attentionRequest: { attentionRefs: [...new Set(request.attentionRefs)] } }
-      : { attentionRequest: null }),
-  }
 }

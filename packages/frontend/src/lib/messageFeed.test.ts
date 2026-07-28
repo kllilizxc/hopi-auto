@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import type { AssistantFeedEntry, AttentionView, InboxEventView, RunAttemptEvent } from './apiTypes'
+import type { AssistantFeedEntry, InboxEventView, RunAttemptEvent } from './apiTypes'
 import {
-  assistantEventsToMessageFeed,
   assistantFeedEntriesToMessageFeed,
   buildMessageFeedRows,
   commandTextFromToolSummary,
@@ -12,15 +11,18 @@ import {
 
 describe('unified message feed adapters', () => {
   test('renders a submitted user message before the canonical Inbox event exists', () => {
-    const items = assistantFeedEntriesToMessageFeed([], [
-      {
-        clientId: 'client-1',
-        createdAt: '2026-07-11T08:00:00.000Z',
-        text: 'Start the next task.',
-        eventId: null,
-        attachments: [],
-      },
-    ])
+    const items = assistantFeedEntriesToMessageFeed(
+      [],
+      [
+        {
+          clientId: 'client-1',
+          createdAt: '2026-07-11T08:00:00.000Z',
+          text: 'Start the next task.',
+          eventId: null,
+          attachments: [],
+        },
+      ],
+    )
 
     expect(items).toEqual([
       expect.objectContaining({
@@ -41,57 +43,24 @@ describe('unified message feed adapters', () => {
         receivedAt: '2026-07-11T08:00:01.000Z',
         body: 'Start the next task.',
       }),
-      completion: null,
     }
-    const items = assistantFeedEntriesToMessageFeed([canonical], [
-      {
-        clientId: 'client-1',
-        createdAt: '2026-07-11T08:00:00.000Z',
-        text: 'Start the next task.',
-        eventId: 'EV-server',
-        attachments: [],
-      },
-    ])
+    const items = assistantFeedEntriesToMessageFeed(
+      [canonical],
+      [
+        {
+          clientId: 'client-1',
+          createdAt: '2026-07-11T08:00:00.000Z',
+          text: 'Start the next task.',
+          eventId: 'EV-server',
+          attachments: [],
+        },
+      ],
+    )
 
     expect(items.filter((item) => item.kind === 'user_message')).toEqual([
       expect.objectContaining({ id: 'inbox:EV-server:user', text: 'Start the next task.' }),
     ])
     expect(items.some((item) => item.id.startsWith('optimistic:'))).toBe(false)
-  })
-
-  test('moves a linked completion Attention into the stream without duplicating its reply', () => {
-    const completion = completionAttention()
-    const items = assistantEventsToMessageFeed(
-      [
-        inboxEvent({
-          source: 'reflection',
-          status: 'handled',
-          body: 'Internal completion handoff.',
-          context: { projectId: 'P-1', goalId: 'G-1', attentionId: completion.id },
-          reply: 'Goal G-1 is complete.',
-          runtimeStatus: 'completed',
-          runtimeEvents: [transcript('answer', 'assistant', 'Goal G-1 is complete.')],
-        }),
-      ],
-      [completion],
-    )
-
-    expect(items.filter((item) => item.kind === 'system_update')).toHaveLength(1)
-    expect(items.filter((item) => item.text === 'Goal G-1 is complete.')).toHaveLength(1)
-    expect(items.find((item) => item.kind === 'system_update')).toMatchObject({
-      label: 'Completed',
-      text: 'Goal G-1 is complete.',
-    })
-  })
-
-  test('adds an unlinked completion Attention as a readable system update', () => {
-    const items = assistantEventsToMessageFeed([], [completionAttention()])
-
-    expect(items).toHaveLength(1)
-    expect(items[0]).toMatchObject({
-      kind: 'system_update',
-      text: 'Completion\n\nGoal proof is sufficient.\n\n• Work W-1 is done.',
-    })
   })
 
   test('renders final Planning Evidence as the same Completed system update', () => {
@@ -120,102 +89,6 @@ describe('unified message feed adapters', () => {
         label: 'Completed',
         groupId: 'goal-completion:P-1:G-1',
       },
-    ])
-  })
-
-  test('does not collide when two Goals reuse the same local completion ID', () => {
-    const first = completionAttention()
-    const second = completionAttention({
-      projectId: 'P-1',
-      goalId: 'G-2',
-      body: '## Completion\n\nSecond Goal is complete.',
-    })
-    const items = assistantEventsToMessageFeed(
-      [
-        inboxEvent({
-          id: 'EV-1',
-          source: 'reflection',
-          status: 'handled',
-          context: {
-            projectId: 'P-1',
-            goalId: 'G-1',
-            attentionRefs: ['project:P-1/goal:G-1/attention:completion-G-1'],
-          },
-          reply: 'First Goal is complete.',
-        }),
-        inboxEvent({
-          id: 'EV-2',
-          source: 'reflection',
-          status: 'handled',
-          context: {
-            projectId: 'P-1',
-            goalId: 'G-2',
-            attentionRefs: ['project:P-1/goal:G-2/attention:completion-G-1'],
-          },
-          reply: 'Second Goal is complete.',
-        }),
-      ],
-      [first, second],
-    )
-
-    expect(items.filter((item) => item.kind === 'system_update')).toMatchObject([
-      { text: 'First Goal is complete.' },
-      { text: 'Second Goal is complete.' },
-    ])
-  })
-
-  test('links one completion only to its handled Reflection reply, not a later user turn', () => {
-    const completion = completionAttention()
-    const reference = 'project:P-1/goal:G-1/attention:completion-G-1'
-    const items = assistantEventsToMessageFeed(
-      [
-        inboxEvent({
-          id: 'EV-reflection',
-          source: 'reflection',
-          status: 'handled',
-          context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
-          reply: 'The Goal is complete.',
-        }),
-        inboxEvent({
-          id: 'EV-user',
-          status: 'handled',
-          context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
-          body: 'Thanks.',
-          reply: 'You are welcome.',
-        }),
-      ],
-      [completion],
-    )
-
-    expect(items.filter((item) => item.kind === 'system_update')).toMatchObject([
-      { text: 'The Goal is complete.' },
-    ])
-    expect(items).toContainEqual(expect.objectContaining({ kind: 'user_message', text: 'Thanks.' }))
-    expect(items).toContainEqual(
-      expect.objectContaining({ kind: 'assistant_message', text: 'You are welcome.' }),
-    )
-  })
-
-  test('renders independently paged Assistant entries without cross-page completion lookup', () => {
-    const completion = completionAttention()
-    const event = inboxEvent({
-      source: 'reflection',
-      context: { projectId: 'P-1', goalId: 'G-1', attentionId: completion.id },
-      reply: 'Goal G-1 is complete.',
-      runtimeStatus: 'completed',
-    })
-    const entries: AssistantFeedEntry[] = [
-      {
-        kind: 'event',
-        id: `event:${event.id}`,
-        occurredAt: event.receivedAt,
-        event,
-        completion,
-      },
-    ]
-
-    expect(assistantFeedEntriesToMessageFeed(entries)).toMatchObject([
-      { kind: 'system_update', label: 'Completed', text: 'Goal G-1 is complete.' },
     ])
   })
 
@@ -268,7 +141,6 @@ describe('unified message feed adapters', () => {
         id: `event:${event.id}`,
         occurredAt: event.receivedAt,
         event,
-        completion: null,
       },
     ]
 
@@ -301,7 +173,6 @@ describe('unified message feed adapters', () => {
         id: `event:${event.id}`,
         occurredAt: event.receivedAt,
         event,
-        completion: null,
       },
     ])
 
@@ -335,7 +206,6 @@ describe('unified message feed adapters', () => {
         id: `event:${event.id}`,
         occurredAt: event.receivedAt,
         event,
-        completion: null,
       },
     ])
 
@@ -350,7 +220,7 @@ describe('unified message feed adapters', () => {
       runtimeStatus: 'failed',
       runtimeError: error,
       runtimeEvents: [
-        transcript('legacy-system', 'status', 'system', {
+        transcript('plain-system', 'status', 'system', {
           transport: 'claude',
           vendorEventType: 'system',
         }),
@@ -366,7 +236,7 @@ describe('unified message feed adapters', () => {
           transport: 'claude',
           vendorEventType: 'result.api_error',
         }),
-        transcript('legacy-success', 'status', 'success', {
+        transcript('plain-success', 'status', 'success', {
           transport: 'claude',
           vendorEventType: 'result',
         }),
@@ -387,7 +257,6 @@ describe('unified message feed adapters', () => {
         id: `event:${event.id}`,
         occurredAt: event.receivedAt,
         event,
-        completion: null,
       },
     ])
 
@@ -397,9 +266,7 @@ describe('unified message feed adapters', () => {
     expect(items.map((item) => item.text)).not.toContain('system')
     expect(items.map((item) => item.text)).not.toContain('success')
     expect(items.map((item) => item.text)).not.toContain('Working')
-    expect(items.map((item) => item.text)).not.toContain(
-      'Provider retry · 10/10 · 429 rate_limit',
-    )
+    expect(items.map((item) => item.text)).not.toContain('Provider retry · 10/10 · 429 rate_limit')
   })
 
   test('keeps internal page context out of the visible user message', () => {
@@ -417,27 +284,30 @@ describe('unified message feed adapters', () => {
   })
 
   test('keeps one final assistant message and pairs tool calls with their results', () => {
-    const items = assistantEventsToMessageFeed(
-      [
-        inboxEvent({
-        reply: 'Implemented the change.',
-        runtimeStatus: 'completed',
-        runtimeEvents: [
-          transcript('progress', 'assistant', 'I am inspecting the tool schema.'),
-          transcript('tool-start', 'tool_call', 'Tool call: command (bun test)', {
-            toolName: 'command',
-            toolInvocationKey: 'call-1',
-          }),
-          transcript('tool-end', 'tool_result', '4 pass, 0 fail', {
-            toolName: 'command',
-            toolInvocationKey: 'call-1',
-          }),
-          transcript('answer', 'assistant', 'Implemented the change.'),
-        ],
+    const event = inboxEvent({
+      reply: 'Implemented the change.',
+      runtimeStatus: 'completed',
+      runtimeEvents: [
+        transcript('progress', 'assistant', 'I am inspecting the tool schema.'),
+        transcript('tool-start', 'tool_call', 'Tool call: command (bun test)', {
+          toolName: 'command',
+          toolInvocationKey: 'call-1',
         }),
+        transcript('tool-end', 'tool_result', '4 pass, 0 fail', {
+          toolName: 'command',
+          toolInvocationKey: 'call-1',
+        }),
+        transcript('answer', 'assistant', 'Implemented the change.'),
       ],
-      [],
-    )
+    })
+    const items = assistantFeedEntriesToMessageFeed([
+      {
+        kind: 'event',
+        id: `event:${event.id}`,
+        occurredAt: event.receivedAt,
+        event,
+      },
+    ])
 
     expect(items.map((item) => item.kind)).toEqual([
       'user_message',
@@ -555,7 +425,7 @@ describe('unified message feed adapters', () => {
     expect(items).toEqual([])
   })
 
-  test('keeps legacy content-free provider progress out of conversational Activity rows', () => {
+  test('keeps content-free provider progress out of conversational Activity rows', () => {
     const items = runEventsToMessageFeed(
       [
         transcript('task-progress', 'status', 'task progress', {
@@ -633,25 +503,9 @@ function inboxEvent(overrides: Partial<InboxEventView> = {}): InboxEventView {
     reply: null,
     disposition: null,
     context: { projectId: 'P-1', goalId: 'G-1' },
-    routeClaim: null,
     runtimeStatus: 'queued',
     runtimeEvents: [],
     runtimeError: null,
-    ...overrides,
-  }
-}
-
-function completionAttention(overrides: Partial<AttentionView> = {}): AttentionView {
-  return {
-    scope: 'goal',
-    id: 'completion-G-1',
-    target: null,
-    createdAt: '2026-07-11T08:00:00.000Z',
-    resolvedAt: '2026-07-11T08:01:00.000Z',
-    notifiedAt: '2026-07-11T08:01:00.000Z',
-    body: '## Completion\n\nGoal proof is sufficient.\n\n- Work W-1 is done.',
-    projectId: 'P-1',
-    goalId: 'G-1',
     ...overrides,
   }
 }

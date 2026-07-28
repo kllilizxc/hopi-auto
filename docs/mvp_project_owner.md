@@ -3,9 +3,7 @@
 Status: authoritative MVP design
 Last updated: 2026-07-28
 
-This document owns the Project Assistant, wake-up, Attention, and operator-notification model. It
-supersedes conflicting Reflection, Attention-target, notification-ownership, and Assistant-policy
-sections in older MVP documents.
+This document owns the Project Assistant, wake-up, Attention, and operator-notification model.
 
 ## Mental Model
 
@@ -81,7 +79,7 @@ not a Reflection role, handoff target, or second product identity.
 
 Native fork is a transport capability. HOPI does not approximate it by rebuilding a fresh prompt or
 copying a transcript. A configured transport that cannot fork reports that capability failure
-directly. A Project with no compatible speaking session cannot run a supervision fork until a
+directly. A Project with no matching speaking session cannot run a supervision fork until a
 speaking turn establishes one.
 
 The Assistant has the Project's configured execution access. A provider transport may still enforce
@@ -274,8 +272,8 @@ directly from Attention; the detailed `body` remains available behind disclosure
 - resolving every referenced Attention removes the request presentation
 - retransferring an Attention makes the newest public request its current presentation
 
-Legacy `<NeedsYou>` blocks remain readable as request references. New requests use the transfer tool;
-neither transfer nor a choice submission changes Work readiness or resolves Attention by itself.
+Requests use the transfer tool; neither transfer nor a choice submission changes Work readiness or
+resolves Attention by itself.
 
 The Assistant's ordinary final text is still a durable public receipt, but it is not the source of
 Needs You wording. Optional external delivery mirrors an already persisted public message and never

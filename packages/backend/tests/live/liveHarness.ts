@@ -38,6 +38,7 @@ export interface LiveState {
   }
   projects: Array<{
     projectId: string
+    needsYouCount: number
     repos: Array<{ repoId: string; integrationRoot: string; primary: boolean }>
     goals: Array<{ id: string; title: string; lifecycle: string }>
   }>
@@ -48,7 +49,6 @@ export interface LiveState {
     resolvedAt: string | null
     updatedAt?: string
     refs?: string[]
-    notifiedAt?: string | null
     projectId?: string
     goalId?: string
   }>
@@ -74,7 +74,6 @@ export interface LiveGoalDetail {
     resolvedAt: string | null
     updatedAt?: string
     refs?: string[]
-    notifiedAt?: string | null
   }>
 }
 
@@ -2204,27 +2203,22 @@ export async function countLogicalRuns(
   ).scan({ cwd: homeRoot, onlyFiles: true, dot: true })) {
     if (await Bun.file(join(homeRoot, path)).exists()) logicalRuns.reflection += 1
   }
-  for (const pattern of [
-    '.hopi/runtime/runs/*/attempt.json',
-    '.hopi/runtime/runs/*/*/*/*/attempt.json',
-  ]) {
-    for await (const path of new Bun.Glob(pattern).scan({
-      cwd: homeRoot,
-      onlyFiles: true,
-      dot: true,
-    })) {
-      const manifest = await readLogicalRunManifest<{ responsibility?: string }>(
-        join(homeRoot, path),
-        options.tolerateUnreadable,
-      )
-      if (!manifest) continue
-      if (
-        manifest.responsibility === 'planner' ||
-        manifest.responsibility === 'generator' ||
-        manifest.responsibility === 'reviewer'
-      ) {
-        logicalRuns[manifest.responsibility] += 1
-      }
+  for await (const path of new Bun.Glob('.hopi/runtime/runs/*/attempt.json').scan({
+    cwd: homeRoot,
+    onlyFiles: true,
+    dot: true,
+  })) {
+    const manifest = await readLogicalRunManifest<{ responsibility?: string }>(
+      join(homeRoot, path),
+      options.tolerateUnreadable,
+    )
+    if (!manifest) continue
+    if (
+      manifest.responsibility === 'planner' ||
+      manifest.responsibility === 'generator' ||
+      manifest.responsibility === 'reviewer'
+    ) {
+      logicalRuns[manifest.responsibility] += 1
     }
   }
 

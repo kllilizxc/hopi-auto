@@ -33,27 +33,22 @@ type WakeScope = z.infer<typeof wakeScopeSchema>
 
 const wakeCursorSchema = z
   .object({
-    version: z.literal(4),
     scope: wakeScopeSchema,
     stateDigest: z.string().regex(/^[a-f0-9]{64}$/),
     eventId: z.string().min(1).nullable(),
     attentionRevisionDigest: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
-      .nullable()
-      .default(null),
+      .nullable(),
     updatedAt: z.string().datetime({ offset: true }),
   })
   .strict()
 
-const ASSISTANT_WAKE_PROTOCOL_REVISION = 4
-
 const reflectionManifestSchema = z
   .object({
-    version: z.literal(1),
     reflectionId: z.string().min(1),
     stateDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    scope: wakeScopeSchema.optional(),
+    scope: wakeScopeSchema,
     status: z.enum(['running', 'completed', 'interrupted', 'failed']),
     startedAt: z.string().datetime({ offset: true }),
     endedAt: z.string().datetime({ offset: true }).nullable(),
@@ -74,11 +69,7 @@ export interface ReflectionRunDetail extends ReflectionRunSummary {
   events: ReflectionRuntimeEvent[]
 }
 
-/**
- * Compatibility name for the old debug API. This is a deterministic wake recorder; it never runs
- * another model or owns a second Assistant context.
- */
-export interface AssistantReflection {
+export interface AssistantWake {
   observe(input: ReflectionObservation): Promise<ReflectionObserveResult>
   acknowledgeProjects(projectIds: readonly string[]): Promise<void>
   isActive(): boolean
@@ -96,7 +87,7 @@ export function createAssistantWake(options: {
   canWake?(scope: WakeScope): boolean | Promise<boolean>
   now?: () => Date
   onWake?(): void
-}): AssistantReflection {
+}): AssistantWake {
   const now = options.now ?? (() => new Date())
   const root = join(resolve(options.homeRoot), '.hopi', 'runtime', 'assistant', 'wakes')
   const cursorsRoot = join(root, 'cursors')
@@ -185,7 +176,6 @@ export function createAssistantWake(options: {
         if (!cursor) {
           if (!immediate) {
             await writeCursor(cursorPath(cursorsRoot, candidate.scopeKey), {
-              version: 4,
               scope: candidate.scope,
               stateDigest: candidate.snapshot.stateDigest,
               eventId: null,
@@ -248,7 +238,6 @@ export function createAssistantWake(options: {
         const path = cursorPath(cursorsRoot, scopeKey)
         const cursor = await readCursor(path)
         await writeCursor(path, {
-          version: 4,
           scope: candidate.scope,
           stateDigest: candidate.snapshot.stateDigest,
           eventId: cursor?.eventId ?? null,
@@ -307,9 +296,7 @@ export function createAssistantWake(options: {
     const eventId =
       continuation?.eventId ??
       `EV-wake-${(
-        await sha256(
-          `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${JSON.stringify(assistantMaterialWakeKeys(snapshot))}`,
-        )
+        await sha256(`${scopeKey}\u0000${JSON.stringify(assistantMaterialWakeKeys(snapshot))}`)
       ).slice(0, 24)}`
     const previousCursor = await readCursor(cursorPath(cursorsRoot, scopeKey))
     const attentionRevisionDigest =
@@ -317,7 +304,6 @@ export function createAssistantWake(options: {
     const existing = await options.workspace.readEvent(eventId)
     if (existing) {
       await writeCursor(cursorPath(cursorsRoot, scopeKey), {
-        version: 4,
         scope,
         stateDigest: snapshot.stateDigest,
         eventId,
@@ -334,7 +320,6 @@ export function createAssistantWake(options: {
     const eventsPath = join(runRoot, 'events.jsonl')
     const startedAt = now()
     const baseManifest: ReflectionManifest = {
-      version: 1,
       reflectionId: wakeId,
       stateDigest: snapshot.stateDigest,
       scope,
@@ -382,7 +367,6 @@ export function createAssistantWake(options: {
         receivedAt: startedAt,
       })
       await writeCursor(cursorPath(cursorsRoot, scopeKey), {
-        version: 4,
         scope,
         stateDigest: snapshot.stateDigest,
         eventId,
@@ -413,9 +397,6 @@ export function createAssistantWake(options: {
     }
   }
 }
-
-// Keep the old factory import working while runtime and debug clients migrate terminology.
-export const createAssistantReflection = createAssistantWake
 
 function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
   const projects = new Map<string, unknown>()
@@ -579,9 +560,7 @@ async function attentionContinuationDigest(
   scopeKey: string,
   attentionRevisions: readonly string[],
 ) {
-  return sha256(
-    `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${attentionRevisions.join('\u0000')}`,
-  )
+  return sha256(`${scopeKey}\u0000${attentionRevisions.join('\u0000')}`)
 }
 
 async function workspaceAttentionRevisionDigest(workspace: AssistantWorkspace, scopeKey: string) {
@@ -704,8 +683,7 @@ function cursorPath(root: string, scopeKey: string) {
 async function readCursor(path: string) {
   const file = Bun.file(path)
   if (!(await file.exists())) return null
-  const parsed = wakeCursorSchema.safeParse(await file.json().catch(() => null))
-  return parsed.success ? parsed.data : null
+  return wakeCursorSchema.parse(await file.json())
 }
 
 async function writeCursor(path: string, cursor: z.infer<typeof wakeCursorSchema>) {
@@ -736,16 +714,16 @@ async function readWakeRunSummaries(root: string) {
   const runs = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory())
-      .map(async (entry): Promise<ReflectionRunSummary | null> => {
+      .map(async (entry): Promise<ReflectionRunSummary> => {
         const runRoot = join(root, entry.name)
-        const manifest = reflectionManifestSchema.safeParse(
-          await Bun.file(join(runRoot, 'reflection.json'))
-            .json()
-            .catch(() => null),
+        const manifest = reflectionManifestSchema.parse(
+          await Bun.file(join(runRoot, 'reflection.json')).json(),
         )
-        if (!manifest.success || manifest.data.reflectionId !== entry.name) return null
+        if (manifest.reflectionId !== entry.name) {
+          throw new Error(`Reflection identity mismatch: ${entry.name}`)
+        }
         return {
-          manifest: manifest.data,
+          manifest,
           paths: {
             prompt: join(runRoot, 'prompt.md'),
             transcript: join(runRoot, 'transcript.log'),
@@ -754,24 +732,22 @@ async function readWakeRunSummaries(root: string) {
         }
       }),
   )
-  return runs
-    .filter((run): run is ReflectionRunSummary => run !== null)
-    .sort(
-      (left, right) =>
-        right.manifest.startedAt.localeCompare(left.manifest.startedAt) ||
-        right.manifest.reflectionId.localeCompare(left.manifest.reflectionId),
-    )
+  return runs.sort(
+    (left, right) =>
+      right.manifest.startedAt.localeCompare(left.manifest.startedAt) ||
+      right.manifest.reflectionId.localeCompare(left.manifest.reflectionId),
+  )
 }
 
 async function readWakeRunEvents(root: string, wakeId: string) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(wakeId)) return null
   const runRoot = join(root, wakeId)
-  const manifest = reflectionManifestSchema.safeParse(
-    await Bun.file(join(runRoot, 'reflection.json'))
-      .json()
-      .catch(() => null),
-  )
-  if (!manifest.success || manifest.data.reflectionId !== wakeId) return null
+  const file = Bun.file(join(runRoot, 'reflection.json'))
+  if (!(await file.exists())) return null
+  const manifest = reflectionManifestSchema.parse(await file.json())
+  if (manifest.reflectionId !== wakeId) {
+    throw new Error(`Reflection identity mismatch: ${wakeId}`)
+  }
   return readWakeEvents(join(runRoot, 'events.jsonl'))
 }
 

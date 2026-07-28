@@ -22,7 +22,6 @@ describe('canonical Markdown documents', () => {
         lifecycle: 'active',
         priority: 10,
         contractRevision: 1,
-        completionAttentionId: null,
       },
       body: '## Objective\n\nShip the documented MVP.\n',
     })
@@ -41,7 +40,7 @@ describe('canonical Markdown documents', () => {
     })
 
     expect(parseGoalDocument(goalSource)).toMatchObject({
-      attributes: { id: 'G-1', lifecycle: 'active', completionAttentionId: null },
+      attributes: { id: 'G-1', lifecycle: 'active' },
       body: '## Objective\n\nShip the documented MVP.\n',
     })
     expect(parseWorkDocument(workSource)).toMatchObject({
@@ -69,7 +68,7 @@ describe('canonical Markdown documents', () => {
           target: 'project:P-1/goal:G-1/work:W-1',
           createdAt: '2026-07-11T00:00:00Z',
           resolvedAt: null,
-          notifiedAt: null,
+          summary: 'Choose the storage format.',
         },
         body: '## Needs you\n\nChoose the storage format.\n',
       }),
@@ -94,55 +93,7 @@ describe('canonical Markdown documents', () => {
     expect(evidence.attributes.producerRun).toContain('/run:R-1')
   })
 
-  test('accepts but removes obsolete Work and Attention fields', () => {
-    const work = parseWorkDocument(`---
-id: W-legacy
-title: Build across the Project
-kind: engineering
-stage: generate
-repos: [frontend]
-notBefore: null
-dependsOn: []
-contractRevision: 1
-evidenceRefs: []
-attempts: 0
----
-All Project Repos are available.
-`)
-    const attention = parseAttentionDocument(`---
-id: A-legacy
-target: project:P-1/goal:G-1/work:W-legacy
-createdAt: 2026-07-11T00:00:00Z
-resolvedAt: null
-notifiedAt: null
-operatorRequest: null
-retryRunId: R-legacy
----
-Legacy retry state is represented by Attempt history now.
-`)
-
-    expect(work.attributes).not.toHaveProperty('repos')
-    expect(work.attributes).not.toHaveProperty('attempts')
-    expect(renderWorkDocument(work)).not.toContain('repos:')
-    expect(renderWorkDocument(work)).not.toContain('attempts:')
-    expect(attention.attributes).not.toHaveProperty('retryRunId')
-    expect(renderAttentionDocument(attention)).not.toContain('retryRunId:')
-  })
-
-  test('rejects illegal discriminators and duplicated control references', () => {
-    expect(() =>
-      parseGoalDocument(`---
-id: G-1
-title: Goal
-lifecycle: active
-priority: 0
-contractRevision: 1
-completionAttentionId: A-1
----
-Body
-`),
-    ).toThrow('completionAttentionId')
-
+  test('rejects illegal Work discriminators and duplicated control references', () => {
     expect(() =>
       parseWorkDocument(`---
 id: W-1
@@ -153,7 +104,6 @@ notBefore: null
 dependsOn: []
 contractRevision: 1
 evidenceRefs: []
-attempts: 0
 ---
 Body
 `),
@@ -169,7 +119,6 @@ notBefore: null
 dependsOn: [W-0, W-0]
 contractRevision: 1
 evidenceRefs: []
-attempts: 0
 ---
 Body
 `),

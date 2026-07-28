@@ -31,7 +31,7 @@ import type {
   RunAttemptStore,
   RunAttemptSummary,
 } from '../runtime/runAttemptStore'
-import { legacyRunStoragePath, runStoragePath } from '../runtime/runPaths'
+import { runStoragePath } from '../runtime/runPaths'
 import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
 import { inspectSourceMerge } from '../runtime/sourceMergePreflight'
 import { createStableWorktreeManager } from '../runtime/stableWorktreeManager'
@@ -170,7 +170,7 @@ export function createAssistantStateReader(options: {
   const homeRoot = resolve(options.homeRoot)
   const now = options.now ?? (() => new Date())
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_ATTEMPT_STALE_AFTER_MS
-  const worktrees = createStableWorktreeManager(homeRoot)
+  const worktrees = createStableWorktreeManager()
   let reflectionCache: { token: string; snapshot: AssistantStateSnapshot } | null = null
 
   const read = async (input: AssistantStateReadInput = {}) => {
@@ -280,11 +280,7 @@ export function createAssistantStateReader(options: {
               const attentionWorkIds = new Set(
                 [...goalPackage.attentions.values()]
                   .filter((attention) => attention.attributes.resolvedAt === null)
-                  .map((attention) =>
-                    attention.attributes.target === null
-                      ? null
-                      : parseWorkAttentionTarget(attention.attributes.target),
-                  )
+                  .map((attention) => parseWorkAttentionTarget(attention.attributes.target))
                   .filter((target): target is NonNullable<typeof target> => target !== null)
                   .map((target) => target.workId),
               )
@@ -693,15 +689,7 @@ async function readWorkRuntime(input: {
 }) {
   const attempts = input.attemptSnapshot.list(input.projectId, input.goalId, input.workId)
   const latest = attempts[0] ?? null
-  const runRoot = latest
-    ? await existingRunRoot(
-        input.homeRoot,
-        input.projectId,
-        input.goalId,
-        input.workId,
-        latest.runId,
-      )
-    : null
+  const runRoot = latest ? await existingRunRoot(input.homeRoot, latest.runId) : null
   const paths = runRoot ? await existingRunPaths(runRoot) : {}
   const runningEvents =
     latest?.status === 'running'
@@ -780,13 +768,7 @@ async function readArtifactPreservation(input: {
   workId: string
   runId: string
 }) {
-  const runRoot = await existingRunRoot(
-    input.homeRoot,
-    input.projectId,
-    input.goalId,
-    input.workId,
-    input.runId,
-  )
+  const runRoot = await existingRunRoot(input.homeRoot, input.runId)
   if (!runRoot) return null
   const path = join(runRoot, 'artifacts.json')
   const file = Bun.file(path)
@@ -809,17 +791,9 @@ async function readArtifactPreservation(input: {
   }
 }
 
-async function existingRunRoot(
-  homeRoot: string,
-  projectId: string,
-  goalId: string,
-  workId: string,
-  runId: string,
-) {
-  const flat = runStoragePath(homeRoot, runId)
-  if (await pathExists(flat)) return flat
-  const legacy = legacyRunStoragePath(homeRoot, projectId, goalId, workId, runId)
-  return (await pathExists(legacy)) ? legacy : null
+async function existingRunRoot(homeRoot: string, runId: string) {
+  const root = runStoragePath(homeRoot, runId)
+  return (await pathExists(root)) ? root : null
 }
 
 async function readCandidateIntegration(input: {

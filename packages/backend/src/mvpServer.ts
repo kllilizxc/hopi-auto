@@ -14,7 +14,6 @@ import {
   assistantConversationScopeKey,
   assistantEventBelongsToScope,
 } from './assistant/assistantConversationScope'
-import { needsYouAttentionIds } from './assistant/assistantNeedsYou'
 import { AssistantToolRequestError } from './assistant/assistantToolRequestError'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
@@ -50,10 +49,7 @@ import { CursorPageError, type CursorPageRequest, paginateItems } from './presen
 import indexPage from './product.html'
 import { acquireCoordinatorInstanceLock } from './publication/instanceLock'
 import type { PublicationCoordinator } from './publication/publisher'
-import {
-  defaultAssistantHomeRoot,
-  migrateRepositoryAssistantHome,
-} from './runtime/assistantHomeMigration'
+import { defaultAssistantHomeRoot } from './runtime/assistantHomeRoot'
 import {
   type AttentionTransport,
   createWebhookAttentionTransport,
@@ -173,7 +169,6 @@ const inboxSchema = z
       .object({
         projectId: z.string().min(1).optional(),
         goalId: z.string().min(1).optional(),
-        attentionId: z.string().min(1).optional(),
         attentionRefs: z
           .array(z.string().refine((value) => Boolean(parseAttentionReference(value))))
           .optional(),
@@ -1059,16 +1054,11 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
       const goalAttentionCount = [...goalPackage.attentions.values()].filter(
-        (attention) =>
-          attention.attributes.target !== null && attention.attributes.resolvedAt === null,
+        (attention) => attention.attributes.resolvedAt === null,
       ).length
       const openAttentionCount = goalAttentionCount + relatedProjectAttentions.length
       goalOpenAttentionCount += goalAttentionCount
       const completion = goalCompletionProjection(project.projectId, goalId, goalPackage)
-      const legacyCompletionId = goalPackage.goal.attributes.completionAttentionId
-      const legacyCompletion = legacyCompletionId
-        ? goalPackage.attentions.get(legacyCompletionId)
-        : null
       goals.push({
         id: goalId,
         title: goalPackage.goal.attributes.title,
@@ -1079,12 +1069,7 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
         openAttentionCount,
         completion: completion
           ? { id: completion.evidenceId, completedAt: completion.completedAt }
-          : legacyCompletion
-            ? {
-                id: legacyCompletion.attributes.id,
-                completedAt: legacyCompletion.attributes.createdAt,
-              }
-            : null,
+          : null,
       })
       const presentedGoalAttentions = presentGoalAttentions(project.projectId, goalId, goalPackage)
       if (includeAttentions) {
@@ -1137,16 +1122,9 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
 }
 
 function presentGoalAttentions(projectId: string, goalId: string, goalPackage: GoalPackage) {
-  return [...goalPackage.attentions.values()].flatMap((attention) => {
-    if (
-      attention.attributes.target === null &&
-      (goalPackage.goal.attributes.lifecycle !== 'done' ||
-        goalPackage.goal.attributes.completionAttentionId !== attention.attributes.id)
-    ) {
-      return []
-    }
-    return [presentGoalAttention(attention, projectId, goalId)]
-  })
+  return [...goalPackage.attentions.values()].map((attention) =>
+    presentGoalAttention(attention, projectId, goalId),
+  )
 }
 
 function goalCreatedAt(goalPackage: GoalPackage, events: ReadonlyMap<string, InboxEventDocument>) {
@@ -1254,17 +1232,7 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
     scope,
     workspace,
   )
-  const completions = attentions.filter(
-    (attention): attention is Extract<ScopedAssistantAttention, { scope: 'goal' }> =>
-      attention.scope === 'goal' && attention.target === null,
-  )
   const requests = projectAssistantOpenRequests(workspace.homeId, workspace.events, attentions)
-  const completionByReference = new Map(
-    completions.map((attention) => [
-      goalAttentionReference(attention.projectId, attention.goalId, attention.id),
-      attention,
-    ]),
-  )
   const workspaceEvents = [...workspace.events.values()]
   const requestEventIds = new Set(requests.map((request) => request.eventId))
   const publicEvents = workspaceEvents.filter(
@@ -1309,51 +1277,16 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       ),
     ),
   ])
-  const linkedCompletionReferences = new Set<string>()
-  const eventCompletionReferences = new Map<string, string>()
-  for (const event of publicEvents.toSorted(
-    (left, right) =>
-      left.attributes.receivedAt.localeCompare(right.attributes.receivedAt) ||
-      left.attributes.id.localeCompare(right.attributes.id),
-  )) {
-    if (!isInternalInboxSource(event.attributes.source) || event.attributes.status !== 'handled')
-      continue
-    const reference = event.attributes.context
-      ? normalizeInboxAttentionReferences(event.attributes.context).find(
-          (candidate) =>
-            completionByReference.has(candidate) && !linkedCompletionReferences.has(candidate),
-        )
-      : undefined
-    if (!reference) continue
-    linkedCompletionReferences.add(reference)
-    eventCompletionReferences.set(event.attributes.id, reference)
-  }
-  const eventEntries = eventStates.map((state) => {
-    const completion =
-      completionByReference.get(eventCompletionReferences.get(state.event.attributes.id) ?? '') ??
-      null
-    return {
-      kind: 'event' as const,
-      id: `event:${state.event.attributes.id}`,
-      occurredAt: state.event.attributes.receivedAt,
-      updatedAt: maxTimestamp(
-        state.updatedAt,
-        completion?.createdAt,
-        completion?.resolvedAt,
-        completion?.notifiedAt,
-      ),
-      event: state.event,
-      turn: state.turn,
-      runtimeStatus: state.runtimeStatus,
-      completion,
-    }
-  })
+  const eventEntries = eventStates.map((state) => ({
+    kind: 'event' as const,
+    id: `event:${state.event.attributes.id}`,
+    occurredAt: state.event.attributes.receivedAt,
+    updatedAt: state.updatedAt,
+    event: state.event,
+    turn: state.turn,
+    runtimeStatus: state.runtimeStatus,
+  }))
   const removals = [
-    ...eventEntries.flatMap((entry) => {
-      if (!entry.completion) return []
-      const reference = eventCompletionReferences.get(entry.event.attributes.id)
-      return reference ? [{ id: `completion:${reference}`, updatedAt: entry.updatedAt }] : []
-    }),
     ...(conversationEpoch.resetAt
       ? conversationEpoch.removedFeedEntryIds.map((id) => ({
           id,
@@ -1370,23 +1303,6 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       updatedAt: completion.completedAt,
       completion,
     })),
-    ...completions
-      .filter((attention) => scope.kind === 'project' && attention.projectId === scope.projectId)
-      .filter((attention) => {
-        const reference = goalAttentionReference(
-          attention.projectId,
-          attention.goalId,
-          attention.id,
-        )
-        return !linkedCompletionReferences.has(reference)
-      })
-      .map((attention) => ({
-        kind: 'completion' as const,
-        id: `completion:${goalAttentionReference(attention.projectId, attention.goalId, attention.id)}`,
-        occurredAt: attention.notifiedAt ?? attention.resolvedAt ?? attention.createdAt,
-        updatedAt: maxTimestamp(attention.createdAt, attention.resolvedAt, attention.notifiedAt),
-        attention,
-      })),
   ].sort(
     (left, right) =>
       left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id),
@@ -1435,8 +1351,7 @@ type ScopedAssistantAttention =
       scope: 'goal'
       projectId: string
       goalId: string
-      target: string | null
-      notifiedAt: string | null
+      target: string
     })
 
 function presentWorkspaceAttention(
@@ -1447,7 +1362,7 @@ function presentWorkspaceAttention(
     scope: 'workspace',
     ...(projectId ? { projectId } : {}),
     ...attention.attributes,
-    summary: attention.attributes.summary ?? summarizeAttentionBody(attention.body),
+    summary: attention.attributes.summary,
     decisionPrompt: attention.attributes.decisionPrompt ?? null,
     body: attention.body,
   }
@@ -1466,20 +1381,10 @@ function presentGoalAttention(
     target: attention.attributes.target,
     createdAt: attention.attributes.createdAt,
     resolvedAt: attention.attributes.resolvedAt,
-    notifiedAt: attention.attributes.notifiedAt,
-    summary: attention.attributes.summary ?? summarizeAttentionBody(attention.body),
+    summary: attention.attributes.summary,
     decisionPrompt: attention.attributes.decisionPrompt ?? null,
     body: attention.body,
   }
-}
-
-function summarizeAttentionBody(body: string) {
-  const line =
-    body
-      .split(/\r?\n/u)
-      .map((candidate) => candidate.trim())
-      .find((candidate) => candidate && !candidate.startsWith('#')) ?? 'This item needs attention.'
-  return line.length > 600 ? `${line.slice(0, 597)}...` : line
 }
 
 interface ScopedGoalCompletion {
@@ -1496,7 +1401,7 @@ export function goalCompletionProjection(
   goalPackage: GoalPackage,
 ): ScopedGoalCompletion | null {
   const goal = goalPackage.goal.attributes
-  if (goal.lifecycle !== 'done' || goal.completionAttentionId !== null) return null
+  if (goal.lifecycle !== 'done') return null
 
   const evidence = [...goalPackage.works.values()]
     .filter(
@@ -1592,11 +1497,7 @@ function projectAssistantOpenRequests(
     ) {
       continue
     }
-    const references = event.attributes.attentionRequest?.attentionRefs ?? [
-      ...needsYouAttentionIds(event.attributes.reply).map((attentionId) =>
-        workspaceAttentionReference(homeId, attentionId),
-      ),
-    ]
+    const references = event.attributes.attentionRequest?.attentionRefs ?? []
     for (const reference of references) {
       const attention = openByReference.get(reference)
       if (!attention) continue
@@ -1671,26 +1572,16 @@ async function presentAssistantFeedEntry(runtime: MvpRuntime, entry: AssistantFe
       completion: entry.completion,
     }
   }
-  if (entry.kind === 'completion') {
-    return {
-      kind: entry.kind,
-      id: entry.id,
-      occurredAt: entry.occurredAt,
-      attention: entry.attention,
-    }
-  }
   const turn =
     entry.turn ?? (await runtime.assistantConversation.readTurn(entry.event.attributes.id))
   return {
     kind: entry.kind,
     id: entry.id,
     occurredAt: entry.occurredAt,
-    completion: entry.completion,
     event: {
       ...entry.event.attributes,
       attachments: await presentInboxAttachments(runtime, entry.event.attributes.attachments),
       context: entry.event.attributes.context ?? null,
-      routeClaim: entry.event.attributes.routeClaim ?? null,
       body: entry.event.body,
       runtimeStatus: entry.runtimeStatus,
       runtimeEvents: (turn?.events ?? []).filter(isPresentableAgentRuntimeEvent),
@@ -1809,12 +1700,7 @@ export function deriveWorkCompletedAt(
   const appliedAttempts = successfulTerminalAttempts.filter((attempt) =>
     terminalApplications.has(attempt.application ?? ''),
   )
-  // Pre-manifest-application Attempts remain readable without weakening current completion semantics.
-  const candidates = appliedAttempts.length
-    ? appliedAttempts
-    : successfulTerminalAttempts.filter((attempt) => attempt.application === null)
-
-  return candidates.reduce<string | null>(
+  return appliedAttempts.reduce<string | null>(
     (latest, attempt) =>
       attempt.endedAt && (!latest || attempt.endedAt > latest) ? attempt.endedAt : latest,
     null,
@@ -2391,22 +2277,8 @@ function errorMessage(error: unknown) {
 }
 
 if (import.meta.main) {
-  const sourceRoot = join(import.meta.dir, '..', '..', '..')
   const configuredHome = process.env.HOPI_HOME?.trim()
   const homeRoot = configuredHome || defaultAssistantHomeRoot()
-  if (!configuredHome) {
-    const migration = await migrateRepositoryAssistantHome({
-      legacyRoot: sourceRoot,
-      homeRoot,
-    })
-    if (migration.relocated || migration.flattenedRuns > 0) {
-      console.log(
-        `HOPI Home migrated to ${homeRoot}: ${migration.flattenedRuns} Runs flattened, ${migration.preservedArtifacts} artifacts preserved, ${migration.removedScratchRoots} scratch roots removed.`,
-      )
-    }
-    for (const warning of migration.warnings)
-      console.warn(`HOPI Home migration warning: ${warning}`)
-  }
   const instanceLock = await acquireCoordinatorInstanceLock(
     join(homeRoot, '.hopi', 'runtime', 'coordinator.lock'),
     {

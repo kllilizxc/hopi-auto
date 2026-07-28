@@ -89,7 +89,6 @@ export interface ProjectReconcilerOptions {
 export type ProjectReconcileResult =
   | { kind: 'wait'; decision: ReconcileDecision }
   | { kind: 'planning_ensured'; workId: string }
-  | { kind: 'goal_completed'; attentionId: string }
   | { kind: 'cancellation_finished' }
   | {
       kind: 'pass_finished'
@@ -133,7 +132,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const checkpointTask = options.checkpointTask ?? checkpointTaskWorktree
   const contextStager =
     options.contextStager ?? createRoleContextStager(options.homeRoot, options.publisher)
-  const worktrees = options.worktrees ?? createStableWorktreeManager(options.homeRoot)
+  const worktrees = options.worktrees ?? createStableWorktreeManager()
   const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot, { now })
   const preparer = options.preparer ?? createProjectPreparer()
   const responsibilitySessions =
@@ -169,12 +168,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const integrator =
     options.integrator ??
     createC1Integrator(options.homeRoot, options.store, options.publisher, now, c1Layout)
-  const goalController =
-    options.goalController ??
-    createGoalController(options.store, {
-      now,
-      verifyCompletion: (goalId, goalPackage) => completion.verify(goalId, goalPackage),
-    })
+  const goalController = options.goalController ?? createGoalController(options.store, { now })
   const runSlots = new Map<string, WorkRunSlot>()
   let projectInterruptionGeneration = 0
   const goalInterruptionGenerations = new Map<string, number>()
@@ -313,7 +307,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         goalId,
         goalPackage,
         runtime: facts,
-        completionStructureValid: true,
       })
 
       if (decision.kind === 'wait') return { kind: 'wait', decision }
@@ -323,10 +316,6 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           'Perform the final semantic assessment or refresh the delivery plan.',
         )
         return { kind: 'planning_ensured', workId: work.attributes.id }
-      }
-      if (decision.kind === 'complete_goal') {
-        await goalController.completeGoal(goalId, decision.attentionId)
-        return { kind: 'goal_completed', attentionId: decision.attentionId }
       }
       if (decision.kind === 'finish_cancellation') {
         await goalController.cancelGoal(goalId)

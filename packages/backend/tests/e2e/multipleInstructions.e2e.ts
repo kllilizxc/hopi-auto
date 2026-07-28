@@ -1,17 +1,13 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
 import type {
   AssistantModelInput,
   AssistantModelResult,
   AssistantModelRunner,
 } from '../../src/assistant/workspaceAssistant'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   assertAcceptedRelease,
@@ -258,22 +254,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           evidenceRefs: [],
         },
         body: `## Acceptance Criteria\n\n- Project equals ${input.projectId}.\n`,
-      }),
-    )
-  } else if (works.some((work) => work.attributes.id === id && work.attributes.stage === 'done')) {
-    const attention = join(proposalGoal, 'attention', `A-complete-${input.runId}.md`)
-    await mkdir(dirname(attention), { recursive: true })
-    await Bun.write(
-      attention,
-      renderAttentionDocument({
-        attributes: {
-          id: `A-complete-${input.runId}`,
-          target: null,
-          createdAt: '2026-07-14T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nDelivery completed.\n',
       }),
     )
   }

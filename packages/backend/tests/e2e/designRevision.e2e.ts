@@ -266,6 +266,7 @@ function createRoles(): RoleRunner & {
         await observer?.onSession?.({
           transport: 'codex',
           sessionId: `design-revision-generator-${revision}`,
+          executionKey: 'test-execution',
         })
       }
       if (input.responsibility === 'planner') return plan(input)

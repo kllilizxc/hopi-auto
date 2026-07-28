@@ -1,10 +1,7 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { MessageFeedItem } from '../lib/messageFeed'
-import {
-  decisionQuestionsComplete,
-  formatDecisionAnswers,
-} from './AssistantDecisionPrompt'
+import { decisionQuestionsComplete, formatDecisionAnswers } from './AssistantDecisionPrompt'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 
@@ -171,20 +168,6 @@ test('decorates the exact unresolved Assistant request and restores it after res
   ).not.toContain('<svg')
   expect(resolved).not.toContain('needs-you')
   expect(resolved).not.toContain('Reply to this request')
-})
-
-test('hides DecisionPrompt protocol JSON from Assistant Markdown', () => {
-  const rendered = renderToStaticMarkup(
-    <AssistantMarkdown
-      text={
-        '<NeedsYou attentionId="A-1">Choose one.<DecisionPrompt>{"questions":[]}</DecisionPrompt></NeedsYou>'
-      }
-    />,
-  )
-
-  expect(rendered).toContain('Choose one.')
-  expect(rendered).not.toContain('DecisionPrompt')
-  expect(rendered).not.toContain('questions')
 })
 
 test('submits several selected choices as one readable reply', () => {

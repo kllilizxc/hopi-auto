@@ -78,7 +78,7 @@ Domain idempotency comes from the authority that owns each effect:
 - a qualified Goal Input path and digest prove that one HOPI tool accepted an Inbox turn for that
   Goal
 - a qualified Work identity in the Git integration trailer proves integration
-- canonical Inbox Attention references and `notifiedAt` govern speaking-Assistant acknowledgement
+- canonical Inbox Attention references govern speaking-Assistant presentation and replies
 - Work references to Evidence and its qualified `producerRun` mark a responsibility-pass
   result as consumed
 - current lifecycle, stage, contract revision, dependencies, and semantic guards reject obsolete
@@ -87,9 +87,8 @@ Domain idempotency comes from the authority that owns each effect:
 Cross-document validation includes unique IDs, legal stages, valid references, acyclic
 dependencies, at most one nonterminal Planning Work, no nonterminal dependency on cancelled
 Work, current contract revisions, valid single Attention targets, evidence for completed Work, at
-most one open workspace project Attention per project, no second Work result consuming the same
-qualified `producerRun`, and a valid legacy `completionAttentionId` only while Goal lifecycle is
-`done`.
+most one open workspace project Attention per project, and no second Work result consuming the same
+qualified `producerRun`.
 A home project link's expected `projectId` must match the linked `project.yml` whenever that file is
 valid and readable.
 A Goal Input must match one durable Inbox source by qualified Home/event identity and digest. One
@@ -103,7 +102,7 @@ publication and claims no project recovery update.
 Implementation mechanics belong to [the publish protocol ADR](./mvp_publish_protocol.md).
 
 The runtime baseline is Bun `>=1.3.11 <2`. `packageManager` records the reproducible baseline, but
-HOPI does not reject a compatible patch or minor release merely because it is newer. Startup checks
+HOPI does not reject a supported patch or minor release merely because it is newer. Startup checks
 the supported range and the test suite proves the capabilities HOPI actually uses. The Coordinator
 instance lock is one long-lived exclusive transaction in a Bun SQLite file under runtime storage.
 SQLite is used only as a cross-platform OS locking primitive: it stores no product or workflow fact,
@@ -174,8 +173,7 @@ Assistant home and project Git are not one atomic store. HOPI uses a simple idem
    their exact canonical control effect without adopting the current Inbox body as Goal authority.
    Goal creation atomically establishes the Goal, its Input receipt, and the caller-authored first
    Planning or Assistant-dispatched Engineering Work. Existing-Goal direct admission atomically
-   publishes its Input, supporting references, and Work gate; legacy completion state is cleared
-   compatibly when present.
+   publishes its Input, supporting references, and Work gate.
 3. After all optional tool calls and the final Assistant reply, publish the Assistant-home reply and
    disposition and mark the turn handled.
 
@@ -217,18 +215,16 @@ Assistant uses the answer as evidence, then resolves the exact Attention only af
 verified clear. Clearing that guard makes the original pending turn eligible again with the answer
 visible in durable conversation history; no answer parser or hidden continuation object is required.
 
-An internal Reflection event is a wake-up, not fresh evidence. Open targeted Attention blocks its
-target; publishing its resolution removes that scheduling gate immediately and may admit another
-Run. A later request cannot reconstruct the removed gate. Publishing an operator request instead
-records ownership on each still-open reference without resolving it, so the same Attention remains
-the scheduling blocker until the reported condition clears. Assistant receives these consequences
-as environment and tool semantics rather than a prescribed call sequence.
+An internal Reflection event is a wake-up, not fresh evidence. Attention gives Assistant durable
+context but does not create another scheduling state. The unchanged settled Attempt, Work, Goal, and
+Project facts determine whether another Run is admitted. Assistant receives these consequences as
+environment and tool semantics rather than a prescribed call sequence.
 
 A pass that publishes targeted Attention settles the unchanged owning Work exactly like any other
 failed or attention outcome: Coordinator must not immediately create another Attempt for that Work.
-The durable Attempt application may be recorded as either the legacy `published` form or the
-targeted `attention` form; both preserve the same scheduling consequence until Assistant explicitly
-continues the Work or changes its contract. Attention presentation itself remains outside Work
+The durable Attempt records the targeted `attention` application and preserves the same scheduling
+consequence until Assistant explicitly continues the Work or changes its contract. Attention
+presentation itself remains outside Work
 readiness, so there is still only one recovery gate: the settled Attempt.
 
 Only the explicit Reply action copies `replyTo` and exact Attention references into a user Inbox
@@ -287,9 +283,6 @@ The MVP ships one code-owned profile at
 `packages/backend/profiles/software-delivery.yml`. Projects cannot override it.
 
 ```yaml
-version: 1
-id: software-delivery-v1
-
 dispatch:
   - when: { kind: planning, stage: plan }
     pass: planner
@@ -331,23 +324,21 @@ Assistant-home `defaults` when that role has no explicit entry.
 The Home settings surface exposes Assistant, Planner, Generator, and Reviewer in one panel. Saving
 a workflow role writes or removes only that role's existing `runtime/agent-adapters.json.roles`
 override; it does not copy the choice into Projects or Work. Removing an override restores the Home
-default. Compatible advanced adapter fields remain intact when only the model or reasoning effort
+default. Transport-supported advanced adapter fields remain intact when only the model or reasoning effort
 changes. UI and API settings address one of these four roles; models cannot change execution
 configuration through HOPI tools. There is no Project-scoped or Assistant-only settings path.
 
 Built-in transports are portable command capabilities (`codex`, `claude`, or `opencode`), resolved
-from the current Coordinator environment when an invocation starts. An explicit working binary path
-remains an exact advanced override. When an older Home configuration points one of those built-in
-names at an absolute path that is no longer executable, configuration migration removes only that
-stale path override so the same transport resolves from the current environment. Custom executable
-names are never guessed or rewritten.
+from the current Coordinator environment when an invocation starts. An explicit binary path is an
+exact advanced override and must be executable. Custom executable names are never guessed or
+rewritten.
 
 The workspace Assistant and disposable Reflection use the same explicit Home `assistant`
-configuration. It may select Codex, Claude, or OpenCode; when absent, it inherits compatible Home
+configuration. It may select Codex, Claude, or OpenCode; when absent, it inherits Home
 defaults. The speaking Assistant's resumable session belongs to Home rather than any Project;
 Reflection remains a fresh snapshot assessment. Responsibility sessions instead belong to one
 `Work + responsibility` pair. Saving Assistant settings affects the next speaking or Reflection
-invocation and invalidates an incompatible speaking session.
+invocation and invalidates a nonmatching speaking session.
 Saving a workflow role affects only responsibility Runs dispatched afterward; an already-started Run
 keeps its resolved immutable command. Agent settings do not change the workflow profile, capacities,
 retry policy, Work stage, or Goal revision.
@@ -358,14 +349,14 @@ Pass result values are:
   after validation and any built-in postcondition. It does not mean a later responsibility has
   already accepted the Work.
 - `reject`: Reviewer returns engineering Work to `generate` with findings
-- `attention`: compatibility label for an incomplete outcome; targeted Attention documents, when
+- `attention`: incomplete outcome; targeted Attention documents, when
   present, publish the actual Assistant-management requests, while the label alone settles like
   `fail`
 - `fail`: the current responsibility cannot complete this Work contract; preserve its Evidence and
   current stage, and settle the Attempt against the exact Work hash
 
-`blocked` is not a Work field. Open targeted Attention and an unchanged settled failed Attempt are
-derived readiness blockers.
+`blocked` is not a Work field. An unchanged settled unsuccessful Attempt is a derived readiness
+blocker.
 Reviewer `reject` returns the Work to Generator with the observed findings. There is no
 Coordinator-owned semantic retry budget; immutable Attempt history records every repair pass.
 Generator success remains a claim about the whole accepted Work after every repair; the latest
@@ -545,9 +536,7 @@ their normal semantics.
 
 Durable JSONL streams recover only at their append boundary. Before a restarted Coordinator appends
 to an existing stream, it discards the prior unterminated tail, matching the reader rule that an
-unterminated final record was never durable. Readers also accept legacy crash padding only when a
-line starts with one or more NUL bytes followed by a complete valid JSON record; the padding is
-ignored and the record is retained. NUL bytes inside a record, malformed terminated JSON, and schema
+unterminated final record was never durable. NUL bytes, malformed terminated JSON, and schema
 violations remain corruption errors. Recovery therefore keeps all complete history without turning
 the event log into a best-effort parser.
 
@@ -599,17 +588,16 @@ responsibility Session, these names resolve through one stable `current` view in
 responsibility workspace. Before invocation, Coordinator atomically points that view at the new
 immutable Run directory. The Agent therefore keeps one valid environment across Attempts while every
 write still lands directly in the owning Run's proposal, result, transcript, or artifact directory.
-Replacing the view never changes an older Run directory. Existing vendor conversations whose
-execution identity predates this boundary are rebuilt once instead of retaining remembered physical
-Run paths. Stable contract and role sections precede current Evidence and repair observations, so a
+Replacing the view never changes an older Run directory. Stable contract and role sections precede
+current Evidence and repair observations, so a
 necessary Run-local change does not invalidate the reusable prompt prefix. Independent Run storage
 therefore remains an audit boundary, not a model conversation or cache boundary.
 
-Vendor conversation reuse additionally requires an exact execution compatibility identity covering
+Vendor conversation reuse additionally requires an exact execution identity covering
 transport, model, reasoning variant, the effective bounded or unrestricted execution boundary, the
 stable process working directory that defines the vendor Session namespace, and other adapter fields
-that can change what the resumed process may understand or execute. Legacy or mismatched identities
-are discarded before invocation. A narrowly recognized unresolved
+that can change what the resumed process may understand or execute. Mismatched identities are
+discarded before invocation. A narrowly recognized unresolved
 infrastructure failure from a tool result, such as required sandbox initialization or execution
 permission failure, also invalidates the vendor conversation after that invocation; the
 responsibility workspace and canonical Attempt record remain. Ordinary command failures, failing
@@ -623,7 +611,7 @@ durable Attempt artifacts and cited by canonical Evidence. Old-revision workspac
 until normal runtime cleanup, while terminal Work deletes its disposable responsibility workspaces.
 
 RoleRunner persists a reported vendor session ID as soon as it appears in the raw stream. If the
-configured transport is incompatible or the vendor explicitly rejects that session, it clears only
+configured transport no longer matches or the vendor explicitly rejects that session, it clears only
 the vendor identity and rebuilds once inside the same Attempt from the current assignment; retained
 workspace files remain available. Process transports do not resume a vendor conversation but use the
 same revision-scoped workspace. OS processes and in-flight tool calls are never reattached; recovery
@@ -671,9 +659,8 @@ model call instead of silently dropping accepted multimodal input. Speaking Assi
 Reflection use the same Home-configured adapter, while Reflection never consumes the speaking or a
 responsibility session. HOPI never infers cross-vendor resume from a synthetic session ID.
 
-Attempt presentation preserves any explicit recorded result, application, and summary, including a
-stale reason. Canonical Evidence may fill fields missing from a legacy or interrupted presentation,
-but Evidence consumption must not overwrite the recorded Attempt application; provenance and Run
+Attempt presentation preserves every recorded result, application, and summary, including a stale
+reason. Evidence consumption never overwrites the recorded Attempt application; provenance and Run
 diagnostics answer different questions.
 
 The Work-detail UI derives a compact breakdown from those immutable Attempt records and keeps
@@ -704,7 +691,7 @@ when the Run completes, fails, is interrupted, or the Coordinator stops. Termina
 bounded operation per Run: an OS denial falls back to the process-group leader, remains a visible
 operational cleanup failure when descendant cleanup cannot be guaranteed, and never escapes as an
 unobserved rejection that can terminate Coordinator. Each Run receives the
-current revision-scoped responsibility workspace through the compatible `$HOPI_RUN_SCRATCH` name.
+current revision-scoped responsibility workspace through the stable `$HOPI_RUN_SCRATCH` name.
 Reusable package and tool caches are redirected to the Assistant-home cache as an optimization, not
 as a permission boundary. Coordinator promotes only explicitly declared proof entries into the Run
 artifact store. It does
@@ -755,10 +742,10 @@ terminal result was captured and repeats the terminal protocol. Neither surface 
 reasoning advice.
 
 The contract is minimal as well as complete. Every owned path, acceptance criterion, and proof
-obligation must protect the requested outcome, an accepted compatibility promise, a material safety
+obligation must protect the requested outcome, an accepted contract promise, a material safety
 boundary, durable persistence, or a credible regression. Planner distinguishes acceptance of the
 current deliverable from completeness of a reusable validator or policy surface. It does not turn a
-one-time content rewrite into a general parser, mutation corpus, schema migration, or infrastructure
+one-time content rewrite into a general parser, mutation corpus, schema framework, or infrastructure
 project unless the Goal explicitly requests that reusable enforcement or the existing system already
 treats it as the durable boundary. When reusable enforcement is required, Planner states its finite
 accepted input grammar and material invariants instead of demanding correctness for unbounded
@@ -819,9 +806,8 @@ Goal sections are omitted rather than filled with placeholder prose. Verbatim In
 from the normalized Goal contract: the former preserves operator provenance, while the latter is
 accepted authority. A new-contract Planning operation therefore supplies an explicit normalized
 `contractChange`; HOPI links the verbatim Input to Planning and appends only that semantic change
-under `Accepted Goal Change <event>`. It never promotes the raw Inbox body implicitly. Legacy
-`Accepted Inbox Instruction <event>` sections remain readable, and the Run prompt does not repeat an
-Input body already represented verbatim by one of those legacy sections. A latest resolved Attention
+under `Accepted Goal Change <event>`. It never promotes the raw Inbox body implicitly. A latest
+resolved Attention
 and its resolution Input remain staged for exact
 provenance, but that resolution Input is not promoted into the expanded Planning Inputs unless the
 Planning Work itself accepted it. Even then, its description is evidence of the condition before
@@ -1311,7 +1297,7 @@ Repo. Retries reuse those branches. Task worktrees live at
 `.hopi-worktrees/<repo-name>/projects/<projectId>/work/<goalId>/<workId>` beside their Repo and start
 from that binding's current release. A responsibility receives one logical
 workspace containing all Project roots; no Repo subtask or extra responsibility is created. Checkout
-directories are disposable and may be rebuilt from their stable branches after migration.
+directories are disposable and may be rebuilt from their stable branches when missing.
 
 Immediately before Generator or Reviewer dispatch, Coordinator compares each stable task branch
 with that binding's current release. If release is already an ancestor, no Git mutation occurs.
@@ -1386,8 +1372,7 @@ the primary adapter starts the Project runtime and announces every available ent
 HOPI does not infer their internal topology or relationships.
 The fixed responsibility prompt exposes the adapter's exact ready signal,
 `HOPI_PREVIEW_SURFACES=<json-array>`, whenever an Engineering Work may create, repair, or review the
-script; `HOPI_PREVIEW_URL=<reachable-url>` remains the single-surface shorthand, while a merely
-human-readable bare URL is not enough for HOPI to leave `starting`. There is no
+script. A merely human-readable bare URL is not enough for HOPI to leave `starting`. There is no
 initialized flag, prepare revision, setup Action, or preparation Kanban state.
 
 The public Project Preview API always starts the current managed integration release. Every Preview
@@ -1538,7 +1523,7 @@ preparing canonical context or a workspace: that older reconciliation may not in
 lease afterward. Coordinator shutdown uses the same project-wide boundary. This is an in-memory
 execution guard, not another durable lifecycle or queue.
 The existing semantic publication guard remains the final protection for a result that races the
-interrupt. Resume creates a new Attempt but reuses each unfinished Work responsibility's compatible
+interrupt. Resume creates a new Attempt but reuses each unfinished Work responsibility's matching
 session; Pause never turns hidden process memory into canonical state.
 
 Assistant never edits source or canonical files directly. Its local MCP server is an adapter over
@@ -1567,31 +1552,18 @@ runtime search is neither discovery nor evidence. Resolved Evidence artifacts di
 internal `inspectionPath` from the browser-facing `operatorUrl`; only the latter belongs in an
 operator reply.
 
-An Inbox turn is eligible when it is pending, not already active in the one Home conversation, and
-not covered by open event-target Attention. Public user turns have priority over internal Reflection
-turns; each source class runs in receipt order. Project Attention blocks a tool targeting that
-Project, not unrelated conversation or direct answers. A terminal Assistant or tool failure leaves
-the turn pending under targeted Attention immediately. Vendor-local transient retry belongs to the
-single configured invocation; Coordinator does not repeat that invocation. An explicitly missing,
-incompatible, or context-exhausted cached conversation cannot make progress by resuming. Coordinator
-clears it and rebuilds once from bounded durable conversation history. A failure from that fresh
-conversation follows the ordinary targeted-Attention path; provider allocation, transport, and
-application failures do not trigger a rebuild.
+An Inbox turn is eligible when it is pending and not already active in the one speaking queue.
+Public user turns have priority over internal wake turns; each source class runs in receipt order.
+Project Attention does not block unrelated conversation or direct answers. Vendor-local transient
+retry belongs to the configured invocation; Coordinator does not repeat that invocation. A missing,
+invalid, or context-exhausted cached conversation is rebuilt once from bounded durable conversation
+history. Provider allocation, transport, and application failures do not masquerade as session
+invalidity.
 
-An internal state turn owns its semantic judgment. The event records the exact open Attention
-references whose next state is still owned by Assistant. Coordinator does not choose a disposition,
-but it does enforce the responsibility boundary: every listed Attention that is still Assistant-owned
-when the turn begins must acquire a changed canonical successor before the event can settle. A
-resolution, responsibility transfer, future revisit, or new durable execution state on the targeted
-Work all satisfy that boundary because each is observable state; prose, an empty reply, and unrelated
-tool activity do not.
-
-An informational internal turn with no listed responsibility may still finish silently. Failure to
-settle listed responsibility is a failed Assistant turn, not a handled no-op: the Inbox event remains
-pending, its turn runtime records the failure, and the same event retries with bounded backoff. A
-process restart makes that durable pending event eligible without requiring another Project change.
-Coordinator neither invents a repair nor creates a second handoff for the same observation. Public
-user turns keep the ordinary targeted-Attention failure path.
+An internal state turn supplies current environment facts and exact Attention references to the
+same Project Assistant. The Assistant owns the semantic judgment and may reply, use tools, present
+Attention to the operator, or conclude no domain change is needed. Coordinator validates only actual
+tool effects and durable turn settlement; it does not require a prescribed successor state.
 
 Messages remain writable while passes run. A material instruction ensures Planning Work, advances
 that Work and the Goal to the new `contractRevision`, and leaves existing nonterminal Engineering
@@ -1670,28 +1642,13 @@ successor or future revisit. A scheduled revisit carries its exact Attention ref
 thread receives the current state separately, revalidates it, and owns every judgment and optional
 operator notification.
 
-The state event describes the environment consequence rather than prescribing an action: listed
-Attention remains Assistant responsibility until its canonical state advances. Coordinator compares
-the state at turn admission and settlement. It does not parse prose, infer intent, or select among
-the available Attention and Work capabilities. This makes a silent no-op invalid without turning
-domain judgment into Coordinator rules.
+The state event describes consequences rather than prescribing an action. Coordinator does not
+parse prose, infer intent, or select among Attention and Work capabilities.
 
-One eligible pending Reflection-sourced Inbox turn suppresses another Reflection assessment until
-that turn is handled. An internal turn blocked by event-target Attention is no longer eligible: it
-remains pending for revalidation after resolution, but cannot suppress assessment of the Assistant-owned
-blocker or newer Goal state. This does not rerun the blocked turn; it allows a new digest to hand off
-the exact Attention that requires speaking-Assistant management. Canonical Attention references and
-`notifiedAt` prevent recursive notification. An Attention-blocked public user turn is likewise
-Reflection-eligible because no executable internal assessment currently owns that state.
-
-Receiving a public user turn aborts an active Reflection-sourced speaking turn but not the independent
-This avoids cancellation churn without letting stale state act or delay speech. One digest and wake
-protocol revision identify one ordinary state event. A failed state turn remains that one pending
-event; Coordinator retries it with exponential backoff up to a capped interval, and a successful turn
-clears the backoff. A restart loses only the delay, not the pending assessment, so recovery does not
-depend on another Project state change or user message. A wake protocol revision changes event
-identity once, allowing a stronger settlement contract to revisit state that an older protocol
-incorrectly consumed without creating a recurring wake.
+One pending wake turn suppresses another wake for the same assessed state. Later state changes
+coalesce into the next digest. A failed turn remains pending and retries with bounded backoff; restart
+loses only the delay. Public user speech can interrupt an internal speaking turn without interrupting
+independent responsibility Runs.
 
 ## Reconciler and Scheduling
 
@@ -1757,8 +1714,7 @@ referenced Attention remains open. Its default wording and optional choices come
 Attention documents; their full bodies remain Agent detail. This adds no ownership field to
 Attention and does not change Work readiness. Goal completion appears from the Goal transition and
 final Planning Evidence as a deterministic **Completed** conversation update; it is presentation of
-canonical completion, not another notification document or required model phrase. Legacy targetless
-completion Attention and `<NeedsYou>` messages remain readable.
+canonical completion, not another notification document or required model phrase.
 
 Completion delivery is an Assistant judgment over current Goal authority, Attention, Evidence, and
 conversation. A Goal-scoped Evidence read exposes resolved artifacts and their browser-facing
@@ -1775,8 +1731,8 @@ another field on Attention or a duplicated notification record.
 The optional provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL` has one job: mirror
 handled public Reflection replies. It scans those Inbox events, uses the canonical Home/event
 identity as its idempotency key, and records `webhookDeliveredAt` after acknowledgement. Persistent
-transport failure retries with bounded in-memory backoff. It never scans or delivers raw Attention,
-never controls `notifiedAt`, and cannot create recursive Attention about delivery.
+transport failure retries with bounded in-memory backoff. It never scans or delivers raw Attention
+and cannot create recursive Attention about delivery.
 
 An external process supervisor is required to restart or alert on Coordinator death or an
 unwritable Assistant-home publication root, because HOPI cannot persist Attention in that root.
@@ -1857,8 +1813,7 @@ directory. Coordinator supplies `HOPI_PROJECT_ROOT` and a disposable
 streams in runtime storage. Exactly one line
 `HOPI_PREVIEW_SURFACES=<json-array>` is the current ready signal. Each array entry contains one
 unique `id`, operator-facing `label`, and HTTP(S) `url`; the adapter emits the complete declaration
-only after every surface is ready. The existing `HOPI_PREVIEW_URL=<url>` signal remains a valid
-single-surface shorthand. Coordinator independently probes every declared surface in parallel and
+only after every surface is ready. Coordinator independently probes every declared surface in parallel and
 keeps the session at `starting` until the complete declaration and all successful probes exist,
 adapter exit occurs, or one bounded startup timeout expires. The
 public Start request admits that operation and returns the current session immediately; it never

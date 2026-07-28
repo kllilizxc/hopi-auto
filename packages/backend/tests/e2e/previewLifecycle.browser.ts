@@ -3,11 +3,7 @@ import { chmod, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   assertAcceptedRelease,
@@ -375,22 +371,6 @@ async function plan(input: RoleRunInput, hasEngineering: boolean): Promise<RoleR
           evidenceRefs: [],
         },
         body: '## Acceptance Criteria\n\n- `src/feature.ts` exports feature with value 2.\n',
-      }),
-    )
-  } else {
-    const attentionPath = join(goalRoot, 'attention', `A-complete-${input.runId}.md`)
-    await mkdir(dirname(attentionPath), { recursive: true })
-    await Bun.write(
-      attentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: `A-complete-${input.runId}`,
-          target: null,
-          createdAt: '2026-07-15T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nThe reviewed release is integrated.\n',
       }),
     )
   }

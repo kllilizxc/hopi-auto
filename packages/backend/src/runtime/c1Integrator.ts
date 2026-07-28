@@ -153,10 +153,7 @@ export function createC1Integrator(
           if (!projectFile?.content || !projectFile.hash) {
             throw new C1IntegrationError('Current project.yml is missing from canonical authority')
           }
-          const currentProject = parseProjectDocument(
-            new TextDecoder().decode(projectFile.content),
-            projectLayout.primaryRepoId,
-          )
+          const currentProject = parseProjectDocument(new TextDecoder().decode(projectFile.content))
           validateProjectLayoutDocument(projectLayout, currentProject)
 
           const oldSecondaryTargets = new Map<string, string>()
@@ -574,21 +571,12 @@ async function recoverProjectProjection(
   }
   await ensureMaterializedCommit(primary, releaseRef, commit)
 
-  const nextProject = await readProjectDocumentAt(
-    primary.integrationRoot,
-    commit,
-    layout.primaryRepoId,
-  )
+  const nextProject = await readProjectDocumentAt(primary.integrationRoot, commit)
   validateProjectLayoutDocument(layout, nextProject)
   const parent = await git(primary.integrationRoot, ['show', '-s', '--format=%P', commit])
   const firstParent = parent.split(/\s+/)[0]
   const previousProject = firstParent
-    ? await readProjectDocumentAtOrLegacy(
-        primary.integrationRoot,
-        firstParent,
-        nextProject.projectId,
-        layout.primaryRepoId,
-      )
+    ? await readProjectDocumentAtIfPresent(primary.integrationRoot, firstParent)
     : null
   await faultHooks.beforeSecondaryProjection?.(commit)
   for (const repo of layout.repos) {
@@ -641,15 +629,10 @@ export async function reconcileProjectReleaseProjection(layout: C1ProjectLayout)
   if (!(await projectFile.exists())) {
     throw new C1IntegrationError('Primary managed root is missing project.yml')
   }
-  const currentProject = parseProjectDocument(await projectFile.text(), layout.primaryRepoId)
+  const currentProject = parseProjectDocument(await projectFile.text())
   validateProjectLayoutDocument(layout, currentProject)
   const previousProject = parent
-    ? await readProjectDocumentAtOrLegacy(
-        primary.integrationRoot,
-        parent,
-        currentProject.projectId,
-        layout.primaryRepoId,
-      )
+    ? await readProjectDocumentAtIfPresent(primary.integrationRoot, parent)
     : null
 
   for (const repo of layout.repos) {
@@ -722,26 +705,21 @@ async function materializeSecondaryRepo(
   await ensureMaterializedCommit(repo, releaseRef, desired)
 }
 
-async function readProjectDocumentAt(repoRoot: string, commit: string, primaryRepoId: string) {
+async function readProjectDocumentAt(repoRoot: string, commit: string) {
   const content = await gitBytes(repoRoot, ['show', `${commit}:.hopi/project.yml`])
-  return parseProjectDocument(new TextDecoder().decode(content), primaryRepoId)
+  return parseProjectDocument(new TextDecoder().decode(content))
 }
 
-async function readProjectDocumentAtOrLegacy(
-  repoRoot: string,
-  commit: string,
-  projectId: string,
-  primaryRepoId: string,
-) {
-  const result = await gitResult(repoRoot, ['show', `${commit}:.hopi/project.yml`])
-  return result.exitCode === 0
-    ? parseProjectDocument(result.stdout, primaryRepoId)
-    : {
-        version: 2 as const,
-        projectId,
-        primaryRepoId,
-        repos: [{ repoId: primaryRepoId }],
-      }
+async function readProjectDocumentAtIfPresent(repoRoot: string, commit: string) {
+  const paths = await gitBytes(repoRoot, [
+    'ls-tree',
+    '-z',
+    '--name-only',
+    commit,
+    '--',
+    '.hopi/project.yml',
+  ])
+  return paths.length === 0 ? null : readProjectDocumentAt(repoRoot, commit)
 }
 
 async function replaceCanonicalIndex(

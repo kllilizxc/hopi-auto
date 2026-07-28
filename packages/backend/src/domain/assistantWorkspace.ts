@@ -16,102 +16,14 @@ import {
 } from './assistantWorkspaceDocuments'
 import { parseAttentionReference } from './attentionReference'
 import { parseInboxEventReference } from './inboxEventReference'
-import { DEFAULT_PRIMARY_REPO_ID, type ProjectLink } from './project'
-import {
-  normalizeProjectCodingDefaults,
-  projectCodingDefaultsInputSchema,
-} from './projectCodingDefaults'
+import type { ProjectLink } from './project'
 import { projectLabelSchema } from './projectLabel'
 import { isNormalizedProjectPath } from './projectPath'
 import { STABLE_ID_PATTERN, stableIdSchema } from './stableId'
 
-const homeSchema = z.object({ version: z.literal(1), homeId: stableIdSchema }).strict()
-const legacyLinksSchema = z
-  .object({
-    version: z.literal(1),
-    projects: z.array(
-      z
-        .object({
-          projectId: stableIdSchema,
-          repoPath: z.string().min(1),
-          codingDefaults: projectCodingDefaultsInputSchema
-            .transform((value) => normalizeProjectCodingDefaults(value))
-            .optional(),
-        })
-        .strict(),
-    ),
-  })
-  .strict()
-const legacyMultiRepoLinksSchema = z
-  .object({
-    version: z.literal(2),
-    projects: z.array(
-      z
-        .object({
-          projectId: stableIdSchema,
-          primaryRepoId: stableIdSchema,
-          repos: z
-            .array(
-              z
-                .object({
-                  repoId: stableIdSchema,
-                  repoPath: z.string().min(1),
-                  projectPath: z.string().refine(isNormalizedProjectPath).optional(),
-                })
-                .strict(),
-            )
-            .min(1),
-          codingDefaults: projectCodingDefaultsInputSchema
-            .transform((value) => normalizeProjectCodingDefaults(value))
-            .optional(),
-        })
-        .strict(),
-    ),
-  })
-  .strict()
-const legacyConfiguredLinksSchema = z
-  .object({
-    version: z.literal(3),
-    projects: z.array(
-      z
-        .object({
-          projectId: stableIdSchema,
-          primaryRepoId: stableIdSchema,
-          repos: z
-            .array(
-              z
-                .object({
-                  repoId: stableIdSchema,
-                  repoPath: z.string().min(1),
-                  projectPath: z.string().refine(isNormalizedProjectPath).optional(),
-                  deliveryBranch: z.string().min(1),
-                })
-                .strict(),
-            )
-            .min(1),
-        })
-        .strict(),
-    ),
-  })
-  .strict()
-const legacyConfiguredLinksWithSettingsSchema = z
-  .object({
-    version: z.literal(3),
-    projects: z.array(
-      legacyConfiguredLinksSchema.shape.projects.element
-        .extend({
-          codingDefaults: projectCodingDefaultsInputSchema
-            .transform((value) => normalizeProjectCodingDefaults(value))
-            .optional(),
-        })
-        .strict(),
-    ),
-  })
-  .strict()
-
+const homeSchema = z.object({ homeId: stableIdSchema }).strict()
 const linksSchema = z
   .object({
-    version: z.literal(4),
     projects: z.array(
       z
         .object({
@@ -178,36 +90,11 @@ export async function readAndValidateAssistantWorkspace(
   paths: AssistantWorkspacePaths,
 ): Promise<AssistantWorkspace> {
   const home = parseYaml(await requiredText(candidate, paths.homeDocument), homeSchema, 'home.yml')
-  const rawLinks = parseYaml(
+  const links = parseYaml(
     await requiredText(candidate, paths.projectLinks),
-    z.union([
-      linksSchema,
-      legacyConfiguredLinksWithSettingsSchema,
-      legacyConfiguredLinksSchema,
-      legacyMultiRepoLinksSchema,
-      legacyLinksSchema,
-    ]),
+    linksSchema,
     'projects.yml',
   )
-  const links: { projects: ProjectLink[] } = {
-    projects:
-      rawLinks.version === 1
-        ? rawLinks.projects.map((project) => ({
-            projectId: project.projectId,
-            primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
-            repos: [{ repoId: DEFAULT_PRIMARY_REPO_ID, repoPath: project.repoPath }],
-          }))
-        : rawLinks.projects.map((project) => ({
-            projectId: project.projectId,
-            ...('label' in project && project.label ? { label: project.label } : {}),
-            primaryRepoId: project.primaryRepoId,
-            repos: project.repos.map((repo) => ({
-              repoId: repo.repoId,
-              repoPath: repo.repoPath,
-              ...(repo.projectPath ? { projectPath: repo.projectPath } : {}),
-            })),
-          })),
-  }
   if (new Set(links.projects.map((project) => project.projectId)).size !== links.projects.length) {
     throw invalid('projects.yml contains duplicate projectId values')
   }
@@ -287,11 +174,7 @@ export async function validateAssistantWorkspaceTransition(
   }
   for (const [eventId, event] of after.events) {
     if (before.events.has(eventId)) continue
-    if (
-      event.attributes.status !== 'pending' ||
-      event.attributes.routeClaim != null ||
-      event.attributes.handledAt !== null
-    ) {
+    if (event.attributes.status !== 'pending' || event.attributes.handledAt !== null) {
       throw invalid(`New Inbox event must be an unclaimed pending receipt: ${eventId}`)
     }
     if (
@@ -336,9 +219,6 @@ function validateEventTransition(previous: InboxEventDocument, next: InboxEventD
     ) {
       throw invalid(`Inbox visibility transition is invalid: ${before.id}`)
     }
-  }
-  if (before.routeClaim && JSON.stringify(before.routeClaim) !== JSON.stringify(after.routeClaim)) {
-    throw invalid(`Inbox route claim is immutable: ${before.id}`)
   }
   if (before.attentionRequest) {
     const nextReferences = new Set(after.attentionRequest?.attentionRefs ?? [])
@@ -398,10 +278,6 @@ function validateReferences(
 ) {
   const projectIds = new Set(projects.map((project) => project.projectId))
   for (const event of events.values()) {
-    const claim = event.attributes.routeClaim
-    if (claim && !projectIds.has(claim.projectId)) {
-      throw invalid(`Inbox event ${event.attributes.id} claims an unlinked Project`)
-    }
     const context = event.attributes.context
     if (context?.projectId && !projectIds.has(context.projectId)) {
       throw invalid(`Inbox event ${event.attributes.id} has context for an unlinked Project`)

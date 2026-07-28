@@ -1,7 +1,7 @@
 import { agentAdapterConfigPath } from '../storage/assistantRuntimePaths'
 import {
   type AgentAdapterConfig,
-  readAndMigrateAgentAdapterConfig,
+  readAgentAdapterConfig,
   writeAgentAdapterConfig,
 } from './adapterConfig'
 import {
@@ -16,7 +16,6 @@ export function createDefaultAgentAdapterConfig(
   codingDefaults: ProjectCodingDefaultsInput = DEFAULT_PROJECT_CODING_DEFAULTS,
 ): AgentAdapterConfig {
   return {
-    version: 3,
     defaults: normalizeProjectCodingDefaults(codingDefaults),
     roles: {},
   }
@@ -33,7 +32,7 @@ export async function ensureDefaultAgentAdapterConfig(
 
   if (await Bun.file(path).exists()) {
     const before = await Bun.file(path).text()
-    const current = await readAndMigrateAgentAdapterConfig(path)
+    const current = await readAgentAdapterConfig(path)
     if (normalizedDefaults) {
       await writeAgentAdapterConfig(path, {
         ...current,

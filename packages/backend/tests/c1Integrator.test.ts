@@ -276,7 +276,7 @@ async function createFixture() {
   })
 
   const releaseBeforeTask = await git(linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
-  const stable = await createStableWorktreeManager(homeRoot).prepare({
+  const stable = await createStableWorktreeManager().prepare({
     projectRoot: linked.integrationRoot,
     projectId: 'project-1',
     goalId: 'goal-1',

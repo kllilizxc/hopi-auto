@@ -15,7 +15,6 @@ export type ProcessTranscriptFormat =
 type ClaudeTaskStatus = 'pending' | 'in_progress' | 'completed'
 
 export interface ProcessTranscriptNormalizerState {
-  version: 1
   claudeTasks: Array<{
     id: string
     text: string
@@ -376,8 +375,7 @@ class ClaudeTaskPlanTracker {
 
   constructor(initialState: unknown) {
     const state = objectValue(initialState)
-    if (state?.version !== 1) return
-    const tasks = arrayValue(state.claudeTasks)
+    const tasks = arrayValue(state?.claudeTasks)
     if (!tasks) return
     for (const candidate of tasks) {
       const task = parseClaudeTaskRecord(candidate)
@@ -392,7 +390,6 @@ class ClaudeTaskPlanTracker {
   state(): ProcessTranscriptNormalizerState | null {
     if (this.tasks.size === 0) return null
     return {
-      version: 1,
       claudeTasks: [...this.tasks.values()].map((task) => ({ ...task })),
     }
   }

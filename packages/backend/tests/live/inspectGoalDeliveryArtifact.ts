@@ -281,6 +281,6 @@ async function writeInspectionReport(
 ) {
   await Bun.write(
     join(root, 'inspection.json'),
-    `${JSON.stringify({ version: 1, kind: 'artifact-inspection', ...report }, null, 2)}\n`,
+    `${JSON.stringify({ kind: 'artifact-inspection', ...report }, null, 2)}\n`,
   )
 }

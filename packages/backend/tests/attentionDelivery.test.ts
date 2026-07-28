@@ -38,6 +38,7 @@ describe('Assistant reply delivery', () => {
         updatedAt: '2026-07-11T00:00:00Z',
         resolvedAt: null,
         refs: [`home:${fixture.homeId}/event:EV-speaking`],
+        summary: 'Choose the release window.',
       },
       body: 'Internal Attention body.\n',
     })

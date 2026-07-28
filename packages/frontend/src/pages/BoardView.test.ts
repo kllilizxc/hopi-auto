@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import type { RunAttemptSummary } from '../lib/api'
 import {
+  attemptModelLabel,
   attemptOutcomeBreakdown,
   attemptOutcomeSummary,
-  attemptModelLabel,
   attemptStatus,
   compactLaneRenderWindow,
   orderDoneWorks,
@@ -11,7 +11,6 @@ import {
 } from './BoardView'
 
 const attempt: RunAttemptSummary = {
-  version: 1,
   projectId: 'P-1',
   goalId: 'G-1',
   workId: 'W-1',
@@ -122,7 +121,9 @@ test('Work and Attempt switches warm their message caches before changing visibl
     'if (request === attemptSelectionRequest.current) setSelectedAttemptId(runId)',
   )
   expect(source).toContain('onPointerEnter={() => onWarm(attempt.runId)}')
-  expect(source).toContain("onSelectionChange={(key) => selectPane(String(key) as 'activity' | 'contract')}")
+  expect(source).toContain(
+    "onSelectionChange={(key) => selectPane(String(key) as 'activity' | 'contract')}",
+  )
 })
 
 test('Work cards keep full prose and dependencies in the detail modal', async () => {
@@ -287,7 +288,10 @@ test('Work card footers show Attempt count, blockers, and Done completion time',
 
 test('Work detail shows the execution model captured by the selected Attempt', async () => {
   const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
-  const detail = source.slice(source.indexOf('function WorkDetail'), source.indexOf('function WorkContract'))
+  const detail = source.slice(
+    source.indexOf('function WorkDetail'),
+    source.indexOf('function WorkContract'),
+  )
 
   expect(detail).toContain('<small>Model</small>')
   expect(detail).toContain('{attemptModelLabel(selectedAttempt)}')

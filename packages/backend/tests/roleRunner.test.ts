@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { ConfiguredRoleRunner, roleSessionCompatibilityKey } from '../src/agent/RoleRunner'
+import { ConfiguredRoleRunner, roleSessionExecutionKey } from '../src/agent/RoleRunner'
 import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { VendorSession } from '../src/agent/vendorAssistantOutput'
 import type { RoleContextBundle } from '../src/runtime/roleContextStager'
@@ -549,6 +549,8 @@ describe('ConfiguredRoleRunner', () => {
       approvalPolicy: 'never',
     } as const
     const runner = new ConfiguredRoleRunner({ resolveConfig: () => config })
+    const executionKey = roleSessionExecutionKey(config, false, fixture.proposalRoot)
+    if (!executionKey) throw new Error('Expected Codex execution key')
 
     const result = await runner.run(
       {
@@ -556,8 +558,7 @@ describe('ConfiguredRoleRunner', () => {
         session: {
           transport: 'codex',
           sessionId: 'thread-missing',
-          compatibilityKey:
-            roleSessionCompatibilityKey(config, false, fixture.proposalRoot) ?? undefined,
+          executionKey,
         },
       },
       {
@@ -604,6 +605,8 @@ describe('ConfiguredRoleRunner', () => {
       approvalPolicy: 'never',
     } as const
     const runner = new ConfiguredRoleRunner({ resolveConfig: () => config })
+    const executionKey = roleSessionExecutionKey(config, false, fixture.proposalRoot)
+    if (!executionKey) throw new Error('Expected Codex execution key')
 
     const result = await runner.run(
       {
@@ -611,8 +614,7 @@ describe('ConfiguredRoleRunner', () => {
         session: {
           transport: 'codex',
           sessionId: 'thread-valid',
-          compatibilityKey:
-            roleSessionCompatibilityKey(config, false, fixture.proposalRoot) ?? undefined,
+          executionKey,
         },
       },
       {
@@ -624,40 +626,6 @@ describe('ConfiguredRoleRunner', () => {
 
     expect(result).toMatchObject({ result: 'success', summary: 'resumed' })
     expect(invalidations).toBe(0)
-  })
-
-  test('does not resume a legacy Session without the current execution compatibility identity', async () => {
-    const fixture = await createFixture()
-    const binary = await fakeCodex(
-      fixture.root,
-      `const resumed = Bun.argv.includes("resume")
-      await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:resumed ? "unexpected resume" : "fresh boundary",artifacts:[]}))`,
-    )
-    const runner = new ConfiguredRoleRunner({
-      resolveConfig: () => ({
-        transport: 'codex',
-        binary,
-        cwdMode: 'root',
-        sandbox: 'workspace-write',
-        approvalPolicy: 'never',
-      }),
-    })
-    let invalidations = 0
-
-    const result = await runner.run(
-      {
-        ...fixture.input('planner', fixture.proposalRoot),
-        session: { transport: 'codex', sessionId: 'legacy-thread' },
-      },
-      {
-        onSessionInvalid: () => {
-          invalidations += 1
-        },
-      },
-    )
-
-    expect(result).toMatchObject({ result: 'success', summary: 'fresh boundary' })
-    expect(invalidations).toBe(1)
   })
 
   test('changes every built-in vendor Session identity across the full-access boundary', () => {
@@ -680,9 +648,7 @@ describe('ConfiguredRoleRunner', () => {
     ] as const
 
     for (const config of configs) {
-      expect(roleSessionCompatibilityKey(config, false)).not.toBe(
-        roleSessionCompatibilityKey(config, true),
-      )
+      expect(roleSessionExecutionKey(config, false)).not.toBe(roleSessionExecutionKey(config, true))
     }
   })
 
@@ -706,8 +672,8 @@ describe('ConfiguredRoleRunner', () => {
     ] as const
 
     for (const config of configs) {
-      expect(roleSessionCompatibilityKey(config, false, '/tmp/session-a')).not.toBe(
-        roleSessionCompatibilityKey(config, false, '/tmp/session-b'),
+      expect(roleSessionExecutionKey(config, false, '/tmp/session-a')).not.toBe(
+        roleSessionExecutionKey(config, false, '/tmp/session-b'),
       )
     }
   })

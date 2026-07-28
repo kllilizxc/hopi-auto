@@ -27,9 +27,8 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 - speaking Assistant skills remain execution aids under a provider-level HOPI ownership contract;
   Reflection has no ambient skills, and provider apps/plugins/workflows never gain HOPI authority
 - an optional vendor session ID for the speaking Assistant
-- a vendor-session compatibility identity derived from the transport, execution boundary, stable
-  Assistant contract, and current preference digest; incompatible or legacy identities are not
-  resumed, while the current model configuration is supplied to a compatible resumed invocation
+- a vendor-session identity derived from the transport, execution boundary, stable Assistant
+  contract, and current preference digest; a nonmatching identity is not resumed
 - vendor-native automatic context compaction for every built-in Agent invocation, including the
   speaking Assistant, Reflection, Planner, Generator, and Reviewer
 - no vendor-owned interactive approval channel: Codex always uses `never`, Claude bypasses its
@@ -80,12 +79,12 @@ Generator, and Reviewer overrides; missing entries use Home `defaults`. Projects
 configuration.
 
 The UI accepts free-form model identifiers because valid catalogs are vendor- and account-specific.
-It preserves compatible advanced fields when changing a model. Switching transport drops
-incompatible fields, installs safe defaults for the new adapter, and invalidates only the disposable
+It preserves transport-supported advanced fields when changing a model. Switching transport drops
+unsupported fields, installs current defaults for the new adapter, and invalidates only the disposable
 runtime session cache. Durable Inbox history remains the recovery source.
 
-Legacy Codex approval-policy and Claude permission-mode fields remain readable for configuration
-compatibility but cannot re-enable vendor prompts. They are not product authorization controls.
+Codex approval-policy and Claude permission-mode fields are transport configuration only and cannot
+re-enable vendor prompts. They are not product authorization controls.
 Bounded versus unrestricted access is selected only by HOPI's resolved execution envelope.
 
 ## Verification Bar

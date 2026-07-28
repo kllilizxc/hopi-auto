@@ -3,7 +3,6 @@ import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   parseWorkDocument,
-  renderAttentionDocument,
   renderInputDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
@@ -313,63 +312,6 @@ describe('GoalController', () => {
       ),
     ).toHaveLength(0)
   })
-
-  test('commits Goal done only from a final Planner proposal and structural verification', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const planningPath = store.paths.workDocument('G-1', 'plan-initial')
-    const source = await Bun.file(store.paths.absolute(planningPath)).text()
-    const planning = parseWorkDocument(source)
-    planning.attributes.stage = 'done'
-    const completion = {
-      attributes: {
-        id: 'A-complete',
-        target: null,
-        createdAt: '2026-07-11T00:00:00Z',
-        resolvedAt: null,
-        notifiedAt: null,
-      },
-      body: '## Complete\n\nAll Goal criteria are satisfied.\n',
-    }
-    await store.publishGoal('G-1', {
-      supportingWrites: [
-        {
-          path: store.paths.attentionDocument('G-1', 'A-complete'),
-          expectedHash: null,
-          content: renderAttentionDocument(completion),
-        },
-      ],
-      gateWrite: {
-        path: planningPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderWorkDocument(planning),
-      },
-    })
-
-    const goal = await controller.completeGoal('G-1', 'A-complete')
-
-    expect(goal.attributes).toMatchObject({
-      lifecycle: 'done',
-      completionAttentionId: 'A-complete',
-    })
-
-    const reopened = await controller.reopenGoal('G-1', {
-      eventId: 'EV-reopen',
-      contractChange: 'The supported platform scope changed.',
-    })
-    const reopenedPackage = await store.readPackage('G-1')
-    expect(reopened.attributes).toMatchObject({
-      lifecycle: 'active',
-      contractRevision: 2,
-      completionAttentionId: null,
-    })
-    expect(
-      [...reopenedPackage.works.values()].filter(
-        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-      ),
-    ).toHaveLength(1)
-    expect(reopenedPackage.attentions.get('A-complete')?.attributes.resolvedAt).not.toBeNull()
-  })
 })
 
 function setup() {
@@ -377,7 +319,6 @@ function setup() {
   const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
   const controller = createGoalController(store, {
     now: () => new Date('2026-07-11T00:00:00Z'),
-    verifyCompletion: () => true,
   })
   return { store, controller }
 }

@@ -280,16 +280,9 @@ async function waitForGoalDone(harness: LiveHarness, projectId: string, goalId: 
   return waitForValue(
     () => requestJson<LiveState>(harness.baseUrl, '/api/state'),
     (state) => {
-      const goal = state.projects
-        .find((project) => project.projectId === projectId)
-        ?.goals.find((candidate) => candidate.id === goalId)
-      const targeted = state.attentions.find(
-        (attention) =>
-          typeof attention.target === 'string' &&
-          attention.resolvedAt === null &&
-          typeof attention.notifiedAt === 'string',
-      )
-      if (targeted) throw new Error(`Unexpected operator Attention: ${targeted.id}`)
+      const project = state.projects.find((candidate) => candidate.projectId === projectId)
+      const goal = project?.goals.find((candidate) => candidate.id === goalId)
+      if (project?.needsYouCount) throw new Error('Unexpected operator Attention')
       return goal?.lifecycle === 'done'
     },
     { timeoutMs: 15 * 60_000, description: `${projectId}/${goalId} to finish` },

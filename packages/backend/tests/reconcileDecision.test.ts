@@ -45,22 +45,6 @@ describe('decideGoalReconciliation', () => {
     expect(decide(goalPackage)).toEqual({ kind: 'ensure_planning' })
   })
 
-  test('claims a final Planner proposal only after structural completion checks', () => {
-    const goalPackage = packageWith(
-      [work('plan-final', 'planning', 'done')],
-      [attention('A-complete', null)],
-    )
-
-    expect(decide(goalPackage, { completionStructureValid: false })).toEqual({
-      kind: 'wait',
-      reasons: ['completion_structure_invalid'],
-    })
-    expect(decide(goalPackage)).toEqual({
-      kind: 'complete_goal',
-      attentionId: 'A-complete',
-    })
-  })
-
   test('does nothing for paused Goals or ineligible Projects', () => {
     const goalPackage = packageWith([work('plan', 'planning', 'plan')])
     goalPackage.goal.attributes.lifecycle = 'paused'
@@ -88,15 +72,12 @@ describe('decideGoalReconciliation', () => {
 
 function decide(
   goalPackage: GoalPackage,
-  overrides: Partial<Parameters<typeof decideGoalReconciliation>[0]['runtime']> & {
-    completionStructureValid?: boolean
-  } = {},
+  overrides: Partial<Parameters<typeof decideGoalReconciliation>[0]['runtime']> = {},
 ) {
   return decideGoalReconciliation({
     projectId: 'P-1',
     goalId: 'G-1',
     goalPackage,
-    completionStructureValid: overrides.completionStructureValid,
     runtime: {
       projectEligible: true,
       liveRunWorkIds: new Set(),
@@ -114,7 +95,6 @@ function packageWith(works: WorkDocument[], attentions: AttentionDocument[] = []
       lifecycle: 'active',
       priority: 0,
       contractRevision: 1,
-      completionAttentionId: null,
     },
     body: 'Goal.\n',
   }
@@ -153,14 +133,14 @@ function work(
       }
 }
 
-function attention(id: string, target: string | null): AttentionDocument {
+function attention(id: string, target: string): AttentionDocument {
   return {
     attributes: {
       id,
       target,
       createdAt: '2026-07-11T00:00:00Z',
       resolvedAt: null,
-      notifiedAt: null,
+      summary: 'Attention.',
     },
     body: 'Attention.\n',
   }

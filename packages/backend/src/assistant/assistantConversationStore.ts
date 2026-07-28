@@ -14,7 +14,6 @@ const turnStatusSchema = z.enum(['running', 'interrupted', 'completed', 'failed'
 
 const turnManifestSchema = z
   .object({
-    version: z.literal(1),
     eventId: z.string().min(1),
     status: turnStatusSchema,
     attempt: z.number().int().nonnegative(),
@@ -27,7 +26,6 @@ const turnManifestSchema = z
 
 const sessionManifestSchema = z
   .object({
-    version: z.literal(4),
     scope: z.string().min(1),
     transport: z.enum(['codex', 'claude', 'opencode']),
     sessionId: z.string().min(1),
@@ -45,7 +43,6 @@ const storedEventSchema = z
 
 const actionReceiptSchema = z
   .object({
-    version: z.literal(1),
     receiptId: z.string().min(1),
     scope: z.string().min(1),
     eventId: z.string().min(1),
@@ -91,7 +88,7 @@ export interface AssistantConversationStore {
   clearSessions(): Promise<void>
   recordActionReceipt(
     scope: AssistantConversationScope,
-    receipt: Omit<AssistantActionReceipt, 'version' | 'scope' | 'createdAt' | 'deliveredAt'>,
+    receipt: Omit<AssistantActionReceipt, 'scope' | 'createdAt' | 'deliveredAt'>,
   ): Promise<AssistantActionReceipt>
   readPendingActionReceipts(scope: AssistantConversationScope): Promise<AssistantActionReceipt[]>
   acknowledgeActionReceipts(
@@ -106,7 +103,6 @@ export function createAssistantConversationStore(
 ): AssistantConversationStore {
   const root = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant')
   const turnsRoot = join(root, 'turns')
-  const legacySessionPath = join(root, 'session.json')
   const receiptsRoot = join(root, 'receipts')
   const sessionPath = (scope: AssistantConversationScope) =>
     scope.kind === 'home'
@@ -126,7 +122,6 @@ export function createAssistantConversationStore(
 
   return {
     async interruptRunning() {
-      await rm(legacySessionPath, { force: true })
       await mkdir(turnsRoot, { recursive: true })
       const glob = new Bun.Glob('*/turn.json')
       for await (const relative of glob.scan({ cwd: turnsRoot, onlyFiles: true })) {
@@ -148,7 +143,6 @@ export function createAssistantConversationStore(
       const previous = await readJson(manifestPath(eventId), turnManifestSchema)
       const timestamp = now().toISOString()
       const manifest: AssistantTurnManifest = {
-        version: 1,
         eventId,
         status: 'running',
         attempt: (previous?.attempt ?? 0) + 1,
@@ -203,46 +197,33 @@ export function createAssistantConversationStore(
     },
 
     async readSession(scope, contractDigest, runtimeDigest) {
-      await rm(legacySessionPath, { force: true })
       const path = sessionPath(scope)
       const expectedScope = assistantConversationScopeKey(scope)
       const file = Bun.file(path)
       if (!(await file.exists())) return null
-      let source: unknown
-      try {
-        source = await file.json()
-      } catch {
+      const current = sessionManifestSchema.parse(await file.json())
+      if (current.scope !== expectedScope) {
         await rm(path, { force: true })
         return null
       }
-      const current = sessionManifestSchema.safeParse(source)
-      if (current.success) {
-        if (current.data.scope !== expectedScope) {
-          await rm(path, { force: true })
-          return null
-        }
-        if (contractDigest && current.data.contractDigest !== contractDigest) {
-          await rm(path, { force: true })
-          return null
-        }
-        if (runtimeDigest && current.data.runtimeDigest !== runtimeDigest) {
-          await rm(path, { force: true })
-          return null
-        }
-        return {
-          transport: current.data.transport,
-          sessionId: current.data.sessionId,
-        }
+      if (contractDigest && current.contractDigest !== contractDigest) {
+        await rm(path, { force: true })
+        return null
       }
-      await rm(path, { force: true })
-      return null
+      if (runtimeDigest && current.runtimeDigest !== runtimeDigest) {
+        await rm(path, { force: true })
+        return null
+      }
+      return {
+        transport: current.transport,
+        sessionId: current.sessionId,
+      }
     },
 
     async writeSession(scope, session, contractDigest, runtimeDigest) {
       const path = sessionPath(scope)
       await mkdir(dirname(path), { recursive: true })
       const manifest = sessionManifestSchema.parse({
-        version: 4,
         scope: assistantConversationScopeKey(scope),
         transport: session.transport,
         sessionId: session.sessionId.trim(),
@@ -258,7 +239,6 @@ export function createAssistantConversationStore(
 
     async clearSessions() {
       await rm(join(root, 'sessions'), { recursive: true, force: true })
-      await rm(legacySessionPath, { force: true })
     },
 
     async recordActionReceipt(scope, receipt) {
@@ -266,7 +246,6 @@ export function createAssistantConversationStore(
       const existing = await readJson(path, actionReceiptSchema)
       if (existing) return existing
       const stored = actionReceiptSchema.parse({
-        version: 1,
         ...receipt,
         scope: assistantConversationScopeKey(scope),
         createdAt: now().toISOString(),

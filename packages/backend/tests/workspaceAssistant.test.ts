@@ -970,7 +970,6 @@ describe('WorkspaceAssistant conversation', () => {
       reply: '你好。',
       disposition: 'answered',
     })
-    expect(event?.attributes.routeClaim).toBeUndefined()
     expect(goalPackage.inputs).toHaveLength(0)
     expect(
       [...goalPackage.works.values()].filter((work) => work.attributes.stage === 'plan'),
@@ -991,7 +990,6 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain(
       'transfer_attention_to_user presents referenced open Attention',
     )
-    expect(seen[0]?.prompt).not.toContain('<NeedsYou')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
     expect(seen[0]?.prompt).toContain('Project Preview is one local managed runtime')
@@ -1733,7 +1731,7 @@ async function setup(
     now: () => new Date('2026-07-11T00:00:00Z'),
   })
   const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
-  const controller = createGoalController(goalStore, { verifyCompletion: () => false })
+  const controller = createGoalController(goalStore, {})
   const preview = createPreviewManager(homeRoot)
   const attempts = createRunAttemptStore(homeRoot)
   const projects = new Map([

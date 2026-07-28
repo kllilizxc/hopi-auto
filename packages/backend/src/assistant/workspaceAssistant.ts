@@ -180,7 +180,7 @@ export function createConfiguredAssistantModelRunner(options: {
       const supervision = input.invocation === 'supervision'
       if (supervision && !session) {
         throw new AssistantNativeForkUnavailableError(
-          `The ${transport} Assistant cannot supervise without a compatible speaking session`,
+          `The ${transport} Assistant cannot supervise without a matching speaking session`,
         )
       }
       if (supervision && transport === 'opencode') {
@@ -1199,7 +1199,6 @@ function renderPreference(preference: AssistantPreferenceDocument) {
 function renderAttentionContext(context: {
   projectId?: string
   goalId?: string
-  attentionId?: string
   attentionRefs?: string[]
   workRefs?: string[]
   replyTo?: string
@@ -1217,7 +1216,6 @@ function renderAttentionContext(context: {
 function renderInboxContext(context: {
   projectId?: string
   goalId?: string
-  attentionId?: string
   attentionRefs?: string[]
   workRefs?: string[]
   replyTo?: string

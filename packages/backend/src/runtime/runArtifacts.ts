@@ -3,7 +3,6 @@ import { basename, isAbsolute, join, posix, relative, resolve, sep } from 'node:
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const PORTABLE_ARTIFACT_PATTERN = /^artifact:([A-Za-z0-9][A-Za-z0-9._-]*)\/(.+)$/
-const LEGACY_ARTIFACT_PATTERN = /^artifact:([^/\s][^\s]*)$/
 
 export interface PreservedRunArtifact {
   reference: string
@@ -30,7 +29,6 @@ export async function preserveRunArtifacts(input: {
   sourceRoots?: readonly string[]
   portableRoots?: readonly string[]
   proposalRoots?: readonly string[]
-  legacyRunRoot?: string
   resultFile?: string
 }): Promise<PreserveRunArtifactsResult> {
   assertStableId(input.runId)
@@ -65,7 +63,7 @@ export async function preserveRunArtifacts(input: {
       continue
     }
 
-    const source = await resolveArtifactSource(artifact, sourceRoots, input.legacyRunRoot, runRoot)
+    const source = await resolveArtifactSource(artifact, sourceRoots)
     if (!source) {
       unavailable.push({ reference: artifact, reason: 'Declared Run artifact is unavailable.' })
       if (isSafeRelativePath(artifact)) addReference(artifact)
@@ -134,11 +132,7 @@ export async function preserveRunArtifacts(input: {
   if (preserved.length > 0 || unavailable.length > 0) {
     await Bun.write(
       join(runRoot, 'artifacts.json'),
-      `${JSON.stringify(
-        { version: 1, runId: input.runId, artifacts: preserved, unavailable },
-        null,
-        2,
-      )}\n`,
+      `${JSON.stringify({ runId: input.runId, artifacts: preserved, unavailable }, null, 2)}\n`,
     )
   }
   if (input.resultFile) await rewriteResultArtifacts(input.resultFile, references)
@@ -164,10 +158,7 @@ export async function cleanupRunScratch(runtimeScratchDir: string) {
 
 export function parsePortableArtifactReference(reference: string) {
   const match = PORTABLE_ARTIFACT_PATTERN.exec(reference)
-  if (!match) {
-    const legacy = LEGACY_ARTIFACT_PATTERN.exec(reference)
-    return legacy?.[1] ? { runId: null, artifactPath: legacy[1] } : null
-  }
+  if (!match) return null
   const runId = match[1]
   const artifactPath = match[2]
   if (
@@ -182,18 +173,9 @@ export function parsePortableArtifactReference(reference: string) {
   return { runId, artifactPath }
 }
 
-async function resolveArtifactSource(
-  artifact: string,
-  sourceRoots: readonly string[],
-  legacyRunRoot: string | undefined,
-  runRoot: string,
-) {
+async function resolveArtifactSource(artifact: string, sourceRoots: readonly string[]) {
   const candidates: string[] = []
   if (isAbsolute(artifact)) {
-    if (legacyRunRoot) {
-      const legacyRelative = containedRelativePath(legacyRunRoot, artifact)
-      if (legacyRelative !== null) candidates.push(join(runRoot, legacyRelative))
-    }
     candidates.push(resolve(artifact))
   } else {
     for (const root of sourceRoots) candidates.push(resolve(root, artifact))
@@ -298,7 +280,7 @@ async function rewriteResultArtifacts(path: string, artifacts: readonly string[]
     if (!value || typeof value !== 'object' || Array.isArray(value)) return
     await Bun.write(path, `${JSON.stringify({ ...value, artifacts }, null, 2)}\n`)
   } catch {
-    // RoleRunner has already validated new results; malformed legacy results remain diagnostic truth.
+    // RoleRunner already recorded invalid output; artifact retention must not replace that evidence.
   }
 }
 

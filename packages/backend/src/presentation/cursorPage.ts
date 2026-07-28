@@ -20,7 +20,6 @@ export interface CursorPage<T> {
 export class CursorPageError extends Error {}
 
 interface CursorPayload {
-  version: 1
   scope: string
   side: 'before' | 'after'
   anchorId: string
@@ -60,7 +59,6 @@ export function paginateItems<T>(
     pageInfo: {
       oldestCursor: first
         ? encodeCursor({
-            version: 1,
             scope: options.scope,
             side: 'before',
             anchorId: options.getId(first),
@@ -68,7 +66,6 @@ export function paginateItems<T>(
         : (request.before ?? null),
       newestCursor: last
         ? encodeCursor({
-            version: 1,
             scope: options.scope,
             side: 'after',
             anchorId: options.getId(last),
@@ -100,7 +97,6 @@ function decodeCursor(cursor: string, scope: string, side: CursorPayload['side']
   }
   if (
     !isRecord(parsed) ||
-    parsed.version !== 1 ||
     parsed.scope !== scope ||
     parsed.side !== side ||
     typeof parsed.anchorId !== 'string' ||

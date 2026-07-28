@@ -25,7 +25,7 @@
     "e2e:revision:012": "cd packages/backend && bun run tests/e2e/designRevision.e2e.ts",
     "e2e:config:020": "cd packages/backend && bun run tests/e2e/configurationRebind.e2e.ts",
     "e2e:source:031": "cd packages/backend && bun run tests/e2e/scopedProjectSource.e2e.ts",
-    "e2e:migration:030": "cd packages/backend && bun run tests/e2e/projectMigration.e2e.ts",
+    "e2e:relocation:030": "cd packages/backend && bun run tests/e2e/projectRelocation.e2e.ts",
     "e2e:restart:016": "cd packages/backend && bun run tests/e2e/restartDuringGenerator.e2e.ts",
     "e2e:webhook:025": "cd packages/backend && bun run tests/e2e/webhookDelivery.e2e.ts",
     "e2e:preflight": "bun run e2e:contract && bun run test:browser",

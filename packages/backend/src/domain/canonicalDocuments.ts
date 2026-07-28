@@ -26,18 +26,8 @@ export const goalAttributesSchema = z
     lifecycle: z.enum(GOAL_LIFECYCLES),
     priority: z.number().int(),
     contractRevision: z.number().int().positive(),
-    completionAttentionId: stableIdSchema.nullable(),
   })
   .strict()
-  .superRefine((goal, context) => {
-    if (goal.lifecycle !== 'done' && goal.completionAttentionId !== null) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['completionAttentionId'],
-        message: 'legacy completionAttentionId is valid only while lifecycle is done',
-      })
-    }
-  })
 
 const workBaseSchema = z.object({
   id: stableIdSchema,
@@ -73,23 +63,19 @@ const workAttributesByKindSchema = z
     if (work.kind === 'planning') validatePlanningWorkDependencies(work, context)
   })
 
-export const workAttributesSchema = z.preprocess(stripLegacyWorkFields, workAttributesByKindSchema)
+export const workAttributesSchema = workAttributesByKindSchema
 
-export const attentionAttributesSchema = z.preprocess(
-  stripLegacyAttentionFields,
-  z
-    .object({
-      id: stableIdSchema,
-      target: canonicalRefSchema.nullable(),
-      createdAt: timestampSchema,
-      resolvedAt: timestampSchema.nullable(),
-      notifiedAt: timestampSchema.nullable(),
-      resolutionInput: canonicalRefSchema.nullable().optional(),
-      summary: z.string().trim().min(1).max(600).optional(),
-      decisionPrompt: assistantDecisionPromptSchema.nullable().optional(),
-    })
-    .strict(),
-)
+export const attentionAttributesSchema = z
+  .object({
+    id: stableIdSchema,
+    target: canonicalRefSchema,
+    createdAt: timestampSchema,
+    resolvedAt: timestampSchema.nullable(),
+    resolutionInput: canonicalRefSchema.nullable().optional(),
+    summary: z.string().trim().min(1).max(600),
+    decisionPrompt: assistantDecisionPromptSchema.nullable().optional(),
+  })
+  .strict()
 
 export const inputAttributesSchema = z
   .object({
@@ -175,17 +161,6 @@ export function isEngineeringWork(work: WorkAttributes): work is EngineeringWork
   return work.kind === 'engineering'
 }
 
-function stripLegacyWorkFields(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const attributes = value as Record<string, unknown>
-  const { attempts: _legacyAttempts, ...withoutAttempts } = attributes
-  if (attributes.kind !== 'engineering' || !Object.hasOwn(attributes, 'repos')) {
-    return withoutAttempts
-  }
-  const { repos: _legacyRepos, ...current } = withoutAttempts
-  return current
-}
-
 function validatePlanningWorkDependencies(
   work: { dependsOn: readonly string[] },
   context: z.RefinementCtx,
@@ -196,15 +171,4 @@ function validatePlanningWorkDependencies(
     path: ['dependsOn'],
     message: 'Planning Work never participates in dependsOn',
   })
-}
-
-function stripLegacyAttentionFields(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const {
-    retryRunId: _legacyRetryRunId,
-    operatorRequest: _legacyOperatorRequest,
-    revisitAt: _legacyRevisitAt,
-    ...current
-  } = value as Record<string, unknown>
-  return current
 }

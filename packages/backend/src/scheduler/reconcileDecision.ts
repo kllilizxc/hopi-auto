@@ -9,7 +9,6 @@ export type ReconcileDecision =
       responsibility: 'planner' | 'generator' | 'reviewer'
     }
   | { kind: 'ensure_planning' }
-  | { kind: 'complete_goal'; attentionId: string }
   | { kind: 'finish_cancellation' }
   | { kind: 'wait'; reasons: string[] }
 
@@ -18,7 +17,6 @@ export interface ReconcileDecisionInput {
   goalId: string
   goalPackage: GoalPackage
   runtime: WorkRuntimeFacts
-  completionStructureValid?: boolean
 }
 
 export function decideGoalReconciliation(input: ReconcileDecisionInput): ReconcileDecision {
@@ -41,17 +39,7 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
     (work) => !isWorkTerminal(work.attributes),
   )
   if (nonterminal.length === 0) {
-    const completion = [...goalPackage.attentions.values()].find(
-      (attention) =>
-        attention.attributes.target === null &&
-        attention.attributes.resolvedAt === null &&
-        attention.attributes.id !== goal.completionAttentionId,
-    )
-    if (!completion) return { kind: 'ensure_planning' }
-    if (input.completionStructureValid === false) {
-      return { kind: 'wait', reasons: ['completion_structure_invalid'] }
-    }
-    return { kind: 'complete_goal', attentionId: completion.attributes.id }
+    return { kind: 'ensure_planning' }
   }
 
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, runtime)

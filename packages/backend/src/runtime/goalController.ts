@@ -49,7 +49,6 @@ export interface AssistantEngineeringAdmission {
 
 export interface GoalControllerOptions {
   now?: () => Date
-  verifyCompletion(goalId: string, packageState: GoalPackage): Promise<boolean> | boolean
 }
 
 export interface GoalController {
@@ -74,7 +73,6 @@ export interface GoalController {
       planningSettlement?: PlanningAttentionSettlement
     },
   ): Promise<GoalDocument>
-  completeGoal(goalId: string, attentionId: string): Promise<GoalDocument>
   pauseGoal(goalId: string): Promise<GoalDocument>
   resumeGoal(goalId: string): Promise<GoalDocument>
   setPriority(goalId: string, priority: number): Promise<GoalDocument>
@@ -166,12 +164,10 @@ export function createGoalController(
         }
       }
 
-      const completionWrites = await supersededCompletionWrites(store, goalId, goalPackage, now())
       await store.publishGoal(goalId, {
         supportingWrites: [
           ...(input.context?.supportingWrites ?? []),
           ...(input.acceptedInput.write ? [input.acceptedInput.write] : []),
-          ...completionWrites,
         ],
         gateWrite: {
           path: store.paths.workDocument(goalId, work.attributes.id),
@@ -300,7 +296,7 @@ export function createGoalController(
       return planning
     },
     async applyMaterialInstruction(goalId, input) {
-      let goalPackage = await store.readPackage(goalId)
+      const goalPackage = await store.readPackage(goalId)
       if (
         goalPackage.goal.attributes.lifecycle === 'done' ||
         goalPackage.goal.attributes.lifecycle === 'cancelled'
@@ -325,12 +321,6 @@ export function createGoalController(
         return (await store.readPackage(goalId)).goal
       }
 
-      for (const attention of goalPackage.attentions.values()) {
-        if (attention.attributes.target === null && attention.attributes.resolvedAt === null) {
-          await resolveAsSuperseded(store, goalId, attention, now())
-        }
-      }
-      goalPackage = await store.readPackage(goalId)
       const revision = goalPackage.goal.attributes.contractRevision + 1
       const existingPlanning = [...goalPackage.works.values()].find(
         (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
@@ -385,40 +375,6 @@ export function createGoalController(
       })
       return nextGoal
     },
-    async completeGoal(goalId, attentionId) {
-      const goalPackage = await store.readPackage(goalId)
-      const goal = goalPackage.goal
-      if (goal.attributes.lifecycle !== 'active') {
-        throw new GoalControllerError('Only an active Goal can complete')
-      }
-      const completion = goalPackage.attentions.get(attentionId)
-      if (
-        !completion ||
-        completion.attributes.target !== null ||
-        completion.attributes.resolvedAt !== null
-      ) {
-        throw new GoalControllerError(
-          'Goal completion requires one open targetless Planner proposal',
-        )
-      }
-      if ([...goalPackage.works.values()].some((work) => !isWorkTerminal(work.attributes))) {
-        throw new GoalControllerError('Goal completion requires every Work to be terminal')
-      }
-      if (!(await options.verifyCompletion(goalId, goalPackage))) {
-        throw new GoalControllerError('Goal completion structure is not valid')
-      }
-
-      const next: GoalDocument = {
-        ...goal,
-        attributes: {
-          ...goal.attributes,
-          lifecycle: 'done',
-          completionAttentionId: attentionId,
-        },
-      }
-      await replaceGoal(store, goalId, next)
-      return next
-    },
     async pauseGoal(goalId) {
       const goal = await requireGoal(store, goalId)
       if (goal.attributes.lifecycle === 'paused') return goal
@@ -439,15 +395,6 @@ export function createGoalController(
         throw new GoalControllerError('Only a paused Goal can resume')
       }
 
-      for (const attention of goalPackage.attentions.values()) {
-        if (
-          attention.attributes.target === null &&
-          attention.attributes.resolvedAt === null &&
-          attention.attributes.id !== goalPackage.goal.attributes.completionAttentionId
-        ) {
-          await resolveAsSuperseded(store, goalId, attention, now())
-        }
-      }
       await this.ensurePlanning(goalId, 'Reassess current truth after Goal resume.')
       goalPackage = await store.readPackage(goalId)
       const current = goalPackage.goal
@@ -693,27 +640,6 @@ export function createGoalController(
         goalPackage = await store.readPackage(goalId)
       }
 
-      const completion = goalPackage.goal.attributes.completionAttentionId
-        ? goalPackage.attentions.get(goalPackage.goal.attributes.completionAttentionId)
-        : null
-      const supportingWrites: Parameters<GoalPackageStore['publishGoal']>[1]['supportingWrites'] =
-        []
-      if (completion?.attributes.resolvedAt === null) {
-        const path = store.paths.attentionDocument(goalId, completion.attributes.id)
-        const source = await Bun.file(store.paths.absolute(path)).text()
-        const resolved: AttentionDocument = {
-          attributes: {
-            ...completion.attributes,
-            resolvedAt: now().toISOString(),
-          },
-          body: `${completion.body}\n## Resolution\n\nSuperseded by explicit Goal reopen.\n`,
-        }
-        supportingWrites.push({
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderAttentionDocument(resolved),
-        })
-      }
       const path = store.paths.goalDocument(goalId)
       const source = await Bun.file(store.paths.absolute(path)).text()
       const reopened: GoalDocument = {
@@ -722,11 +648,10 @@ export function createGoalController(
           ...goalPackage.goal.attributes,
           lifecycle: 'active',
           contractRevision: goalPackage.goal.attributes.contractRevision + 1,
-          completionAttentionId: null,
         },
       }
       await store.publishGoal(goalId, {
-        supportingWrites,
+        supportingWrites: [],
         gateWrite: {
           path,
           expectedHash: await hashBytes(new TextEncoder().encode(source)),
@@ -805,51 +730,6 @@ async function replaceGoal(store: GoalPackageStore, goalId: string, next: GoalDo
       content: renderGoalDocument(next),
     },
   })
-}
-
-async function supersededCompletionWrites(
-  store: GoalPackageStore,
-  goalId: string,
-  goalPackage: GoalPackage,
-  resolvedAt: Date,
-) {
-  const writes: PublicationWrite[] = []
-  for (const attention of goalPackage.attentions.values()) {
-    if (attention.attributes.target !== null || attention.attributes.resolvedAt !== null) continue
-    const path = store.paths.attentionDocument(goalId, attention.attributes.id)
-    const source = await Bun.file(store.paths.absolute(path)).text()
-    const resolved = parseAttentionDocument(source)
-    resolved.attributes.resolvedAt = resolvedAt.toISOString()
-    resolved.body = [
-      resolved.body.trimEnd(),
-      '',
-      '## Resolution',
-      '',
-      'Superseded by a newly admitted Engineering Work.',
-      '',
-    ].join('\n')
-    writes.push({
-      path,
-      expectedHash: await hashBytes(new TextEncoder().encode(source)),
-      content: renderAttentionDocument(resolved),
-    })
-  }
-  return writes
-}
-
-async function resolveAsSuperseded(
-  store: GoalPackageStore,
-  goalId: string,
-  attention: AttentionDocument,
-  resolvedAt: Date,
-) {
-  return resolveAttention(
-    store,
-    goalId,
-    attention,
-    resolvedAt,
-    'Superseded by an instruction requiring fresh Planning.',
-  )
 }
 
 async function resolveAttention(

@@ -69,7 +69,6 @@ describe('ProjectReconciler', () => {
       fixture.runner.repoRootsByRun.find((run) => run.responsibility === 'generator')?.paths[0],
     )
     expect(goalPackage.goal.attributes.lifecycle).toBe('done')
-    expect(goalPackage.goal.attributes.completionAttentionId).toBeNull()
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('done')
     expect(releases).toEqual([{ projectId: 'project-1', commit: expect.any(String) }])
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
@@ -462,7 +461,7 @@ describe('ProjectReconciler', () => {
 
   test('Pause is a lifecycle guard and dispatches no responsibility pass', async () => {
     const fixture = await createFixture()
-    const controller = createGoalController(fixture.store, { verifyCompletion: () => true })
+    const controller = createGoalController(fixture.store, {})
     await controller.pauseGoal('goal-1')
 
     const result = await fixture.reconciler.reconcileGoal('goal-1')
@@ -921,7 +920,7 @@ describe('ProjectReconciler', () => {
 
   test('keeps a timed queued Attempt across restart and runs it once after notBefore', async () => {
     const fixture = await createFixture({ directInitialWork: true })
-    const controller = createGoalController(fixture.store, { verifyCompletion: () => false })
+    const controller = createGoalController(fixture.store, {})
     await controller.setWorkNotBefore('goal-1', 'W-1', '2026-07-12T00:00:00.000Z')
     expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toMatchObject({
       runId: 'run-1',
@@ -1010,7 +1009,7 @@ describe('ProjectReconciler', () => {
       generatorOperationalFailure: true,
     })
     const first = await fixture.reconciler.reconcileGoal('goal-1')
-    const controller = createGoalController(fixture.store, { verifyCompletion: () => false })
+    const controller = createGoalController(fixture.store, {})
     await controller.appendWorkMessage('goal-1', 'W-1', {
       sourceEventId: 'EV-guidance',
       content: 'Use the verified API command from the current design.',
@@ -1219,6 +1218,7 @@ class DeliveryScriptRunner implements RoleRunner {
     await observer?.onSession?.({
       transport: 'codex',
       sessionId: `session-${input.workId}-${input.responsibility}`,
+      executionKey: 'test-execution',
     })
     this.repoRootsByRun.push({
       responsibility: input.responsibility,

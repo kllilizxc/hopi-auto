@@ -1,5 +1,5 @@
 import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { resetProjectAssistantConversationEpoch } from '../assistant/assistantConversationEpoch'
 import { assistantConversationScopeForEvent } from '../assistant/assistantConversationScope'
 import { createAssistantWorkspacePaths } from '../domain/assistantWorkspace'
@@ -7,7 +7,6 @@ import {
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
 } from '../domain/assistantWorkspaceDocuments'
-import { goalAttentionReference } from '../domain/attentionReference'
 import { projectReleaseRef } from '../domain/project'
 import { assertStableId } from '../domain/stableId'
 import { acquireCoordinatorInstanceLock } from '../publication/instanceLock'
@@ -25,7 +24,6 @@ export interface ProjectResetRepoPlan {
 }
 
 export interface ProjectResetPlan {
-  version: 1
   projectId: string
   homeRoot: string
   primaryIntegrationRoot: string
@@ -91,7 +89,6 @@ export async function planProjectReset(input: {
       Promise.all(
         project.repos.map(async (repo) => {
           const managed = managedRepoWorktreePaths(repo.repoPath, projectId)
-          const legacyRuntimeRoot = join(homeRoot, '.hopi', 'runtime', 'worktrees', projectId)
           const [worktrees, refs] = await Promise.all([
             listGitWorktrees(repo.repoPath),
             gitRefList(repo.repoPath, [
@@ -103,10 +100,7 @@ export async function planProjectReset(input: {
           const taskWorktrees = (
             await Promise.all(
               worktrees.map(async (path) =>
-                (await isInsideCanonical(managed.work, path)) ||
-                (await isInsideCanonical(legacyRuntimeRoot, path))
-                  ? path
-                  : null,
+                (await isInsideCanonical(managed.work, path)) ? path : null,
               ),
             )
           ).filter((path): path is string => path !== null)
@@ -144,25 +138,11 @@ export async function planProjectReset(input: {
     const goalId = path.slice(`${GOALS_ROOT}/`.length).split('/')[0]
     if (goalId) goalIds.add(goalId)
   }
-  const goalAttentionFeedEntryIds = (
-    await Promise.all(
-      [...goalIds].map(async (goalId) =>
-        (
-          await markdownFiles(join(goalsRoot, goalId, 'attention'))
-        ).map((path) => {
-          const attentionId = basename(path, '.md')
-          return `completion:${goalAttentionReference(projectId, goalId, attentionId)}`
-        }),
-      ),
-    )
-  ).flat()
-  assistantState.feedEntryIds = [
-    ...assistantState.eventIds.map((eventId) => `event:${eventId}`),
-    ...goalAttentionFeedEntryIds,
-  ].toSorted()
+  assistantState.feedEntryIds = assistantState.eventIds
+    .map((eventId) => `event:${eventId}`)
+    .toSorted()
 
   return {
-    version: 1,
     projectId,
     homeRoot,
     primaryIntegrationRoot: project.integrationRoot,
@@ -259,7 +239,6 @@ export async function applyProjectReset(input: {
       manifestPath,
       `${JSON.stringify(
         {
-          version: 1,
           kind: 'project_reset',
           projectId: plan.projectId,
           appliedAt: new Date().toISOString(),
@@ -471,12 +450,6 @@ async function readPriorResetFeedEntryIds(homeRoot: string, projectId: string) {
     if (Array.isArray(assistant.feedEntryIds)) {
       for (const id of assistant.feedEntryIds) {
         if (typeof id === 'string' && id) ids.add(id)
-      }
-      continue
-    }
-    if (Array.isArray(assistant.eventIds)) {
-      for (const eventId of assistant.eventIds) {
-        if (typeof eventId === 'string' && eventId) ids.add(`event:${eventId}`)
       }
     }
   }

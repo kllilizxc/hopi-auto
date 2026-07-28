@@ -29,7 +29,6 @@ afterEach(async () => {
 describe('browser environment', () => {
   test('describes two environment targets without Project policy', () => {
     expect(browserTargetManifest()).toEqual({
-      version: 1,
       defaultTarget: 'managed',
       selector: '--target <managed|operator>',
       targets: {

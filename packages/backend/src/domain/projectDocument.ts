@@ -1,6 +1,6 @@
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
-import { DEFAULT_PRIMARY_REPO_ID, type ProjectDocument, type ProjectRepoDocument } from './project'
+import type { ProjectDocument, ProjectRepoDocument } from './project'
 import { isNormalizedProjectPath, normalizeProjectPath } from './projectPath'
 import { stableIdSchema } from './stableId'
 
@@ -17,33 +17,22 @@ export const projectRepoDocumentSchema = z
 
 export const projectDocumentSchema = z
   .object({
-    version: z.literal(2),
     projectId: stableIdSchema,
     primaryRepoId: stableIdSchema,
     repos: z.array(projectRepoDocumentSchema).min(1),
   })
   .strict()
 
-export const legacyProjectDocumentSchema = z
-  .object({
-    version: z.literal(1),
-    projectId: stableIdSchema,
-  })
-  .strict()
-
 export class ProjectDocumentError extends Error {}
 
-export function parseProjectDocument(
-  source: string,
-  legacyPrimaryRepoId = DEFAULT_PRIMARY_REPO_ID,
-): ProjectDocument {
+export function parseProjectDocument(source: string): ProjectDocument {
   let value: unknown
   try {
     value = parse(source)
   } catch (error) {
     throw new ProjectDocumentError(`project.yml YAML is invalid: ${errorMessage(error)}`)
   }
-  const parsed = z.union([projectDocumentSchema, legacyProjectDocumentSchema]).safeParse(value)
+  const parsed = projectDocumentSchema.safeParse(value)
   if (!parsed.success) {
     throw new ProjectDocumentError(
       `project.yml is invalid: ${parsed.error.issues
@@ -51,15 +40,7 @@ export function parseProjectDocument(
         .join(', ')}`,
     )
   }
-  const document: ProjectDocument =
-    parsed.data.version === 2
-      ? parsed.data
-      : {
-          version: 2,
-          projectId: parsed.data.projectId,
-          primaryRepoId: legacyPrimaryRepoId,
-          repos: [{ repoId: legacyPrimaryRepoId }],
-        }
+  const document: ProjectDocument = parsed.data
   validateProjectDocument(document)
   return document
 }

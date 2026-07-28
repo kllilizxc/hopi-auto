@@ -2,9 +2,9 @@ import type { InfiniteData, QueryClient } from '@tanstack/react-query'
 import type { AssistantFeedChanges, AssistantFeedPage, CursorPage } from './apiTypes'
 import { infiniteMessageHistoryQueryKey } from './queryKeys'
 import {
-  createSessionSnapshotCache,
   type SessionSnapshot,
   type SessionSnapshotStorage,
+  createSessionSnapshotCache,
 } from './sessionSnapshotCache'
 
 export const MESSAGE_STREAM_CACHE_MAX_ENTRIES = 12
@@ -15,8 +15,7 @@ export type MessageStreamSnapshot<T> = SessionSnapshot<T>
 export type MessageStreamStorage = SessionSnapshotStorage
 
 const messageStreamCache = createSessionSnapshotCache({
-  storageKey: 'hopi.message-stream-cache.v1',
-  version: 1,
+  storageKey: 'hopi.message-stream-cache',
   maxEntries: MESSAGE_STREAM_CACHE_MAX_ENTRIES,
   maxEntryCharacters: MESSAGE_STREAM_CACHE_MAX_ENTRY_CHARACTERS,
   maxTotalCharacters: MESSAGE_STREAM_CACHE_MAX_TOTAL_CHARACTERS,

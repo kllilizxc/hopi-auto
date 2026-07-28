@@ -180,7 +180,7 @@ async function seedPausedGoal(integrationRoot: string) {
     title: 'Existing read-only context Goal',
     objective: 'Provide stable page context for a conversation-only scenario.',
   })
-  const controller = createGoalController(store, { verifyCompletion: () => false })
+  const controller = createGoalController(store, {})
   await controller.pauseGoal(GOAL_ID)
 }
 

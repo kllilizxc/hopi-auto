@@ -494,7 +494,6 @@ interface GoalView {
     id: string
     target: string | null
     resolvedAt: string | null
-    notifiedAt: string | null
     body: string
   }>
 }

@@ -41,7 +41,6 @@ describe('Run artifacts', () => {
     expect(result.references).toEqual(['artifact:R-1/001-asset.png'])
     expect(await Bun.file(join(runRoot, 'artifacts', '001-asset.png')).text()).toBe('proof')
     expect(await Bun.file(join(runRoot, 'artifacts.json')).json()).toMatchObject({
-      version: 1,
       runId: 'R-1',
       artifacts: [{ reference: 'artifact:R-1/001-asset.png', path: 'artifacts/001-asset.png' }],
     })
@@ -83,10 +82,7 @@ describe('Run artifacts', () => {
       runId: 'R-1',
       artifactPath: '001-proof.txt',
     })
-    expect(parsePortableArtifactReference('artifact:test-log')).toEqual({
-      runId: null,
-      artifactPath: 'test-log',
-    })
+    expect(parsePortableArtifactReference('artifact:test-log')).toBeNull()
   })
 
   test('keeps a verified Project-relative source path portable without duplicating it', async () => {

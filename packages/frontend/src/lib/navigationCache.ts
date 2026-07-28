@@ -1,6 +1,6 @@
 import type { Query, QueryClient } from '@tanstack/react-query'
 import { NAVIGATION_CACHE_GC_INTERVAL_MS } from './queryPerformance'
-import { createSessionSnapshotCache, type SessionSnapshotStorage } from './sessionSnapshotCache'
+import { type SessionSnapshotStorage, createSessionSnapshotCache } from './sessionSnapshotCache'
 
 export const NAVIGATION_CACHE_MAX_ENTRIES = 24
 export const NAVIGATION_CACHE_MAX_ENTRY_CHARACTERS = 750_000
@@ -8,8 +8,7 @@ export const NAVIGATION_CACHE_MAX_TOTAL_CHARACTERS = 3_000_000
 export const NAVIGATION_CACHE_WRITE_INTERVAL_MS = 5_000
 
 const navigationCache = createSessionSnapshotCache({
-  storageKey: 'hopi.navigation-cache.v1',
-  version: 1,
+  storageKey: 'hopi.navigation-cache',
   maxEntries: NAVIGATION_CACHE_MAX_ENTRIES,
   maxEntryCharacters: NAVIGATION_CACHE_MAX_ENTRY_CHARACTERS,
   maxTotalCharacters: NAVIGATION_CACHE_MAX_TOTAL_CHARACTERS,

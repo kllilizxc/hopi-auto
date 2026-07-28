@@ -1,7 +1,5 @@
 import { assertStableId } from './stableId'
 
-export const LEGACY_HOPI_RELEASE_BRANCH = 'hopi/release'
-export const LEGACY_HOPI_RELEASE_REF = `refs/heads/${LEGACY_HOPI_RELEASE_BRANCH}`
 export const DEFAULT_PRIMARY_REPO_ID = 'primary'
 
 export function projectReleaseBranch(projectId: string) {
@@ -14,7 +12,6 @@ export function projectReleaseRef(projectId: string) {
 }
 
 export interface AssistantHomeDocument {
-  version: 1
   homeId: string
 }
 
@@ -32,7 +29,6 @@ export interface ProjectLink {
 }
 
 export interface ProjectLinksDocument {
-  version: 4
   projects: ProjectLink[]
 }
 
@@ -43,7 +39,6 @@ export interface ProjectRepoDocument {
 }
 
 export interface ProjectDocument {
-  version: 2
   projectId: string
   primaryRepoId: string
   repos: ProjectRepoDocument[]
@@ -57,11 +52,11 @@ export interface LinkedProjectRepo extends ProjectRepoLink {
 
 export interface LinkedProject extends ProjectLink {
   repos: LinkedProjectRepo[]
-  /** Primary Repo compatibility alias. */
+  /** Primary Repo convenience projection. */
   repoPath: string
-  /** Primary Repo portable source-scope compatibility alias. */
+  /** Primary Repo portable source scope. */
   projectPath: string
-  /** Primary Repo compatibility alias and canonical document root. */
+  /** Primary Repo canonical document root. */
   integrationRoot: string
 }
 

@@ -29,17 +29,23 @@ describe('ResponsibilitySessionStore', () => {
     await store.write(generator, assignment, {
       transport: 'codex',
       sessionId: 'thread-generator',
+      executionKey: 'generator-key',
     })
     await store.write(reviewer, assignment, {
       transport: 'claude',
       sessionId: 'thread-reviewer',
+      executionKey: 'reviewer-key',
     })
 
     const resumed = await store.open(generator, assignment)
     expect(resumed).toMatchObject({
       contractRevision: 1,
       assignmentHash: 'a'.repeat(64),
-      session: { transport: 'codex', sessionId: 'thread-generator' },
+      session: {
+        transport: 'codex',
+        sessionId: 'thread-generator',
+        executionKey: 'generator-key',
+      },
       workspaceDir: first.workspaceDir,
     })
     expect(await Bun.file(join(resumed.workspaceDir, 'partial-proof.json')).text()).toBe(
@@ -48,6 +54,7 @@ describe('ResponsibilitySessionStore', () => {
     expect((await store.open(reviewer, assignment)).session).toEqual({
       transport: 'claude',
       sessionId: 'thread-reviewer',
+      executionKey: 'reviewer-key',
     })
 
     await store.invalidateVendor(generator, assignment)
@@ -66,6 +73,7 @@ describe('ResponsibilitySessionStore', () => {
     await store.write(generator, firstScope, {
       transport: 'codex',
       sessionId: 'revision-one',
+      executionKey: 'revision-one-key',
     })
 
     const revisionTwo = await store.open(generator, secondScope)
@@ -83,43 +91,18 @@ describe('ResponsibilitySessionStore', () => {
     expect(await Bun.file(revisionTwo.workspaceDir).exists()).toBe(false)
   })
 
-  test('discards an unbound legacy session and repairs malformed metadata without deleting files', async () => {
+  test('rejects malformed metadata', async () => {
     const root = await temporaryRoot()
-    const legacyPath = join(
-      root,
-      '.hopi',
-      'runtime',
-      'responsibility-sessions',
-      'P-1',
-      'G-1',
-      'W-1',
-      'generator.json',
-    )
-    await mkdir(dirname(legacyPath), { recursive: true })
-    await Bun.write(
-      legacyPath,
-      `${JSON.stringify({ version: 1, transport: 'codex', sessionId: 'legacy-thread' })}\n`,
-    )
     const store = createResponsibilitySessionStore(root)
     const generator = key('W-1', 'generator')
     const assignment = scope(3, 'c')
-    const migrated = await store.open(generator, assignment)
+    const opened = await store.open(generator, assignment)
 
-    expect(migrated.session).toBeNull()
-    expect(await Bun.file(legacyPath).exists()).toBe(false)
-    const manifestPath = join(dirname(migrated.workspaceDir), 'session.json')
-    await Bun.write(join(migrated.workspaceDir, 'retained.txt'), 'keep')
+    expect(opened.session).toBeNull()
+    const manifestPath = join(dirname(opened.workspaceDir), 'session.json')
     await Bun.write(manifestPath, '{not-json')
 
-    const repaired = await store.open(generator, assignment)
-    expect(repaired.session).toBeNull()
-    expect(await Bun.file(join(repaired.workspaceDir, 'retained.txt')).text()).toBe('keep')
-    expect(await Bun.file(manifestPath).json()).toEqual({
-      version: 3,
-      contractRevision: 3,
-      assignmentHash: 'c'.repeat(64),
-      session: null,
-    })
+    expect(store.open(generator, assignment)).rejects.toThrow()
   })
 
   test('atomically rebinds one stable current view without changing older Run directories', async () => {

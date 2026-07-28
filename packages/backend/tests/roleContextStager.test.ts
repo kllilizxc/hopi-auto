@@ -473,8 +473,8 @@ describe('RoleContextStager', () => {
               target: 'project:project-1/goal:goal-1/work:plan-initial',
               createdAt: '2026-07-17T00:00:00.000Z',
               resolvedAt: '2026-07-17T00:01:00.000Z',
-              notifiedAt: '2026-07-17T00:00:30.000Z',
               resolutionInput,
+              summary: 'The old route was superseded.',
             },
             body: 'The old route was superseded.\n',
           }),
@@ -834,7 +834,6 @@ describe('RoleContextStager', () => {
     expect(await Bun.file(join(projectedPath, 'pages', 'trade-cal.json')).text()).toBe('{}\n')
     expect((await stat(join(projectedPath, 'ledger.json'))).mode & 0o222).toBe(0)
     expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
-      version: 1,
       artifacts: [
         {
           reference: artifactReference,
@@ -882,7 +881,6 @@ describe('RoleContextStager', () => {
     )
     expect(prompt).toContain('Decide whether they matter for the current responsibility.')
     expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
-      version: 1,
       artifacts: [
         {
           reference: availableReference,
@@ -1084,7 +1082,6 @@ describe('RoleContextStager', () => {
       '001-001-proof.txt',
     )
     expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
-      version: 1,
       artifacts: [
         {
           reference: artifactReference,
@@ -1207,7 +1204,6 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain(missingPath)
     expect(prompt).toContain('The referenced Goal asset is unavailable in current authority.')
     expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
-      version: 1,
       artifacts: [],
       unavailable: [
         {

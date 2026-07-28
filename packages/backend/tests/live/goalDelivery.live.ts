@@ -117,18 +117,11 @@ try {
   await waitForValue(
     async () => {
       const state = await requestJson<LiveState>(harness?.baseUrl ?? '', '/api/state')
-      const current = state.projects
-        .find((candidate) => candidate.projectId === PROJECT_ID)
-        ?.goals.find((goal) => goal.id === goalId)
+      const project = state.projects.find((candidate) => candidate.projectId === PROJECT_ID)
+      const current = project?.goals.find((goal) => goal.id === goalId)
       if (current?.lifecycle === 'cancelled') throw new Error(`Goal ${goalId} was cancelled`)
-      const needsUser = state.attentions.find(
-        (attention) =>
-          typeof attention.target === 'string' &&
-          attention.resolvedAt === null &&
-          typeof attention.notifiedAt === 'string',
-      )
-      if (needsUser) {
-        throw new Error(`Goal requires unexpected user action: ${needsUser.id}`)
+      if (project?.needsYouCount) {
+        throw new Error('Goal requires unexpected user action')
       }
       const activeForGoal = state.activeRuns.filter((run) =>
         run.key.startsWith(`${PROJECT_ID}/${goalId}/`),

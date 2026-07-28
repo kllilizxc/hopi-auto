@@ -34,7 +34,7 @@ describe('Project presentation', () => {
   test('uses the selected subfolder instead of the Repo root', () => {
     expect(
       projectDisplayName({
-        projectId: 'P-legacy',
+        projectId: 'P-project',
         repoPath: '/home/me/Code/monorepo',
         projectPath: 'apps/mobile-client',
       }),

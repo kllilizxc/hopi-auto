@@ -88,10 +88,14 @@ const assistantRunner: AssistantModelRunner = {
     const mode = input.toolMode ?? 'main'
     assistantTurns.push({ eventId: input.eventId, projectId: input.projectId ?? null })
     if (mode === 'main' && input.prompt.includes(STATUS_MESSAGE)) {
-      return assistantResult(
-        `<NeedsYou attentionId="${attentionToResolve}">${NEEDS_YOU_MESSAGE}</NeedsYou>`,
-        mode,
-      )
+      await callAssistantTool(input, observer, 'hopi_manage_attention', {
+        projectId: PROJECT_ID,
+        change: {
+          kind: 'transfer_attention_to_user',
+          attentionRefs: [workspaceAttentionReference(assistantHomeId, attentionToResolve)],
+        },
+      })
+      return assistantResult(NEEDS_YOU_MESSAGE, mode)
     }
     if (mode === 'main' && input.prompt.includes(USER_MESSAGE)) {
       await rm(recoveryBlocker, { force: true })

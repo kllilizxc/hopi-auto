@@ -11,7 +11,6 @@ export interface SessionSnapshotStorage {
 
 interface SessionSnapshotCacheOptions {
   storageKey: string
-  version: number
   maxEntries: number
   maxEntryCharacters: number
   maxTotalCharacters: number
@@ -24,7 +23,6 @@ interface CacheIndexEntry {
 }
 
 interface CacheEntry<T> extends SessionSnapshot<T> {
-  version: number
   key: string
 }
 
@@ -45,12 +43,7 @@ export function createSessionSnapshotCache(options: SessionSnapshotCacheOptions)
       const raw = storage.getItem(entryKey(key))
       if (!raw) return null
       const parsed = JSON.parse(raw) as Partial<CacheEntry<T>>
-      if (
-        parsed.version !== options.version ||
-        parsed.key !== key ||
-        typeof parsed.savedAt !== 'number' ||
-        !('value' in parsed)
-      ) {
+      if (parsed.key !== key || typeof parsed.savedAt !== 'number' || !('value' in parsed)) {
         return null
       }
       return { savedAt: parsed.savedAt, value: parsed.value as T }
@@ -80,7 +73,6 @@ export function createSessionSnapshotCache(options: SessionSnapshotCacheOptions)
     let serialized: string
     try {
       serialized = JSON.stringify({
-        version: options.version,
         key,
         savedAt,
         value,

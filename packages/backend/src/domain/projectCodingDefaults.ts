@@ -60,14 +60,27 @@ export const DEFAULT_PROJECT_CODING_DEFAULTS: ProjectCodingDefaults = {
   reasoningEffort: DEFAULT_CODEX_REASONING_EFFORT,
 }
 
-export const projectCodingDefaultsSchema = z.custom<ProjectCodingDefaults>((input) => {
-  try {
-    normalizeProjectCodingDefaults(input as ProjectCodingDefaultsInput | undefined)
-    return true
-  } catch {
-    return false
-  }
-})
+export const projectCodingDefaultsSchema = z.discriminatedUnion('transport', [
+  z
+    .object({
+      transport: z.literal('codex'),
+      model: z.string().trim().min(1),
+      reasoningEffort: codingReasoningEffortSchema,
+    })
+    .strict(),
+  z
+    .object({
+      transport: z.literal('claude'),
+      model: z.string().trim().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      transport: z.literal('opencode'),
+      model: providerQualifiedModelSchema.optional(),
+    })
+    .strict(),
+])
 
 export function normalizeProjectCodingDefaults(
   input?: ProjectCodingDefaultsInput,

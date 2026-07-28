@@ -649,7 +649,6 @@ describe('normalizeProcessOutputLine', () => {
 
   test('does not merge untouched Claude Session tasks into a resumed Attempt plan', () => {
     const normalizer = createProcessTranscriptNormalizer({
-      version: 1,
       claudeTasks: [
         { id: '1', text: 'Finished in an earlier Attempt', status: 'completed' },
         { id: '2', text: 'Continue this repair', status: 'pending' },

@@ -327,82 +327,8 @@ describe('RunAttemptStore', () => {
     })
     expect(await Bun.file(eventsPath).text()).not.toContain('\0')
   })
-
-  test('reads an older Attempt manifest without an execution identity', async () => {
-    const store = createRunAttemptStore(temporaryRoot)
-    await store.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-1',
-      runId: 'R-before-execution-capture',
-      responsibility: 'planner',
-      runRoot: runRoot('R-before-execution-capture'),
-    })
-    const manifestPath = join(runRoot('R-before-execution-capture'), 'attempt.json')
-    const manifest = (await Bun.file(manifestPath).json()) as Record<string, unknown>
-    manifest.execution = undefined
-    await Bun.write(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-
-    expect(await store.list('P-1', 'G-1', 'W-1')).toMatchObject([{ execution: null }])
-  })
-
-  test('reads an older execution identity without inventing reasoning effort', async () => {
-    const store = createRunAttemptStore(temporaryRoot)
-    await store.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-1',
-      runId: 'R-before-effort-capture',
-      responsibility: 'generator',
-      runRoot: runRoot('R-before-effort-capture'),
-    })
-    const manifestPath = join(runRoot('R-before-effort-capture'), 'attempt.json')
-    const manifest = (await Bun.file(manifestPath).json()) as Record<string, unknown>
-    manifest.execution = { transport: 'codex', model: 'gpt-5.4' }
-    await Bun.write(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-
-    expect(await store.list('P-1', 'G-1', 'W-1')).toMatchObject([
-      {
-        execution: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: null },
-      },
-    ])
-  })
-
-  test('keeps pre-recorder Run directories visible as legacy Attempts', async () => {
-    const root = legacyRunRoot('P-1', 'G-1', 'W-1', 'R-legacy')
-    await mkdir(root, { recursive: true })
-    await Bun.write(
-      join(root, 'context.md'),
-      '# HOPI Responsibility Context\n\n- Responsibility: reviewer\n',
-    )
-    await Bun.write(
-      join(root, 'result.json'),
-      `${JSON.stringify({ result: 'reject', summary: 'Visual regression.', artifacts: [] })}\n`,
-    )
-    const store = createRunAttemptStore(temporaryRoot)
-    const snapshot = await store.snapshot()
-
-    expect(await store.list('P-1', 'G-1', 'W-1')).toMatchObject([
-      {
-        runId: 'R-legacy',
-        responsibility: 'reviewer',
-        status: 'finished',
-        result: 'reject',
-        summary: 'Visual regression.',
-      },
-    ])
-    expect(snapshot.list('P-1', 'G-1', 'W-1')).toMatchObject([
-      { runId: 'R-legacy', responsibility: 'reviewer', result: 'reject' },
-    ])
-    expect((await store.read('P-1', 'G-1', 'W-1', 'R-legacy'))?.events).toEqual([])
-    expect((await store.read('P-1', 'G-1', 'W-1', 'R-legacy'))?.runPrompt).toBeNull()
-  })
 })
 
 function runRoot(runId: string) {
   return join(temporaryRoot, '.hopi', 'runtime', 'runs', runId)
-}
-
-function legacyRunRoot(projectId: string, goalId: string, workId: string, runId: string) {
-  return join(temporaryRoot, '.hopi', 'runtime', 'runs', projectId, goalId, workId, runId)
 }

@@ -4,8 +4,6 @@ import { z } from 'zod'
 
 const profileSchema = z
   .object({
-    version: z.literal(1),
-    id: z.literal('software-delivery-v1'),
     dispatch: z.tuple([
       z
         .object({

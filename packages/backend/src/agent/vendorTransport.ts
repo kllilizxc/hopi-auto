@@ -87,14 +87,14 @@ const codexTransportSchema = commonTransportSchema.extend({
   model: z.string().min(1).optional(),
   profile: z.string().min(1).optional(),
   reasoningEffort: codingReasoningEffortSchema.optional(),
-  sandbox: codexSandboxSchema.default('workspace-write'),
-  approvalPolicy: codexApprovalSchema.default('never'),
+  sandbox: codexSandboxSchema,
+  approvalPolicy: codexApprovalSchema,
 })
 
 const claudeTransportSchema = commonTransportSchema.extend({
   transport: z.literal('claude'),
   model: z.string().min(1).optional(),
-  permissionMode: claudePermissionSchema.default('dontAsk'),
+  permissionMode: claudePermissionSchema,
 })
 
 const opencodeTransportSchema = commonTransportSchema.extend({

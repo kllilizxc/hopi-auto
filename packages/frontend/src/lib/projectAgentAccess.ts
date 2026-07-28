@@ -1,4 +1,4 @@
-const KEY_PREFIX = 'hopi.project-agent-full-access.v1:'
+const KEY_PREFIX = 'hopi.project-agent-full-access:'
 
 export function readProjectAgentFullAccess(projectId: string, storage = browserStorage()) {
   if (!storage) return false

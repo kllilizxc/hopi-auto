@@ -35,7 +35,6 @@ export interface ScreenshotEvidence extends TestRunEvidence {
 }
 
 export interface TestRunReport extends TestRunContext {
-  version: 1
   kind: 'test-run'
   status: TestRunStatus
   endedAt: string | null
@@ -202,7 +201,6 @@ export async function writeTestRunReport(
   const evidence = await collectLocalEvidence(context.artifactRoot)
   const report: TestRunReport = {
     ...details,
-    version: 1,
     kind: 'test-run',
     artifactRoot: context.artifactRoot,
     scenario: context.scenario,
@@ -222,7 +220,7 @@ export async function readTestRun(root: string): Promise<TestRunReport> {
   const file = Bun.file(path)
   if (!(await file.exists())) throw new Error(`Missing Test Run report: ${path}`)
   const report = (await file.json()) as TestRunReport
-  if (report.version !== 1 || report.kind !== 'test-run') {
+  if (report.kind !== 'test-run') {
     throw new Error(`Unsupported Test Run report: ${path}`)
   }
   return report

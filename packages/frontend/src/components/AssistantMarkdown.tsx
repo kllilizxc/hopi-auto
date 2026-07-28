@@ -1,7 +1,7 @@
+import { Brain, ChevronDown, ChevronRight } from 'lucide-react'
 import { memo, useState } from 'react'
 import Markdown, { type Components as MarkdownComponents, type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ChevronRight, ChevronDown, Brain } from 'lucide-react'
 import { AppLink } from './ui'
 
 const ASSISTANT_MARKDOWN_PLUGINS = [remarkGfm]
@@ -61,24 +61,34 @@ function ThinkingBlock({ content }: { content: string }) {
 }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
-  const visibleText = unwrapNeedsYou(text).replace(
-    /<DecisionPrompt>[\s\S]*?<\/DecisionPrompt>/giu,
-    '',
-  )
-  const chunks = []
+  const visibleText = text
+  const chunks: Array<{ type: 'text' | 'thinking'; content: string; key: string }> = []
   const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/gi
   let lastIndex = 0
-  let match
+  let match = thinkingRegex.exec(visibleText)
 
-  while ((match = thinkingRegex.exec(visibleText)) !== null) {
+  while (match !== null) {
     if (match.index > lastIndex) {
-      chunks.push({ type: 'text', content: visibleText.substring(lastIndex, match.index) })
+      chunks.push({
+        type: 'text',
+        content: visibleText.substring(lastIndex, match.index),
+        key: `text:${lastIndex}`,
+      })
     }
-    chunks.push({ type: 'thinking', content: match[1] })
+    chunks.push({
+      type: 'thinking',
+      content: match[1] ?? '',
+      key: `thinking:${match.index}`,
+    })
     lastIndex = thinkingRegex.lastIndex
+    match = thinkingRegex.exec(visibleText)
   }
   if (lastIndex < visibleText.length) {
-    chunks.push({ type: 'text', content: visibleText.substring(lastIndex) })
+    chunks.push({
+      type: 'text',
+      content: visibleText.substring(lastIndex),
+      key: `text:${lastIndex}`,
+    })
   }
 
   if (chunks.length <= 1 && chunks[0]?.type === 'text') {
@@ -87,20 +97,16 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { tex
 
   return (
     <div className="assistant-markdown-chunks">
-      {chunks.map((chunk, i) =>
+      {chunks.map((chunk) =>
         chunk.type === 'thinking' ? (
-          <ThinkingBlock key={i} content={chunk.content} />
+          <ThinkingBlock key={chunk.key} content={chunk.content} />
         ) : (
-          <MarkdownRenderer key={i} text={chunk.content} />
+          <MarkdownRenderer key={chunk.key} text={chunk.content} />
         ),
       )}
     </div>
   )
 })
-
-function unwrapNeedsYou(text: string) {
-  return text.replace(/<NeedsYou\b[^>]*>/giu, '').replace(/<\/NeedsYou>/giu, '')
-}
 
 function isSafeAssistantLink(href: string) {
   if (href.startsWith('/api/') || href.startsWith('/projects/')) return true

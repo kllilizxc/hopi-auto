@@ -5,14 +5,13 @@ import { projectAgentAccessPath } from './assistantRuntimePaths'
 
 const projectAgentAccessStateSchema = z
   .object({
-    version: z.literal(1),
     projects: z.record(z.string(), z.boolean()),
   })
   .strict()
 
 type ProjectAgentAccessState = z.infer<typeof projectAgentAccessStateSchema>
 
-const EMPTY_STATE: ProjectAgentAccessState = { version: 1, projects: {} }
+const EMPTY_STATE: ProjectAgentAccessState = { projects: {} }
 
 export interface ProjectAgentAccessPreference {
   fullAccess: boolean

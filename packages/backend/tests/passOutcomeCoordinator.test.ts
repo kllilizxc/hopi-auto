@@ -74,7 +74,7 @@ describe('PassOutcomeCoordinator', () => {
           target: 'project:project-1/goal:goal-1/work:plan-initial',
           createdAt: '2099-12-31T23:59:59Z',
           resolvedAt: null,
-          notifiedAt: null,
+          summary: 'The local identity source needs an operator decision.',
         },
         body: '## Observed condition\n\nThe local identity source needs an operator decision.\n',
       }),
@@ -241,7 +241,7 @@ describe('PassOutcomeCoordinator', () => {
   test('accepts an admitted Engineering result when Planning queues afterward', async () => {
     const fixture = await createEngineeringFixture('generate')
     const context = await fixture.stage('W-1', 'run-before-planning', 'generator')
-    const goals = createGoalController(fixture.store, { verifyCompletion: () => false })
+    const goals = createGoalController(fixture.store, {})
     const planning = await goals.ensurePlanning('goal-1', 'Assess a concurrent user instruction.')
 
     const result = await fixture.outcomes.apply(
@@ -295,7 +295,7 @@ describe('PassOutcomeCoordinator', () => {
           target: 'project:project-1/goal:goal-1/work:W-1',
           createdAt: '2099-12-31T23:59:59Z',
           resolvedAt: null,
-          notifiedAt: null,
+          summary: 'Choose the durable storage format.',
         },
         body: '## Needs you\n\nChoose the durable storage format.\n',
       }),
@@ -339,7 +339,7 @@ describe('PassOutcomeCoordinator', () => {
             target: 'project:project-1/goal:goal-1/work:W-1',
             createdAt: '1970-01-01T00:00:00.000Z',
             resolvedAt: null,
-            notifiedAt: null,
+            summary: `${id} requires separate Assistant judgment.`,
           },
           body: `## Observed condition\n\n${id} requires separate Assistant judgment.\n`,
         }),
@@ -374,7 +374,7 @@ describe('PassOutcomeCoordinator', () => {
           target: '.hopi/docs/goals/goal-1/work/plan-initial.md',
           createdAt: '2026-07-11T00:00:00Z',
           resolvedAt: null,
-          notifiedAt: null,
+          summary: 'Choose compact or verbose.',
         },
         body: '## Needs you\n\nChoose compact or verbose.\n',
       }),
@@ -408,7 +408,7 @@ describe('PassOutcomeCoordinator', () => {
           target: 'project:project-1/goal:goal-1/work:W-1',
           createdAt: '2026-07-11T00:00:00Z',
           resolvedAt: null,
-          notifiedAt: null,
+          summary: 'A technical command failed.',
         },
         body: '## Needs you\n\nA technical command failed.\n',
       }),
@@ -487,7 +487,7 @@ describe('PassOutcomeCoordinator', () => {
           target: 'project:project-1/goal:goal-1',
           createdAt: '2026-07-11T00:00:00Z',
           resolvedAt: null,
-          notifiedAt: null,
+          summary: 'Choose the durable storage format.',
         },
         body: '## Needs you\n\nChoose the durable storage format.\n',
       }),
@@ -588,7 +588,7 @@ describe('PassOutcomeCoordinator', () => {
 
   test('lets Planner leave an older Engineering route visibly stale', async () => {
     const fixture = await createEngineeringFixture('review')
-    const goals = createGoalController(fixture.store, { verifyCompletion: () => false })
+    const goals = createGoalController(fixture.store, {})
     await goals.applyMaterialInstruction('goal-1', {
       eventId: 'EV-revise',
       contractChange: 'Change the required behavior.',
@@ -631,7 +631,7 @@ describe('PassOutcomeCoordinator', () => {
   test('normalizes paused Reviewer success before C1 to stale', async () => {
     const fixture = await createEngineeringFixture('review')
     const context = await fixture.stage('W-1', 'run-review-paused', 'reviewer')
-    const goals = createGoalController(fixture.store, { verifyCompletion: () => false })
+    const goals = createGoalController(fixture.store, {})
     await goals.pauseGoal('goal-1')
 
     const result = await fixture.outcomes.apply(
@@ -643,77 +643,6 @@ describe('PassOutcomeCoordinator', () => {
     expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('review')
     expect(goalPackage.works.get('W-1')?.attributes.evidenceRefs).toEqual([])
     expect(goalPackage.evidence.has('E-run-review-paused')).toBe(false)
-  })
-
-  test('allows empty sparse recovery when completion support already exists', async () => {
-    const fixture = await createFixture()
-    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-existing-completion')
-    await fixture.store.publishGoal('goal-1', {
-      supportingWrites: [
-        {
-          path: attentionPath,
-          expectedHash: null,
-          content: renderAttentionDocument({
-            attributes: {
-              id: 'A-existing-completion',
-              target: null,
-              createdAt: '2026-07-11T00:00:00Z',
-              resolvedAt: null,
-              notifiedAt: null,
-            },
-            body: '## Completion\n\nThe prior Planner publication left valid completion support.\n',
-          }),
-        },
-      ],
-    })
-    const context = await fixture.stage('plan-initial', 'run-empty', 'planner')
-
-    const result = await fixture.outcomes.apply(
-      fixture.input('plan-initial', 'run-empty', 'planner', context, 'success'),
-    )
-    const work = (await fixture.store.readPackage('goal-1')).works.get('plan-initial')
-
-    expect(result).toMatchObject({ kind: 'published', result: 'success' })
-    expect(work?.attributes.stage).toBe('done')
-    expect(work?.attributes.evidenceRefs).toEqual(['E-run-empty'])
-  })
-
-  test('preserves legacy completion Attention history while final Planning completes directly', async () => {
-    const fixture = await createFixture()
-    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-completion')
-    await fixture.store.publishGoal('goal-1', {
-      supportingWrites: [
-        {
-          path: attentionPath,
-          expectedHash: null,
-          content: renderAttentionDocument({
-            attributes: {
-              id: 'A-completion',
-              target: null,
-              createdAt: '2026-07-10T00:00:00Z',
-              resolvedAt: '2026-07-10T01:00:00Z',
-              notifiedAt: '2026-07-10T00:30:00Z',
-            },
-            body: '## Prior completion\n\nThe earlier completion was reopened.\n',
-          }),
-        },
-      ],
-    })
-    const context = await fixture.stage('plan-initial', 'run-reused-completion-id', 'planner')
-
-    const result = await fixture.outcomes.apply(
-      fixture.input('plan-initial', 'run-reused-completion-id', 'planner', context, 'success'),
-    )
-    const goalPackage = await fixture.store.readPackage('goal-1')
-
-    expect(result).toMatchObject({ kind: 'published', result: 'success' })
-    expect(goalPackage.attentions.get('A-completion')?.attributes.resolvedAt).not.toBeNull()
-    expect(goalPackage.attentions.has('A-completion-2')).toBe(false)
-    expect(goalPackage.goal.attributes).toMatchObject({
-      lifecycle: 'done',
-      completionAttentionId: null,
-    })
-    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('done')
   })
 
   test('finishes Planning from an empty sparse proposal when the existing DAG is complete', async () => {
@@ -756,7 +685,6 @@ describe('PassOutcomeCoordinator', () => {
     expect(result).toMatchObject({ kind: 'published', result: 'success' })
     expect(goalPackage.goal.attributes).toMatchObject({
       lifecycle: 'done',
-      completionAttentionId: null,
     })
     expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
       stage: 'done',
@@ -833,50 +761,6 @@ describe('PassOutcomeCoordinator', () => {
     expect(completedPlanning?.body).toBe(planningBody)
     expect(goalPackage.works.get('W-retry')?.attributes.stage).toBe('generate')
     expect(goalPackage.evidence.has('E-run-owning-work')).toBe(false)
-  })
-
-  test('rejects new targetless Attention instead of treating it as completion state', async () => {
-    const fixture = await createFixture()
-    const context = await fixture.stage('plan-initial', 'run-premature-completion', 'planner')
-    const engineeringPath = fixture.store.paths.workDocument('goal-1', 'W-pending')
-    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-premature')
-    await Bun.write(
-      join(context.proposalRoot, ...engineeringPath.split('/')),
-      renderWorkDocument(engineeringWork('W-pending', 'generate')),
-    )
-    await mkdir(dirname(join(context.proposalRoot, ...attentionPath.split('/'))), {
-      recursive: true,
-    })
-    await Bun.write(
-      join(context.proposalRoot, ...attentionPath.split('/')),
-      renderAttentionDocument({
-        attributes: {
-          id: 'A-premature',
-          target: null,
-          createdAt: '2026-07-11T00:00:00Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nEverything is complete.\n',
-      }),
-    )
-
-    const result = await fixture.outcomes.apply(
-      fixture.input('plan-initial', 'run-premature-completion', 'planner', context, 'success'),
-    )
-    const goalPackage = await fixture.store.readPackage('goal-1')
-
-    expect(result).toMatchObject({
-      kind: 'invalid',
-      reason:
-        'New Attention requires an owning target; final Planner success completes the Goal directly',
-    })
-    expect(goalPackage.works.has('W-pending')).toBe(false)
-    expect(goalPackage.attentions.has('A-premature')).toBe(false)
-    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
-      stage: 'plan',
-    })
-    expect(goalPackage.evidence.has('E-run-premature-completion')).toBe(false)
   })
 
   test('rejects Planner output that leaks an Assistant-home attachment into Work', async () => {

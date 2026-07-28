@@ -86,7 +86,7 @@ describe('Project Assistant wake and Attention E2E', () => {
         return {
           reply:
             input.toolMode === 'internal'
-              ? '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>'
+              ? 'Choose the release window.'
               : 'I will supervise this Project.',
           session: codexSession('project-session'),
         }
@@ -120,7 +120,7 @@ describe('Project Assistant wake and Attention E2E', () => {
       ).toMatchObject({
         visibility: 'public',
         status: 'handled',
-        reply: '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>',
+        reply: 'Choose the release window.',
       })
     } finally {
       await runtime.coordinator.stop()
@@ -258,6 +258,7 @@ function attention(id: string, body: string): WorkspaceAttentionDocument {
       updatedAt: timestamp,
       resolvedAt: null,
       refs: ['project:P-1'],
+      summary: body,
     },
     body: `${body}\n`,
   }

@@ -328,7 +328,7 @@ async function createFixture(changedRepoIds: string[]) {
     },
   })
 
-  const manager = createStableWorktreeManager(homeRoot)
+  const manager = createStableWorktreeManager()
   const taskWorktrees = new Map<string, string>()
   for (const repo of linked.repos) {
     const repoId = repo.repoId

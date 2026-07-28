@@ -2,7 +2,6 @@ import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { DEFAULT_PRIMARY_REPO_ID, projectReleaseBranch, projectReleaseRef } from '../domain/project'
 import { STABLE_ID_PATTERN } from '../domain/stableId'
-import { relocateRegisteredWorktree } from './worktreeRelocator'
 
 export interface StableWorktreeInput {
   projectRoot: string
@@ -29,9 +28,7 @@ export interface StableWorktreeManager {
 export class StableWorktreeError extends Error {}
 export class StableWorktreeSyncError extends StableWorktreeError {}
 
-export function createStableWorktreeManager(homeRoot: string): StableWorktreeManager {
-  const absoluteHomeRoot = resolve(homeRoot)
-
+export function createStableWorktreeManager(): StableWorktreeManager {
   function worktree(input: StableWorktreeInput): StableWorktree {
     assertInput(input)
     const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
@@ -47,14 +44,12 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
   return {
     async prepare(input) {
       const expected = worktree(input)
-      await migrateLegacyWorktree(input, expected)
       const existing = await this.inspect(input)
       const prepared = existing ?? (await materialize(input, expected))
       return synchronize(input, prepared)
     },
     async prepareClean(input) {
       const expected = worktree(input)
-      await migrateLegacyWorktree(input, expected)
       const existing = await this.inspect(input)
       if (existing) {
         const removed = await runGit(
@@ -216,32 +211,6 @@ export function createStableWorktreeManager(homeRoot: string): StableWorktreeMan
       )
     }
     return expected
-  }
-
-  async function migrateLegacyWorktree(input: StableWorktreeInput, expected: StableWorktree) {
-    if (await pathExists(expected.path)) return
-    const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
-    const primaryRepoId = input.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
-    const legacyPrimary = join(
-      absoluteHomeRoot,
-      '.hopi',
-      'runtime',
-      'worktrees',
-      input.projectId,
-      input.goalId,
-      input.workId,
-    )
-    const legacyPath =
-      repoId === primaryRepoId
-        ? legacyPrimary
-        : join(dirname(legacyPrimary), `${input.workId}.repos`, repoId)
-    if (!(await pathExists(legacyPath))) return
-    await relocateRegisteredWorktree({
-      repoRoot: input.projectRoot,
-      from: legacyPath,
-      to: expected.path,
-      expectedBranch: expected.branch,
-    })
   }
 }
 

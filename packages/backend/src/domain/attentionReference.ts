@@ -47,20 +47,7 @@ export function parseAttentionReference(reference: string): AttentionReference |
 }
 
 export function normalizeInboxAttentionReferences(context: {
-  projectId?: string
-  goalId?: string
-  attentionId?: string
   attentionRefs?: readonly string[]
 }) {
-  const references = [
-    ...(context.attentionId ? [context.attentionId] : []),
-    ...(context.attentionRefs ?? []),
-  ].map((reference) => {
-    if (parseAttentionReference(reference)) return reference
-    if (context.projectId && context.goalId) {
-      return goalAttentionReference(context.projectId, context.goalId, reference)
-    }
-    return reference
-  })
-  return [...new Set(references)]
+  return [...new Set(context.attentionRefs ?? [])]
 }

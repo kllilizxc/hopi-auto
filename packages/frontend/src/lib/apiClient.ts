@@ -276,7 +276,6 @@ export function sendInboxMessage(input: {
   context?: {
     projectId?: string
     goalId?: string
-    attentionId?: string
     attentionRefs?: string[]
     replyTo?: string
   }

@@ -18,7 +18,7 @@ const decisionQuestionSchema = z
     header: z.string().trim().min(1).max(40),
     question: z.string().trim().min(1).max(600),
     options: z.array(decisionOptionSchema).min(2).max(3),
-    allowOther: z.boolean().default(true),
+    allowOther: z.boolean(),
   })
   .strict()
   .superRefine((question, context) => {

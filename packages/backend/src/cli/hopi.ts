@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { createProjectCommandRunner } from '../commands/projectCommandRunner'
 import { acquireCoordinatorInstanceLock } from '../publication/instanceLock'
 import { PublicationCoordinator } from '../publication/publisher'
-import { defaultAssistantHomeRoot } from '../runtime/assistantHomeMigration'
+import { defaultAssistantHomeRoot } from '../runtime/assistantHomeRoot'
 import { createAssistantHomeStore } from '../storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 

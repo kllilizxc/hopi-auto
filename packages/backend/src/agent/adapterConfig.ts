@@ -1,12 +1,11 @@
-import { constants } from 'node:fs'
-import { access, mkdir } from 'node:fs/promises'
-import { basename, dirname, isAbsolute } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { z } from 'zod'
 import {
-  DEFAULT_PROJECT_CODING_DEFAULTS,
   type ProjectCodingDefaults,
   type ProjectCodingDefaultsInput,
   normalizeProjectCodingDefaults,
+  projectCodingDefaultsSchema,
 } from './projectCodingDefaults'
 import type { RoleTransportConfig } from './vendorTransport'
 import { roleTransportConfigSchema } from './vendorTransport'
@@ -20,11 +19,6 @@ export interface AgentRoleCodingSettings {
   inherited: boolean
   configurable: boolean
 }
-type ProjectCodingDefaultSource = Extract<
-  RoleTransportConfig,
-  { transport: 'codex' | 'claude' | 'opencode' }
->
-
 const assistantTransportConfigSchema = roleTransportConfigSchema.refine(
   (config) =>
     config.cwdMode === 'root' &&
@@ -47,71 +41,26 @@ const workflowRoleConfigMapSchema = z
     reviewer: workflowRoleTransportConfigSchema.optional(),
   })
   .strict()
-  .default({})
 
-const legacyRoleConfigMapSchema = z
+export const agentAdapterConfigSchema = z
   .object({
-    planner: roleTransportConfigSchema.optional(),
-    generator: roleTransportConfigSchema.optional(),
-    reviewer: roleTransportConfigSchema.optional(),
-    merger: roleTransportConfigSchema.optional(),
+    defaults: projectCodingDefaultsSchema,
+    assistant: assistantTransportConfigSchema.optional(),
+    roles: workflowRoleConfigMapSchema,
   })
-  .default({})
-
-const agentAdapterConfigV1Schema = z.object({
-  version: z.literal(1),
-  assistant: roleTransportConfigSchema.optional(),
-  roles: legacyRoleConfigMapSchema,
-})
-
-const agentAdapterConfigV2Schema = z.object({
-  version: z.literal(2),
-  assistant: assistantTransportConfigSchema.optional(),
-  roles: legacyRoleConfigMapSchema,
-})
-
-export const agentAdapterConfigSchema = z.object({
-  version: z.literal(3),
-  defaults: z
-    .custom<ProjectCodingDefaults>((input) => {
-      try {
-        normalizeProjectCodingDefaults(input as ProjectCodingDefaults | undefined)
-        return true
-      } catch {
-        return false
-      }
-    })
-    .default(DEFAULT_PROJECT_CODING_DEFAULTS),
-  assistant: assistantTransportConfigSchema.optional(),
-  roles: workflowRoleConfigMapSchema,
-})
+  .strict()
 
 export type AgentAdapterConfig = z.infer<typeof agentAdapterConfigSchema>
 
-type LegacyAgentAdapterConfig =
-  | z.infer<typeof agentAdapterConfigV1Schema>
-  | z.infer<typeof agentAdapterConfigV2Schema>
-
 export function normalizeAgentAdapterConfig(input: unknown): AgentAdapterConfig {
-  const parsedCurrent = agentAdapterConfigSchema.safeParse(input)
-  if (parsedCurrent.success) {
+  const parsed = agentAdapterConfigSchema.safeParse(input)
+  if (parsed.success) {
     return {
-      ...parsedCurrent.data,
-      defaults: normalizeProjectCodingDefaults(parsedCurrent.data.defaults),
+      ...parsed.data,
+      defaults: normalizeProjectCodingDefaults(parsed.data.defaults),
     }
   }
-
-  const parsedV2 = agentAdapterConfigV2Schema.safeParse(input)
-  if (parsedV2.success) {
-    return migrateAgentAdapterConfig(parsedV2.data)
-  }
-
-  const parsedV1 = agentAdapterConfigV1Schema.safeParse(input)
-  if (parsedV1.success) {
-    return migrateAgentAdapterConfig(parsedV1.data)
-  }
-
-  const issues = parsedCurrent.error.issues
+  const issues = parsed.error.issues
     .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
     .join(', ')
   throw new Error(`Invalid adapter config: ${issues}`)
@@ -122,66 +71,10 @@ export async function writeAgentAdapterConfig(path: string, config: AgentAdapter
   await Bun.write(path, `${JSON.stringify(config, null, 2)}\n`)
 }
 
-export async function readAndMigrateAgentAdapterConfig(path: string) {
+export async function readAgentAdapterConfig(path: string) {
   const raw = await Bun.file(path).text()
   const source = JSON.parse(raw) as unknown
-  const normalized = await recoverUnavailableBuiltInBinaries(normalizeAgentAdapterConfig(source))
-  const normalizedText = `${JSON.stringify(normalized, null, 2)}\n`
-  if (normalizedText !== raw) {
-    await writeAgentAdapterConfig(path, normalized)
-  }
-  return normalized
-}
-
-async function recoverUnavailableBuiltInBinaries(
-  config: AgentAdapterConfig,
-): Promise<AgentAdapterConfig> {
-  const assistant = config.assistant
-    ? await recoverUnavailableBuiltInBinary(config.assistant)
-    : undefined
-  const roles = Object.fromEntries(
-    await Promise.all(
-      Object.entries(config.roles).map(async ([role, value]) => [
-        role,
-        value ? await recoverUnavailableBuiltInBinary(value) : value,
-      ]),
-    ),
-  ) as AgentAdapterConfig['roles']
-  return {
-    ...config,
-    ...(assistant ? { assistant } : {}),
-    roles,
-  }
-}
-
-async function recoverUnavailableBuiltInBinary<T extends RoleTransportConfig>(
-  config: T,
-): Promise<T> {
-  if ('cmd' in config) return config
-  const binary = config.binary
-  if (
-    !binary ||
-    !isAbsolute(binary) ||
-    executableName(binary) !== config.transport ||
-    (await isExecutable(binary))
-  ) {
-    return config
-  }
-  const { binary: _binary, ...portable } = config
-  return portable as T
-}
-
-function executableName(path: string) {
-  return basename(path).replace(/\.exe$/i, '')
-}
-
-async function isExecutable(path: string) {
-  try {
-    await access(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
+  return normalizeAgentAdapterConfig(source)
 }
 
 export function resolveAssistantTransportConfig(config: AgentAdapterConfig): RoleTransportConfig {
@@ -283,111 +176,6 @@ export function resolveRoleTransportConfig(
   }
 
   return buildDefaultTransportConfig(defaults, 'worktree')
-}
-
-function migrateAgentAdapterConfig(input: LegacyAgentAdapterConfig): AgentAdapterConfig {
-  const defaults = deriveProjectCodingDefaultsFromLegacyConfig(input)
-  const assistant = migrateLegacyTransportConfig(input.assistant, 'root')
-
-  return {
-    version: 3,
-    defaults,
-    ...(assistant &&
-    !('cmd' in assistant) &&
-    (assistant.transport === 'codex' ||
-      assistant.transport === 'claude' ||
-      assistant.transport === 'opencode')
-      ? { assistant }
-      : {}),
-    roles: Object.fromEntries(
-      WORKFLOW_ROLE_KEYS.flatMap((role) => {
-        const migrated = migrateLegacyTransportConfig(input.roles[role], 'worktree')
-        return migrated ? [[role, migrated]] : []
-      }),
-    ) as AgentAdapterConfig['roles'],
-  }
-}
-
-function migrateLegacyTransportConfig(
-  config: RoleTransportConfig | undefined,
-  cwdMode: 'root' | 'worktree',
-) {
-  if (!config) {
-    return undefined
-  }
-
-  const migrated = {
-    ...config,
-    cwdMode,
-  } satisfies RoleTransportConfig
-
-  if (isLegacyGeneratedCodexConfig(migrated, cwdMode)) {
-    return undefined
-  }
-
-  return migrated
-}
-
-function deriveProjectCodingDefaultsFromLegacyConfig(
-  config: LegacyAgentAdapterConfig,
-): ProjectCodingDefaults {
-  let preferred = selectPreferredCodingDefaultSource(config.assistant)
-  if (!preferred) {
-    for (const role of WORKFLOW_ROLE_KEYS) {
-      preferred = selectPreferredCodingDefaultSource(config.roles[role])
-      if (preferred) {
-        break
-      }
-    }
-  }
-
-  if (!preferred) {
-    return DEFAULT_PROJECT_CODING_DEFAULTS
-  }
-
-  if (preferred.transport === 'codex') {
-    return normalizeProjectCodingDefaults({
-      transport: 'codex',
-      model: preferred.model,
-    })
-  }
-
-  return normalizeProjectCodingDefaults({
-    transport: preferred.transport,
-    model: preferred.model,
-  })
-}
-
-function selectPreferredCodingDefaultSource(
-  config: RoleTransportConfig | undefined,
-): ProjectCodingDefaultSource | undefined {
-  if (!config) {
-    return undefined
-  }
-
-  if (
-    config.transport === 'codex' ||
-    config.transport === 'claude' ||
-    config.transport === 'opencode'
-  ) {
-    return config
-  }
-
-  return undefined
-}
-
-function isLegacyGeneratedCodexConfig(config: RoleTransportConfig, cwdMode: 'root' | 'worktree') {
-  return (
-    config.transport === 'codex' &&
-    config.cwdMode === cwdMode &&
-    config.sandbox === 'workspace-write' &&
-    config.approvalPolicy === 'never' &&
-    !config.model &&
-    !config.profile &&
-    !config.binary &&
-    !config.baseRef &&
-    !config.reasoningEffort
-  )
 }
 
 function resolveExplicitTransportConfig(

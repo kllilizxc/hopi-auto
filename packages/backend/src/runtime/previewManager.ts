@@ -655,15 +655,7 @@ function recordLine(operation: PreviewOperation, line: string, logPath: string) 
   operation.logWriteTail = operation.logWriteTail.then(() => appendFile(logPath, `${line}\n`))
   if (operation.reportedReadiness !== null) return
   const surfaces = /^HOPI_PREVIEW_SURFACES=(.*)$/.exec(line)?.[1]
-  const legacyUrl = /^HOPI_PREVIEW_URL=(\S+)$/.exec(line)?.[1]
-  const readiness =
-    surfaces !== undefined
-      ? parsePreviewSurfaces(surfaces)
-      : legacyUrl
-        ? parsePreviewSurfaces(
-            JSON.stringify([{ id: 'default', label: 'Preview', url: legacyUrl }]),
-          )
-        : null
+  const readiness = surfaces === undefined ? null : parsePreviewSurfaces(surfaces)
   if (!readiness) return
   operation.reportedReadiness = readiness
   operation.signalReady(readiness)

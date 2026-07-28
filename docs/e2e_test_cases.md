@@ -416,7 +416,7 @@ variant of `022`, and dependency Evidence handoff; earlier terminal evidence rem
 | `HOPI-E2E-027` | Complete Project context without mandatory preparation    | P1       | Contract and Live canary   | Covered by the blank multi-Repo fixture in `017`                 |
 | `HOPI-E2E-028` | Agent-led Project Attention recovery and supervision      | P0       | Browser and Live canary    | Browser passed post-redesign; Live rerun pending                  |
 | `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Covered                                                          |
-| `HOPI-E2E-030` | Project and Assistant-home migration                      | P1       | Contract                   | Covered; complete-set move and rebind passed                     |
+| `HOPI-E2E-030` | Project and Assistant-home relocation                     | P1       | Contract                   | Covered; complete-set move and rebind passed                     |
 | `HOPI-E2E-031` | Safe Project source selection and scoped execution        | P0       | Browser and Contract       | Covered; scoped lifecycle and C1 escape rejection passed          |
 | `HOPI-E2E-032` | Durable cross-Project preference judgment                 | P1       | Live Assistant and Contract | Covered; focused Live judgment canary passed                     |
 | `HOPI-E2E-033` | Dependency Evidence and artifact handoff                  | P0       | Contract                   | Covered; production Coordinator handoff passed                    |
@@ -453,7 +453,7 @@ is the only intentional execution exclusion.
 | `HOPI-E2E-027` | `tests/roleContextStager.test.ts`, `tests/projectReconciler.test.ts`                                                         |
 | `HOPI-E2E-028` | `tests/browser/projectAttentionRecovery.browser.ts`, `tests/coordinatorReconciler.test.ts`                                   |
 | `HOPI-E2E-029` | `tests/browser/assistantProviderError.browser.ts`, `tests/workspaceAssistant.test.ts`, `tests/coordinatorReconciler.test.ts` |
-| `HOPI-E2E-030` | `tests/e2e/projectMigration.e2e.ts`                                                                                          |
+| `HOPI-E2E-030` | `tests/e2e/projectRelocation.e2e.ts`                                                                                          |
 | `HOPI-E2E-031` | `tests/e2e/scopedProjectSource.e2e.ts`                                                                                       |
 | `HOPI-E2E-032` | `tests/assistantWorkspaceStore.test.ts`, `tests/workspaceAssistant.test.ts`, `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts` |
 | `HOPI-E2E-033` | `tests/contract/dependencyEvidenceHandoff.test.ts`, `tests/roleContextStager.test.ts`                                      |
@@ -962,7 +962,7 @@ Assistant and Generator settings, rebinds one Repo, restarts the Coordinator, re
 retains nine screenshots. Adapter-command construction remains in the vendor/configuration Contract
 tests because repeating the same choice through a model would not add another execution boundary.
 
-### HOPI-E2E-030: Project And Assistant-Home Migration
+### HOPI-E2E-030: Project And Assistant-Home Relocation
 
 | Field   | Value                                                                                                              |
 | ------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -991,8 +991,8 @@ Pass conditions:
 
 Primary invariants: `INV-01`, `INV-02`, `INV-04`, `INV-05`, `INV-10`, `INV-11`, `INV-14`.
 
-Current implementation: `packages/backend/tests/e2e/projectMigration.e2e.ts`
-(`bun run e2e:migration:030`) moves one complete Home plus two Repos, proves stale startup dispatches
+Current implementation: `packages/backend/tests/e2e/projectRelocation.e2e.ts`
+(`bun run e2e:relocation:030`) moves one complete Home plus two Repos, proves stale startup dispatches
 no Agent, rejects partial rebind without changing `projects.yml`, and repairs the exact stable Repo-ID
 set in one operation. It then restarts and byte-checks identity, Goal documents, image provenance,
 Inbox reply, session, Attention, release refs, delivery bindings, and relocated managed roots.
@@ -1154,8 +1154,8 @@ Primary invariants: `INV-01`, `INV-08`, `INV-13`, `INV-14`.
 Use a local HTTP receiver, never a real external endpoint. Produce one handled public Attention reply,
 fail the receiver, restart Coordinator, and then acknowledge the same idempotency key. The webhook
 must mirror only the already handled speaking reply, never raw Attention or an ordinary user reply.
-Transport failure must back off without blocking reconciliation, and durable `notifiedAt` must remain
-owned by speaking-thread publication rather than webhook success.
+Transport failure must back off without blocking reconciliation. The public speaking turn remains
+the sole owner of its Attention references; webhook success adds no workflow state.
 
 Primary invariants: `INV-04`, `INV-08`, `INV-09`, `INV-10`, `INV-14`.
 

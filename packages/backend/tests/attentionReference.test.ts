@@ -39,13 +39,14 @@ describe('canonical Attention references', () => {
     })
   })
 
-  test('normalizes legacy local IDs only inside their stored Goal context', () => {
+  test('keeps only unique canonical references', () => {
     expect(
       normalizeInboxAttentionReferences({
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionId: 'A-1',
-        attentionRefs: ['A-1', 'project:P-2/goal:G-2/attention:A-1'],
+        attentionRefs: [
+          'project:P-1/goal:G-1/attention:A-1',
+          'project:P-1/goal:G-1/attention:A-1',
+          'project:P-2/goal:G-2/attention:A-1',
+        ],
       }),
     ).toEqual(['project:P-1/goal:G-1/attention:A-1', 'project:P-2/goal:G-2/attention:A-1'])
   })

@@ -13,14 +13,4 @@ describe('Attention references with readable identities', () => {
       }),
     ).toEqual([reference])
   })
-
-  test('qualifies a local Attention ID with the readable Goal identity', () => {
-    expect(
-      normalizeAttentionReferences({
-        projectId: 'P-产品工作台',
-        goalId: 'G-优化前端样式',
-        attentionId: 'A-review',
-      }),
-    ).toEqual(['project:P-产品工作台/goal:G-优化前端样式/attention:A-review'])
-  })
 })

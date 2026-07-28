@@ -227,8 +227,6 @@ function normalizeNewAttentions(
         ...attention.document.attributes,
         id,
         createdAt,
-        summary:
-          attention.document.attributes.summary ?? summarizeAttentionBody(attention.document.body),
       },
       body: attention.document.body,
     }
@@ -245,15 +243,6 @@ function normalizeNewAttentions(
   })
 
   return { ...proposal, changedWrites, newAttentions }
-}
-
-function summarizeAttentionBody(body: string) {
-  const line =
-    body
-      .split(/\r?\n/u)
-      .map((candidate) => candidate.trim())
-      .find((candidate) => candidate && !candidate.startsWith('#')) ?? 'This item needs attention.'
-  return line.length > 600 ? `${line.slice(0, 597)}...` : line
 }
 
 function allocateFreshAttentionId(proposedId: string, reservedIds: ReadonlySet<string>) {
@@ -461,7 +450,6 @@ function buildPlannerApplication(
         attributes: {
           ...current.goal.attributes,
           lifecycle: 'done' as const,
-          completionAttentionId: null,
         },
       }
     : null
@@ -707,7 +695,6 @@ function validatePlannerTransition(
       attributes: {
         ...before.goal.attributes,
         lifecycle: 'done' as const,
-        completionAttentionId: null,
       },
     }
     if (JSON.stringify(after.goal) !== JSON.stringify(expectedGoal)) {
@@ -777,7 +764,7 @@ function assertOnlyAllowedAttentionTransition(
   assertOnlyGeneratedEvidenceAdded(before, after, evidenceId)
   for (const attention of attentions) {
     const addedAttention = after.attentions.get(attention.document.attributes.id)
-    if (!addedAttention || addedAttention.attributes.target === null) {
+    if (!addedAttention) {
       throw new PassProposalError(
         'Attention publication must install every staged targeted Attention',
       )
@@ -929,15 +916,10 @@ function validateNewAttention(
   if (path !== store.paths.attentionDocument(input.goalId, document.attributes.id)) {
     throw new PassProposalError(`Attention identity does not match proposal path: ${path}`)
   }
-  if (document.attributes.resolvedAt !== null || document.attributes.notifiedAt !== null) {
-    throw new PassProposalError('New Attention must be open and unnotified')
+  if (document.attributes.resolvedAt !== null) {
+    throw new PassProposalError('New Attention must be open')
   }
   const expectedTarget = workRef(store, input.goalId, input.workId)
-  if (document.attributes.target === null) {
-    throw new PassProposalError(
-      'New Attention requires an owning target; final Planner success completes the Goal directly',
-    )
-  }
   if (document.attributes.target !== expectedTarget) {
     throw new PassProposalError(`Targeted Attention must use owning Work target: ${expectedTarget}`)
   }

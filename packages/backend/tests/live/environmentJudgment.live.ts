@@ -5,7 +5,6 @@ import { deflateSync } from 'node:zlib'
 import {
   parseGoalDocument,
   parseWorkDocument,
-  renderAttentionDocument,
   renderEvidenceDocument,
   renderGoalDocument,
   renderWorkDocument,
@@ -158,29 +157,12 @@ async function seedCompletedGoal(integrationRoot: string) {
       'Deliver a reusable right-facing character spritesheet at assets/sprites/hero-run-right-8f.png.',
   })
   await finishInitialPlanning(store)
-  const attentionId = 'A-complete'
   const goalPath = store.paths.goalDocument(GOAL_ID)
   const goalSource = await Bun.file(store.paths.absolute(goalPath)).text()
   const goal = parseGoalDocument(goalSource)
   goal.attributes.lifecycle = 'done'
-  goal.attributes.completionAttentionId = attentionId
   await store.publishGoal(GOAL_ID, {
-    supportingWrites: [
-      {
-        path: store.paths.attentionDocument(GOAL_ID, attentionId),
-        expectedHash: null,
-        content: renderAttentionDocument({
-          attributes: {
-            id: attentionId,
-            target: null,
-            createdAt: '2026-07-20T10:46:00.000Z',
-            resolvedAt: null,
-            notifiedAt: '2026-07-20T10:47:00.000Z',
-          },
-          body: '## Completion\n\nThe requested spritesheet is complete.\n',
-        }),
-      },
-    ],
+    supportingWrites: [],
     gateWrite: {
       path: goalPath,
       expectedHash: await hashBytes(new TextEncoder().encode(goalSource)),
@@ -211,7 +193,7 @@ async function finishInitialPlanning(store: ReturnType<typeof createGoalPackageS
             owner: `project:${PROJECT_ID}/goal:${GOAL_ID}/work:${workId}`,
             artifacts: ['assets/sprites/hero-run-right-8f.png'],
           },
-          body: '## Summary\n\nThe spritesheet is delivered and verified.\n',
+          body: '## Responsibility Result\n\n- Result: success\n\n## Summary\n\nThe spritesheet is delivered and verified.\n',
         }),
       },
     ],

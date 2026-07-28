@@ -43,7 +43,6 @@ test('one Test Run indexes evidence, derives a gallery, and becomes immutable', 
       providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
     })
     expect(report).toMatchObject({
-      version: 1,
       kind: 'test-run',
       scenario: 'browser-proof',
       claim: 'browser',

@@ -21,17 +21,6 @@ test('merges mutable Assistant entries by identity instead of only replacing the
   expect(merged[0]?.kind === 'event' ? merged[0].event.runtimeStatus : null).toBe('completed')
 })
 
-test('removes a standalone projection after it is absorbed into another conversation entry', () => {
-  const standalone = {
-    kind: 'completion',
-    id: 'completion:project:P-1/goal:G-1/attention:A-complete',
-    occurredAt: '2026-07-16T09:00:00.000Z',
-    attention: {},
-  } as AssistantFeedEntry
-
-  expect(mergeAssistantFeedEntries([standalone], [], [standalone.id])).toEqual([])
-})
-
 test('retains Assistant changes in cached history for the next mount', () => {
   const removed = eventEntry('event:removed', '2026-07-16T09:00:00.000Z', 'completed')
   const added = eventEntry('event:added', '2026-07-16T09:01:00.000Z', 'running')
@@ -64,9 +53,7 @@ test('retains Assistant changes in cached history for the next mount', () => {
 
   expect(merged?.pages[0]?.items).toEqual([added])
   expect(merged?.pages[0]?.activity).toEqual({ phase: 'working' })
-  expect(merged?.pages[0]?.requests).toEqual([
-    { eventId: 'EV-request', attentions: [] },
-  ])
+  expect(merged?.pages[0]?.requests).toEqual([{ eventId: 'EV-request', attentions: [] }])
   expect(merged?.pages[0]?.syncCursor).toBe('new-sync')
 })
 
@@ -145,6 +132,5 @@ function eventEntry(
     id,
     occurredAt,
     event: { runtimeStatus },
-    completion: null,
   } as AssistantFeedEntry
 }

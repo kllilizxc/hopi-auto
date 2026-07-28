@@ -2,8 +2,8 @@ import { ConfiguredRoleRunner, type RoleRunner } from '../agent/RoleRunner'
 import {
   type AgentRoleCodingSettings,
   type ConfigurableAgentRole,
+  readAgentAdapterConfig,
   readAgentRoleCodingDefaults,
-  readAndMigrateAgentAdapterConfig,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,
   updateAgentRoleCodingDefaults,
@@ -13,7 +13,7 @@ import {
 import { ensureDefaultAgentAdapterConfig } from '../agent/defaultAdapterConfig'
 import { assistantConversationScopeForEvent } from '../assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../assistant/assistantConversationStore'
-import { createAssistantReflection } from '../assistant/assistantReflection'
+import { createAssistantWake } from '../assistant/assistantReflection'
 import { createAssistantStateReader } from '../assistant/assistantState'
 import { createAssistantTools } from '../assistant/assistantTools'
 import {
@@ -34,7 +34,6 @@ import { agentAdapterConfigPath } from '../storage/assistantRuntimePaths'
 import { createAssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../storage/goalPackageStore'
 import { type AttentionTransport, createAssistantReplyDeliveryWorker } from './attentionDelivery'
-import { createCompletionStructureVerifier } from './completionVerifier'
 import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBootstrap'
 import { createGoalController } from './goalController'
 import { createPreviewManager } from './previewManager'
@@ -69,7 +68,7 @@ export interface MvpRuntime {
   assistantConversation: ReturnType<typeof createAssistantConversationStore>
   assistantTools: ReturnType<typeof createAssistantTools>
   assistantState: ReturnType<typeof createAssistantStateReader>
-  reflection: ReturnType<typeof createAssistantReflection>
+  reflection: ReturnType<typeof createAssistantWake>
   attentions: ReturnType<typeof createWorkspaceAttentionController>
   coordinator: ReturnType<typeof createCoordinatorReconciler>
   preview: ReturnType<typeof createPreviewManager>
@@ -127,7 +126,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     runProjectMutation: (projectId, operation) => runProjectMutation(projectId, operation),
   })
   const adapterPath = agentAdapterConfigPath(options.homeRoot)
-  const readAdapterConfig = () => readAndMigrateAgentAdapterConfig(adapterPath)
+  const readAdapterConfig = () => readAgentAdapterConfig(adapterPath)
   const roleRunner =
     options.roleRunner ??
     new ConfiguredRoleRunner({
@@ -182,20 +181,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       publisher,
       linked.projectPath,
     )
-    const layout = {
-      projectId: linked.projectId,
-      primaryRepoId: linked.primaryRepoId,
-      repos: linked.repos.map((repo) => ({
-        repoId: repo.repoId,
-        integrationRoot: repo.integrationRoot,
-        projectPath: repo.projectPath,
-        primary: repo.primary,
-      })),
-    }
-    const completion = createCompletionStructureVerifier(store, layout)
-    const controller = createGoalController(store, {
-      verifyCompletion: (goalId, goalPackage) => completion.verify(goalId, goalPackage),
-    })
+    const controller = createGoalController(store, {})
     const reconciler = createProjectReconciler({
       homeRoot: options.homeRoot,
       projectId: linked.projectId,
@@ -319,7 +305,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       if (topologyChangedEvents.delete(eventId)) options.onProjectTopologyChanged?.()
     },
   })
-  const reflection = createAssistantReflection({
+  const reflection = createAssistantWake({
     homeRoot: options.homeRoot,
     workspace,
     state: assistantState,

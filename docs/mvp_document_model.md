@@ -4,13 +4,8 @@ Status: forward document and authority reference
 Last updated: 2026-07-24
 
 > [Project Owner And Attention](./mvp_project_owner.md) owns the minimal Project Attention document
-> and immutable original Goal statement. Legacy Goal-local and Workspace Attention fields remain
-> readable only for migration until this document is consolidated.
->
-> Any `operatorRequest`, `revisitAt`, Attention owner/target, or handoff fields described below are
-> historical compatibility details. The active Project Attention presentation fields are `summary`
-> and optional `decisionPrompt`; responsibility-produced Goal-local Attention shares those
-> presentation fields. A public Inbox `attentionRequest` contains only canonical references.
+> and immutable original Goal statement. Only the current schemas described here are readable.
+> A public Inbox `attentionRequest` contains only canonical Attention references.
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
@@ -116,10 +111,8 @@ control. It identifies the exact handled public Assistant request event and requ
 but never guesses this pointer from currently open Attention.
 
 A Reflection handoff may contain only `attentionRefs`; a normal Goal-page turn may contain only the
-Project/Goal pair; and one turn may contain both. New writes never use a bare Attention ID. Older
-Inbox events with singular `attentionId` or local IDs in `attentionRefs` remain readable and are
-interpreted in their stored Project/Goal context, but they are migration input rather than a second
-reference form. Context is conversational and delivery correlation only; it grants no mutation
+Project/Goal pair; and one turn may contain both. Writes use only complete canonical Attention
+references. Context is conversational and delivery correlation only; it grants no mutation
 authority.
 `handledAt`, `reply`, and the free non-control `disposition` string are all null while pending and
 all present while handled. The Markdown body is the lossless received content or internal Reflection
@@ -164,16 +157,12 @@ may enter Goal, design, and Work prose only through the resulting Goal-local ass
 Assistant-home paths and machine-local absolute image paths are never canonical authority. This
 does not prohibit Project-relative source image paths or ordinary remote URLs.
 
-Historical Inbox events may contain the removed `routeClaim` field. The compatibility reader keeps
-it as provenance, but new turns never write it and no forward control rule depends on it.
-
 `runtime/assistant/sessions/home.json` and
 `runtime/assistant/sessions/projects/<projectId>.json` are rebuildable vendor-session caches, not
 conversation authority:
 
 ```json
 {
-  "version": 4,
   "scope": "project:P-example",
   "transport": "opencode",
   "sessionId": "vendor-session-id",
@@ -185,14 +174,13 @@ conversation authority:
 Only `codex | claude | opencode` is accepted. HOPI selects the cache from immutable Inbox scope and
 resumes it only when scope, transport, the initial Assistant context digest, and the stable-workspace
 runtime digest match. The context digest covers the stable Assistant contract and current durable
-preference digest. A missing, invalid, or incompatible cache starts a new vendor session from the
+preference digest. A missing, invalid, or nonmatching cache starts a new vendor session from the
 same initial context and ordered bounded Inbox history; it does not alter or synthesize canonical
 turns.
 An adapter may discard an already selected cache during a turn only when the vendor explicitly
-reports that session missing or incompatible. Provider, quota, authentication, model, and process
-failures do not imply session incompatibility and therefore do not rebuild conversation history.
-The legacy global cache is discarded because its conversation scope cannot be recovered without
-guessing. Per-turn `events.jsonl` stores normalized live
+reports that session missing or invalid. Provider, quota, authentication, model, and process
+failures do not invalidate the selected session and therefore do not rebuild conversation history.
+Per-turn `events.jsonl` stores normalized live
 Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves process
 output for debugging after exact inherited secret values are redacted.
 
@@ -217,7 +205,7 @@ must be exactly `home:<homeId>/event:<eventId>` or `project:<projectId>`.
 required before Coordinator starts and travels with every lossless Assistant-home export; the
 filesystem path of Assistant home is only a current machine binding.
 
-Each version 4 `projects.yml` link owns `{ projectId, label?, primaryRepoId, repos }`. `label` is
+Each `projects.yml` link owns `{ projectId, label?, primaryRepoId, repos }`. `label` is
 optional Home-local presentation metadata: trimmed non-empty Unicode text up to 80 characters. It
 does not participate in Project identity or Repo topology, and duplicate labels are valid. Each Repo
 entry owns a stable Project-local `repoId`, its current-machine `repoPath` Git-checkout locator, and
@@ -231,7 +219,6 @@ remains the canonical Project document root. `repoPath` supplies the Git object 
 HEAD only; HOPI never writes its branch, index, or working tree.
 
 ```yaml
-version: 4
 projects:
   - projectId: product-a
     label: Storefront
@@ -244,15 +231,13 @@ projects:
         repoPath: /home/operator/Code/product-api
 ```
 
-Legacy Project `codingDefaults` are discarded during Assistant-home initialization. They are not
-merged into Home settings because multiple Project values cannot deterministically define one
-Home-wide role. `project.yml`, Goal documents, and runtime indexes do not duplicate model settings.
+`project.yml`, Goal documents, and runtime indexes do not duplicate model settings.
 
 `runtime/agent-adapters.json.assistant` separately owns the Home-wide speaking Assistant and
 Reflection adapter. It uses the same Codex, Claude, or OpenCode transport shapes but always runs from
-the Assistant runtime root. It never inherits a Project link. UI updates merge fields compatible
-with the selected transport so advanced binary/profile/permission settings are not silently lost;
-switching transport replaces incompatible fields with that transport's safe defaults. `process` is
+the Assistant runtime root. It never inherits a Project link. UI updates preserve fields supported
+by the selected transport so advanced binary/profile/permission settings are not silently lost;
+switching transport installs that transport's current defaults. `process` is
 allowed only for responsibility adapters and is not a configurable Assistant transport.
 
 `runtime/agent-adapters.json.roles` may separately override `planner`, `generator`, and `reviewer`.
@@ -261,16 +246,8 @@ settings document. A missing role entry means inherit Home `defaults`; removing 
 restores that fallback. Role settings affect only future responsibility Runs and never rewrite a
 Project link, Goal, Work, or active Run command.
 
-Version 1 through 3 links migrate by moving the binding's legacy release ref and registered managed
-worktrees into its Project-qualified namespace without changing the selected checkout. A version 3
-link carrying legacy `codingDefaults` is rewritten without that field. A missing legacy worktree is
-rebuilt from its exact release ref. If both old and Project-qualified refs exist but disagree, or an
-old-format Repo is shared by several Projects, migration raises Project Attention rather than
-choosing a history. Each verified step is idempotent, and version 4 is published only after the new
-ref and paths validate.
-Legacy Engineering Work may still contain a `repos` field. Readers ignore it because Project Repo
-membership is the execution environment; the field disappears whenever that Work is canonically
-rewritten. No migration guesses whether an old subset was complete.
+Both documents accept only their current strict schemas. Engineering Work contains no Repo subset
+because Project Repo membership is the execution environment.
 
 After a Repo or Assistant-home move, explicit Repo rebind repairs Git's managed-worktree
 administration, relocates the Project-qualified Repo-adjacent managed root when needed, validates its
@@ -278,9 +255,8 @@ release projection, then changes the machine-local binding.
 A single moved Repo and a complete moved Repo set use the same operation; the complete form requires
 exactly the existing stable Repo IDs and publishes `projects.yml` only after every target validates.
 This lets several stale old paths recover together without weakening duplicate-Git-identity checks.
-Outside the legacy migration, a missing primary managed integration root is not reconstructed from
-Git because its uncheckpointed canonical documents may be newer than the ref; that loss remains
-Project Attention.
+A missing primary managed integration root is not reconstructed from Git because its uncheckpointed
+canonical documents may be newer than the ref; that loss remains Project Attention.
 
 The managed root's `project.yml` remains authority for Project identity, Repo membership, and each
 portable `projectPath`; the local link must match it after missing paths normalize to `.`.
@@ -323,8 +299,8 @@ checkout. `HOPI_HOME` selects their owner directory; when it is unset the produc
 worktrees live under the Repo-adjacent root above. The managed
 integration worktree is stable rather than disposable
 because ordinary canonical document publications may precede their next Git checkpoint. Canonical
-Project documents, `project.yml`, Project-qualified release refs, and task branch refs travel with a lossless
-Project migration. User preferences travel with Assistant Home instead; Project-specific operating
+Project documents, `project.yml`, Project-qualified release refs, and task branch refs travel with a
+lossless Project relocation. User preferences travel with Assistant Home instead; Project-specific operating
 rules remain in Project docs or Repo-local `AGENTS.md`.
 
 A `Project × Goal` address whose Goal root contains no files is absent and public APIs report it as
@@ -354,9 +330,8 @@ identity or isolation:
 small execution identity resolved for that one Run: transport, configured model, and Codex reasoning
 effort when applicable. RoleRunner
 captures this identity before launching the process, so a later Home role model change cannot rewrite
-history. Older or non-model Attempts may have no execution identity, and an older identity may retain
-its model without a recorded reasoning effort; the UI reports those absences instead of substituting
-current configuration. `events.jsonl` is an append-only stream of normalized
+history. Queued Attempts have no execution identity; a started Attempt captures the current
+transport, model, and applicable reasoning effort. `events.jsonl` is an append-only stream of normalized
 model messages and tool events used by the Work-detail UI. `transcript.log` preserves each
 stdout/stderr line before vendor normalization or display truncation, except that exact values from
 secret-like inherited environment variables are replaced before persistence. These files are runtime
@@ -381,11 +356,8 @@ path. Preservation diagnostics remain runtime facts available to later responsib
 turns; they do not create a second Evidence-validity state machine. Once the responsibility process
 is gone and its proof is preserved, Coordinator
 removes `scratch/`; terminal scratch left by a process crash is removed during restart recovery.
-On restart, a manifest still marked `running` becomes `interrupted`; Coordinator never reattaches its
-child. The former `<projectId>/<goalId>/<workId>/<runId>` layout remains read-only compatible during
-migration, but all new writes use the flat layout. Older Run directories without these files remain
-readable as legacy Attempts but may have no message stream or raw transcript. Runtime Attempt
-records are the only invocation and recovery count.
+On restart, a current manifest still marked `running` becomes `interrupted`; Coordinator never
+reattaches its child. Runtime Attempt records are the only invocation and recovery count.
 
 Semantic and operational recovery use these existing Attempt records without making them canonical
 Work semantics. A failed Attempt records the settled Work assignment fingerprint: the canonical Work
@@ -573,7 +545,7 @@ Planning Work omits engineering Git fields. For engineering Work:
 - branch paths derive from Project, Goal, and Work identity; worktree paths derive from the Repo
   binding plus Goal and Work identity
 - each Repo task branch HEAD is its current source checkpoint and is not copied into Work front matter
-- a missing disposable task checkout may be rebuilt from that Repo's stable branch after migration
+- a missing disposable task checkout may be rebuilt from that Repo's stable branch
 - before dispatch, Coordinator synchronizes the stable branch with the latest Repo release while
   preserving its checkpointed Work delta; this computed projection has no document field
 - a plan that must discard the current Work delta creates a distinct Engineering Work identity;
@@ -685,10 +657,9 @@ process stops after its supporting write but before its Work gate, and remains p
 #### Recovery history
 
 Durable Attempt records are the sole source for queued execution, invocation count, responsibility,
-result, application, timing, model, diagnostics, and interruption history. Work does not duplicate an
-`attempts` counter or retry budget. Legacy Work documents containing `attempts` remain readable, but
-the compatibility field has no semantics and disappears when that nonterminal Work is republished.
-The ordered `evidenceRefs` retains consumed canonical Evidence for model repair context.
+result, application, timing, model, diagnostics, and interruption history. Work does not duplicate
+an `attempts` counter or retry budget. The ordered `evidenceRefs` retains consumed canonical Evidence
+for model repair context.
 
 Reviewer `reject` and deterministic pre-C1 integration rejection return Engineering Work from
 `review` to `generate`; the corresponding Attempt and Evidence already record why. Explicit
@@ -704,9 +675,8 @@ transition. Terminal Work remains in `work/`.
 
 ### `attention/<attentionId>.md`
 
-Attention is the durable model for a condition that pauses Work or requires Assistant ownership.
-There is no separate decision entity or blocker entity. One nullable event reference records
-operator ownership, and one optional timestamp may request a single future Assistant observation.
+Attention is the durable model for a condition requiring Assistant judgment. There is no separate
+decision entity, blocker entity, ownership field, notification state, or retry state.
 
 ```yaml
 ---
@@ -714,29 +684,16 @@ id: A-W12-storage-format
 target: project:P-1/goal:G-4/work:W-12
 createdAt: 2026-07-10T09:00:00Z
 resolvedAt: null
-notifiedAt: null
-operatorRequest: null
-revisitAt: null
+resolutionInput: null
+summary: Choose the storage format for the current Work.
+decisionPrompt: null
 ---
 ```
 
-`target` is exactly one canonical event, project, Goal, or Work reference. Legacy targetless
-completion Attention remains readable but no new Run creates it.
-An open targeted Attention projects as **Waiting for Assistant** while `operatorRequest` is null
-and as **Needs you** only while `operatorRequest` contains the exact
-`home:<homeId>/event:<eventId>` public Assistant request awaiting a reply. `notifiedAt` is independent
-delivery history and may be non-null in either projection. The parser accepts and drops an obsolete
-`retryRunId` key from legacy documents; it has no current domain or projection semantics.
-
-Attention is open exactly when `resolvedAt` is null; there is no duplicate `status` field.
-
-`revisitAt` is null when no future observation is requested. A non-null value names one instant at
-which HOPI may publish an internal Assistant turn if the Attention is still open and Assistant-owned.
-The resulting Inbox event has a deterministic identity derived from the exact Attention reference
-and timestamp, so repeated reconciliation and restart cannot repeat that check. The timestamp is
-one-shot: leaving the Attention unresolved does not schedule another turn, and Assistant records a
-new timestamp only when another observation is useful. `revisitAt` neither retries Work nor asserts
-that the external condition changed.
+`target` is exactly one canonical project, Goal, or Work reference. `summary` is the concise
+operator-facing explanation, the Markdown body is complete Agent context, and `decisionPrompt`
+optionally describes one or more user choices. Attention is open exactly when `resolvedAt` is null;
+there is no duplicate status.
 
 An ordinary Project state event records every currently actionable Assistant-owned Attention as an
 exact canonical reference. These references are responsibility facts, not suggested actions. At turn
@@ -799,25 +756,17 @@ Resolving targeted Attention and applying its effects uses one publication when 
 only gate; it installs supporting effects first and the resolution last. Any additional gate is a
 separate publication. A cross-root answer uses the receipt sequence defined under Canonical
 Publication. In its project phase, effects precede Goal Input, and Goal-local Attention resolution
-is the final unblocking gate after that receipt. An exact reply clears `operatorRequest` and returns
-the still-open condition to Assistant ownership; it never selects a Work or Goal operation. The
-Assistant then acts from current state. No answer-state document is stored.
+is the final unblocking gate after that receipt.
 
-`notifiedAt` is null until an Attention-linked Assistant turn is durably exposed with its complete
-handled reply. Informational delivery leaves `operatorRequest` null. A staged
-`transfer_attention_to_user` records that exact handled event in `operatorRequest`;
-only a user Inbox event whose immutable `context.replyTo` equals that pointer clears it after receipt
-is durable and before Assistant continues. Only the explicit Reply action writes that `replyTo` and
-the exact canonical Attention references; ordinary page context never infers them from open
-Attention. None of these ownership transitions alone resolves the Attention. Completion is marked
-notified and resolved in the same project publication. The
-Assistant-home reply gate is always first, so a crash cannot
-acknowledge delivery or transfer ownership without leaving a durable public turn whose recovery can
-finish the exact linked Attention publications. Resolution facts do not change the immutable
-notification payload or request delivery again.
+`transfer_attention_to_user` stages complete open Attention references on the pending Assistant
+turn. The handled public reply exposes each referenced Attention's `summary` and optional
+`decisionPrompt`; it does not mutate the Attention or scheduling state. Only the explicit Reply
+action creates a user turn with `replyTo` and those exact references. The Assistant then judges the
+answer against current facts and applies or resolves the Attention explicitly. Ordinary page
+context never infers Attention references.
 
 The optional provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL` mirrors that
-handled public Assistant reply; it never delivers raw Attention and never owns `notifiedAt`.
+handled public Assistant reply; it never delivers raw Attention.
 `webhookDeliveredAt` on the Inbox event is its separate durable acknowledgement. Webhook delivery is
 at least once: a crash after the transport accepts the reply but before `webhookDeliveredAt` may
 repeat the same event identity. Retry timing remains disposable runtime state, so no notification

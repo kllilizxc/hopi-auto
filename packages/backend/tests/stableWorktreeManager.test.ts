@@ -25,7 +25,7 @@ describe('createStableWorktreeManager', () => {
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))
     const home = createAssistantHomeStore(homeRoot)
     const project = await home.linkProject({ projectId: 'P-1', repoPath })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
@@ -53,7 +53,7 @@ describe('createStableWorktreeManager', () => {
       repoPath,
     })
 
-    const prepared = await createStableWorktreeManager(homeRoot).prepare({
+    const prepared = await createStableWorktreeManager().prepare({
       projectRoot: project.integrationRoot,
       projectId: project.projectId,
       goalId: 'G-优化前端样式',
@@ -71,7 +71,7 @@ describe('createStableWorktreeManager', () => {
     const project = await home.linkProject({ projectId: 'P-1', repoPath })
     await Bun.write(join(repoPath, 'local.txt'), 'user checkout change\n')
     const before = await checkoutSnapshot(repoPath)
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
 
     const prepared = await manager.prepare({
       projectRoot: project.integrationRoot,
@@ -97,7 +97,7 @@ describe('createStableWorktreeManager', () => {
       repoPath,
     })
 
-    const prepared = await createStableWorktreeManager(homeRoot).prepare({
+    const prepared = await createStableWorktreeManager().prepare({
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
       goalId: 'G-1',
@@ -118,7 +118,7 @@ describe('createStableWorktreeManager', () => {
     project = await home.linkRepo({ projectId: 'P-1', repoId: 'api', repoPath: apiPath })
     const apiRepo = project.repos.find((repo) => repo.repoId === 'api')
     if (!apiRepo) throw new Error('Expected linked api Repo')
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const common = { projectId: 'P-1', goalId: 'G-1', workId: 'W-1', primaryRepoId: 'primary' }
 
     const [primary, api] = await Promise.all([
@@ -146,7 +146,7 @@ describe('createStableWorktreeManager', () => {
     const home = createAssistantHomeStore(homeRoot)
     const firstProject = await home.linkProject({ projectId: 'P-1', repoPath })
     const secondProject = await home.linkProject({ projectId: 'P-2', repoPath })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
 
     const [first, second] = await Promise.all([
       manager.prepare({
@@ -170,12 +170,12 @@ describe('createStableWorktreeManager', () => {
     expect(await Bun.file(join(second.path, 'only-p1.txt')).exists()).toBe(false)
   })
 
-  test('rebuilds a disposable checkout from its stable task branch after migration cleanup', async () => {
+  test('rebuilds a missing disposable checkout from its stable task branch', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))
     const home = createAssistantHomeStore(homeRoot)
     const project = await home.linkProject({ projectId: 'P-1', repoPath })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
@@ -203,7 +203,7 @@ describe('createStableWorktreeManager', () => {
       projectId: 'P-1',
       repoPath,
     })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
@@ -236,7 +236,7 @@ describe('createStableWorktreeManager', () => {
       projectId: 'P-1',
       repoPath,
     })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
@@ -264,7 +264,7 @@ describe('createStableWorktreeManager', () => {
       projectId: 'P-1',
       repoPath,
     })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
@@ -295,7 +295,7 @@ describe('createStableWorktreeManager', () => {
       projectId: 'P-1',
       repoPath,
     })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
@@ -335,7 +335,7 @@ describe('createStableWorktreeManager', () => {
       projectId: 'P-1',
       repoPath,
     })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
@@ -366,7 +366,7 @@ describe('createStableWorktreeManager', () => {
       projectId: 'P-1',
       repoPath,
     })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',
@@ -399,7 +399,7 @@ describe('createStableWorktreeManager', () => {
       projectId: 'P-1',
       repoPath,
     })
-    const manager = createStableWorktreeManager(homeRoot)
+    const manager = createStableWorktreeManager()
     const input = {
       projectRoot: project.integrationRoot,
       projectId: 'P-1',

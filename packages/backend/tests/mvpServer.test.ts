@@ -268,7 +268,6 @@ describe('MVP server', () => {
           lifecycle: 'active',
           priority: 0,
           contractRevision: 1,
-          completionAttentionId: null,
         },
         body: 'Goal.\n',
       },
@@ -349,7 +348,6 @@ describe('MVP server', () => {
           lifecycle: 'active',
           priority: 0,
           contractRevision: 1,
-          completionAttentionId: null,
         },
         body: 'Goal.\n',
       },
@@ -404,7 +402,6 @@ describe('MVP server', () => {
 
   test('derives Done completion from the Attempt that applied the terminal transition', () => {
     const attempt = (overrides: Partial<RunAttemptSummary> = {}): RunAttemptSummary => ({
-      version: 2,
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'W-1',
@@ -437,11 +434,6 @@ describe('MVP server', () => {
     expect(
       deriveWorkCompletedAt({ kind: 'planning', stage: 'done' }, [
         attempt({ responsibility: 'planner', application: 'published' }),
-      ]),
-    ).toBe('2026-07-11T00:05:00Z')
-    expect(
-      deriveWorkCompletedAt({ kind: 'engineering', stage: 'done' }, [
-        attempt({ application: null }),
       ]),
     ).toBe('2026-07-11T00:05:00Z')
     expect(deriveWorkCompletedAt({ kind: 'engineering', stage: 'review' }, [attempt()])).toBeNull()
@@ -609,9 +601,7 @@ describe('MVP server', () => {
       title: 'Goal',
       objective: 'Ship it.',
     })
-    await createGoalController(goalStore, {
-      verifyCompletion: () => false,
-    }).cancelGoal('G-1')
+    await createGoalController(goalStore, {}).cancelGoal('G-1')
 
     const toolStatuses: number[] = []
     const assistantRunner: AssistantModelRunner = {
@@ -970,7 +960,7 @@ describe('MVP server', () => {
       [
         '#!/usr/bin/env bun',
         'const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ready") })',
-        'console.log(`HOPI_PREVIEW_URL=http://127.0.0.1:${server.port}/`)',
+        'console.log(`HOPI_PREVIEW_SURFACES=${JSON.stringify([{ id: "default", label: "Preview", url: `http://127.0.0.1:${server.port}/` }])}`)',
         'process.on("SIGTERM", () => { server.stop(true); process.exit(0) })',
         'await new Promise(() => {})',
         '',
@@ -1147,9 +1137,11 @@ describe('MVP server', () => {
     await Bun.write(
       assistantSessionPath,
       JSON.stringify({
-        version: 1,
+        scope: 'home',
         transport: 'codex',
         sessionId: 'old-codex-session',
+        contractDigest: null,
+        runtimeDigest: null,
       }),
     )
     expect(
@@ -1179,9 +1171,11 @@ describe('MVP server', () => {
     await Bun.write(
       assistantSessionPath,
       JSON.stringify({
-        version: 1,
+        scope: 'home',
         transport: 'opencode',
         sessionId: 'opencode-session',
+        contractDigest: null,
+        runtimeDigest: null,
       }),
     )
     expect(
@@ -1291,7 +1285,7 @@ describe('MVP server', () => {
               target: 'project:P-1/goal:G-1/work:plan-initial',
               createdAt: '2026-07-11T00:00:00Z',
               resolvedAt: null,
-              notifiedAt: null,
+              summary: 'Choose the delivery strategy.',
             },
             body: '## Needs you\n\nChoose the delivery strategy without sending this body to Board.\n',
           }),
@@ -1305,7 +1299,7 @@ describe('MVP server', () => {
               target: 'project:P-1/goal:G-1/work:plan-initial',
               createdAt: '2026-07-10T00:00:00Z',
               resolvedAt: '2026-07-10T01:00:00Z',
-              notifiedAt: '2026-07-10T00:05:00Z',
+              summary: 'Historical Attention stays in the full Goal only.',
             },
             body: '## Resolved\n\nHistorical Attention stays in the full Goal only.\n',
           }),
@@ -1535,7 +1529,6 @@ describe('MVP server', () => {
       event: {
         status: 'pending',
         context: { projectId: 'P-1', goalId: 'G-1' },
-        routeClaim: null,
         runtimeStatus: 'queued',
         runtimeEvents: [],
       },
@@ -1762,6 +1755,7 @@ describe('MVP server', () => {
         updatedAt: createdAt,
         resolvedAt: null,
         refs: ['project:P-1', 'G-1', 'plan-initial'],
+        summary: 'The current Goal proof needs inspection.',
       },
       body: 'The current Goal proof needs inspection.\n',
     })
@@ -1841,7 +1835,7 @@ describe('MVP server', () => {
     })
   })
 
-  test('keeps Workspace state readable when a blocked migrated Project root is unavailable', async () => {
+  test('keeps Workspace state readable when a relocated Project root is unavailable', async () => {
     const sourceMachine = join(temporaryRoot, 'source-machine')
     const destinationMachine = join(temporaryRoot, 'destination-machine')
     const homeRoot = join(sourceMachine, 'home')
@@ -1855,7 +1849,7 @@ describe('MVP server', () => {
     await createGoalPackageStore(linked.integrationRoot, 'P-1', publisher).createGoal({
       goalId: 'G-1',
       title: 'Goal',
-      objective: 'Survive migration.',
+      objective: 'Survive relocation.',
     })
     await createWorkspaceAttentionController(
       createAssistantWorkspaceStore(homeRoot, publisher),
@@ -1930,7 +1924,7 @@ describe('MVP server', () => {
     ).toMatchObject({
       command: 'project.rebind',
       summary: expect.stringContaining('1 Repo binding'),
-      warnings: [expect.stringContaining('recovery evidence')],
+      warnings: [],
     })
     const rebound = await request(base, '/api/projects/P-1/repos/api/rebind', {
       method: 'POST',
@@ -2124,114 +2118,6 @@ describe('MVP server', () => {
       omitted: 0,
     })
     expect((await fetch(`${artifactBase}/4`)).status).toBe(404)
-  })
-
-  test('correlates repeated local completion IDs by canonical Goal identity', async () => {
-    const homeRoot = join(temporaryRoot, 'completion-home')
-    const repoRoot = await createRepo(join(temporaryRoot, 'completion-repo'))
-    const publisher = new PublicationCoordinator()
-    const home = createAssistantHomeStore(homeRoot, publisher)
-    const linked = await home.linkProject({
-      projectId: 'P-1',
-      repoPath: repoRoot,
-    })
-    const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
-    await createCompletedGoal(store, 'G-1', 'A-complete')
-    await createCompletedGoal(store, 'G-2', 'A-complete')
-    const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
-    for (const goalId of ['G-1', 'G-2']) {
-      const event = await workspace.receiveReflectionEvent({
-        eventId: `EV-${goalId}`,
-        content: `Internal completion for ${goalId}.`,
-        context: {
-          projectId: 'P-1',
-          goalId,
-          attentionRefs: [`project:P-1/goal:${goalId}/attention:A-complete`],
-        },
-      })
-      await workspace.handleEvent(event.attributes.id, {
-        reply: `${goalId} is complete.`,
-        disposition: 'answered',
-        expose: true,
-      })
-    }
-    const userEvent = await workspace.receiveEvent({
-      eventId: 'EV-user-followup',
-      content: 'Thanks.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: ['project:P-1/goal:G-1/attention:A-complete'],
-      },
-    })
-    await workspace.handleEvent(userEvent.attributes.id, {
-      reply: 'You are welcome.',
-      disposition: 'answered',
-    })
-    const server = createServer({
-      rootDir: homeRoot,
-      port: 0,
-      startCoordinator: false,
-    })
-    activeServers.add(server)
-    const base = `http://127.0.0.1:${server.port}`
-    const legacyReceipt = await request(base, '/api/inbox', {
-      method: 'POST',
-      body: {
-        content: 'Legacy client follow-up.',
-        context: { projectId: 'P-1', goalId: 'G-1', attentionId: 'A-complete' },
-      },
-    })
-    expect(await request(base, '/api/state?view=shell')).toMatchObject({
-      projects: [
-        {
-          projectId: 'P-1',
-          goals: [
-            { id: 'G-1', completion: { id: 'A-complete' } },
-            { id: 'G-2', completion: { id: 'A-complete' } },
-          ],
-        },
-      ],
-    })
-
-    const feed = await request(base, '/api/assistant/feed?projectId=P-1')
-    const items = feed.items as Array<{
-      kind: string
-      event?: { id: string }
-      completion?: { goalId: string }
-    }>
-
-    expect(items).toHaveLength(4)
-    expect(items.find((item) => item.event?.id === 'EV-G-1')).toMatchObject({
-      kind: 'event',
-      completion: { goalId: 'G-1' },
-    })
-    expect(items.find((item) => item.event?.id === 'EV-G-2')).toMatchObject({
-      kind: 'event',
-      completion: { goalId: 'G-2' },
-    })
-    expect(items.find((item) => item.event?.id === 'EV-user-followup')).toMatchObject({
-      kind: 'event',
-      completion: null,
-    })
-    expect(items.find((item) => item.event?.id === legacyReceipt.eventId)).toMatchObject({
-      kind: 'event',
-      completion: null,
-      event: {
-        context: {
-          projectId: 'P-1',
-          goalId: 'G-1',
-          attentionRefs: ['project:P-1/goal:G-1/attention:A-complete'],
-        },
-      },
-    })
-    const changes = await request(base, '/api/assistant/feed/changes?projectId=P-1')
-    expect(changes.removedIds).toEqual(
-      expect.arrayContaining([
-        'completion:project:P-1/goal:G-1/attention:A-complete',
-        'completion:project:P-1/goal:G-2/attention:A-complete',
-      ]),
-    )
   })
 
   test('projects a new Goal completion from final Planning Evidence without Attention', async () => {
@@ -2603,7 +2489,6 @@ describe('MVP server', () => {
     await Bun.write(
       join(wakeRoot, 'reflection.json'),
       JSON.stringify({
-        version: 1,
         reflectionId: 'WK-debug',
         stateDigest: 'd'.repeat(64),
         scope: { kind: 'home' },
@@ -2661,48 +2546,6 @@ describe('MVP server', () => {
     })
   })
 })
-
-async function createCompletedGoal(
-  store: ReturnType<typeof createGoalPackageStore>,
-  goalId: string,
-  attentionId: string,
-) {
-  await store.createGoal({
-    goalId,
-    title: goalId,
-    objective: `Complete ${goalId}.`,
-  })
-  const workPath = store.paths.workDocument(goalId, 'plan-initial')
-  const workSource = await Bun.file(store.paths.absolute(workPath)).text()
-  const work = parseWorkDocument(workSource)
-  work.attributes.stage = 'done'
-  await store.publishGoal(goalId, {
-    supportingWrites: [
-      {
-        path: store.paths.attentionDocument(goalId, attentionId),
-        expectedHash: null,
-        content: renderAttentionDocument({
-          attributes: {
-            id: attentionId,
-            target: null,
-            createdAt: new Date().toISOString(),
-            resolvedAt: null,
-            notifiedAt: null,
-          },
-          body: `## Completion\n\n${goalId} is complete.\n`,
-        }),
-      },
-    ],
-    gateWrite: {
-      path: workPath,
-      expectedHash: await hashBytes(new TextEncoder().encode(workSource)),
-      content: renderWorkDocument(work),
-    },
-  })
-  await createGoalController(store, {
-    verifyCompletion: () => true,
-  }).completeGoal(goalId, attentionId)
-}
 
 async function createEvidenceCompletedGoal(
   store: ReturnType<typeof createGoalPackageStore>,

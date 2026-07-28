@@ -1,6 +1,5 @@
-import { isWorkTerminal, renderWorkDocument } from '../domain/canonicalDocuments'
+import { isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
-import { hashBytes } from '../publication/publisher'
 import type { RunAttemptSummary } from './runAttemptStore'
 import { responsibilityFor } from './softwareDeliveryProfile'
 import { workAssignmentHash } from './workAssignment'
@@ -22,11 +21,7 @@ export async function settledFailureWorkIds(
         return
       }
       if (!latest.workHash) return
-      const [assignmentHash, legacyDocumentHash] = await Promise.all([
-        workAssignmentHash(work),
-        hashBytes(new TextEncoder().encode(renderWorkDocument(work))),
-      ])
-      if (assignmentHash === latest.workHash || legacyDocumentHash === latest.workHash) {
+      if ((await workAssignmentHash(work)) === latest.workHash) {
         blocked.add(work.attributes.id)
       }
     }),

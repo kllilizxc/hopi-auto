@@ -12,12 +12,7 @@ import { ACTIVE_STREAM_POLL_INTERVAL_MS } from '../lib/queryPerformance'
 import { useInfiniteMessageStream } from '../lib/useInfiniteMessageStream'
 import { cn, formatTime } from '../lib/utils'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
-import {
-  AppDisclosure,
-  AppScrollShadow,
-  AppSpinner,
-  WorkingIndicator,
-} from './ui'
+import { AppDisclosure, AppScrollShadow, AppSpinner, WorkingIndicator } from './ui'
 
 export function ReflectionDebugPanel({ enabled }: { enabled: boolean }) {
   const stream = useInfiniteMessageStream({
@@ -162,11 +157,7 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
         <div>
           <dt>Scope</dt>
           <dd>
-            {manifest.scope?.kind === 'project'
-              ? `Project ${manifest.scope.projectId}`
-              : manifest.scope?.kind === 'home'
-                ? 'Home'
-                : 'Legacy'}
+            {manifest.scope?.kind === 'project' ? `Project ${manifest.scope.projectId}` : 'Home'}
           </dd>
         </div>
         <div>

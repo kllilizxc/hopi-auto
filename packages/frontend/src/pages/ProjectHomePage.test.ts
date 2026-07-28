@@ -1,23 +1,18 @@
 import { expect, test } from 'bun:test'
-import {
-  codingDefaultsToDraft,
-  formatCodingDefaults,
-  resolveCodingDefaults,
-  scopedRepoPath,
-} from './ProjectHomePage'
+import { codingDefaultsToDraft, formatCodingDefaults, scopedRepoPath } from './ProjectHomePage'
 
-test('Assistant settings use a safe default when an older API omits coding defaults', () => {
-  expect(resolveCodingDefaults(undefined)).toEqual({
+test('Assistant settings use the current coding defaults', () => {
+  const defaults = {
+    transport: 'codex',
+    model: 'gpt-5.4',
+    reasoningEffort: 'xhigh',
+  } as const
+  expect(codingDefaultsToDraft(defaults)).toEqual({
     transport: 'codex',
     model: 'gpt-5.4',
     reasoningEffort: 'xhigh',
   })
-  expect(codingDefaultsToDraft(undefined)).toEqual({
-    transport: 'codex',
-    model: 'gpt-5.4',
-    reasoningEffort: 'xhigh',
-  })
-  expect(formatCodingDefaults(undefined)).toBe('gpt-5.4 · xhigh')
+  expect(formatCodingDefaults(defaults)).toBe('gpt-5.4 · xhigh')
 })
 
 test('model settings are Home-wide by role and absent from Project cards', async () => {

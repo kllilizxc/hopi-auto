@@ -1,17 +1,13 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type {
   RoleRunInput,
   RoleRunObserver,
   RoleRunResult,
   RoleRunner,
 } from '../../src/agent/RoleRunner'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { projectReleaseRef } from '../../src/domain/project'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import { managedRepoWorktreePaths } from '../../src/runtime/managedWorktreePaths'
@@ -250,6 +246,7 @@ function createRestartRoleRunner(blockFirstGenerator: boolean): RoleRunner & {
         await observer?.onSession?.({
           transport: 'codex',
           sessionId: 'restart-generator-session',
+          executionKey: 'test-execution',
         })
       }
       if (input.responsibility === 'planner') return plan(input)
@@ -318,22 +315,6 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           evidenceRefs: [],
         },
         body: '## Acceptance Criteria\n\n- `src/feature.ts` exports feature with value 2.\n',
-      }),
-    )
-  } else {
-    const attentionPath = join(goalRoot, 'attention', `A-complete-${input.runId}.md`)
-    await mkdir(dirname(attentionPath), { recursive: true })
-    await Bun.write(
-      attentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: `A-complete-${input.runId}`,
-          target: null,
-          createdAt: '2026-07-14T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nReplacement Coordinator completed the recovered delivery.\n',
       }),
     )
   }

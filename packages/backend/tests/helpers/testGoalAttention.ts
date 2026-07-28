@@ -20,7 +20,7 @@ export async function publishTestWorkAttention(
       target: workAttentionTarget(store.paths.projectId, goalId, workId),
       createdAt: new Date().toISOString(),
       resolvedAt: null,
-      notifiedAt: null,
+      summary: body,
     },
     body: `## Observed condition\n\n${body}\n`,
   }

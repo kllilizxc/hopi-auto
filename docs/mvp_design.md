@@ -3,12 +3,11 @@
 Status: forward product and architecture authority
 Last updated: 2026-07-24
 
-This document defines the target MVP for HOPI. New product and architecture work follows it.
+This document defines the target MVP for HOPI.
 
 - [The Project Owner design](./mvp_project_owner.md) owns Assistant supervision, wake-up, Attention,
-  and Needs You. It supersedes older Reflection-Agent and targeted-Attention rules.
-- [The Project Runtime design](./mvp_project_runtime.md) owns Project-level Prepare and Preview. It
-  supersedes older per-Repo preparation and formal-Planning Preview rules.
+  and Needs You.
+- [The Project Runtime design](./mvp_project_runtime.md) owns Project-level Prepare and Preview.
 - [The document model](./mvp_document_model.md) owns file layout, schemas, and field invariants.
 - [The Assistant design](./mvp_assistant.md) owns conversation, vendor-qualified session continuity, HOPI
   tools, and Assistant UI behavior.
@@ -18,11 +17,9 @@ This document defines the target MVP for HOPI. New product and architecture work
   second workflow authority.
 - [The publish protocol ADR](./mvp_publish_protocol.md) owns implementation details for the
   kernel publication primitive.
-- `docs/unified_design.md` is a historical redirect only; it is not current implementation authority.
-
-When an older MVP document conflicts with either focused authority above, the focused document wins.
-Compatibility readers may still accept old fields during migration, but new writes and behavior
-follow the focused authority.
+Production code supports only the current document and runtime schemas. After a schema change,
+discard the Assistant Home and managed runtime state, then create current state again. Readers never
+infer another format or rewrite business prose.
 
 ## Product Goal
 
@@ -62,8 +59,7 @@ public Assistant turn references it through `attentionRequest`; the UI reads the
 operator summary and optional choices. Neither the request nor the reply changes Attention,
 scheduling, or responsibility. The Assistant resolves the condition from current facts. An ordinary
 message on the same Goal is not inferred to be a reply. Goal completion appears as a normal Assistant
-and Goal update derived from final Planning Evidence. Legacy targetless completion Attention and
-tagged request text remain readable. There is no separate Attention page.
+and Goal update derived from final Planning Evidence. There is no separate Attention page.
 
 The speaking Assistant is the only operator-delivery authority. Inbox context correlates a public
 reply to complete canonical Goal-local or workspace Attention references. The handled request turn
@@ -169,7 +165,7 @@ durable external run, or later proof uses the existing targeted Attention while 
 lineage must span the external action, Attention is the pause and no additional phase state is
 introduced.
 
-The Reconciler reads one built-in versioned profile. Planner, Generator, and Reviewer are fixed
+The Reconciler reads one built-in profile. Planner, Generator, and Reviewer are fixed
 responsibility passes executed by one generic `RoleRunner`; they are not durable actor types.
 Coordinator integration is deterministic kernel behavior, not another responsibility pass or Work
 stage. Project overrides, arbitrary passes, capability matching, workflow expressions, and a
@@ -283,16 +279,16 @@ Assistant scope, and Repo topology continue to use `projectId`. Labels need not 
 omitted label preserves the existing folder-name fallback. Product UI and Assistant Project creation
 share this input; neither derives `projectId` from the label. The Project card may replace or clear
 its label inline; clearing restores the folder-name fallback without reloading Project execution.
-Explicit IDs remain available at the API boundary for migration and deterministic automation.
+Explicit IDs remain available at the API boundary for deterministic automation and tests.
 
 The ordinary Assistant Create Goal operation does not expose `goalId` to the operator. New Goals
 derive a Project-local, readable `G-<title>` identity from the Goal title. Unicode letters and
 numbers remain readable, spacing and punctuation normalize to `-`, and a same-name collision
 receives the smallest free numeric suffix (`-2`, `-3`, ...). Existing identities are never renamed;
-explicit IDs remain an API compatibility boundary.
+explicit IDs remain available to deterministic automation and tests.
 
-Local IDs may repeat outside their owning package. Integration, delivery, receipts, references,
-and migration use the complete canonical identity rather than a bare local ID.
+Local IDs may repeat outside their owning package. Integration, delivery, receipts, and references
+use the complete canonical identity rather than a bare local ID.
 
 A Run record, process, and transcript may be discarded, but its `runId` is never reused within the
 owning Work. Any qualified producer Run reference retained in Evidence or Git remains permanently
@@ -551,9 +547,8 @@ reason derived from readiness facts. A Done card also shows when its successful 
 made completion effective. The Done Lane orders cards by that derived time, newest first; records
 without a derivable completion time follow timestamped cards in stable projection order. This is a
 presentation rule over the server-derived read projection and durable Attempt log, not another
-model-maintained Work field; older Attempt records without application metadata may be used only
-when their successful terminal responsibility unambiguously matches the Work kind. This runtime
-count is the only attempt count; Work carries no duplicate repair counter. Lane placement and
+model-maintained Work field. This runtime count is the only attempt count; Work carries no duplicate
+repair counter. Lane placement and
 segmented progress already communicate ordinary running and queued state without repeating footer
 labels.
 Kanban is read-only: it has no drag-to-transition or direct status mutation. A card links to its
@@ -562,8 +557,7 @@ segment fill carry restrained status motion; the title uses the Lane color while
 remains still. Reduced-motion keeps the title as a static emphasis. Opening a card also lists each
 runtime Attempt and its normalized live message/tool stream. The detail header shows the execution
 model and reasoning effort captured for the selected Attempt; switching Attempts switches that
-value, while older records without a captured execution show an explicit unavailable value rather
-than today's Home role setting. One horizontally scrollable fact strip combines that execution
+value. One horizontally scrollable fact strip combines that execution
 identity with revision/recovery timing and the selected Attempt's cost diagnostics. It omits Stage,
 Responsibility, and Repositories because the Lane, Attempt list, and Work contract already own that
 context. A terminal result summary is a collapsed single-line preview above Activity, not an
@@ -597,7 +591,7 @@ The MVP does not include:
   rebase, reset, force update, or conflict resolution
 - one writable project attached to multiple active HOPI homes
 - child-process reattachment
-- kernel compatibility judgments for stale output
+- kernel semantic judgments about stale output
 - product-visible restart, fence, pending-result, or patch-rebuild states
 - multi-user RBAC or remote tenancy
 - vector memory as workflow truth
@@ -635,8 +629,7 @@ The production path is the MVP path:
 The Goal-scoped Assistant authority, `todo.yml` board authority, decisions, planning requests,
 parsed `actions[]`, merger role, per-Run task worktrees, old server routes, Vite runtime, and writable
 React workflow screens are deleted. `packages/frontend` remains as the React presentation boundary
-and reads only MVP projections. The only legacy production code is a one-way `todo.yml` import and
-adapter-config schema migration; neither can write an old authority.
+and reads only MVP projections. Deleted authorities have no production readers or importers.
 
 ## Completed Delivery Order
 
@@ -654,10 +647,10 @@ adapter-config schema migration; neither can write an old authority.
 7. Introduce bounded Goal packages, single-target Attention, and per-Work documents.
 8. Make Assistant, Project, Goal, and derived Goal Kanban the primary UI; expose Pause or Resume
    through the same intent path.
-9. Retire `planning-requests.yml`, Assistant Actions, old state authorities, and compatibility
-   paths after migration tests.
+9. Retire `planning-requests.yml`, Assistant Actions, and old state authorities; development state
+   is recreated on schema changes.
 
-Each completed slice preserved an end-to-end path and added migration or restart coverage.
+Each completed slice preserved an end-to-end path and added current-schema restart coverage.
 
 ## MVP Acceptance Scenarios
 
@@ -680,7 +673,7 @@ The Inbox receipt durably owns the original image. Assistant sees it, adopts it 
 Goal with a concise purpose, and starts Planning in the same publication. Planner records the design
 decision and cites the exact Goal asset in each related Engineering Work. Generator and Reviewer
 receive that image with their Work while unrelated Work receives no image context. Restart, retry,
-and Project migration preserve the same file and Markdown provenance.
+and Home relocation preserve the same file and Markdown provenance.
 
 ### Concurrent instructions
 
@@ -721,12 +714,12 @@ recorded clean fast-forward, but delivery drift is nonblocking and it never repa
 or changes branches. Managed-root ownership does not authorize destructive reconstruction of newer
 canonical documents.
 Invalid Assistant-home state requires supervisor intervention. Inbox turn state, qualified Goal
-Input path and digest, qualified Work integration trailers, Work references to
-immutable Evidence, Attention identity and `notifiedAt`, and current semantic state prevent
+Input path and digest, qualified Work integration trailers, Work references to immutable Evidence,
+Attention identity, and current semantic state prevent
 duplicate domain effects. At-least-once webhook mirroring may repeat after a crash but keeps the
 same canonical Inbox event identity and cannot repeat domain effects.
 
-### Project migration
+### Home relocation
 
 Git refs and canonical `.hopi` files move to another machine. Goal Inputs, contracts, DAG, timing,
 task branches, Attention, Evidence, stable Repo IDs, and the primary release manifest remain

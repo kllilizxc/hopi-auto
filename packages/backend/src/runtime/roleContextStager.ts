@@ -297,7 +297,7 @@ export function createRoleContextStager(
           unavailableMaterial.length > 0 ? { unavailable: unavailableMaterial } : {}
         await Bun.write(
           artifactManifestFile,
-          `${JSON.stringify({ version: 1, artifacts: evidenceArtifacts, ...unavailable }, null, 2)}\n`,
+          `${JSON.stringify({ artifacts: evidenceArtifacts, ...unavailable }, null, 2)}\n`,
         )
         await chmod(artifactManifestFile, 0o444)
       }
@@ -1053,20 +1053,17 @@ function proposalCapabilities(
       target: 'exact target above',
       createdAt: '1970-01-01T00:00:00.000Z',
       resolvedAt: null,
-      notifiedAt: null,
       summary: 'short operator-facing explanation of the condition',
       decisionPrompt: null,
     },
   }
   if (input.responsibility !== 'planner') {
     return {
-      version: 1,
       proposalRoot: '$HOPI_PROPOSAL_ROOT',
       writable: [{ type: 'targeted-attention', ...attention }],
     }
   }
   return {
-    version: 1,
     proposalRoot: '$HOPI_PROPOSAL_ROOT',
     writable: [
       { type: 'design', path: `${paths.designRoot(input.goalId)}/**` },

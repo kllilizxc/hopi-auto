@@ -369,6 +369,7 @@ function attention(id: string, projectId: string): WorkspaceAttentionDocument {
       updatedAt: timestamp,
       resolvedAt: null,
       refs: [`project:${projectId}`],
+      summary: 'Inspect the repeated failure.',
     },
     body: 'Inspect the repeated failure.\n',
   }

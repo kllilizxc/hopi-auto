@@ -21,9 +21,9 @@ import {
   startTestRun,
 } from '../live/liveHarness'
 
-const SCENARIO = 'project-home-migration'
-const PROJECT_ID = 'P-migration'
-const GOAL_ID = 'G-migration'
+const SCENARIO = 'project-home-relocation'
+const PROJECT_ID = 'P-relocation'
+const GOAL_ID = 'G-relocation'
 const testRun = await startTestRun(SCENARIO, 'contract')
 const sourceMachine = join(testRun.artifactRoot, 'source-machine')
 const destinationMachine = join(testRun.artifactRoot, 'destination-machine')
@@ -59,8 +59,8 @@ try {
   }
   const runtime = await createMvpRuntime({ homeRoot: sourceHome, start: false })
   const request = await runtime.workspace.receiveEvent({
-    eventId: 'EV-migration-create',
-    content: 'Create a portable migration Goal from this reference image.',
+    eventId: 'EV-relocation-create',
+    content: 'Create a portable relocation Goal from this reference image.',
     images: [new File([imageBytes], 'reference.png', { type: 'image/png' })],
   })
   const attachmentRef = request.attributes.attachments[0]
@@ -68,20 +68,20 @@ try {
   await runtime.assistantTools.executeForEvent(request.attributes.id, 'hopi_create_goal', {
     projectId: PROJECT_ID,
     goalId: GOAL_ID,
-    title: 'Preserve migration state',
+    title: 'Preserve relocation state',
     objective: 'Keep the complete portable Project state valid after Home and Repo paths move.',
     firstWork: { kind: 'planning' },
     references: [
-      { attachmentRef, purpose: 'Preserve this exact visual reference across migration.' },
+      { attachmentRef, purpose: 'Preserve this exact visual reference across relocation.' },
     ],
   })
   await runtime.workspace.handleEvent(request.attributes.id, {
-    reply: 'Migration Goal created.',
+    reply: 'Relocation Goal created.',
     disposition: 'tools-used',
   })
   const design = await runtime.workspace.receiveEvent({
-    eventId: 'EV-migration-design',
-    content: 'Record the migration acceptance in design.',
+    eventId: 'EV-relocation-design',
+    content: 'Record the relocation acceptance in design.',
     context: { projectId: PROJECT_ID, goalId: GOAL_ID },
   })
   await runtime.assistantTools.executeForEvent(design.attributes.id, 'hopi_write_design', {
@@ -90,14 +90,14 @@ try {
     changes: [
       {
         kind: 'document',
-        path: 'migration.md',
+        path: 'relocation.md',
         content:
-          '# Migration\n\nPreserve identity, provenance, release refs, and local rebind safety.\n',
+          '# Relocation\n\nPreserve identity, provenance, release refs, and local rebind safety.\n',
       },
     ],
   })
   await runtime.workspace.handleEvent(design.attributes.id, {
-    reply: 'Migration design recorded.',
+    reply: 'Relocation design recorded.',
     disposition: 'tools-used',
   })
   const attention = await runtime.attentions.ensureProjectAttention(
@@ -108,7 +108,7 @@ try {
     { kind: 'project', projectId: PROJECT_ID },
     {
       transport: 'codex',
-      sessionId: 'migration-session',
+      sessionId: 'relocation-session',
     },
   )
   const sourceHomeDocument = await runtime.home.readHome()
@@ -131,12 +131,12 @@ try {
   const roleRunner: RoleRunner = {
     async run() {
       responsibilityRuns += 1
-      throw new Error('Migration must not dispatch responsibility work before recovery')
+      throw new Error('Relocation must not dispatch responsibility work before recovery')
     },
   }
   const silentAssistant: AssistantModelRunner = {
     async run() {
-      return { reply: '', session: { transport: 'codex', sessionId: 'migration-silent' } }
+      return { reply: '', session: { transport: 'codex', sessionId: 'relocation-silent' } }
     },
   }
   server = createServer({
@@ -188,36 +188,36 @@ try {
   await serverCleanup.run()
   server = null
 
-  const migratedWorkspace = createAssistantWorkspaceStore(movedHome, new PublicationCoordinator())
-  await migratedWorkspace.resolveAttention(
+  const relocatedWorkspace = createAssistantWorkspaceStore(movedHome, new PublicationCoordinator())
+  await relocatedWorkspace.resolveAttention(
     attention.attributes.id,
     'All stable Repo IDs were rebound and validated together.',
   )
   restarted = createServer({ rootDir: movedHome, port: 0, startCoordinator: false })
   restartedCleanup = ownTestRunServer(testRun, restarted)
   const durable = await requestJson<StateView>(`http://127.0.0.1:${restarted.port}`, '/api/state')
-  const migratedHomeStore = createAssistantHomeStore(movedHome)
-  const migratedHomeDocument = await migratedHomeStore.readHome()
-  const migratedProject = await migratedHomeStore.validateProject(PROJECT_ID)
-  const migratedGoalStore = createGoalPackageStore(
-    migratedProject.integrationRoot,
+  const relocatedHomeStore = createAssistantHomeStore(movedHome)
+  const relocatedHomeDocument = await relocatedHomeStore.readHome()
+  const relocatedProject = await relocatedHomeStore.validateProject(PROJECT_ID)
+  const relocatedGoalStore = createGoalPackageStore(
+    relocatedProject.integrationRoot,
     PROJECT_ID,
     new PublicationCoordinator(),
   )
-  const migratedPackage = await migratedGoalStore.readPackage(GOAL_ID)
-  const migratedRequest = await migratedWorkspace.readEvent(request.attributes.id)
-  const migratedAttachment = await migratedWorkspace.resolveAttachment(attachmentRef)
-  const migratedSession = await createAssistantConversationStore(movedHome).readSession({
+  const relocatedPackage = await relocatedGoalStore.readPackage(GOAL_ID)
+  const relocatedRequest = await relocatedWorkspace.readEvent(request.attributes.id)
+  const relocatedAttachment = await relocatedWorkspace.resolveAttachment(attachmentRef)
+  const relocatedSession = await createAssistantConversationStore(movedHome).readSession({
     kind: 'project',
     projectId: PROJECT_ID,
   })
 
-  assert.equal(migratedHomeDocument.homeId, sourceHomeDocument.homeId)
-  assert.equal(migratedPackage.goal.attributes.id, GOAL_ID)
-  assert.equal(migratedPackage.goal.attributes.contractRevision, 1)
-  assert.equal(migratedPackage.inputs.length, sourcePackage.inputs.length)
+  assert.equal(relocatedHomeDocument.homeId, sourceHomeDocument.homeId)
+  assert.equal(relocatedPackage.goal.attributes.id, GOAL_ID)
+  assert.equal(relocatedPackage.goal.attributes.contractRevision, 1)
+  assert.equal(relocatedPackage.inputs.length, sourcePackage.inputs.length)
   assert.deepEqual(
-    [...migratedPackage.works.values()].map((work) => ({
+    [...relocatedPackage.works.values()].map((work) => ({
       id: work.attributes.id,
       dependsOn: work.attributes.dependsOn,
     })),
@@ -228,30 +228,30 @@ try {
   )
   assert.match(
     await Bun.file(
-      migratedGoalStore.paths.absolute(
-        `${migratedGoalStore.paths.designRoot(GOAL_ID)}/migration.md`,
+      relocatedGoalStore.paths.absolute(
+        `${relocatedGoalStore.paths.designRoot(GOAL_ID)}/relocation.md`,
       ),
     ).text(),
     /Preserve identity/,
   )
   assert.match(
     await Bun.file(
-      migratedGoalStore.paths.absolute(
-        `${migratedGoalStore.paths.designRoot(GOAL_ID)}/references.md`,
+      relocatedGoalStore.paths.absolute(
+        `${relocatedGoalStore.paths.designRoot(GOAL_ID)}/references.md`,
       ),
     ).text(),
     /Preserve this exact visual/,
   )
-  assert.equal(migratedRequest?.attributes.reply, 'Migration Goal created.')
+  assert.equal(relocatedRequest?.attributes.reply, 'Relocation Goal created.')
   assert.deepEqual(
-    migratedAttachment
-      ? new Uint8Array(await Bun.file(migratedAttachment.absolutePath).arrayBuffer())
+    relocatedAttachment
+      ? new Uint8Array(await Bun.file(relocatedAttachment.absolutePath).arrayBuffer())
       : null,
     imageBytes,
   )
   assert.deepEqual(
-    migratedSession,
-    { transport: 'codex', sessionId: 'migration-session' },
+    relocatedSession,
+    { transport: 'codex', sessionId: 'relocation-session' },
     'Disposable Reflection runs must not replace the persistent speaking Session',
   )
   assert.ok(
@@ -270,7 +270,7 @@ try {
   assert.deepEqual(await checkoutSnapshot(movedApi), apiBefore)
 
   await Bun.write(
-    join(testRun.artifactRoot, 'migration-contract.json'),
+    join(testRun.artifactRoot, 'relocation-contract.json'),
     `${JSON.stringify(
       {
         status: 'passed',
@@ -289,17 +289,17 @@ try {
   )
   await finishTestRun(testRun, 'passed', {
     paths: { home: movedHome, web: movedWeb, api: movedApi },
-    resultFile: 'migration-contract.json',
+    resultFile: 'relocation-contract.json',
     providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
   })
-  console.log(`HOPI-E2E-030 Project/Home migration passed: ${testRun.artifactRoot}`)
+  console.log(`HOPI-E2E-030 Project/Home relocation passed: ${testRun.artifactRoot}`)
 } catch (error) {
   await finishTestRun(testRun, 'failed', {
     paths: { home: movedHome, web: movedWeb, api: movedApi },
     error: errorMessage(error),
     providerUsage: { runs: 0, inputTokens: 0, outputTokens: 0 },
   }).catch(() => undefined)
-  console.error(`HOPI-E2E-030 Project/Home migration failed: ${errorMessage(error)}`)
+  console.error(`HOPI-E2E-030 Project/Home relocation failed: ${errorMessage(error)}`)
   console.error(`Retained evidence: ${testRun.artifactRoot}`)
   process.exitCode = 1
 } finally {

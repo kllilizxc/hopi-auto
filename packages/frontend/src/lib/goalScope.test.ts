@@ -120,11 +120,11 @@ describe('recent workspace navigation', () => {
     ).toEqual([{ id: 'G-current' }])
   })
 
-  test('migrates the previous single-Project preference into visit history', () => {
+  test('ignores non-current Project preference data', () => {
     const values = new Map([
       [
         'hopi.navigation.recent-project',
-        JSON.stringify({ projectId: 'P-legacy', visitedAt: '2026-07-17T10:00:00Z' }),
+        JSON.stringify({ projectId: 'P-old', visitedAt: '2026-07-17T10:00:00Z' }),
       ],
     ])
     const storage: GoalPreferenceStorage = {
@@ -132,37 +132,32 @@ describe('recent workspace navigation', () => {
       setItem: (key, value) => values.set(key, value),
     }
 
-    expect(readRecentProjects(storage)).toEqual([
-      { projectId: 'P-legacy', visitedAt: '2026-07-17T10:00:00Z' },
-    ])
-    expect(JSON.parse(values.get('hopi.navigation.recent-project') ?? 'null')).toEqual([
-      { projectId: 'P-legacy', visitedAt: '2026-07-17T10:00:00Z' },
-    ])
+    expect(readRecentProjects(storage)).toEqual([])
   })
 
   test('orders Goals by the newer of creation and last visit', () => {
     const goals = [
       { id: 'G-old', createdAt: '2026-07-17T10:00:00Z' },
       { id: 'G-new', createdAt: '2026-07-17T10:20:00Z' },
-      { id: 'G-legacy', createdAt: null },
+      { id: 'G-undated', createdAt: null },
     ]
     const olderVisits = [
       { projectId: 'P-1', goalId: 'G-old', visitedAt: '2026-07-17T10:10:00Z' },
-      { projectId: 'P-1', goalId: 'G-legacy', visitedAt: '2026-07-17T10:05:00Z' },
+      { projectId: 'P-1', goalId: 'G-undated', visitedAt: '2026-07-17T10:05:00Z' },
     ]
     const newerVisits = [
       { projectId: 'P-1', goalId: 'G-old', visitedAt: '2026-07-17T10:30:00Z' },
-      { projectId: 'P-1', goalId: 'G-legacy', visitedAt: '2026-07-17T10:25:00Z' },
+      { projectId: 'P-1', goalId: 'G-undated', visitedAt: '2026-07-17T10:25:00Z' },
     ]
 
     expect(orderGoalsByRecency(goals, 'P-1', olderVisits).map((goal) => goal.id)).toEqual([
       'G-new',
       'G-old',
-      'G-legacy',
+      'G-undated',
     ])
     expect(orderGoalsByRecency(goals, 'P-1', newerVisits).map((goal) => goal.id)).toEqual([
       'G-old',
-      'G-legacy',
+      'G-undated',
       'G-new',
     ])
     expect(resolveProjectGoalId(goals, 'P-1', olderVisits)).toBe('G-new')
@@ -219,7 +214,7 @@ describe('recent workspace navigation', () => {
     expect(readSeenProjectCompletions('P-2', storage)).toBeNull()
   })
 
-  test('migrates previous single-Goal preferences into visit history', () => {
+  test('ignores non-current Goal preference data', () => {
     const values = new Map([
       ['hopi.navigation.recent-goal.P-1', 'G-plain'],
       [
@@ -236,17 +231,8 @@ describe('recent workspace navigation', () => {
       setItem: (key, value) => values.set(key, value),
     }
 
-    expect(readRecentGoals('P-1', storage)[0]).toMatchObject({
-      projectId: 'P-1',
-      goalId: 'G-plain',
-    })
-    expect(readRecentGoals('P-2', storage)).toEqual([
-      { projectId: 'P-2', goalId: 'G-object', visitedAt: '2026-07-17T10:00:00Z' },
-    ])
-    expect(JSON.parse(values.get('hopi.navigation.recent-goal.P-1') ?? 'null')).toHaveLength(1)
-    expect(JSON.parse(values.get('hopi.navigation.recent-goal.P-2') ?? 'null')).toEqual([
-      { projectId: 'P-2', goalId: 'G-object', visitedAt: '2026-07-17T10:00:00Z' },
-    ])
+    expect(readRecentGoals('P-1', storage)).toEqual([])
+    expect(readRecentGoals('P-2', storage)).toEqual([])
   })
 
   test('ignores unavailable browser storage', () => {

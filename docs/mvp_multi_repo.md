@@ -22,8 +22,7 @@ The primary Repo is the existing Project control boundary:
 
 Every secondary binding has its own Project-qualified release ref and managed integration worktree, but
 no duplicate Goal package. A Repo may provide a local `scripts/hopi/prepare` capability; Project
-membership does not require one. Choosing a primary Repo instead of creating a
-synthetic control Repo preserves the current single-Repo layout and migration model. Changing or
+membership does not require one. Choosing a primary Repo avoids a synthetic control Repo. Changing or
 removing the primary Repo is outside this MVP because it would move canonical history and the
 irreversible boundary.
 
@@ -40,7 +39,6 @@ Repo is a Project member, not another task hierarchy or a Work-level selector.
 Assistant-home `projects.yml` is the authority for machine-local bindings:
 
 ```yaml
-version: 4
 projects:
   - projectId: P-1
     primaryRepoId: web
@@ -54,7 +52,6 @@ projects:
 The primary managed root's `.hopi/project.yml` is the portable Project and release authority:
 
 ```yaml
-version: 2
 projectId: P-1
 primaryRepoId: web
 repos:
@@ -78,12 +75,10 @@ operational knowledge, or both; HOPI does not classify the Repo or copy its pros
 The semantic map and applicable guidance locations make that knowledge discoverable while the model
 still decides which source is relevant to the owned outcome.
 
-Version 1 Project links and `project.yml` normalize to one primary Repo. Every Engineering Work uses
-the complete current Project Repo set. Legacy Work `repos` fields are accepted as inert input and
-removed on canonical rewrite; they never narrow a Run. Coordinator can allocate branches and
-worktrees from Project membership without asking a model to predict which roots implementation or
-proof will eventually need. Intent, cross-Repo reasoning, and acceptance criteria remain ordinary
-Markdown.
+Every Engineering Work uses the complete current Project Repo set. Work has no `repos` field.
+Coordinator can allocate branches and worktrees from Project membership without asking a model to
+predict which roots implementation or proof will eventually need. Intent, cross-Repo reasoning, and
+acceptance criteria remain ordinary Markdown.
 
 ## Linking and Initialization
 
@@ -107,8 +102,7 @@ primary selected Project folder as `P-<folder>` after stable-ID normalization. U
 numbers remain readable while unsafe separators normalize to `-`. If that identity is already owned
 by another Project in the same Assistant Home, Coordinator appends the smallest free numeric suffix
 (`-2`, `-3`, ...). Selecting an already linked exact Repo set reuses its durable identity. Explicit
-`projectId` remains an API compatibility boundary for migrations, fixtures, and automation, but is
-not a product-form decision.
+`projectId` remains available to fixtures and automation, but is not a product-form decision.
 
 An empty directory outside every Git worktree is an explicit new-project candidate. An explicitly
 named missing leaf directory is the same candidate when its parent already exists; repository
@@ -205,8 +199,8 @@ one runtime manifest:
 The Generator process cwd is the primary root; the runtime manifest names every other Project root
 explicitly.
 `projection` identifies what the manifest paths materialize. For the `candidate` projection,
-`releaseHeads` is the backward-compatible field carrying the commit actually checked out at each
-task root; the base Project release heads remain separately labeled in `context.md`. For the
+`releaseHeads` carries the commit actually checked out at each task root; the base Project release
+heads remain separately labeled in `context.md`. For the
 `release` projection used by Preview, the same field identifies each managed integration head.
 The field never describes a different tree from the path beside it. Commit identities remain local
 to each Repo's Git object database, and the primary authority snapshot is never presented as a
@@ -319,14 +313,13 @@ diffs, and integration diagnostics. Preview remains one Project control.
 
 The implementation is complete only when automated tests cover:
 
-- version 1 single-Repo Projects and legacy Work with or without `repos` run without behavioral
-  migration regressions
+- only current `projects.yml`, `project.yml`, and Work schemas are accepted
 - the host chooser can be cancelled without an effect and one create request atomically links two Repos
 - duplicate Git identities inside one Project fail before a durable Project link exists
 - the same Git Repo can be primary or secondary in several Projects with isolated refs and worktrees
 - a secondary Repo can be added and rebound without changing any selected checkout
 - a moved Assistant home and complete Repo set can be rebound together without losing portable state
-- every Work receives every Project Repo even when an obsolete legacy `repos` field names a subset
+- every Work receives every Project Repo
 - one Work modifies primary and secondary Repos, receives one review, and produces one primary C1
 - one Work modifies only a secondary Repo while its Work and Evidence remain canonical in primary
 - a target advance or merge conflict in any Repo rejects before the primary boundary

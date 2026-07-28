@@ -1,4 +1,4 @@
-import type { AssistantReflection } from '../assistant/assistantReflection'
+import type { AssistantWake } from '../assistant/assistantReflection'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import type { InboxEventAttributes } from '../domain/assistantWorkspaceDocuments'
@@ -21,7 +21,7 @@ export interface CoordinatorProjectRuntime {
 export interface CoordinatorReconcilerOptions {
   workspace: AssistantWorkspaceStore
   assistant: WorkspaceAssistant
-  reflection?: AssistantReflection
+  reflection?: AssistantWake
   attentions: WorkspaceAttentionController
   projects: readonly CoordinatorProjectRuntime[]
   concurrency: Readonly<Record<Responsibility, number>>
@@ -439,9 +439,7 @@ export function createCoordinatorReconciler(
       (candidate) =>
         eligibleProjects.has(candidate.project.projectId) &&
         !goalDispatchBlocked(candidate.project.projectId, candidate.goalId) &&
-        ['ensure_planning', 'complete_goal', 'finish_cancellation'].includes(
-          candidate.decision.kind,
-        ),
+        ['ensure_planning', 'finish_cancellation'].includes(candidate.decision.kind),
     )
     if (deterministic) {
       try {

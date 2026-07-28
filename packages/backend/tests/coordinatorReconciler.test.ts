@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { AssistantReflection } from '../src/assistant/assistantReflection'
+import type { AssistantWake } from '../src/assistant/assistantReflection'
 import type { WorkDocument } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
 import { PublicationCoordinator } from '../src/publication/publisher'
@@ -23,6 +23,20 @@ function createCoordinatorReconciler(
   },
 ) {
   return createCoordinatorReconcilerWithOptions({ concurrency: testConcurrency, ...options })
+}
+
+function projectLinks(projects: ReadonlyArray<readonly [projectId: string, repoPath: string]>) {
+  return `${JSON.stringify(
+    {
+      projects: projects.map(([projectId, repoPath]) => ({
+        projectId,
+        primaryRepoId: 'primary',
+        repos: [{ repoId: 'primary', repoPath }],
+      })),
+    },
+    null,
+    2,
+  )}\n`
 }
 
 beforeEach(async () => {
@@ -120,15 +134,10 @@ describe('CoordinatorReconciler', () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
-      [
-        'version: 1',
-        'projects:',
-        '  - projectId: P-1',
-        '    repoPath: /tmp/project-one',
-        '  - projectId: P-2',
-        '    repoPath: /tmp/project-two',
-        '',
-      ].join('\n'),
+      projectLinks([
+        ['P-1', '/tmp/project-one'],
+        ['P-2', '/tmp/project-two'],
+      ]),
     )
     await fixture.workspace.receiveEvent({
       eventId: 'EV-P1',
@@ -257,7 +266,7 @@ describe('CoordinatorReconciler', () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
-      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+      projectLinks([['P-1', '/tmp/project-one']]),
     )
     await fixture.workspace.receiveEvent({
       eventId: 'EV-goal-turn',
@@ -330,7 +339,7 @@ describe('CoordinatorReconciler', () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
-      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+      projectLinks([['P-1', '/tmp/project-one']]),
     )
     await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-reviewer-reject',
@@ -530,7 +539,7 @@ describe('CoordinatorReconciler', () => {
       readRunEvents: async () => null,
       waitForIdle: async () => undefined,
       stop: async () => undefined,
-    } satisfies AssistantReflection
+    } satisfies AssistantWake
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: {
@@ -573,7 +582,7 @@ describe('CoordinatorReconciler', () => {
       readRunEvents: async () => null,
       waitForIdle: async () => undefined,
       stop: async () => undefined,
-    } satisfies AssistantReflection
+    } satisfies AssistantWake
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: {
@@ -850,7 +859,7 @@ describe('CoordinatorReconciler', () => {
       readRunEvents: async () => null,
       waitForIdle: async () => undefined,
       stop: async () => undefined,
-    } satisfies AssistantReflection
+    } satisfies AssistantWake
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
@@ -1151,7 +1160,7 @@ describe('CoordinatorReconciler', () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
-      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+      projectLinks([['P-1', '/tmp/project-one']]),
     )
     const goalPackage = engineeringPackage('G-1')
     goalPackage.works = new Map()
@@ -1194,7 +1203,7 @@ describe('CoordinatorReconciler', () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
-      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+      projectLinks([['P-1', '/tmp/project-one']]),
     )
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
@@ -1231,7 +1240,7 @@ describe('CoordinatorReconciler', () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
-      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+      projectLinks([['P-1', '/tmp/project-one']]),
     )
     const original = await fixture.attentions.ensureProjectAttention(
       'P-1',
@@ -1291,7 +1300,7 @@ describe('CoordinatorReconciler', () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
-      'version: 1\nprojects:\n  - projectId: P-1\n    repoPath: /tmp/project-one\n',
+      projectLinks([['P-1', '/tmp/project-one']]),
     )
     const attention = await fixture.attentions.ensureProjectAttention(
       'P-1',
@@ -1492,7 +1501,6 @@ function engineeringPackage(goalId: string): GoalPackage {
         lifecycle: 'active',
         priority: 0,
         contractRevision: 1,
-        completionAttentionId: null,
       },
       body: 'Ship.\n',
     },

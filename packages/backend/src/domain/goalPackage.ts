@@ -100,7 +100,7 @@ export async function readAndValidateGoalPackage(
   }
 
   validateWorkGraph(paths.projectId, goalId, goal, works, evidence)
-  validateAttentions(paths.projectId, goalId, goal, works, attentions)
+  validateAttentions(paths.projectId, goalId, works, attentions)
   validateEvidenceOwnership(paths.projectId, goalId, works, evidence)
 
   return { goal, works, attentions, evidence, inputs }
@@ -141,7 +141,6 @@ function validateNewGoal(goalId: string, goalPackage: GoalPackage) {
   if (
     goal.lifecycle !== 'active' ||
     goal.contractRevision !== 1 ||
-    goal.completionAttentionId !== null ||
     (!planningAdmission && !directAdmission)
   ) {
     throw invalid(
@@ -260,9 +259,6 @@ async function validateImmutableDocuments(
     }
     if (before.resolvedAt !== null && before.resolvedAt !== after.resolvedAt) {
       throw invalid(goalId, `Attention resolution changed after publication: ${attentionId}`)
-    }
-    if (before.notifiedAt !== null && before.notifiedAt !== after.notifiedAt) {
-      throw invalid(goalId, `Attention delivery acknowledgement changed: ${attentionId}`)
     }
     if (!nextAttention.body.startsWith(previousAttention.body)) {
       throw invalid(goalId, `Attention notification body was rewritten: ${attentionId}`)
@@ -388,31 +384,17 @@ function validateWorkGraph(
 function validateAttentions(
   projectId: string,
   goalId: string,
-  goal: GoalDocument,
   works: Map<string, WorkDocument>,
   attentions: Map<string, AttentionDocument>,
 ) {
   for (const [attentionId, attention] of attentions) {
-    const { target, resolvedAt } = attention.attributes
-    if (target === null) {
-      continue
-    }
-
+    const { target } = attention.attributes
     const match = matchGoalAttentionTarget(projectId, goalId, target)
     if (!match) {
       throw invalid(goalId, `Attention ${attentionId} targets outside its Goal`)
     }
     if (match.scope === 'work' && !works.has(match.workId)) {
       throw invalid(goalId, `Attention ${attentionId} targets missing Work`)
-    }
-    void resolvedAt
-  }
-
-  const completionId = goal.attributes.completionAttentionId
-  if (completionId) {
-    const completion = attentions.get(completionId)
-    if (!completion || completion.attributes.target !== null) {
-      throw invalid(goalId, 'completionAttentionId does not reference targetless Attention')
     }
   }
 }

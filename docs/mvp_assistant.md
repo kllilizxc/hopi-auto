@@ -49,7 +49,7 @@ surfaces, not a deterministic intent classifier or a mandatory workflow decision
 
 The MVP has one operator-facing Assistant identity with one Home conversation and one conversation
 per linked Project. Goal surfaces in the same Project share its conversation. The page selects the
-scope explicitly; message text is never classified to choose or migrate a session. Each Project
+scope explicitly; message text is never classified to choose a session. Each Project
 serializes its own Assistant invocations while different Projects may run concurrently. Submitted
 user messages become durable and visible immediately, wait behind an already active Project
 invocation, and run before queued wake work.
@@ -237,21 +237,19 @@ The free-form disposition is diagnostic only: speaking turns use `answered` when
 observed and `tools-used` when one was. It never claims that a side effect was applied; durable
 documents and the recorded tool result remain the only evidence of an effect.
 
-`source: user | system | reflection` preserves provenance; `reflection` remains a compatibility
-value for old records. `visibility: public | internal` controls only the conversation projection.
+`source: user | system | reflection` preserves provenance. `visibility: public | internal` controls
+only the conversation projection.
 User turns are always public. Wake turns begin internal; a non-empty final response publishes them
 while an empty response leaves them hidden. These fields do not grant mutation authority.
 
 The vendor-qualified session cache and normalized live events are runtime data under
 `.hopi/runtime/assistant/`. Home uses `sessions/home.json`; each Project uses
-`sessions/projects/<projectId>.json`. Each manifest stores `version`, scope, `transport`, `sessionId`,
+`sessions/projects/<projectId>.json`. Each manifest stores scope, `transport`, `sessionId`,
 the digest of the durable initial Assistant context, and the runtime-affinity digest. The initial
 context consists of the small stable Assistant contract plus the current `preference.md` digest.
-HOPI resumes
-only the session selected by the immutable Inbox context while the configured transport and both
-digests match. The legacy global `session.json` mixed scopes and is discarded rather than assigned
-to a Project by guesswork. A model change within one transport may reuse a compatible scoped session
-because the next invocation still receives the current configured model.
+HOPI resumes only the session selected by the immutable Inbox context while the configured transport
+and both digests match. A model change within one transport may reuse that scoped session because the
+next invocation still receives the current configured model.
 
 The same adapter keeps vendor-native automatic context compaction enabled for the speaking
 Assistant. A supervision branch is a native fork of the current speaking session, so it inherits the
@@ -269,7 +267,7 @@ session storage on every turn.
 Losing or invalidating vendor session state does not lose product truth: a user turn starts a new
 speaking session from the durable Home instructions, a fixed character budget of the newest public
 user-visible exchanges in that same Home or Project scope, pending action receipts, and that turn.
-A wake does not emulate fork by rebuilding this prompt. Without a compatible speaking session it
+A wake does not emulate fork by rebuilding this prompt. Without a matching speaking session it
 records the transport capability failure; a later user turn can establish the speaking session.
 Long-lived decisions belong in Project, Goal, design, Input, Work, Evidence, or preference documents
 rather than an unbounded vendor thread transcript.
@@ -651,9 +649,8 @@ fail-closed boundaries, which create a new Project Attention. A successful shell
 not resolution, and Assistant must not report the Project unblocked unless the Attention tool call
 succeeds.
 
-A single conversation turn may call multiple tools and may affect more than one Goal. The old
-single-destination Inbox route claim therefore is not part of the forward Assistant protocol.
-Historical route claims remain readable only for migration and provenance.
+A single conversation turn may call multiple tools and may affect more than one Goal. Inbox has no
+single-destination route claim.
 
 If the process stops after a tool succeeds but before the final reply, the Inbox turn stays pending
 and the confirmed mutation already has an action receipt. On resume, Assistant also sees the durable
@@ -663,9 +660,9 @@ idempotent. HOPI does not parse reply prose to reconstruct effects.
 
 ## Attention And Queueing
 
-Attention is the Project Assistant's durable todo set. It has natural-language body and canonical
-refs plus a short operator summary and optional decision prompt, but no owner, target, kind, priority,
-waiting, notification, or retry state.
+Attention is the Project Assistant's durable todo set. It has a natural-language body, canonical
+target or refs, a short operator summary, and an optional decision prompt, but no owner, kind,
+priority, waiting, notification, or retry state.
 All unresolved Attention is supplied together; Assistant may create, update, merge, or resolve it.
 An operator message or reply does not mutate Attention automatically.
 
@@ -673,8 +670,7 @@ An operator message or reply does not mutate Attention automatically.
 turn. While any reference remains unresolved, the turn renders as `Needs you` using each Attention's
 current summary and optional shared choice UI; complete bodies remain available as detail. Reply
 stores the message and exact Attention references as context but leaves the next action to Assistant
-judgment. The header count navigates to the newest visible unresolved request. Legacy `<NeedsYou>`
-blocks remain readable as reference-only history.
+judgment. The header count navigates to the newest visible unresolved request.
 
 Resolution wakes ordinary reconciliation but does not declare any Work or Project executable.
 Deterministic boundaries recheck their own facts and may create a new Attention if the condition
@@ -761,7 +757,7 @@ Within that scope, the drawer shows one chronological conversation:
   replying preserves every open identifier associated with that exact message invisibly as context
 
 Every `Virtuoso`-backed stream, including Assistant conversation, Attempt activity, wake records
-exposed through the legacy Reflection debug view, and wake event activity, is the sole authority for
+exposed through the wake diagnostic view, and wake event activity, is the sole authority for
 its row visibility and height. Its
 variable-height rows do not add browser `content-visibility` estimates that can fight scroll
 anchoring.

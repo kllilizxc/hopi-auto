@@ -6,7 +6,7 @@ export type AssistantTransport = Exclude<AgentTranscriptTransport, 'process'>
 export interface VendorSession {
   transport: AssistantTransport
   sessionId: string
-  compatibilityKey?: string
+  executionKey?: string
 }
 
 export interface VendorAssistantTerminalError {

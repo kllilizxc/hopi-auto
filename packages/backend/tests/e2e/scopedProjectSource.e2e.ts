@@ -4,11 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { RoleRunInput, RoleRunResult, RoleRunner } from '../../src/agent/RoleRunner'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
-import {
-  parseWorkDocument,
-  renderAttentionDocument,
-  renderWorkDocument,
-} from '../../src/domain/canonicalDocuments'
+import { parseWorkDocument, renderWorkDocument } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   captureBrowserPage,
@@ -184,7 +180,7 @@ try {
     'stop',
     'scoped',
   )
-  assert.match(await Bun.file(preview.session.logPath).text(), /HOPI_PREVIEW_URL=/)
+  assert.match(await Bun.file(preview.session.logPath).text(), /HOPI_PREVIEW_SURFACES=/)
   assert.match(
     await Bun.file(join(dirname(preview.session.logPath), 'project-prepare', 'prepare.log')).text(),
     /prepared:.*apps\/storefront/,
@@ -466,23 +462,6 @@ async function planScopedWork(input: RoleRunInput): Promise<RoleRunResult> {
             : '## Acceptance Criteria\n\n- Exercise C1 rejection when a candidate changes `apps/admin/sentinel.txt`.\n',
       }),
     )
-  } else if (engineering.every((work) => work.attributes.stage === 'done')) {
-    const attentionId = `A-complete-${input.runId}`
-    const attentionPath = join(goalRoot, 'attention', `${attentionId}.md`)
-    await mkdir(dirname(attentionPath), { recursive: true })
-    await Bun.write(
-      attentionPath,
-      renderAttentionDocument({
-        attributes: {
-          id: attentionId,
-          target: null,
-          createdAt: '2026-07-17T00:00:00.000Z',
-          resolvedAt: null,
-          notifiedAt: null,
-        },
-        body: '## Completion\n\nThe selected source scope is reviewed, integrated, and previewable.\n',
-      }),
-    )
   }
   return success('Planner published only the scoped Project proposal.')
 }
@@ -499,7 +478,7 @@ async function writeScopedAdapters(projectRoot: string) {
     [
       '#!/usr/bin/env bun',
       "const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('scoped-preview-ready') })",
-      'console.log(`HOPI_PREVIEW_URL=http://127.0.0.1:${server.port}`)',
+      'console.log(`HOPI_PREVIEW_SURFACES=${JSON.stringify([{ id: "default", label: "Preview", url: `http://127.0.0.1:${server.port}` }])}`)',
       'const stop = () => { server.stop(true); process.exit(0) }',
       "process.on('SIGTERM', stop)",
       "process.on('SIGINT', stop)",

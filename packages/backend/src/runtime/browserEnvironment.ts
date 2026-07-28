@@ -8,7 +8,6 @@ export const BROWSER_TARGETS = ['managed', 'operator'] as const
 export type BrowserTarget = (typeof BROWSER_TARGETS)[number]
 
 export interface BrowserTargetManifest {
-  version: 1
   defaultTarget: BrowserTarget
   selector: string
   targets: Record<
@@ -49,7 +48,7 @@ export function browserHarnessRuntimeRoot(homeRoot: string) {
 }
 
 export function browserHarnessAdapterCommand() {
-  return fileURLToPath(new URL('../browserHarnessAdapter.ts', import.meta.url))
+  return fileURLToPath(new URL('../browser-harness-adapter', import.meta.url))
 }
 
 export function resolveBrowserHarnessBackendCommand() {
@@ -93,7 +92,6 @@ export function hasManagedBrowserConfiguration() {
 
 export function browserTargetManifest(): BrowserTargetManifest {
   return {
-    version: 1,
     defaultTarget: 'managed',
     selector: '--target <managed|operator>',
     targets: {

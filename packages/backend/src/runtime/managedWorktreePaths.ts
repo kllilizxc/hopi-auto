@@ -33,11 +33,3 @@ export function managedTaskWorktreePath(
 ) {
   return join(managedRepoWorktreePaths(repoPath, projectId).work, goalId, workId)
 }
-
-export function legacyManagedRepoWorktreePaths(repoPath: string): ManagedRepoWorktreePaths {
-  const repoRoot = resolve(repoPath)
-  const repoName = basename(repoRoot)
-  if (!repoName) throw new Error(`Cannot derive managed worktree root for ${repoRoot}`)
-  const root = join(dirname(repoRoot), HOPI_WORKTREE_DIRECTORY, repoName)
-  return { root, integration: join(root, 'integration'), work: join(root, 'work') }
-}

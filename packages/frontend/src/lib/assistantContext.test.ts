@@ -119,7 +119,6 @@ describe('Assistant automatic context', () => {
       projectId: 'P-1',
       goalId: 'G-1',
       id: 'A-1',
-      notifiedAt: NOW,
     })
     expect(findAttentionRequestEventId([openRequest('EV-public', [target])], target)).toBe(
       'EV-public',
@@ -134,7 +133,6 @@ describe('Assistant automatic context', () => {
           projectId: 'P-1',
           goalId: 'G-1',
           id: 'A-1',
-          notifiedAt: NOW,
         }),
       ),
     ).toBeNull()
@@ -154,7 +152,7 @@ function attention(overrides: Partial<AttentionView>): AttentionView {
     target: 'project:P-1/goal:G-1',
     createdAt: NOW,
     resolvedAt: null,
-    notifiedAt: null,
+    summary: 'Needs a decision.',
     body: 'Needs a decision.',
     ...overrides,
   }

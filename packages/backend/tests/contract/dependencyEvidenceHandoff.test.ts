@@ -203,7 +203,6 @@ async function inspectHandoff(input: RoleRunInput): Promise<HandoffObservation> 
   const manifestPath = input.context.artifactManifestFile
   if (!manifestPath) throw new Error('Dependent Work received no Evidence artifact manifest')
   const manifest = (await Bun.file(manifestPath).json()) as {
-    version: number
     artifacts: Array<{
       reference: string
       path: string
@@ -211,7 +210,6 @@ async function inspectHandoff(input: RoleRunInput): Promise<HandoffObservation> 
       evidence: string[]
     }>
   }
-  expect(manifest.version).toBe(1)
   expect(manifest.artifacts).toHaveLength(1)
   const artifact = manifest.artifacts[0]
   if (!artifact) throw new Error('Dependent Work received an empty artifact manifest')

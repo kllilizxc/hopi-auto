@@ -1,11 +1,9 @@
 import type {
   AssistantFeedEntry,
-  AttentionView,
   GoalCompletionView,
   InboxEventView,
   RunAttemptEvent,
 } from './apiTypes'
-import { goalAttentionReference, normalizeAttentionReferences } from './attentionReference'
 
 export interface MessageFeedAttachment {
   reference: string
@@ -195,74 +193,6 @@ export function inboxEventsToMessageFeed(events: InboxEventView[]): MessageFeedI
     .flatMap((event) => inboxEventToMessageFeed(event))
 }
 
-export function assistantEventsToMessageFeed(
-  events: InboxEventView[],
-  attentions: AttentionView[],
-): MessageFeedItem[] {
-  const completions = attentions
-    .filter((attention) => attention.scope === 'goal' && attention.target === null)
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-  const completionByReference = new Map(
-    completions.flatMap((attention) => {
-      const reference = completionReference(attention)
-      return reference ? [[reference, attention] as const] : []
-    }),
-  )
-  const linkedCompletionReferences = new Set<string>()
-  const items = [...events]
-    .sort((left, right) => left.receivedAt.localeCompare(right.receivedAt))
-    .flatMap((event) => {
-      const eventItems = inboxEventToMessageFeed(event, { assistantPresentation: true })
-      if (event.source !== 'reflection' || event.status !== 'handled') return eventItems
-      const reference = event.context
-        ? normalizeAttentionReferences(event.context).find((candidate) =>
-            completionByReference.has(candidate) && !linkedCompletionReferences.has(candidate),
-          )
-        : undefined
-      if (!reference) return eventItems
-      const completion = completionByReference.get(reference)
-      if (!completion) return eventItems
-
-      linkedCompletionReferences.add(reference)
-      const assistantIndex = eventItems.findLastIndex((item) => item.kind === 'assistant_message')
-      if (assistantIndex >= 0) {
-        const assistant = eventItems[assistantIndex]
-        if (assistant) {
-          eventItems[assistantIndex] = {
-            ...assistant,
-            kind: 'system_update',
-            role: 'system',
-            label: 'Completed',
-          }
-        }
-      } else {
-        eventItems.push(completionAttentionItem(completion))
-      }
-      return eventItems
-    })
-
-  for (const completion of completions) {
-    const reference = completionReference(completion)
-    if (!reference || !linkedCompletionReferences.has(reference)) {
-      items.push(completionAttentionItem(completion))
-    }
-  }
-
-  return items
-    .map((item, index) => ({ item, index }))
-    .sort((left, right) => {
-      const timestamp = left.item.createdAt.localeCompare(right.item.createdAt)
-      return timestamp === 0 ? left.index - right.index : timestamp
-    })
-    .map(({ item }) => item)
-}
-
-function completionReference(attention: AttentionView) {
-  return attention.scope === 'goal' && attention.projectId && attention.goalId
-    ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
-    : null
-}
-
 export function assistantFeedEntriesToMessageFeed(
   entries: AssistantFeedEntry[],
   optimisticMessages: readonly OptimisticInboxMessage[] = [],
@@ -270,10 +200,8 @@ export function assistantFeedEntriesToMessageFeed(
   const canonicalEventIds = assistantFeedEventIds(entries)
   return [
     ...entries.flatMap((entry) => {
-      if (entry.kind === 'completion') return [completionAttentionItem(entry.attention)]
       if (entry.kind === 'goal_completion') return [goalCompletionItem(entry.completion)]
-      const items = inboxEventToMessageFeed(entry.event, { assistantPresentation: true })
-      return entry.completion ? applyCompletion(items, entry.completion) : items
+      return inboxEventToMessageFeed(entry.event, { assistantPresentation: true })
     }),
     ...optimisticMessages
       .filter((message) => !message.eventId || !canonicalEventIds.has(message.eventId))
@@ -297,9 +225,7 @@ export function assistantFeedEntriesToMessageFeed(
 }
 
 export function assistantFeedEventIds(entries: readonly AssistantFeedEntry[]) {
-  return new Set(
-    entries.flatMap((entry) => (entry.kind === 'event' ? [entry.event.id] : [])),
-  )
+  return new Set(entries.flatMap((entry) => (entry.kind === 'event' ? [entry.event.id] : [])))
 }
 
 function inboxEventToMessageFeed(
@@ -340,13 +266,14 @@ function inboxEventToMessageFeed(
       : presentedRuntimeItems),
   )
 
-  if (event.runtimeError && !items.some((item) => sameText(item.text, event.runtimeError!))) {
+  const runtimeError = event.runtimeError
+  if (runtimeError && !items.some((item) => sameText(item.text, runtimeError))) {
     items.push({
       id: `${groupId}:runtime-error`,
       createdAt: lastTimestamp(items, event.receivedAt),
       kind: 'error',
       role: 'system',
-      text: event.runtimeError,
+      text: runtimeError,
       label: 'Assistant error',
       groupId,
     })
@@ -575,7 +502,9 @@ function presentAssistantRuntimeItems(
   const latestRetryIndex = runtimeStatus === 'running' ? items.findLastIndex(isProviderRetry) : -1
   const terminalErrorTexts = new Set(
     runtimeStatus === 'failed'
-      ? items.filter((item) => item.kind === 'error').map((item) => normalizedMessageText(item.text))
+      ? items
+          .filter((item) => item.kind === 'error')
+          .map((item) => normalizedMessageText(item.text))
       : [],
   )
   const seenErrors = new Set<string>()
@@ -655,19 +584,10 @@ function isProviderRetry(item: MessageFeedItem) {
 }
 
 function normalizedVendorEventType(item: MessageFeedItem) {
-  return item.vendorEventType?.trim().toLowerCase().replaceAll(/[\/_]+/g, '.')
-}
-
-function completionAttentionItem(attention: AttentionView): MessageFeedItem {
-  return {
-    id: `completion:${attention.scope}:${attention.id}`,
-    createdAt: attention.notifiedAt ?? attention.resolvedAt ?? attention.createdAt,
-    kind: 'system_update',
-    role: 'system',
-    text: readableCompletionBody(attention.body),
-    label: 'Completed',
-    groupId: `completion:${attention.scope}:${attention.id}`,
-  }
+  return item.vendorEventType
+    ?.trim()
+    .toLowerCase()
+    .replaceAll(/[\/_]+/g, '.')
 }
 
 function goalCompletionItem(completion: GoalCompletionView): MessageFeedItem {
@@ -680,21 +600,6 @@ function goalCompletionItem(completion: GoalCompletionView): MessageFeedItem {
     label: 'Completed',
     groupId: `goal-completion:${completion.projectId}:${completion.goalId}`,
   }
-}
-
-function applyCompletion(items: MessageFeedItem[], completion: AttentionView) {
-  const assistantIndex = items.findLastIndex((item) => item.kind === 'assistant_message')
-  if (assistantIndex < 0) return [...items, completionAttentionItem(completion)]
-  const assistant = items[assistantIndex]
-  if (!assistant) return [...items, completionAttentionItem(completion)]
-  const next = [...items]
-  next[assistantIndex] = {
-    ...assistant,
-    kind: 'system_update',
-    role: 'system',
-    label: 'Completed',
-  }
-  return next
 }
 
 function readableCompletionBody(body: string) {

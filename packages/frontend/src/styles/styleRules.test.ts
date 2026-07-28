@@ -25,7 +25,7 @@ test('the application shell enforces the borderless surface system', async () =>
 })
 
 test('scrollbars share one minimal design and hide until interaction', async () => {
-  const legacySource = await Bun.file(new URL('../index.css', import.meta.url)).text()
+  const mainSource = await Bun.file(new URL('../index.css', import.meta.url)).text()
   const themeSource = await Bun.file(new URL('./theme.css', import.meta.url)).text()
   const uiSource = await Bun.file(new URL('./ui.css', import.meta.url)).text()
   const defaultThumbRule = uiSource.match(/::-webkit-scrollbar-thumb\s*\{([^}]*)\}/)?.[1] ?? ''
@@ -34,7 +34,7 @@ test('scrollbars share one minimal design and hide until interaction', async () 
       /:where\(\*:hover, \*:focus-within\)::-webkit-scrollbar-thumb\s*\{([^}]*)\}/,
     )?.[1] ?? ''
 
-  expect(legacySource).not.toContain('::-webkit-scrollbar')
+  expect(mainSource).not.toContain('::-webkit-scrollbar')
   expect(themeSource).toContain('--app-scrollbar-size: 6px')
   expect(themeSource).toContain('--scrollbar-color: transparent transparent')
   expect(uiSource).toContain('scrollbar-color: transparent transparent')
@@ -97,8 +97,7 @@ test('Work cards animate only the running title and current progress', async () 
   const board = await Bun.file(new URL('../pages/BoardView.tsx', import.meta.url)).text()
   const workingRule = styles.match(/\.work-card\.work-card--working\s*\{([^}]*)\}/)?.[1] ?? ''
   const shinyTextRule = ui.match(/\.animated-shiny-text\s*\{([^}]*)\}/)?.[1] ?? ''
-  const shinyTextFrames =
-    ui.match(/@keyframes animated-shiny-text\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+  const shinyTextFrames = ui.match(/@keyframes animated-shiny-text\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
   const badgeRule = styles.match(/\.badge-working\s*\{([^}]*)\}/)?.[1] ?? ''
   const activeProgressRule = styles.match(/\.agent-plan__segment-progress\s*\{([^}]*)\}/)?.[1] ?? ''
   const completedProgressRule =
@@ -248,7 +247,9 @@ test('stream virtualization is the only authority for variable row height', asyn
   const reflection = await Bun.file(
     new URL('../components/ReflectionDebugPanel.tsx', import.meta.url),
   ).text()
-  const feed = await Bun.file(new URL('../components/UnifiedMessageFeed.tsx', import.meta.url)).text()
+  const feed = await Bun.file(
+    new URL('../components/UnifiedMessageFeed.tsx', import.meta.url),
+  ).text()
   const runRowRule = styles.match(/\.reflection-run-row\s*\{([^}]*)\}/)?.[1] ?? ''
   const messageRowRule =
     styles.match(
@@ -292,7 +293,7 @@ test('Assistant Attention chrome stays quiet, aligned, and free of duplicate ico
   expect(cornerRule).toContain('justify-content: flex-end')
   expect(cornerRule).toContain('min-height: 54px')
   expect(cornerRule).not.toContain('min-height: 72px')
-  expect(assistant.indexOf('className={cn(\'reflection-debug-button\'')).toBeLessThan(
+  expect(assistant.indexOf("className={cn('reflection-debug-button'")).toBeLessThan(
     assistant.indexOf('assistant-needs-you-count'),
   )
   expect(assistant).toContain('className="composer-context__dismiss"')
@@ -303,9 +304,7 @@ test('Assistant Attention chrome stays quiet, aligned, and free of duplicate ico
 test('user text and image attachments stay in one right-aligned vertical message stack', async () => {
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
   const userMessageRule =
-    styles.match(
-      /\.unified-feed-message-row\.user \.unified-feed-message\s*\{([^}]*)\}/,
-    )?.[1] ?? ''
+    styles.match(/\.unified-feed-message-row\.user \.unified-feed-message\s*\{([^}]*)\}/)?.[1] ?? ''
   const attachmentRule =
     styles.match(/\.unified-feed-message__attachments\s*\{([^}]*)\}/)?.[1] ?? ''
   const attachmentLinkRule =
@@ -390,7 +389,9 @@ test('compact Kanban and Docs preserve every lane and evidence surface', async (
 
 test('Assistant Markdown links stay blue in ordinary and Completed messages', async () => {
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
-  const renderer = await Bun.file(new URL('../components/AssistantMarkdown.tsx', import.meta.url)).text()
+  const renderer = await Bun.file(
+    new URL('../components/AssistantMarkdown.tsx', import.meta.url),
+  ).text()
   const linkRule = styles.match(/\.assistant-message-link\.app-link\s*\{([^}]*)\}/)?.[1] ?? ''
 
   expect(renderer).toContain('className="assistant-message-link"')

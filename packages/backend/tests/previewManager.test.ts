@@ -31,7 +31,7 @@ describe('PreviewManager', () => {
       [
         '#!/usr/bin/env bun',
         'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/root.txt`, process.cwd())',
-        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
+        previewSurfaceSignal('http://127.0.0.1:4321'),
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
         '',
@@ -83,7 +83,7 @@ describe('PreviewManager', () => {
         '#!/usr/bin/env bun',
         'import { appendFile } from "node:fs/promises"',
         `await appendFile(${JSON.stringify(launches)}, "started\\n")`,
-        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
+        previewSurfaceSignal('http://127.0.0.1:4321'),
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
         '',
@@ -277,7 +277,7 @@ describe('PreviewManager', () => {
       [
         '#!/usr/bin/env bun',
         `if (await Bun.file(${JSON.stringify(orderFile)}).text() !== "web\\n") process.exit(2)`,
-        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
+        previewSurfaceSignal('http://127.0.0.1:4321'),
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
         '',
@@ -569,7 +569,7 @@ describe('PreviewManager', () => {
         '#!/usr/bin/env bun',
         'console.log("installing prerequisites")',
         'await Bun.sleep(80)',
-        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
+        previewSurfaceSignal('http://127.0.0.1:4321'),
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
         '',
@@ -622,7 +622,7 @@ describe('PreviewManager', () => {
       adapter,
       [
         '#!/usr/bin/env bun',
-        `console.log("HOPI_PREVIEW_URL=http://127.0.0.1:${endpointServer.port}/app")`,
+        previewSurfaceSignal(`http://127.0.0.1:${endpointServer.port}/app`),
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
         '',
@@ -681,7 +681,7 @@ describe('PreviewManager', () => {
       adapter,
       [
         '#!/usr/bin/env bun',
-        `console.log("HOPI_PREVIEW_URL=http://127.0.0.1:${endpointServer.port}/missing")`,
+        previewSurfaceSignal(`http://127.0.0.1:${endpointServer.port}/missing`),
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
         '',
@@ -724,7 +724,7 @@ describe('PreviewManager', () => {
       [
         '#!/usr/bin/env bun',
         'await Bun.sleep(100)',
-        'console.log("HOPI_PREVIEW_URL=http://127.0.0.1:4321")',
+        previewSurfaceSignal('http://127.0.0.1:4321'),
         'process.on("SIGTERM", () => process.exit(0))',
         'await new Promise(() => {})',
         '',
@@ -1011,4 +1011,10 @@ async function readGitHead(projectRoot: string) {
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
   return stdout.trim()
+}
+
+function previewSurfaceSignal(url: string) {
+  return `console.log(${JSON.stringify(
+    `HOPI_PREVIEW_SURFACES=${JSON.stringify([{ id: 'default', label: 'Preview', url }])}`,
+  )})`
 }

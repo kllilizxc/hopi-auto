@@ -188,7 +188,6 @@ async function createFixture() {
   await Bun.write(
     join(repoRoot, '.hopi/project.yml'),
     stringify({
-      version: 2,
       projectId: 'P-1',
       primaryRepoId: 'primary',
       repos: [{ repoId: 'primary' }],
@@ -216,11 +215,10 @@ async function createFixture() {
   await Bun.write(join(taskRoot, 'uncommitted.txt'), 'discard me\n')
 
   await mkdir(join(homeRoot, '.hopi'), { recursive: true })
-  await Bun.write(join(homeRoot, '.hopi/home.yml'), stringify({ version: 1, homeId: 'H-1' }))
+  await Bun.write(join(homeRoot, '.hopi/home.yml'), stringify({ homeId: 'H-1' }))
   await Bun.write(
     join(homeRoot, '.hopi/projects.yml'),
     stringify({
-      version: 4,
       projects: [
         {
           projectId: 'P-1',
@@ -301,7 +299,6 @@ async function writeEvent(
         sourceDigest,
         attachments,
         context: { projectId },
-        routeClaim: null,
         handledAt: timestamp,
         reply: 'Handled',
         disposition: 'answered',
@@ -325,6 +322,7 @@ async function writeAttention(homeRoot: string, attentionId: string, refs: strin
         updatedAt: timestamp,
         resolvedAt: null,
         refs,
+        summary: 'Attention',
       },
       body: 'Attention',
     }),

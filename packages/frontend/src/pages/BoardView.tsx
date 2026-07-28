@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
   ChevronDown,
@@ -10,16 +10,16 @@ import {
   X,
 } from 'lucide-react'
 import {
-  memo,
-  lazy,
   Suspense,
+  type UIEvent,
+  lazy,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type UIEvent,
 } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { useShell } from '../components/Layout'
@@ -27,6 +27,7 @@ import { MessageFeedSkeleton } from '../components/MessageFeedSkeleton'
 import { PeerSwitcher } from '../components/PeerSwitcher'
 import { ProjectPreviewControl } from '../components/ProjectPreviewControl'
 import {
+  AnimatedShinyText,
   AppAlert,
   AppBreathingIndicator,
   AppButton,
@@ -37,7 +38,6 @@ import {
   AppScrollShadow,
   AppSpinner,
   AppTabs,
-  AnimatedShinyText,
   CountBadge,
   SelectField,
   StatusChip,
@@ -65,6 +65,14 @@ import {
   startPreview,
   stopPreview,
 } from '../lib/api'
+import {
+  type GoalViewLane,
+  type GoalViewState,
+  orderGoalsByRecency,
+  readGoalViewState,
+  readRecentGoals,
+  rememberGoalViewState,
+} from '../lib/goalScope'
 import { runEventsToMessageFeed } from '../lib/messageFeed'
 import {
   hydrateInfiniteMessageStreamSnapshot,
@@ -73,24 +81,16 @@ import {
   writeMessageStreamSnapshot,
 } from '../lib/messageStreamCache'
 import {
-  orderGoalsByRecency,
-  readGoalViewState,
-  readRecentGoals,
-  rememberGoalViewState,
-  type GoalViewLane,
-  type GoalViewState,
-} from '../lib/goalScope'
-import {
-  ACTIVE_STREAM_POLL_INTERVAL_MS,
-  boardPollInterval,
-  shellPollInterval,
-  STABLE_QUERY_NOTIFY_PROPS,
-} from '../lib/queryPerformance'
-import {
   goalBoardQueryKey,
   workAttemptEventsQueryKey,
   workAttemptsQueryKey,
 } from '../lib/queryKeys'
+import {
+  ACTIVE_STREAM_POLL_INTERVAL_MS,
+  STABLE_QUERY_NOTIFY_PROPS,
+  boardPollInterval,
+  shellPollInterval,
+} from '../lib/queryPerformance'
 import {
   prefetchInfiniteMessageStream,
   useInfiniteMessageStream,
@@ -412,7 +412,7 @@ export function BoardView() {
     )
     if (!board || !column) return
     scroller.scrollLeft = column.offsetLeft - board.offsetLeft
-  }, [compactKanban, goalId, goalReady, goalViewState.mobileLane, projectId])
+  }, [compactKanban, goalReady, goalViewState.mobileLane])
   const workOpenRequest = useRef(0)
   const warmWork = useCallback(
     (work: WorkCardView) => {
@@ -479,12 +479,7 @@ export function BoardView() {
     ) {
       previewStartMutation.reset()
     }
-  }, [
-    previewSession?.sessionId,
-    previewSession?.status,
-    previewStartMutation.isError,
-    previewStartMutation.reset,
-  ])
+  }, [previewSession?.status, previewStartMutation.isError, previewStartMutation.reset])
 
   if (!projectId || !goalId) return <Navigate to="/projects" replace />
   const project = projectQuery.data
@@ -1227,9 +1222,9 @@ function WorkContract({
         {workBodyError ? (
           <AppAlert className="work-document-status error">{workBodyError.message}</AppAlert>
         ) : workBodyLoading || workBody === null ? (
-          <div className="work-document-status" role="status">
+          <output className="work-document-status">
             <AppBreathingIndicator /> Loading Work contract
-          </div>
+          </output>
         ) : (
           <pre>{workBody}</pre>
         )}
@@ -1298,7 +1293,7 @@ function RunPromptView({ prompt }: { prompt: string }) {
     return (
       <div className="work-run-prompt">
         <div>
-          <strong>Legacy Run instructions</strong>
+          <strong>Run instructions</strong>
           <pre className="work-system-prompt">{prompt}</pre>
         </div>
       </div>
@@ -1450,7 +1445,7 @@ function AttemptHistory({
                 summary={
                   <span className="attempt-summary__heading">
                     <strong>Result summary</strong>
-                    <small aria-hidden="true">{selectedAttempt.summary}</small>
+                    <small>{selectedAttempt.summary}</small>
                   </span>
                 }
               >

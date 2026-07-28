@@ -141,15 +141,9 @@ export interface InboxEventView {
   context: {
     projectId?: string
     goalId?: string
-    attentionId?: string
     attentionRefs?: string[]
     replyTo?: string
     observedDigest?: string
-  } | null
-  routeClaim: {
-    projectId: string
-    goalId: string
-    mode: 'existing' | 'create'
   } | null
   runtimeStatus: 'queued' | 'running' | 'interrupted' | 'completed' | 'failed'
   runtimeEvents: RunAttemptEvent[]
@@ -166,7 +160,6 @@ export interface InboxImageAttachmentView {
 
 export interface ReflectionRunDetail {
   manifest: {
-    version: 1
     reflectionId: string
     stateDigest: string
     scope?: { kind: 'home' } | { kind: 'project'; projectId: string }
@@ -205,11 +198,10 @@ export interface AssistantDecisionPrompt {
 export interface AttentionView {
   scope: 'workspace' | 'goal'
   id: string
-  target?: string | null
+  target?: string
   createdAt: string
   updatedAt?: string
   resolvedAt: string | null
-  notifiedAt?: string | null
   refs?: string[]
   summary: string
   decisionPrompt?: AssistantDecisionPrompt | null
@@ -234,13 +226,6 @@ export type AssistantFeedEntry =
       id: string
       occurredAt: string
       event: InboxEventView
-      completion: AttentionView | null
-    }
-  | {
-      kind: 'completion'
-      id: string
-      occurredAt: string
-      attention: AttentionView
     }
   | {
       kind: 'goal_completion'
@@ -371,7 +356,6 @@ export interface GoalDocumentView {
 }
 
 export interface RunAttemptSummary {
-  version: 2
   projectId: string
   goalId: string
   workId: string
@@ -508,7 +492,6 @@ export interface GoalDetail {
     lifecycle: GoalLifecycle
     priority: number
     contractRevision: number
-    completionAttentionId: string | null
     body: string
   }
   works: WorkView[]

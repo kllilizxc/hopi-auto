@@ -109,16 +109,10 @@ describe('checkpointTaskWorktree', () => {
   test('fails without committing forbidden canonical changes', async () => {
     const fixture = await setup()
     await mkdir(join(fixture.worktreePath, '.hopi'), { recursive: true })
-    await Bun.write(
-      join(fixture.worktreePath, '.hopi', 'project.yml'),
-      'version: 1\nprojectId: P-1\n',
-    )
+    await Bun.write(join(fixture.worktreePath, '.hopi', 'project.yml'), 'projectId: P-1\n')
     await git(fixture.worktreePath, ['add', '-f', '.hopi/project.yml'])
     await git(fixture.worktreePath, ['commit', '-m', 'canonical baseline'])
-    await Bun.write(
-      join(fixture.worktreePath, '.hopi', 'project.yml'),
-      'version: 1\nprojectId: bad\n',
-    )
+    await Bun.write(join(fixture.worktreePath, '.hopi', 'project.yml'), 'projectId: bad\n')
 
     const failure = checkpointTaskWorktree(fixture.input).catch((error) => error)
     await expect(failure).resolves.toBeInstanceOf(TaskCheckpointError)
@@ -145,7 +139,7 @@ async function setup() {
     projectId: 'P-1',
     repoPath,
   })
-  const worktree = await createStableWorktreeManager(homeRoot).prepare({
+  const worktree = await createStableWorktreeManager().prepare({
     projectRoot: project.integrationRoot,
     projectId: 'P-1',
     goalId: 'G-1',

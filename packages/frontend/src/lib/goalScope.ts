@@ -68,11 +68,7 @@ export function readRecentProjects(
 
   try {
     const value = JSON.parse(raw) as unknown
-    const preferences = normalizeRecentProjects(value)
-    if (!Array.isArray(value) && preferences.length) {
-      writePreference(storage, RECENT_PROJECT_KEY, preferences)
-    }
-    return preferences
+    return Array.isArray(value) ? normalizeRecentProjects(value) : []
   } catch {
     return []
   }
@@ -93,25 +89,10 @@ export function readRecentGoals(
 
   try {
     const value = JSON.parse(raw) as unknown
-    if (!isString(value)) {
-      const preferences = normalizeRecentGoals(value, projectId)
-      if (!Array.isArray(value) && preferences.length) {
-        writePreference(storage, key, preferences)
-      }
-      return preferences
-    }
-    raw = value
+    return Array.isArray(value) ? normalizeRecentGoals(value, projectId) : []
   } catch {
-    // The previous preference format stored only the Goal ID.
+    return []
   }
-
-  const migrated = { projectId, goalId: raw, visitedAt: new Date().toISOString() }
-  try {
-    storage?.setItem(key, JSON.stringify([migrated]))
-  } catch {
-    // A readable legacy preference remains useful even when migration cannot be persisted.
-  }
-  return [migrated]
 }
 
 export function rememberRecentProject(
@@ -315,7 +296,7 @@ function isGoalViewLane(value: unknown): value is GoalViewLane {
 }
 
 function normalizeRecentProjects(value: unknown) {
-  const candidates = Array.isArray(value) ? value : [value]
+  const candidates = Array.isArray(value) ? value : []
   const byProject = new Map<string, RecentProjectPreference>()
   for (const candidate of candidates) {
     if (
@@ -335,7 +316,7 @@ function normalizeRecentProjects(value: unknown) {
 }
 
 function normalizeRecentGoals(value: unknown, projectId: string) {
-  const candidates = Array.isArray(value) ? value : [value]
+  const candidates = Array.isArray(value) ? value : []
   const byGoal = new Map<string, RecentGoalPreference>()
   for (const candidate of candidates) {
     if (

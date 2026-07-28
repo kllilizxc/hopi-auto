@@ -1,11 +1,10 @@
-import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { appendFile, mkdir, rename } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
   type RoleExecutionIdentity,
   type RoleRunResult,
   STORED_PASS_RESULTS,
-  type StoredPassResultKind,
 } from '../agent/RoleRunner'
 import {
   AGENT_TRANSCRIPT_ENTRY_KINDS,
@@ -18,7 +17,7 @@ import { readDurableJsonLines, repairDurableJsonLineTail } from '../storage/json
 import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
 import { cleanupRunScratch } from './runArtifacts'
 import { type RunAttemptDiagnostics, readRunAttemptDiagnostics } from './runAttemptDiagnostics'
-import { legacyRunStoragePath, runStoragePath, runStorageRoot } from './runPaths'
+import { runStoragePath, runStorageRoot } from './runPaths'
 
 export const RUN_ATTEMPT_STATUSES = ['queued', 'running', 'finished', 'interrupted'] as const
 export type RunAttemptStatus = (typeof RUN_ATTEMPT_STATUSES)[number]
@@ -28,12 +27,11 @@ const roleExecutionIdentitySchema = z
   .object({
     transport: z.enum(AGENT_TRANSCRIPT_TRANSPORTS),
     model: z.string().min(1).nullable(),
-    reasoningEffort: codingReasoningEffortSchema.nullable().default(null),
+    reasoningEffort: codingReasoningEffortSchema.nullable(),
   })
   .strict()
-const currentAttemptManifestSchema = z
+const attemptManifestSchema = z
   .object({
-    version: z.literal(2),
     projectId: stableIdSchema,
     goalId: stableIdSchema,
     workId: stableIdSchema,
@@ -42,9 +40,8 @@ const currentAttemptManifestSchema = z
     workHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
-      .nullable()
-      .default(null),
-    execution: roleExecutionIdentitySchema.nullable().default(null),
+      .nullable(),
+    execution: roleExecutionIdentitySchema.nullable(),
     requestedAt: z.string().datetime(),
     startedAt: z.string().datetime().nullable(),
     endedAt: z.string().datetime().nullable(),
@@ -55,45 +52,6 @@ const currentAttemptManifestSchema = z
     application: z.string().nullable(),
   })
   .strict()
-const legacyAttemptManifestSchema = z
-  .object({
-    version: z.literal(1),
-    projectId: stableIdSchema,
-    goalId: stableIdSchema,
-    workId: stableIdSchema,
-    runId: stableIdSchema,
-    responsibility: z.enum(RESPONSIBILITIES),
-    workHash: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .nullable()
-      .default(null),
-    execution: roleExecutionIdentitySchema.nullable().default(null),
-    startedAt: z.string().datetime(),
-    endedAt: z.string().datetime().nullable(),
-    status: z.enum(['running', 'finished', 'interrupted']),
-    result: nullableResultSchema,
-    summary: z.string().nullable(),
-    exitCode: z.number().int().nullable(),
-    application: z.string().nullable(),
-  })
-  .strict()
-const attemptManifestSchema = z.preprocess((value) => {
-  const legacy = legacyAttemptManifestSchema.safeParse(value)
-  if (!legacy.success) return value
-  return {
-    ...legacy.data,
-    version: 2,
-    requestedAt: legacy.data.startedAt,
-  }
-}, currentAttemptManifestSchema)
-const attemptIdentitySchema = currentAttemptManifestSchema.pick({
-  projectId: true,
-  goalId: true,
-  workId: true,
-  runId: true,
-})
-
 const storedMessageEventSchema = z
   .object({
     eventId: stableIdSchema,
@@ -146,14 +104,6 @@ const storedEventSchema = z.discriminatedUnion('kind', [
   storedTranscriptEventSchema,
   storedPlanEventSchema,
 ])
-const legacyResultSchema = z
-  .object({
-    result: z.enum(STORED_PASS_RESULTS),
-    summary: z.string(),
-    artifacts: z.array(z.string()).optional(),
-  })
-  .passthrough()
-
 export type RunAttemptSummary = z.infer<typeof attemptManifestSchema>
 export type StoredRunAttemptEvent = z.infer<typeof storedEventSchema>
 export interface RunAttemptDetail extends RunAttemptSummary {
@@ -330,13 +280,12 @@ export function createRunAttemptStore(
 
         const requestedAt = now()
         const manifest: RunAttemptSummary = {
-          version: 2,
           projectId: input.projectId,
           goalId: input.goalId,
           workId: input.workId,
           runId: input.runId,
           responsibility: input.responsibility,
-          workHash: input.workHash,
+          workHash: input.workHash ?? null,
           execution: null,
           requestedAt: requestedAt.toISOString(),
           startedAt: null,
@@ -379,7 +328,7 @@ export function createRunAttemptStore(
       const manifestPath = join(expectedRoot, 'attempt.json')
       const eventsPath = join(expectedRoot, 'events.jsonl')
       let manifest = await withIndexLock(async () => {
-        const existing = await readStoredManifest(manifestPath).catch(() => null)
+        const existing = await readStoredManifest(manifestPath)
         if (
           existing &&
           (existing.projectId !== input.projectId ||
@@ -400,7 +349,6 @@ export function createRunAttemptStore(
               status: 'running',
             }
           : {
-              version: 2,
               projectId: input.projectId,
               goalId: input.goalId,
               workId: input.workId,
@@ -598,16 +546,14 @@ export function createRunAttemptStore(
         await mkdir(attemptsRoot, { recursive: true })
         let count = 0
         const manifestPaths = new Set<string>()
-        for (const pattern of ['*/attempt.json', '*/*/*/*/attempt.json']) {
-          for await (const relativePath of new Bun.Glob(pattern).scan({
-            cwd: attemptsRoot,
-            onlyFiles: true,
-          })) {
-            manifestPaths.add(join(attemptsRoot, relativePath))
-          }
+        for await (const relativePath of new Bun.Glob(ATTEMPT_MANIFEST_PATTERN).scan({
+          cwd: attemptsRoot,
+          onlyFiles: true,
+        })) {
+          manifestPaths.add(join(attemptsRoot, relativePath))
         }
         for (const path of manifestPaths) {
-          const manifest = await readStoredManifest(path).catch(() => null)
+          const manifest = await readStoredManifest(path)
           if (!manifest || manifest.status !== 'running') continue
           const endedAt = now().toISOString()
           const summary = 'Coordinator stopped before recording an Attempt outcome.'
@@ -649,32 +595,16 @@ export function createRunAttemptStore(
 }
 
 const RUN_MANIFEST_READ_CONCURRENCY = 32
-const ATTEMPT_MANIFEST_PATTERNS = ['*/attempt.json', '*/*/*/*/attempt.json'] as const
-const LEGACY_CONTEXT_PATTERNS = ['*/context.md', '*/*/*/*/context.md'] as const
+const ATTEMPT_MANIFEST_PATTERN = '*/attempt.json'
 
 async function readAllAttemptSummaries(attemptsRoot: string) {
-  const manifestPaths = await scanAttemptPaths(attemptsRoot, ATTEMPT_MANIFEST_PATTERNS)
+  const manifestPaths = await scanAttemptPaths(attemptsRoot, ATTEMPT_MANIFEST_PATTERN)
   const parsedManifests = await mapWithConcurrency(
     manifestPaths,
     RUN_MANIFEST_READ_CONCURRENCY,
-    async (path) => ({
-      root: dirname(path),
-      attempt: await readStoredManifest(path).catch(() => null),
-    }),
+    (path) => readStoredManifest(path),
   )
-  const manifestRoots = new Set(
-    parsedManifests.flatMap(({ root, attempt }) => (attempt ? [root] : [])),
-  )
-  const contextPaths = await scanAttemptPaths(attemptsRoot, LEGACY_CONTEXT_PATTERNS)
-  const legacyAttempts = await mapWithConcurrency(
-    contextPaths.filter((path) => !manifestRoots.has(dirname(path))),
-    RUN_MANIFEST_READ_CONCURRENCY,
-    (path) => readLegacySnapshotSummary(attemptsRoot, dirname(path)),
-  )
-  return [
-    ...parsedManifests.flatMap(({ attempt }) => (attempt ? [attempt] : [])),
-    ...legacyAttempts.filter((attempt): attempt is RunAttemptSummary => attempt !== null),
-  ]
+  return parsedManifests.filter((attempt): attempt is RunAttemptSummary => attempt !== null)
 }
 
 function createAttemptSnapshot(attempts: readonly RunAttemptSummary[]): RunAttemptSnapshot {
@@ -724,13 +654,11 @@ function createAttemptSnapshot(attempts: readonly RunAttemptSummary[]): RunAttem
   }
 }
 
-async function scanAttemptPaths(root: string, patterns: readonly string[]) {
+async function scanAttemptPaths(root: string, pattern: string) {
   const paths = new Set<string>()
   try {
-    for (const pattern of patterns) {
-      for await (const path of new Bun.Glob(pattern).scan({ cwd: root, onlyFiles: true })) {
-        paths.add(join(root, path))
-      }
+    for await (const path of new Bun.Glob(pattern).scan({ cwd: root, onlyFiles: true })) {
+      paths.add(join(root, path))
     }
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') throw error
@@ -756,22 +684,6 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
-async function readLegacySnapshotSummary(attemptsRoot: string, root: string) {
-  const segments = relative(attemptsRoot, root).split(sep)
-  const fallback =
-    segments.length === 4
-      ? {
-          projectId: segments[0],
-          goalId: segments[1],
-          workId: segments[2],
-          runId: segments[3],
-        }
-      : segments.length === 1
-        ? { runId: segments[0] }
-        : {}
-  return readLegacySummaryWithFallback(root, fallback)
-}
-
 async function readSummary(
   root: string,
   projectId: string,
@@ -779,93 +691,13 @@ async function readSummary(
   workId: string,
   runId: string,
 ) {
-  const manifest = await readStoredManifest(join(root, 'attempt.json')).catch(() => null)
-  if (manifest) {
-    return manifest.projectId === projectId &&
-      manifest.goalId === goalId &&
-      manifest.workId === workId &&
-      manifest.runId === runId
-      ? manifest
-      : null
-  }
-  return readLegacySummary(root, projectId, goalId, workId, runId)
-}
-
-async function readLegacySummary(
-  root: string,
-  projectId: string,
-  goalId: string,
-  workId: string,
-  runId: string,
-): Promise<RunAttemptSummary | null> {
-  const attempt = await readLegacySummaryWithFallback(root, {
-    projectId,
-    goalId,
-    workId,
-    runId,
-  })
-  return attempt?.projectId === projectId &&
-    attempt.goalId === goalId &&
-    attempt.workId === workId &&
-    attempt.runId === runId
-    ? attempt
+  const manifest = await readStoredManifest(join(root, 'attempt.json'))
+  return manifest?.projectId === projectId &&
+    manifest.goalId === goalId &&
+    manifest.workId === workId &&
+    manifest.runId === runId
+    ? manifest
     : null
-}
-
-async function readLegacySummaryWithFallback(
-  root: string,
-  fallback: Partial<Pick<RunAttemptSummary, 'projectId' | 'goalId' | 'workId' | 'runId'>>,
-): Promise<RunAttemptSummary | null> {
-  const contextFile = Bun.file(join(root, 'context.md'))
-  if (!(await contextFile.exists())) return null
-  const context = await contextFile.text()
-  const identity = {
-    projectId: context.match(/^- Project: (.+)$/m)?.[1] ?? fallback.projectId,
-    goalId: context.match(/^- Goal: (.+)$/m)?.[1] ?? fallback.goalId,
-    workId: context.match(/^- Work: (.+)$/m)?.[1] ?? fallback.workId,
-    runId: context.match(/^- Run: (.+)$/m)?.[1] ?? fallback.runId,
-  }
-  const parsedIdentity = attemptIdentitySchema.safeParse(identity)
-  if (!parsedIdentity.success) return null
-  const responsibility = z
-    .enum(RESPONSIBILITIES)
-    .safeParse(context.match(/^- Responsibility: (.+)$/m)?.[1]).data
-  if (!responsibility) return null
-  const contextStats = await stat(join(root, 'context.md'))
-  const resultPath = join(root, 'result.json')
-  const resultFile = Bun.file(resultPath)
-  const source = (await resultFile.exists()) ? await resultFile.text() : ''
-  const parsed = parseLegacyResult(source)
-  const resultStats = source.trim() ? await stat(resultPath).catch(() => null) : null
-  return {
-    version: 2,
-    ...parsedIdentity.data,
-    responsibility,
-    workHash: null,
-    execution: null,
-    requestedAt: contextStats.mtime.toISOString(),
-    startedAt: contextStats.mtime.toISOString(),
-    endedAt: resultStats?.mtime.toISOString() ?? contextStats.mtime.toISOString(),
-    status: source.trim() ? 'finished' : 'interrupted',
-    result: parsed?.result ?? null,
-    summary:
-      parsed?.summary ??
-      (source.trim() ? 'Invalid legacy result.json.' : 'Attempt ended without a recorded outcome.'),
-    exitCode: null,
-    application: null,
-  }
-}
-
-function parseLegacyResult(
-  source: string,
-): { result: StoredPassResultKind; summary: string } | null {
-  if (!source.trim()) return null
-  try {
-    const parsed = legacyResultSchema.safeParse(JSON.parse(source))
-    return parsed.success ? parsed.data : null
-  } catch {
-    return null
-  }
 }
 
 async function readStoredManifest(path: string) {
@@ -906,14 +738,8 @@ async function locateRunRoot(
   workId: string,
   runId: string,
 ) {
-  const candidates = [
-    runStoragePath(homeRoot, runId),
-    legacyRunStoragePath(homeRoot, projectId, goalId, workId, runId),
-  ]
-  for (const candidate of candidates) {
-    if (await readSummary(candidate, projectId, goalId, workId, runId)) return candidate
-  }
-  return null
+  const root = runStoragePath(homeRoot, runId)
+  return (await readSummary(root, projectId, goalId, workId, runId)) ? root : null
 }
 
 function assertIds(projectId: string, goalId: string, workId: string, runId?: string) {

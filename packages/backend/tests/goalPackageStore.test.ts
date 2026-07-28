@@ -61,13 +61,13 @@ describe('createGoalPackageStore', () => {
     const goalPackage = await store.createGoal({
       goalId: 'G-1',
       title: 'Align HOPI with the MVP',
-      objective: 'Replace every legacy workflow authority.',
+      objective: 'Replace every removed workflow authority.',
       constraints: ['Never mutate a user checkout.'],
       successCriteria: ['All MVP acceptance scenarios pass.'],
       priority: 10,
       firstPlanningWork: {
         title: 'Plan the MVP alignment',
-        objective: 'Decide how to replace the legacy workflow authority safely.',
+        objective: 'Decide how to replace the removed workflow authority safely.',
         acceptanceCriteria: ['The plan is sufficient to publish the Engineering Work DAG.'],
       },
     })
@@ -78,7 +78,6 @@ describe('createGoalPackageStore', () => {
       lifecycle: 'active',
       priority: 10,
       contractRevision: 1,
-      completionAttentionId: null,
     })
     expect([...goalPackage.works.values()].map((work) => work.attributes)).toEqual([
       expect.objectContaining({ id: 'plan-initial', kind: 'planning', stage: 'plan' }),
@@ -90,7 +89,7 @@ describe('createGoalPackageStore', () => {
     expect(goalPackage.goal.body).not.toContain('## Non-Goals')
     const planning = [...goalPackage.works.values()][0]
     expect(planning?.attributes.title).toBe('Plan the MVP alignment')
-    expect(planning?.body).toContain('Decide how to replace the legacy workflow authority safely.')
+    expect(planning?.body).toContain('Decide how to replace the removed workflow authority safely.')
     expect(planning?.body).toContain('The plan is sufficient to publish the Engineering Work DAG.')
     expect(await Bun.file(store.paths.absolute(store.paths.designIndex('G-1'))).text()).toContain(
       '## Current Design',

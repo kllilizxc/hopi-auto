@@ -16,7 +16,6 @@ notBefore: null
 dependsOn: []
 contractRevision: 1
 evidenceRefs: []
-attempts: 0
 ---
 Plan the smallest complete delivery.
 `)
@@ -27,7 +26,6 @@ title: Deliver the Goal
 lifecycle: active
 priority: 1
 contractRevision: 1
-completionAttentionId: null
 ---
 Deliver the Goal.
 `),

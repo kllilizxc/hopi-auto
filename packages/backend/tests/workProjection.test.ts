@@ -43,7 +43,7 @@ describe('derived Work projection', () => {
       ],
       [
         attention('A-1', 'project:Project-1/goal:G-1/work:W-attention'),
-        attention('A-2', 'project:Project-1/goal:G-1/work:W-needs-you', '2026-07-11T01:00:00Z'),
+        attention('A-2', 'project:Project-1/goal:G-1/work:W-needs-you'),
       ],
     )
 
@@ -129,7 +129,7 @@ describe('derived Work projection', () => {
     const target = 'project:Project-1/goal:G-1/work:W-1'
     const goalPackage = packageWith(
       [work('W-1', 'engineering', 'generate')],
-      [attention('A-waiting', target), attention('A-needs', target, '2026-07-11T01:00:00Z')],
+      [attention('A-waiting', target), attention('A-needs', target)],
     )
 
     expect(
@@ -141,7 +141,7 @@ describe('derived Work projection', () => {
     const target = 'project:Project-1/goal:G-1/work:W-1'
     const goalPackage = packageWith(
       [work('W-1', 'engineering', 'generate')],
-      [attention('A-info', target, '2026-07-11T01:00:00Z')],
+      [attention('A-info', target)],
     )
 
     expect(
@@ -218,7 +218,6 @@ function packageWith(works: WorkDocument[], attentions: AttentionDocument[] = []
       lifecycle: 'active',
       priority: 0,
       contractRevision: 1,
-      completionAttentionId: null,
     },
     body: 'Goal contract.\n',
   }
@@ -261,18 +260,14 @@ function work(
       }
 }
 
-function attention(
-  id: string,
-  target: string,
-  notifiedAt: string | null = null,
-): AttentionDocument {
+function attention(id: string, target: string): AttentionDocument {
   return {
     attributes: {
       id,
       target,
       createdAt: '2026-07-11T00:00:00Z',
       resolvedAt: null,
-      notifiedAt,
+      summary: 'Needs you.',
     },
     body: 'Needs you.\n',
   }

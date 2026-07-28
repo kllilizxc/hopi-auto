@@ -3,8 +3,7 @@
 Status: authoritative MVP design
 Last updated: 2026-07-24
 
-This document owns Prepare and Preview. It supersedes conflicting per-Repo preparation, formal
-Planner Preview, Preview-repair prompt, and Attention-gated Preview sections in older MVP documents.
+This document owns Prepare and Preview.
 
 ## Mental Model
 
@@ -68,16 +67,10 @@ Prepare script prevents Preview startup and produces a factual Project event.
 `scripts/hopi/preview` owns all Project-specific local service startup across linked Repos. It starts the
 exact managed release heads, never an unintegrated Work candidate.
 
-The script announces either:
+The script announces:
 
 ```text
 HOPI_PREVIEW_SURFACES=<json>
-```
-
-or the compatible single-surface shorthand:
-
-```text
-HOPI_PREVIEW_URL=<url>
 ```
 
 HOPI considers Preview `running` only after the announced transports are reachable. Reachability is

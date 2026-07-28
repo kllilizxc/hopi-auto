@@ -29,6 +29,10 @@ export const STORED_PASS_RESULTS = [...PASS_RESULTS, 'replan'] as const
 export type PassResultKind = (typeof PASS_RESULTS)[number]
 export type StoredPassResultKind = (typeof STORED_PASS_RESULTS)[number]
 
+export interface ResponsibilitySession extends VendorSession {
+  executionKey: string
+}
+
 const roleResultSchema = z
   .object({
     result: z.enum(PASS_RESULTS),
@@ -46,7 +50,7 @@ export interface RoleRunInput {
   cwd: string
   sourceRoots?: readonly string[]
   context: RoleContextBundle
-  session?: VendorSession | null
+  session?: ResponsibilitySession | null
   refreshAssignment?: boolean
   signal?: AbortSignal
 }
@@ -69,7 +73,7 @@ export interface RoleRunObserver {
   onEvent?(event: AgentRuntimeEvent): Promise<void> | void
   onExecution?(execution: RoleExecutionIdentity): Promise<void> | void
   onHeartbeat?(): Promise<void> | void
-  onSession?(session: VendorSession): Promise<void> | void
+  onSession?(session: ResponsibilitySession): Promise<void> | void
   onSessionInvalid?(): Promise<void> | void
 }
 
@@ -99,11 +103,11 @@ export class ConfiguredRoleRunner implements RoleRunner {
     const fullAccess = await this.fullAccess(input)
     await observer?.onExecution?.(roleExecutionIdentity(config))
     const transport = resumableTransport(config)
-    const compatibilityKey = roleSessionCompatibilityKey(config, fullAccess, input.cwd)
+    const executionKey = roleSessionExecutionKey(config, fullAccess, input.cwd)
     let session =
       transport &&
       input.session?.transport === transport &&
-      input.session.compatibilityKey === compatibilityKey
+      input.session.executionKey === executionKey
         ? input.session
         : null
     if (input.session && !session) {
@@ -151,7 +155,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
         this.heartbeatMs,
         transcriptFile,
         session,
-        compatibilityKey,
+        executionKey,
       )
     }
 
@@ -261,7 +265,7 @@ function resumableTransport(config: RoleTransportConfig): AssistantTransport | n
   return config.transport
 }
 
-export function roleSessionCompatibilityKey(
+export function roleSessionExecutionKey(
   config: RoleTransportConfig,
   fullAccess = false,
   sessionCwd?: string,
@@ -276,7 +280,6 @@ export function roleSessionCompatibilityKey(
         ? 'workspace-write'
         : config.sandbox
     return JSON.stringify({
-      version: 6,
       transport: config.transport,
       binary: config.binary ?? 'codex',
       cwdMode: config.cwdMode,
@@ -291,7 +294,6 @@ export function roleSessionCompatibilityKey(
   }
   if (config.transport === 'claude') {
     return JSON.stringify({
-      version: 4,
       transport: config.transport,
       binary: config.binary ?? 'claude',
       cwdMode: config.cwdMode,
@@ -302,7 +304,6 @@ export function roleSessionCompatibilityKey(
     })
   }
   return JSON.stringify({
-    version: 4,
     transport: config.transport,
     binary: config.binary ?? 'opencode',
     cwdMode: config.cwdMode,
@@ -555,14 +556,21 @@ async function consumeLines(
   if (buffered) await consume(buffered)
 }
 
+function requireExecutionKey(executionKey: string | null) {
+  if (!executionKey) {
+    throw new Error('A resumable responsibility transport requires an execution key')
+  }
+  return executionKey
+}
+
 async function executeProcess(
   command: Awaited<ReturnType<typeof resolveConfiguredTransportCommand>>,
   input: RoleRunInput,
   observer: RoleRunObserver | undefined,
   heartbeatMs: number,
   transcriptFile: string,
-  session: VendorSession | null,
-  compatibilityKey: string | null,
+  session: ResponsibilitySession | null,
+  executionKey: string | null,
 ) {
   const tempDir = await mkdtemp('/tmp/hopi-role-')
   try {
@@ -573,7 +581,7 @@ async function executeProcess(
       heartbeatMs,
       transcriptFile,
       session,
-      compatibilityKey,
+      executionKey,
       tempDir,
     )
   } finally {
@@ -587,8 +595,8 @@ async function executeProcessWithTempDir(
   observer: RoleRunObserver | undefined,
   heartbeatMs: number,
   transcriptFile: string,
-  session: VendorSession | null,
-  compatibilityKey: string | null,
+  session: ResponsibilitySession | null,
+  executionKey: string | null,
   tempDir: string,
 ) {
   const cacheDir = input.context.runtimeCacheDir
@@ -673,7 +681,7 @@ async function executeProcessWithTempDir(
             await observer?.onSession?.({
               transport: command.sessionTransport,
               sessionId: output.sessionId,
-              ...(compatibilityKey ? { compatibilityKey } : {}),
+              executionKey: requireExecutionKey(executionKey),
             })
           }
           if (output.terminalError) {
@@ -730,7 +738,7 @@ async function executeProcessWithTempDir(
           ? {
               transport: command.sessionTransport,
               sessionId: observedSessionId,
-              ...(compatibilityKey ? { compatibilityKey } : {}),
+              executionKey: requireExecutionKey(executionKey),
             }
           : null,
       structuredOutcome,

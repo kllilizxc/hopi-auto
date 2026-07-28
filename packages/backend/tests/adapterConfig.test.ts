@@ -1,11 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import {
   normalizeAgentAdapterConfig,
   readAgentRoleCodingDefaults,
-  readAndMigrateAgentAdapterConfig,
   readAssistantCodingDefaults,
   resolveAssistantTransportConfig,
   resolveRoleTransportConfig,
@@ -13,131 +9,18 @@ import {
   updateAssistantCodingDefaults,
 } from '../src/agent/adapterConfig'
 
-describe('agent adapter config normalization', () => {
-  test('re-resolves an unavailable built-in binary path from the current environment', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'hopi-adapter-config-'))
-    const path = join(root, 'agent-adapters.json')
-    try {
-      await Bun.write(
-        path,
-        `${JSON.stringify(
-          {
-            version: 3,
-            defaults: {
-              transport: 'codex',
-              model: 'gpt-5.4',
-              reasoningEffort: 'xhigh',
-            },
-            assistant: {
-              transport: 'codex',
-              cwdMode: 'root',
-              binary: join(root, 'missing', 'codex'),
-              sandbox: 'workspace-write',
-              approvalPolicy: 'never',
-            },
-            roles: {
-              reviewer: {
-                transport: 'codex',
-                cwdMode: 'worktree',
-                binary: join(root, 'missing', 'company-codex'),
-                sandbox: 'workspace-write',
-                approvalPolicy: 'never',
-              },
-            },
-          },
-          null,
-          2,
-        )}\n`,
-      )
-
-      const migrated = await readAndMigrateAgentAdapterConfig(path)
-
-      expect(migrated.assistant).not.toHaveProperty('binary')
-      expect(migrated.roles.reviewer?.binary).toBe(join(root, 'missing', 'company-codex'))
-      expect(await Bun.file(path).json()).toEqual(migrated)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
-  test('migrates legacy generated codex defaults into a defaults-only v3 config', () => {
-    expect(
+describe('agent adapter config', () => {
+  test('accepts the current complete config', () => {
+    expect(() =>
       normalizeAgentAdapterConfig({
-        version: 2,
-        assistant: {
-          transport: 'codex',
-          cwdMode: 'root',
-          sandbox: 'workspace-write',
-          approvalPolicy: 'never',
-        },
-        roles: {
-          planner: {
-            transport: 'codex',
-            cwdMode: 'worktree',
-            sandbox: 'workspace-write',
-            approvalPolicy: 'never',
-          },
-          generator: {
-            transport: 'codex',
-            cwdMode: 'worktree',
-            sandbox: 'workspace-write',
-            approvalPolicy: 'never',
-          },
-          reviewer: {
-            transport: 'codex',
-            cwdMode: 'worktree',
-            sandbox: 'workspace-write',
-            approvalPolicy: 'never',
-          },
-          merger: {
-            transport: 'codex',
-            cwdMode: 'worktree',
-            sandbox: 'workspace-write',
-            approvalPolicy: 'never',
-          },
-        },
+        defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
+        roles: {},
       }),
-    ).toEqual({
-      version: 3,
-      defaults: {
-        transport: 'codex',
-        model: 'gpt-5.4',
-        reasoningEffort: 'xhigh',
-      },
-      roles: {},
-    })
-  })
-
-  test('preserves explicit legacy overrides while adding Home defaults', () => {
-    expect(
-      normalizeAgentAdapterConfig({
-        version: 1,
-        roles: {
-          reviewer: {
-            cmd: ['bun', '-e', 'console.log("review")'],
-            cwdMode: 'root',
-          },
-        },
-      }),
-    ).toEqual({
-      version: 3,
-      defaults: {
-        transport: 'codex',
-        model: 'gpt-5.4',
-        reasoningEffort: 'xhigh',
-      },
-      roles: {
-        reviewer: {
-          cmd: ['bun', '-e', 'console.log("review")'],
-          cwdMode: 'worktree',
-        },
-      },
-    })
+    ).not.toThrow()
   })
 
   test('resolves defaults-only configs for assistant and workflow roles', () => {
     const config = normalizeAgentAdapterConfig({
-      version: 3,
       defaults: {
         transport: 'codex',
         model: 'gpt-5.4',
@@ -166,7 +49,6 @@ describe('agent adapter config normalization', () => {
 
   test('uses Home defaults and explicit Home role overrides for workflow roles', () => {
     const config = normalizeAgentAdapterConfig({
-      version: 3,
       defaults: {
         transport: 'codex',
         model: 'gpt-5.4',
@@ -199,7 +81,6 @@ describe('agent adapter config normalization', () => {
 
   test('inherits non-Codex Home defaults for Assistant and workflow roles', () => {
     const config = normalizeAgentAdapterConfig({
-      version: 3,
       defaults: { transport: 'claude', model: 'claude-workflow' },
       roles: {},
     })
@@ -218,7 +99,6 @@ describe('agent adapter config normalization', () => {
 
   test('updates Assistant vendor and model without changing workflow defaults', () => {
     const config = normalizeAgentAdapterConfig({
-      version: 3,
       defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
       roles: {},
     })
@@ -248,9 +128,8 @@ describe('agent adapter config normalization', () => {
     })
   })
 
-  test('preserves compatible advanced Assistant fields while changing the model', () => {
+  test('preserves transport-supported advanced Assistant fields while changing the model', () => {
     const config = normalizeAgentAdapterConfig({
-      version: 3,
       defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
       assistant: {
         transport: 'codex',
@@ -283,7 +162,6 @@ describe('agent adapter config normalization', () => {
 
   test('updates and clears one workflow role override without losing advanced fields', () => {
     const config = normalizeAgentAdapterConfig({
-      version: 3,
       defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
       roles: {
         reviewer: {
@@ -338,7 +216,6 @@ describe('agent adapter config normalization', () => {
   test('rejects process as an Assistant transport', () => {
     expect(() =>
       normalizeAgentAdapterConfig({
-        version: 3,
         defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
         assistant: {
           transport: 'process',
@@ -352,7 +229,6 @@ describe('agent adapter config normalization', () => {
 
   test('lets explicit codex overrides inherit model and effort unless a profile is set', () => {
     const inheritedConfig = normalizeAgentAdapterConfig({
-      version: 3,
       defaults: {
         transport: 'codex',
         model: 'gpt-5.4',
@@ -367,7 +243,6 @@ describe('agent adapter config normalization', () => {
       roles: {},
     })
     const profiledConfig = normalizeAgentAdapterConfig({
-      version: 3,
       defaults: {
         transport: 'codex',
         model: 'gpt-5.4',

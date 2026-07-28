@@ -128,7 +128,6 @@ describe('AssistantWorkspaceStore', () => {
       reply: 'I can help with that.',
       disposition: 'answered',
     })
-    expect(handled.attributes.routeClaim).toBeUndefined()
   })
 
   test('accepts Reply provenance from any handled public turn in the same Project', async () => {
@@ -141,6 +140,7 @@ describe('AssistantWorkspaceStore', () => {
         updatedAt: timestamp,
         resolvedAt: null,
         refs: ['project:P-1'],
+        summary: 'Confirm the Project decision.',
       },
       body: 'Confirm the Project decision.\n',
     })
@@ -150,7 +150,7 @@ describe('AssistantWorkspaceStore', () => {
       context: { projectId: 'P-1' },
     })
     await fixture.store.handleEvent('EV-question', {
-      reply: '<NeedsYou attentionId="A-project">Confirm the Project decision.</NeedsYou>',
+      reply: 'Please confirm the Project decision.',
       disposition: 'answered',
     })
 
@@ -248,13 +248,11 @@ describe('AssistantWorkspaceStore', () => {
     const attention = {
       attributes: {
         id: 'A-event',
-        target: `home:${fixture.homeId}/event:EV-1`,
         createdAt: '2026-07-11T00:00:00Z',
         updatedAt: '2026-07-11T00:00:00Z',
         resolvedAt: null,
         refs: [`home:${fixture.homeId}/event:EV-1`],
-        notifiedAt: null,
-        operatorRequest: null,
+        summary: 'Choose the owning Project.',
       },
       body: '## Needs you\n\nWhich Project owns this request?\n',
     }
@@ -275,13 +273,11 @@ describe('AssistantWorkspaceStore', () => {
     const attention = (id: string) => ({
       attributes: {
         id,
-        target: 'project:P-1',
         createdAt: '2026-07-11T00:00:00Z',
         updatedAt: '2026-07-11T00:00:00Z',
         resolvedAt: null,
         refs: ['project:P-1'],
-        notifiedAt: null,
-        operatorRequest: null,
+        summary: 'Project root is invalid.',
       },
       body: '## Needs you\n\nProject root is invalid.\n',
     })

@@ -59,7 +59,7 @@ export function createCompletionStructureVerifier(
 async function releaseProjectionMatches(store: GoalPackageStore, layout: C1ProjectLayout) {
   const releaseRef = projectReleaseRef(layout.projectId)
   const source = await Bun.file(`${store.paths.projectRoot}/.hopi/project.yml`).text()
-  const document = parseProjectDocument(source, layout.primaryRepoId)
+  const document = parseProjectDocument(source)
   for (const repo of layout.repos) {
     if (repo.primary) continue
     const expected = repoRelease(document, repo.repoId)

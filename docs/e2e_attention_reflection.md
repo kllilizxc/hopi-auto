@@ -340,7 +340,8 @@ one independent unnotified Goal Attention.
 **Expected:**
 
 - The blocked event is not retried before its own Attention resolves.
-- The new Attention is handed to Speaking Assistant, exposed once, and records `notifiedAt`.
+- The new Attention is handed to Speaking Assistant and exposed by one handled public turn carrying
+  its exact reference.
 - Resolving the old event allows one current-state revalidation without a duplicate public message.
 - The workspace settles without a new loop-exhaustion Attention.
 

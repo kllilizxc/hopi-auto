@@ -9,7 +9,6 @@ import {
 
 const epochSchema = z
   .object({
-    version: z.literal(1),
     streamId: z.string().min(1),
     resetAt: z.string().datetime({ offset: true }),
     removedFeedEntryIds: z.array(z.string().min(1)),
@@ -53,7 +52,6 @@ export async function resetProjectAssistantConversationEpoch(input: {
 }) {
   assertStableId(input.projectId, 'projectId')
   const epoch = epochSchema.parse({
-    version: 1,
     streamId: `assistant-stream-${crypto.randomUUID()}`,
     resetAt: (input.now ?? new Date()).toISOString(),
     removedFeedEntryIds: [...new Set(input.removedFeedEntryIds)].toSorted(),
