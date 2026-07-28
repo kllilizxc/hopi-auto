@@ -113,6 +113,7 @@ export function createRoleContextStager(
         input.repoRoots ?? [{ repoId: primaryRepoId, path: projectRoot, primary: true }],
         primaryRepoId,
       )
+      const repoGuidance = await discoverRepoGuidance(repoRoots)
       const paths = createGoalPackagePaths(projectRoot, input.projectId, input.projectPath)
       const runRoot = runStoragePath(absoluteHomeRoot, input.runId)
       const contextRoot = join(runRoot, 'context')
@@ -329,6 +330,9 @@ export function createRoleContextStager(
             releaseRef,
             repos: Object.fromEntries(repoRoots.map((repo) => [repo.repoId, repo.path])),
             releaseHeads: repoProjectionHeads,
+            guidance: Object.fromEntries(
+              repoGuidance.map((guidance) => [guidance.repoId, guidance.path]),
+            ),
           },
           null,
           2,
@@ -357,6 +361,7 @@ export function createRoleContextStager(
           imagePaths: [...availableReferencedImages],
           primaryRepoId,
           repoRoots,
+          repoGuidance,
           reposFile,
           projectPath: paths.projectPath,
           apiOrigin,
@@ -384,6 +389,7 @@ export function createRoleContextStager(
             attentionRoot: paths.attentionRoot(input.goalId),
             primaryRepoId,
             repoRoots,
+            repoGuidance,
             reposFile,
             apiOrigin,
             operatorPreferenceFile,
@@ -492,6 +498,22 @@ function requiredPrimaryRepoRoot(repoRoots: readonly RoleRepoRoot[], primaryRepo
     repoRoots[0]
   if (!primary) throw new RoleContextStagingError('Responsibility Repo workspace must not be empty')
   return primary.path
+}
+
+async function discoverRepoGuidance(repoRoots: readonly RoleRepoRoot[]) {
+  const candidates = repoRoots.map((repo) => ({
+    repoId: repo.repoId,
+    path: join(repo.path, 'AGENTS.md'),
+  }))
+  const present = await Promise.all(
+    candidates.map(async (candidate) => ({
+      ...candidate,
+      present: await Bun.file(candidate.path).exists(),
+    })),
+  )
+  return present
+    .filter((candidate) => candidate.present)
+    .map(({ repoId, path }) => ({ repoId, path }))
 }
 
 function normalizeApiOrigin(value: string) {
@@ -1051,7 +1073,11 @@ function proposalCapabilities(
         },
       },
       { type: 'targeted-attention', ...attention },
-      { type: 'project-repo-context', path: '.hopi/docs/repos.md' },
+      {
+        type: 'project-repo-context',
+        path: '.hopi/docs/repos.md',
+        purpose: 'Repo ownership, important commands, shared contracts, and combined runtime shape',
+      },
       { type: 'missing-project-guidance-bootstrap', path: 'AGENTS.md' },
     ],
   }
@@ -1189,6 +1215,7 @@ function renderContextManifest(
     imagePaths: readonly string[]
     primaryRepoId: string
     repoRoots: readonly RoleRepoRoot[]
+    repoGuidance: readonly { repoId: string; path: string }[]
     reposFile: string
     projectPath: string
     apiOrigin?: string
@@ -1232,6 +1259,9 @@ function renderContextManifest(
         `  Base release head: ${context.repoReleaseHeads[repo.repoId] ?? 'unavailable'}`,
       ].join('\n'),
     ),
+    ...context.repoGuidance.map(
+      (guidance) => `- Applicable Repo guidance ${guidance.repoId}: ${guidance.path}`,
+    ),
     ...(context.bootstrapSourceRoot
       ? ['- Read-only bootstrap source snapshot: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),
@@ -1269,6 +1299,7 @@ function renderResponsibilityPrompt(
     attentionRoot: string
     primaryRepoId: string
     repoRoots: readonly RoleRepoRoot[]
+    repoGuidance: readonly { repoId: string; path: string }[]
     reposFile: string
     apiOrigin?: string
     operatorPreferenceFile?: string
@@ -1298,7 +1329,10 @@ function renderResponsibilityPrompt(
     '$HOPI_CACHE_DIR persists across responsibility Attempts and task-worktree replacement.',
     'A detached shell descendant is not an independent Work Attempt and has no durable HOPI result owner.',
     ...(paths.artifactManifestFile ? ['Evidence artifacts: $HOPI_EVIDENCE_ARTIFACTS_FILE'] : []),
-    `Project guidance: ${paths.agentsPath}`,
+    `Primary Project guidance: ${paths.agentsPath}`,
+    ...paths.repoGuidance.map(
+      (guidance) => `Applicable Repo guidance ${guidance.repoId}: ${guidance.path}`,
+    ),
     `Primary Repo: ${paths.primaryRepoId}`,
     'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
     'Browser harness, when installed: $HOPI_BROWSER_HARNESS_COMMAND',
@@ -1312,7 +1346,8 @@ function renderResponsibilityPrompt(
     'Authority and evidence are immutable. Proposal is a sparse overlay: an absent path is unchanged; deletion is unsupported.',
     'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published; any other proposal is rejected.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
-    '$HOPI_REPOS_FILE is the complete Project source-root map. Source outside those roots and another Work runtime is outside this assignment.',
+    '$HOPI_REPOS_FILE is the complete Project source-root map; roots may contain source, knowledge, or both, and list existing Repo guidance. Other source and Work runtimes are outside this assignment.',
+    'Project Preview is a local HOPI-managed runtime over managed release projections, not a remote deployment; primary scripts/hopi/preview may orchestrate services from any linked Repo.',
     'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
     ...(paths.hasImages
       ? ['Attached images are Goal assets with their authority-defined purpose.']
@@ -1535,6 +1570,7 @@ function plannerPrompt(paths: {
     'Reviewer success is terminal for the complete Engineering Work; use targeted Attention rather than success while required action or proof remains.',
     'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
     'The proposal owns the current nonterminal dependsOn graph and may atomically add, remove, or redirect edges. Leave one valid acyclic graph; terminal Work is immutable.',
+    'Owned Project Repo context: .hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology.',
     ...(paths.bootstrapSourceRoot
       ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),

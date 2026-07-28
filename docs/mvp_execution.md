@@ -1374,6 +1374,10 @@ missing, non-executable, failing, timing-out, or source-mutating preparation pre
 claiming readiness. Each process is a bounded process-group leader so descendants are terminated
 before failure is reported. Only after all Repo preparation succeeds does the primary Repo's
 `scripts/hopi/preview` start.
+This is one HOPI-managed local runtime assembled from the Project's managed release projections.
+“Release Preview” names the immutable local Git inputs being exercised, not a deployment target or
+an instruction to publish them to a remote environment. The primary adapter can start any linked
+service described by the complete Repo manifest.
 The fixed responsibility prompt exposes the adapter's exact ready signal,
 `HOPI_PREVIEW_SURFACES=<json-array>`, whenever an Engineering Work may create, repair, or review the
 script; `HOPI_PREVIEW_URL=<reachable-url>` remains the single-surface shorthand, while a merely

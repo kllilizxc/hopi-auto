@@ -65,7 +65,7 @@ Prepare script prevents Preview startup and produces a factual Project event.
 
 ## Preview
 
-`scripts/hopi/preview` owns all Project-specific service startup across linked Repos. It starts the
+`scripts/hopi/preview` owns all Project-specific local service startup across linked Repos. It starts the
 exact managed release heads, never an unintegrated Work candidate.
 
 The script announces either:

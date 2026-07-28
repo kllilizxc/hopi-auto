@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   parseWorkDocument,
   renderAttentionDocument,
+  renderInputDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
@@ -90,6 +91,51 @@ describe('GoalController', () => {
     const repeated = await controller.applyMaterialInstruction('G-1', {
       eventId: 'EV-revise',
       contractChange: 'Add a measurable latency criterion before implementation continues.',
+    })
+    expect(repeated.attributes.contractRevision).toBe(2)
+  })
+
+  test('applies a material revision after its Inbox Input was already accepted', async () => {
+    const { store, controller } = setup()
+    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    const inputPath = store.paths.inputDocument('G-1', 'H-1', 'EV-revise')
+    const inputWrite = {
+      path: inputPath,
+      expectedHash: null,
+      content: renderInputDocument({
+        attributes: {
+          sourceHomeId: 'H-1',
+          sourceEventId: 'EV-revise',
+          sourceDigest: 'a'.repeat(64),
+          attachments: [],
+        },
+        body: 'Use a local Project Preview assembled from all linked services.\n',
+      }),
+    }
+    await controller.ensurePlanning('G-1', 'Assess the current contract.', {
+      path: inputPath,
+      write: inputWrite,
+    })
+
+    const revised = await controller.applyMaterialInstruction('G-1', {
+      eventId: 'EV-revise',
+      contractChange: 'Exercise all linked services in the local Project Preview.',
+      acceptedInput: { path: inputPath, write: null },
+    })
+    const goalPackage = await store.readPackage('G-1')
+    const planning = [...goalPackage.works.values()].find(
+      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+    )
+
+    expect(revised.attributes.contractRevision).toBe(2)
+    expect(planning?.attributes.contractRevision).toBe(2)
+    expect(planning?.body).toContain('Exercise all linked services in the local Project Preview.')
+    expect(planning?.body).not.toContain('Reassess accepted Inbox event')
+
+    const repeated = await controller.applyMaterialInstruction('G-1', {
+      eventId: 'EV-revise',
+      contractChange: 'Exercise all linked services in the local Project Preview.',
+      acceptedInput: { path: inputPath, write: null },
     })
     expect(repeated.attributes.contractRevision).toBe(2)
   })

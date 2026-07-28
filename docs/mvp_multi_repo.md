@@ -72,6 +72,12 @@ dependency direction, shared contracts, important commands, and the combined run
 kernel never parses its prose. Membership and commit identity stay in `project.yml`, while local
 paths stay in Assistant home; these documents do not compete for the same fact.
 
+Every responsibility receives the complete Repo-root manifest and the exact paths of existing
+Repo-local `AGENTS.md` files as environment context. A linked Repo may contain product source,
+operational knowledge, or both; HOPI does not classify the Repo or copy its prose into the prompt.
+The semantic map and applicable guidance locations make that knowledge discoverable while the model
+still decides which source is relevant to the owned outcome.
+
 Version 1 Project links and `project.yml` normalize to one primary Repo. Every Engineering Work uses
 the complete current Project Repo set. Legacy Work `repos` fields are accepted as inert input and
 removed on canonical rewrite; they never narrow a Run. Coordinator can allocate branches and
@@ -240,6 +246,11 @@ services it needs from that complete Repo environment. A surface is not assigned
 one Repo may provide several surfaces, and one surface may depend on several Repos. Preview remains
 one atomic Project runtime session, so readiness, Stop, failure, and release invalidation apply to
 the complete declared surface set.
+
+Project Preview is a HOPI-managed local runtime. Its managed release projection identifies the exact
+local Git inputs used by that runtime; it does not imply a deployment, remote environment, or
+published branch. The primary adapter owns the local orchestration boundary and may start whichever
+linked services it needs through the complete manifest.
 
 ## Primary C1 and Component Commits
 

@@ -267,40 +267,13 @@ export function createGoalController(
         )
       }
 
-      const planning: WorkDocument = {
-        attributes: {
-          id: nextPlanningWorkId(goalPackage),
-          title: 'Reassess and plan the Goal',
-          kind: 'planning',
-          stage: 'plan',
-          notBefore: null,
-          dependsOn: [],
-          contractRevision: goalPackage.goal.attributes.contractRevision,
-          evidenceRefs: [],
-        },
-        body: [
-          '## Objective',
-          '',
-          reason.trim(),
-          '',
-          '## Acceptance Criteria',
-          '',
-          '- Current Goal criteria and proof are assessed semantically.',
-          '- Additional Work or targeted Attention is published, or final success completes the Goal.',
-          '',
-          ...(acceptedInput ? ['## Accepted Inputs', '', `- ${acceptedInput.path}`, ''] : []),
-          ...(context.references?.length
-            ? [
-                '## Reference Images',
-                '',
-                ...context.references.map(
-                  (reference) => `- \`${reference.path}\` - ${reference.purpose.trim()}`,
-                ),
-                '',
-              ]
-            : []),
-        ].join('\n'),
-      }
+      const planning = createPlanningWork(
+        goalPackage,
+        goalPackage.goal.attributes.contractRevision,
+        reason,
+        acceptedInput,
+        context,
+      )
       const planningWrite: PublicationWrite = {
         path: store.paths.workDocument(goalId, planning.attributes.id),
         expectedHash: null,
@@ -334,16 +307,6 @@ export function createGoalController(
       ) {
         throw new GoalControllerError('Terminal Goal must be explicitly reopened')
       }
-      if (hasAcceptedGoalInput(goalPackage, input.eventId)) {
-        await this.ensurePlanning(
-          goalId,
-          `Reassess accepted Inbox event ${input.eventId}.`,
-          input.acceptedInput,
-          input.planningContext,
-          input.planningSettlement,
-        )
-        return (await store.readPackage(goalId)).goal
-      }
       const representedPlanning = [...goalPackage.works.values()].find(
         (work) =>
           isPlanningWork(work.attributes) &&
@@ -362,14 +325,6 @@ export function createGoalController(
         return (await store.readPackage(goalId)).goal
       }
 
-      await this.ensurePlanning(
-        goalId,
-        input.contractChange,
-        input.acceptedInput,
-        input.planningContext,
-        input.planningSettlement,
-      )
-      goalPackage = await store.readPackage(goalId)
       for (const attention of goalPackage.attentions.values()) {
         if (attention.attributes.target === null && attention.attributes.resolvedAt === null) {
           await resolveAsSuperseded(store, goalId, attention, now())
@@ -377,26 +332,29 @@ export function createGoalController(
       }
       goalPackage = await store.readPackage(goalId)
       const revision = goalPackage.goal.attributes.contractRevision + 1
-      const supportingWrites: Parameters<GoalPackageStore['publishGoal']>[1]['supportingWrites'] =
-        []
-      for (const work of goalPackage.works.values()) {
-        if (isWorkTerminal(work.attributes) || !isPlanningWork(work.attributes)) continue
-        const path = store.paths.workDocument(goalId, work.attributes.id)
-        const source = await Bun.file(store.paths.absolute(path)).text()
-        const next: WorkDocument = {
-          ...work,
-          attributes: {
-            ...work.attributes,
-            stage: 'plan',
-            contractRevision: revision,
-          },
-        }
-        supportingWrites.push({
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderWorkDocument(next),
-        })
-      }
+      const existingPlanning = [...goalPackage.works.values()].find(
+        (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
+      )
+      const planning = materialRevisionPlanning(
+        goalPackage,
+        revision,
+        input.contractChange,
+        input.acceptedInput,
+        input.planningContext,
+      )
+      const planningPath = store.paths.workDocument(goalId, planning.attributes.id)
+      const planningSource = existingPlanning
+        ? await Bun.file(store.paths.absolute(planningPath)).text()
+        : null
+      const attentionWrites = await planningAttentionResolutionWrites(
+        store,
+        goalId,
+        goalPackage,
+        planning.attributes.id,
+        input.acceptedInput,
+        input.planningSettlement,
+        now(),
+      )
       const goalPath = store.paths.goalDocument(goalId)
       const goalSource = await Bun.file(store.paths.absolute(goalPath)).text()
       const nextGoal: GoalDocument = {
@@ -407,7 +365,18 @@ export function createGoalController(
         },
       }
       await store.publishGoal(goalId, {
-        supportingWrites,
+        supportingWrites: [
+          ...(input.planningContext?.supportingWrites ?? []),
+          ...(input.acceptedInput?.write ? [input.acceptedInput.write] : []),
+          {
+            path: planningPath,
+            expectedHash: planningSource
+              ? await hashBytes(new TextEncoder().encode(planningSource))
+              : null,
+            content: renderWorkDocument(planning),
+          },
+          ...attentionWrites,
+        ],
         gateWrite: {
           path: goalPath,
           expectedHash: await hashBytes(new TextEncoder().encode(goalSource)),
@@ -977,6 +946,84 @@ function appendListEntry(body: string, heading: string, entry: string) {
   return `${normalized.slice(0, insertAt).trimEnd()}\n${entry}\n${normalized
     .slice(insertAt)
     .trimStart()}`
+}
+
+function materialRevisionPlanning(
+  goalPackage: GoalPackage,
+  revision: number,
+  contractChange: string,
+  acceptedInput: PlanningInputAdmission | undefined,
+  context: PlanningContext | undefined,
+): WorkDocument {
+  const existing = [...goalPackage.works.values()].find(
+    (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
+  )
+  if (existing) {
+    if (!isPlanningWork(existing.attributes)) {
+      throw new GoalControllerError('Open Planning lookup returned Engineering Work')
+    }
+    const attributes = existing.attributes
+    const acceptedBody = acceptedInput
+      ? appendAcceptedInput(existing.body, acceptedInput.path)
+      : existing.body
+    return {
+      ...existing,
+      attributes: {
+        ...attributes,
+        stage: 'plan',
+        contractRevision: revision,
+      },
+      body: appendPlanningReferences(
+        replacePlanningObjective(acceptedBody, contractChange),
+        context?.references ?? [],
+      ),
+    }
+  }
+
+  return createPlanningWork(goalPackage, revision, contractChange, acceptedInput, context)
+}
+
+function createPlanningWork(
+  goalPackage: GoalPackage,
+  revision: number,
+  objective: string,
+  acceptedInput: PlanningInputAdmission | undefined,
+  context: PlanningContext | undefined,
+): WorkDocument {
+  return {
+    attributes: {
+      id: nextPlanningWorkId(goalPackage),
+      title: 'Reassess and plan the Goal',
+      kind: 'planning',
+      stage: 'plan',
+      notBefore: null,
+      dependsOn: [],
+      contractRevision: revision,
+      evidenceRefs: [],
+    },
+    body: [
+      '## Objective',
+      '',
+      objective.trim(),
+      '',
+      '## Acceptance Criteria',
+      '',
+      '- Current Goal criteria and proof are assessed semantically.',
+      '- Additional Work or targeted Attention is published, or final success completes the Goal.',
+      '',
+      ...(acceptedInput ? ['## Accepted Inputs', '', `- ${acceptedInput.path}`, ''] : []),
+      ...(context?.references?.length
+        ? [
+            '## Reference Images',
+            '',
+            ...context.references.map(
+              (reference) => `- \`${reference.path}\` - ${reference.purpose.trim()}`,
+            ),
+            '',
+          ]
+        : []),
+    ].join('\n'),
+  }
 }
 
 function hasAcceptedGoalInput(goalPackage: GoalPackage, eventId: string) {

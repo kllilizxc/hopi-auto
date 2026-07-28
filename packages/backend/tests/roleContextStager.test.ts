@@ -86,6 +86,12 @@ describe('RoleContextStager', () => {
     expect(prompt).not.toContain('plan separate Work for independent outcomes')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
+    expect(prompt).toContain('Project Preview is a local HOPI-managed runtime')
+    expect(prompt).toContain('not a remote deployment')
+    expect(prompt).toContain('primary scripts/hopi/preview may orchestrate services')
+    expect(prompt).toContain(
+      '.hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology',
+    )
     const proposalCapabilities = await Bun.file(bundle.proposalCapabilitiesFile).json()
     expect(
       proposalCapabilities.writable.map((capability: { type: string }) => capability.type),
@@ -100,6 +106,7 @@ describe('RoleContextStager', () => {
       releaseRef: projectReleaseRef('project-1'),
       repos: { primary: fixture.projectRoot },
       releaseHeads: { primary: bundle.releaseHead },
+      guidance: {},
     })
     const context = await Bun.file(bundle.contextFile).text()
     expect(context).toContain(`Primary authority release snapshot: ${bundle.releaseHead}`)
@@ -116,6 +123,7 @@ describe('RoleContextStager', () => {
     expect(proposalCapabilities.writable).toContainEqual({
       type: 'project-repo-context',
       path: '.hopi/docs/repos.md',
+      purpose: 'Repo ownership, important commands, shared contracts, and combined runtime shape',
     })
     expect(prompt).toContain('Working directory: $HOPI_SESSION_WORKSPACE')
     expect(prompt).not.toContain(bundle.runRoot)
@@ -193,8 +201,60 @@ describe('RoleContextStager', () => {
     expect(bundle.extraWritableRoots).not.toContain(fixture.projectRoot)
     expect(await Bun.file(join(bundle.proposalRoot, 'AGENTS.md')).exists()).toBe(false)
     const prompt = await Bun.file(bundle.promptFile).text()
-    expect(prompt).toContain('Project guidance: AGENTS.md')
+    expect(prompt).toContain('Primary Project guidance: AGENTS.md')
+    expect(prompt).toContain(
+      `Applicable Repo guidance primary: ${join(fixture.projectRoot, 'AGENTS.md')}`,
+    )
     expect(prompt).not.toContain('$HOPI_BOOTSTRAP_SOURCE_ROOT')
+  })
+
+  test('exposes guidance paths from every linked Repo without classifying their contents', async () => {
+    const fixture = await createFixture(true)
+    const knowledgeRoot = join(dirname(fixture.homeRoot), 'knowledge-repo')
+    await mkdir(join(knowledgeRoot, 'runbooks'), { recursive: true })
+    await Bun.write(
+      join(knowledgeRoot, 'AGENTS.md'),
+      '# Knowledge guidance\n\nUse the relevant runbook for the owned outcome.\n',
+    )
+    await Bun.write(
+      join(knowledgeRoot, 'runbooks', 'local-preview.md'),
+      '# Local Preview\n\nService startup knowledge.\n',
+    )
+    await git(knowledgeRoot, ['init', '-b', 'main'])
+    await git(knowledgeRoot, ['config', 'user.email', 'hopi@example.test'])
+    await git(knowledgeRoot, ['config', 'user.name', 'HOPI Test'])
+    await git(knowledgeRoot, ['add', '.'])
+    await git(knowledgeRoot, ['commit', '-m', 'knowledge'])
+    await git(knowledgeRoot, ['update-ref', projectReleaseRef('project-1'), 'HEAD'])
+
+    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
+      projectRoot: fixture.projectRoot,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'plan-initial',
+      runId: 'run-multi-repo-guidance',
+      responsibility: 'planner',
+      repoRoots: [
+        { repoId: 'primary', path: fixture.projectRoot, primary: true },
+        { repoId: 'knowledge', path: knowledgeRoot, primary: false },
+      ],
+    })
+    const prompt = await Bun.file(bundle.promptFile).text()
+    const context = await Bun.file(bundle.contextFile).text()
+    const manifest = await Bun.file(bundle.reposFile).json()
+
+    expect(manifest.guidance).toEqual({
+      primary: join(fixture.projectRoot, 'AGENTS.md'),
+      knowledge: join(knowledgeRoot, 'AGENTS.md'),
+    })
+    expect(prompt).toContain(
+      `Applicable Repo guidance knowledge: ${join(knowledgeRoot, 'AGENTS.md')}`,
+    )
+    expect(context).toContain(
+      `Applicable Repo guidance knowledge: ${join(knowledgeRoot, 'AGENTS.md')}`,
+    )
+    expect(prompt).toContain('roots may contain source, knowledge, or both')
+    expect(prompt).not.toContain('local-preview.md')
   })
 
   test('stages Home preferences only for Planner without adding them to semantic guards', async () => {
