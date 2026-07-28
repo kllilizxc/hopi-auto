@@ -373,15 +373,20 @@ function buildAttentionApplication(
   supportingWrites.push(evidenceWrite(store, input.goalId, evidence))
   return {
     supportingWrites,
+    projectContextWrites: proposal.projectContextWrites,
     gateWrite: {
       path: gateAttention.path,
       expectedHash: null,
       content: gateAttention.source,
     },
     async validateTransition(_before, candidate, currentAuthority) {
-      await validatePassSemanticGuard(store, input, current, supportingWrites, {
-        currentAuthority,
-      })
+      await validatePassSemanticGuard(
+        store,
+        input,
+        current,
+        [...supportingWrites, ...proposal.projectContextWrites],
+        { currentAuthority },
+      )
       assertOnlyAllowedAttentionTransition(
         current,
         candidate,

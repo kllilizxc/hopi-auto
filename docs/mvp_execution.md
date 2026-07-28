@@ -1427,11 +1427,13 @@ another invocation is useful.
 Planner reads every linked Repo's current managed source and existing Repo-local `AGENTS.md`, while
 the primary root `AGENTS.md` remains the single automatically bootstrapped Project entrypoint. It
 maintains `.hopi/docs/repos.md` as natural-language topology, responsibility, command, and shared
-contract context when missing or materially stale. Engineering responsibilities receive the roots
-listed by their owning Work. Planner and Reviewer processes start from their Run directory and see
-those roots read-only; Generator alone receives write access to its assigned task worktrees.
-Managed integration roots are never Agent-writable. Reviewer checks and Generator checkpointing
-cover every assigned root as one logical result.
+contract context when missing or materially stale. A valid project-context update is durable Planner
+output even when the same pass publishes targeted Attention, and is committed atomically with that
+Attention so the next pass sees the learned environment. Engineering responsibilities receive the
+roots listed by their owning Work. Planner and Reviewer processes start from their Run directory and
+see those roots read-only; Generator alone receives write access to its assigned task worktrees.
+Managed integration roots are never Agent-writable. Reviewer checks and Generator checkpointing cover
+every assigned root as one logical result.
 
 All responsibilities may write their Run root, `$HOPI_RUN_SCRATCH`, and `$HOPI_CACHE_DIR`, use the
 network, and run ordinary tools. Planner writes durable decisions only to Proposal. Reviewer directs

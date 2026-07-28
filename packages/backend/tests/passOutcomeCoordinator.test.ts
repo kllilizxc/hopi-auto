@@ -53,6 +53,49 @@ describe('PassOutcomeCoordinator', () => {
     )
   })
 
+  test('publishes Planner project context atomically with targeted Attention', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-plan-attention', 'planner')
+    await Bun.write(
+      join(context.proposalRoot, '.hopi', 'docs', 'repos.md'),
+      [
+        '# Project Repositories',
+        '',
+        'The product Preview enters through the host and composes the child plus local backend.',
+        '',
+      ].join('\n'),
+    )
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-runtime-choice')
+    await Bun.write(
+      join(context.proposalRoot, ...attentionPath.split('/')),
+      renderAttentionDocument({
+        attributes: {
+          id: 'A-runtime-choice',
+          target: 'project:project-1/goal:goal-1/work:plan-initial',
+          createdAt: '2099-12-31T23:59:59Z',
+          resolvedAt: null,
+          notifiedAt: null,
+        },
+        body: '## Observed condition\n\nThe local identity source needs an operator decision.\n',
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-plan-attention', 'planner', context, 'attention'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toEqual({
+      kind: 'attention',
+      evidenceId: 'E-run-plan-attention',
+      attentionIds: ['A-runtime-choice'],
+    })
+    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('plan')
+    expect(
+      await Bun.file(join(fixture.projectRoot, '.hopi', 'docs', 'repos.md')).text(),
+    ).toContain('host and composes the child plus local backend')
+  })
+
   test('lets Planner atomically rewire current dependencies around cancelled Work', async () => {
     const fixture = await createFixture()
     const base = engineeringWork('W-base', 'generate')
