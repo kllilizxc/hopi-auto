@@ -532,11 +532,7 @@ describe('RoleContextStager', () => {
 
   test('states the Git, Attention, and Run-scoped runtime boundaries for Engineering passes', async () => {
     const fixture = await createFixture(true)
-    const acceptedInputPath = fixture.store.paths.inputDocument(
-      'goal-1',
-      'H-1',
-      'EV-engineering',
-    )
+    const acceptedInputPath = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-engineering')
     await publishEngineeringWork(
       fixture,
       [
@@ -701,9 +697,7 @@ describe('RoleContextStager', () => {
         await Bun.file(
           join(bundle.contextRoot, 'authority', ...acceptedInputPath.split('/')),
         ).text(),
-      ).toContain(
-        'Open the host application, mount the child, and connect the local backend.',
-      )
+      ).toContain('Open the host application, mount the child, and connect the local backend.')
     }
     expect(
       await Bun.file(

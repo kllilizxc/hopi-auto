@@ -34,7 +34,6 @@ import { agentAdapterConfigPath } from '../storage/assistantRuntimePaths'
 import { createAssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../storage/goalPackageStore'
 import { type AttentionTransport, createAssistantReplyDeliveryWorker } from './attentionDelivery'
-import { migrateLegacyAttentionOwnership } from './attentionOwnershipMigration'
 import { createCompletionStructureVerifier } from './completionVerifier'
 import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBootstrap'
 import { createGoalController } from './goalController'
@@ -140,7 +139,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const linkedProjects = await home.listProjects()
   const projects = new Map<string, MvpProjectRuntime>()
   let wakeCoordinator: () => void = () => undefined
-  let interruptInternalAssistant: () => void = () => undefined
   const preview = createPreviewManager(options.homeRoot, {
     onEvent: async (event) => {
       if (event.kind === 'start_failed') {
@@ -157,7 +155,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
             `Log: ${event.logPath}`,
           ].join('\n'),
         })
-        interruptInternalAssistant()
         wakeCoordinator()
         return
       }
@@ -309,11 +306,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       })
     },
   })
-  await migrateLegacyAttentionOwnership({
-    workspace,
-    projects,
-    acknowledgeEvent: (eventId) => assistantTools.acknowledgeEventAttentionRequest(eventId),
-  })
   const assistant = createWorkspaceAssistant({
     homeRoot: options.homeRoot,
     workspace,
@@ -355,7 +347,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   protectAssistantProject = (eventId, projectId) =>
     coordinator.protectAssistantProject(eventId, projectId)
   wakeCoordinator = () => coordinator.wake()
-  interruptInternalAssistant = () => coordinator.interruptInternalAssistant()
   restoreProjectEligibility = async (projectId) => {
     const project = requireProject(projects, projectId)
     try {

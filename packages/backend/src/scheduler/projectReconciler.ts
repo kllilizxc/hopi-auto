@@ -26,8 +26,8 @@ import {
   createProjectPreparer,
 } from '../runtime/projectPreparation'
 import {
-  bindResponsibilitySessionRunView,
   type ResponsibilitySessionStore,
+  bindResponsibilitySessionRunView,
   createResponsibilitySessionStore,
 } from '../runtime/responsibilitySessionStore'
 import {

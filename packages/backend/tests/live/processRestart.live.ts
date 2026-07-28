@@ -233,7 +233,7 @@ try {
         .find((project) => project.projectId === PROJECT_ID)
         ?.goals.find((candidate) => candidate.id === GOAL_ID)
       const unresolvedTargeted = state.attentions.some(
-        (attention) => attention.target !== null && attention.resolvedAt === null,
+        (attention) => typeof attention.target === 'string' && attention.resolvedAt === null,
       )
       return { state, pending, goal, unresolvedTargeted }
     },

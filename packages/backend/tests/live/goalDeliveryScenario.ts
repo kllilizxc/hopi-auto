@@ -45,7 +45,7 @@ export async function verifyGoalDeliveryDomain(input: {
   assert.equal(finalState.activeRuns.length, 0, 'Terminal state must not retain active Runs')
   assert.equal(
     finalState.attentions.filter(
-      (attention) => attention.target !== null && attention.resolvedAt === null,
+      (attention) => typeof attention.target === 'string' && attention.resolvedAt === null,
     ).length,
     0,
     'Clear delivery must not retain targeted Attention',

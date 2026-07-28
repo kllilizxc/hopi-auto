@@ -19,13 +19,12 @@ afterEach(async () => {
 })
 
 describe('Project Assistant wake and Attention E2E', () => {
-  test('drains unresolved Attention through native forks of one speaking session', async () => {
+  test('continues one unresolved Attention revision through one native fork', async () => {
     const calls: Array<{
       mode: string | undefined
       invocation: string | undefined
       sessionId: string | null
     }> = []
-    let supervisionCalls = 0
     const runtime = await setupRuntime({
       async run(input) {
         calls.push({
@@ -39,13 +38,9 @@ describe('Project Assistant wake and Attention E2E', () => {
             session: codexSession('project-session'),
           }
         }
-        supervisionCalls += 1
         return {
-          reply:
-            supervisionCalls === 1
-              ? 'The Project todo remains in progress.'
-              : '<NeedsYou attentionId="A-choice">Choose the release window.</NeedsYou>',
-          session: codexSession(`fork-${supervisionCalls}`),
+          reply: 'The Project todo remains in progress.',
+          session: codexSession('fork-1'),
         }
       },
     })
@@ -64,20 +59,19 @@ describe('Project Assistant wake and Attention E2E', () => {
       expect(calls).toEqual([
         { mode: 'main', invocation: 'speaking', sessionId: null },
         { mode: 'internal', invocation: 'supervision', sessionId: 'project-session' },
-        { mode: 'internal', invocation: 'supervision', sessionId: 'project-session' },
       ])
       const events = [...(await runtime.workspace.readWorkspace()).events.values()]
         .filter((event) => event.attributes.source === 'system')
         .toSorted((left, right) =>
           left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
         )
-      expect(events).toHaveLength(2)
+      expect(events).toHaveLength(1)
       expect(events.every((event) => event.attributes.status === 'handled')).toBe(true)
-      expect(events[1]?.attributes.context?.attentionRefs).toHaveLength(1)
+      expect(events[0]?.attributes.context?.attentionRefs).toHaveLength(1)
 
       runtime.coordinator.wake()
       await runtime.coordinator.waitForIdle()
-      expect(calls).toHaveLength(3)
+      expect(calls).toHaveLength(2)
     } finally {
       await runtime.coordinator.stop()
       await runtime.preview.stopAll()
@@ -264,9 +258,6 @@ function attention(id: string, body: string): WorkspaceAttentionDocument {
       updatedAt: timestamp,
       resolvedAt: null,
       refs: ['project:P-1'],
-      target: 'project:P-1',
-      notifiedAt: null,
-      operatorRequest: null,
     },
     body: `${body}\n`,
   }

@@ -13,7 +13,6 @@ import {
   isInternalInboxSource,
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
-  workspaceAttentionProjectId,
 } from './assistantWorkspaceDocuments'
 import { parseAttentionReference } from './attentionReference'
 import { parseInboxEventReference } from './inboxEventReference'
@@ -342,16 +341,8 @@ function validateEventTransition(previous: InboxEventDocument, next: InboxEventD
     throw invalid(`Inbox route claim is immutable: ${before.id}`)
   }
   if (before.status === 'handled' && JSON.stringify(previous) !== JSON.stringify(next)) {
-    const {
-      attentionRequest: _previousAttentionRequest,
-      webhookDeliveredAt: _previousWebhookDeliveredAt,
-      ...previousStableAttributes
-    } = before
-    const {
-      attentionRequest: _nextAttentionRequest,
-      webhookDeliveredAt: _nextWebhookDeliveredAt,
-      ...nextStableAttributes
-    } = after
+    const { webhookDeliveredAt: _previousWebhookDeliveredAt, ...previousStableAttributes } = before
+    const { webhookDeliveredAt: _nextWebhookDeliveredAt, ...nextStableAttributes } = after
     const previousWithoutMutableMetadata = {
       ...previous,
       attributes: previousStableAttributes,
@@ -360,18 +351,13 @@ function validateEventTransition(previous: InboxEventDocument, next: InboxEventD
       ...next,
       attributes: nextStableAttributes,
     }
-    const attentionRequestChanged =
-      JSON.stringify(before.attentionRequest ?? null) !==
-      JSON.stringify(after.attentionRequest ?? null)
     const deliveryChanged = before.webhookDeliveredAt !== after.webhookDeliveredAt
     if (
       JSON.stringify(previousWithoutMutableMetadata) !==
         JSON.stringify(nextWithoutMutableMetadata) ||
-      (attentionRequestChanged &&
-        (before.attentionRequest != null || after.attentionRequest == null)) ||
       (deliveryChanged &&
         (before.webhookDeliveredAt != null || after.webhookDeliveredAt == null)) ||
-      (!attentionRequestChanged && !deliveryChanged)
+      !deliveryChanged
     ) {
       throw invalid(`Handled Inbox event is immutable: ${before.id}`)
     }
@@ -392,22 +378,6 @@ function validateAttentionTransition(
   }
   if (before.resolvedAt !== null && JSON.stringify(previous) !== JSON.stringify(next)) {
     throw invalid(`Resolved Workspace Attention changed: ${before.id}`)
-  }
-  if (before.notifiedAt !== null && before.notifiedAt !== after.notifiedAt) {
-    throw invalid(`Workspace Attention delivery acknowledgement changed: ${before.id}`)
-  }
-  if (
-    before.operatorRequest !== null &&
-    after.operatorRequest !== null &&
-    before.operatorRequest !== after.operatorRequest
-  ) {
-    throw invalid(`Workspace Attention operator request changed without a reply: ${before.id}`)
-  }
-  if (after.resolvedAt !== null && after.operatorRequest !== null) {
-    throw invalid(`Resolved Workspace Attention cannot remain user-owned: ${before.id}`)
-  }
-  if (after.operatorRequest !== null && after.revisitAt !== null) {
-    throw invalid(`User-owned Workspace Attention cannot retain a revisit: ${before.id}`)
   }
 }
 
@@ -449,25 +419,6 @@ function validateReferences(
       }
       if (parsed.scope === 'goal' && !projectIds.has(parsed.projectId)) {
         throw invalid(`Inbox event ${event.attributes.id} references an unlinked Project`)
-      }
-    }
-    for (const reference of event.attributes.attentionRequest?.attentionRefs ?? []) {
-      const parsed = parseAttentionReference(reference)
-      const eventProjectId = context?.projectId ?? null
-      const migratedHomeRequest = eventProjectId === null && event.attributes.status === 'handled'
-      if (!parsed) {
-        throw invalid(`Inbox event ${event.attributes.id} has an invalid Attention request`)
-      }
-      if (parsed.scope === 'workspace') {
-        const attention = parsed.homeId === homeId ? attentions.get(parsed.attentionId) : undefined
-        if (
-          !attention ||
-          (workspaceAttentionProjectId(attention) !== eventProjectId && !migratedHomeRequest)
-        ) {
-          throw invalid(`Inbox event ${event.attributes.id} transfers outside its conversation`)
-        }
-      } else if (parsed.projectId !== eventProjectId && !migratedHomeRequest) {
-        throw invalid(`Inbox event ${event.attributes.id} transfers outside its conversation`)
       }
     }
   }

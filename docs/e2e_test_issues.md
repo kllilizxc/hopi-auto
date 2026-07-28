@@ -1179,3 +1179,26 @@ that pre-action boundary. Scenario scripts are still never replayed after failur
 missing response cannot prove whether a click or submission happened. This adds no scenario retry
 policy or Browser state manager; it makes the existing initialization contract observable and keeps
 both reload and probe diagnostics in the Test Run.
+
+## 2026-07-28: Project Attention continuation after the Project-owner redesign
+
+`HOPI-E2E-028` was rebased from the removed `target`, ownership-transfer, and
+`hopi_resolve_attention` protocol onto Project Attention, `NeedsYou` presentation, and
+`hopi_manage_attention`.
+
+The first product-reaching Browser run retained at
+`test-artifacts/project-attention-recovery-browser-2026-07-28T14-57-09-612Z-db133980` exposed one
+redundant supervision invocation. A fork created and presented `A-checkpoint-follow-up`; the generic
+unresolved-Attention continuation then invoked the same Assistant again, producing an idempotent
+second `create` with `changed:false`.
+
+Continuation identity now belongs to the sorted Project Attention IDs and `updatedAt` revisions.
+Publishing a continuation or settling an Assistant mutation records that revision digest in the
+existing wake cursor. Each revision can therefore receive at most one continuation, while
+`NeedsYou` remains presentation-only and cannot enable or suppress scheduling.
+
+The rerun passed with zero provider calls at
+`test-artifacts/project-attention-recovery-browser-2026-07-28T15-00-36-000Z-2ce83b24`. It retained
+the production Server, Git/worktree state, Browser actions, screenshots, hash-chained audit, one
+successful original Attention resolution, and one successful replacement Attention creation. The
+configured-provider `013` and `028` canaries still require post-redesign Live evidence.

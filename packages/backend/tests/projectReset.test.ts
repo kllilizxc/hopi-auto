@@ -325,9 +325,6 @@ async function writeAttention(homeRoot: string, attentionId: string, refs: strin
         updatedAt: timestamp,
         resolvedAt: null,
         refs,
-        target: '',
-        notifiedAt: null,
-        operatorRequest: null,
       },
       body: 'Attention',
     }),
@@ -363,7 +360,7 @@ async function exists(path: string) {
 }
 
 async function git(cwd: string, args: string[], allowFailure = false) {
-  const child = Bun.spawn(['git', ...args], {
+  const child = Bun.spawn(['git', '-c', 'core.autocrlf=false', ...args], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',

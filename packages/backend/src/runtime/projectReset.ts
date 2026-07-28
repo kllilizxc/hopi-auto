@@ -484,7 +484,11 @@ async function readPriorResetFeedEntryIds(homeRoot: string, projectId: string) {
 }
 
 async function listGitWorktrees(repoPath: string) {
-  const output = await gitNullList(repoPath, ['worktree', 'list', '--porcelain', '-z'])
+  const nullDelimited = await git(repoPath, ['worktree', 'list', '--porcelain', '-z'], true)
+  const output =
+    nullDelimited.exitCode === 0
+      ? nullDelimited.rawStdout.split('\0')
+      : (await git(repoPath, ['worktree', 'list', '--porcelain'])).rawStdout.split(/\r?\n/)
   return output.filter((token) => token.startsWith('worktree ')).map((token) => token.slice(9))
 }
 

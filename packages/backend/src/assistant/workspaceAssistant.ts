@@ -1039,7 +1039,7 @@ const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
   'Project Preview is one local managed runtime. The Project adapter announces all opaque named surfaces together; HOPI only presents them.',
   'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
-  'Attention remains Assistant-owned until hopi_manage_attention records a resolution, future revisit, or transfer; a responsibility-bearing internal event cannot settle while its canonical successor state is unchanged.',
+  'hopi_manage_attention persists the Project Assistant todo set. <NeedsYou attentionId="A-...">...</NeedsYou> presents one open Attention as requiring operator action; resolving it restores ordinary message rendering.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
 ] as const
@@ -1161,11 +1161,10 @@ function renderTurn(
 function renderCurrentSupervisionState(state: AssistantStateSnapshot | undefined) {
   if (!state) return ''
   const encoded = JSON.stringify(assistantSupervisionProjection(state), null, 2)
-  const bounded = encoded.length > 60_000 ? `${encoded.slice(0, 60_000)}\n... truncated` : encoded
   return [
     '[Current supervision facts; canonical paths inside this projection remain the source references.]',
     '```json',
-    bounded,
+    encoded,
     '```',
   ].join('\n')
 }

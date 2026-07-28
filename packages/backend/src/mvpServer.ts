@@ -14,11 +14,13 @@ import {
   assistantConversationScopeKey,
   assistantEventBelongsToScope,
 } from './assistant/assistantConversationScope'
+import { needsYouAttentionIds } from './assistant/assistantNeedsYou'
 import { AssistantToolRequestError } from './assistant/assistantToolRequestError'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
 import {
   type InboxEventDocument,
+  type WorkspaceAttentionDocument,
   isInternalInboxSource,
   workspaceAttentionProjectId,
 } from './domain/assistantWorkspaceDocuments'
@@ -26,12 +28,15 @@ import {
   goalAttentionReference,
   normalizeInboxAttentionReferences,
   parseAttentionReference,
-  workspaceAttentionReference,
 } from './domain/attentionReference'
 import { workAttentionTarget } from './domain/attentionTarget'
-import { type WorkDocument, isPlanningWork } from './domain/canonicalDocuments'
+import {
+  type AttentionDocument,
+  type WorkDocument,
+  isPlanningWork,
+} from './domain/canonicalDocuments'
 import { type GoalPackage, GoalPackageNotFoundError } from './domain/goalPackage'
-import { inboxEventReferenceSchema, parseInboxEventReference } from './domain/inboxEventReference'
+import { inboxEventReferenceSchema } from './domain/inboxEventReference'
 import {
   normalizeProjectCodingDefaults,
   projectCodingDefaultsInputSchema,
@@ -50,7 +55,6 @@ import {
 } from './runtime/assistantHomeMigration'
 import {
   type AttentionTransport,
-  clearGoalAttentionOperatorRequest,
   createWebhookAttentionTransport,
 } from './runtime/attentionDelivery'
 import {
@@ -1020,13 +1024,7 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
         attention.attributes.resolvedAt === null,
     )
     const projectAssistantAttentions: ScopedAssistantAttention[] = projectAttentions.map(
-      (attention) => ({
-        scope: 'workspace',
-        projectId: project.projectId,
-        ...attention.attributes,
-        operatorRequest: attention.attributes.operatorRequest ?? null,
-        body: attention.body,
-      }),
+      (attention) => presentWorkspaceAttention(attention, project.projectId),
     )
     const goals = []
     let goalOpenAttentionCount = 0
@@ -1088,12 +1086,6 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
             : null,
       })
       const presentedGoalAttentions = presentGoalAttentions(project.projectId, goalId, goalPackage)
-      projectAssistantAttentions.push(
-        ...presentedGoalAttentions.map((attention) => ({
-          scope: 'goal' as const,
-          ...attention,
-        })),
-      )
       if (includeAttentions) {
         goalAttentions.push(...presentedGoalAttentions)
       }
@@ -1131,13 +1123,10 @@ async function presentState(runtime: MvpRuntime, options: { includeAttentions?: 
     projects,
     attentions: includeAttentions
       ? [
-          ...[...workspace.attentions.values()].map((attention) => ({
-            scope: 'workspace',
-            ...attention.attributes,
-            operatorRequest: attention.attributes.operatorRequest ?? null,
-            body: attention.body,
-          })),
-          ...goalAttentions.map((attention) => ({ scope: 'goal', ...attention })),
+          ...[...workspace.attentions.values()].map((attention) =>
+            presentWorkspaceAttention(attention),
+          ),
+          ...goalAttentions,
         ]
       : [],
     activeRuns: [...runningAttempts, ...queuedAttempts].map((attempt) =>
@@ -1155,15 +1144,7 @@ function presentGoalAttentions(projectId: string, goalId: string, goalPackage: G
     ) {
       return []
     }
-    return [
-      {
-        projectId,
-        goalId,
-        ...attention.attributes,
-        operatorRequest: attention.attributes.operatorRequest ?? null,
-        body: attention.body,
-      },
-    ]
+    return [presentGoalAttention(attention, projectId, goalId)]
   })
 }
 
@@ -1272,13 +1253,14 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
     scope,
     workspace,
   )
-  const completions = attentions.filter((attention) => attention.target === null)
+  const completions = attentions.filter(
+    (attention): attention is Extract<ScopedAssistantAttention, { scope: 'goal' }> =>
+      attention.scope === 'goal' && attention.target === null,
+  )
   const requests = projectAssistantOpenRequests(workspace.homeId, workspace.events, attentions)
   const completionByReference = new Map(
     completions.map((attention) => [
-      attention.scope === 'goal'
-        ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
-        : workspaceAttentionReference(workspace.homeId, attention.id),
+      goalAttentionReference(attention.projectId, attention.goalId, attention.id),
       attention,
     ]),
   )
@@ -1388,24 +1370,18 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
       completion,
     })),
     ...completions
-      .filter((attention) =>
-        attention.scope === 'goal'
-          ? scope.kind === 'project' && attention.projectId === scope.projectId
-          : scope.kind === 'home',
-      )
+      .filter((attention) => scope.kind === 'project' && attention.projectId === scope.projectId)
       .filter((attention) => {
-        const reference =
-          attention.scope === 'goal'
-            ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
-            : workspaceAttentionReference(workspace.homeId, attention.id)
+        const reference = goalAttentionReference(
+          attention.projectId,
+          attention.goalId,
+          attention.id,
+        )
         return !linkedCompletionReferences.has(reference)
       })
       .map((attention) => ({
         kind: 'completion' as const,
-        id:
-          attention.scope === 'goal'
-            ? `completion:${goalAttentionReference(attention.projectId, attention.goalId, attention.id)}`
-            : `completion:${workspaceAttentionReference(workspace.homeId, attention.id)}`,
+        id: `completion:${goalAttentionReference(attention.projectId, attention.goalId, attention.id)}`,
         occurredAt: attention.notifiedAt ?? attention.resolvedAt ?? attention.createdAt,
         updatedAt: maxTimestamp(attention.createdAt, attention.resolvedAt, attention.notifiedAt),
         attention,
@@ -1440,11 +1416,8 @@ async function readAssistantFeedProjection(runtime: MvpRuntime, scope: Assistant
 
 interface ScopedAssistantAttentionBase {
   id: string
-  target: string | null
   createdAt: string
   resolvedAt: string | null
-  notifiedAt: string | null
-  operatorRequest: string | null
   body: string
 }
 
@@ -1452,12 +1425,46 @@ type ScopedAssistantAttention =
   | (ScopedAssistantAttentionBase & {
       scope: 'workspace'
       projectId?: string
+      updatedAt: string
+      refs: string[]
     })
   | (ScopedAssistantAttentionBase & {
       scope: 'goal'
       projectId: string
       goalId: string
+      target: string | null
+      notifiedAt: string | null
     })
+
+function presentWorkspaceAttention(
+  attention: WorkspaceAttentionDocument,
+  projectId = workspaceAttentionProjectId(attention) ?? undefined,
+): ScopedAssistantAttention {
+  return {
+    scope: 'workspace',
+    ...(projectId ? { projectId } : {}),
+    ...attention.attributes,
+    body: attention.body,
+  }
+}
+
+function presentGoalAttention(
+  attention: AttentionDocument,
+  projectId: string,
+  goalId: string,
+): ScopedAssistantAttention {
+  return {
+    scope: 'goal',
+    projectId,
+    goalId,
+    id: attention.attributes.id,
+    target: attention.attributes.target,
+    createdAt: attention.attributes.createdAt,
+    resolvedAt: attention.attributes.resolvedAt,
+    notifiedAt: attention.attributes.notifiedAt,
+    body: attention.body,
+  }
+}
 
 interface ScopedGoalCompletion {
   projectId: string
@@ -1519,12 +1526,7 @@ async function readScopedAssistantProjection(
     return {
       attentions: [...workspace.attentions.values()]
         .filter((attention) => workspaceAttentionProjectId(attention) === null)
-        .map((attention) => ({
-          scope: 'workspace' as const,
-          ...attention.attributes,
-          operatorRequest: attention.attributes.operatorRequest ?? null,
-          body: attention.body,
-        })),
+        .map((attention) => presentWorkspaceAttention(attention)),
       goalCompletions: [],
     }
   }
@@ -1532,23 +1534,12 @@ async function readScopedAssistantProjection(
   const project = requireProject(runtime.projects, scope.projectId)
   const attentions: ScopedAssistantAttention[] = [...workspace.attentions.values()]
     .filter((attention) => workspaceAttentionProjectId(attention) === scope.projectId)
-    .map((attention) => ({
-      scope: 'workspace' as const,
-      projectId: scope.projectId,
-      ...attention.attributes,
-      operatorRequest: attention.attributes.operatorRequest ?? null,
-      body: attention.body,
-    }))
+    .map((attention) => presentWorkspaceAttention(attention, scope.projectId))
   const goalCompletions: ScopedGoalCompletion[] = []
   for (const goalId of await project.store.listGoalIds()) {
     try {
       const goalPackage = await project.store.readPackage(goalId)
-      attentions.push(
-        ...presentGoalAttentions(project.projectId, goalId, goalPackage).map((attention) => ({
-          scope: 'goal' as const,
-          ...attention,
-        })),
-      )
+      attentions.push(...presentGoalAttentions(project.projectId, goalId, goalPackage))
       const completion = goalCompletionProjection(project.projectId, goalId, goalPackage)
       if (completion) goalCompletions.push(completion)
     } catch {}
@@ -1557,54 +1548,58 @@ async function readScopedAssistantProjection(
 }
 
 function projectAssistantOpenRequests(
-  homeId: string,
+  _homeId: string,
   events: ReadonlyMap<string, InboxEventDocument>,
   attentions: Awaited<ReturnType<typeof readScopedAssistantProjection>>['attentions'],
 ) {
+  type WorkspaceAttention = Extract<(typeof attentions)[number], { scope: 'workspace' }>
+  const openById = new Map<string, WorkspaceAttention>()
+  for (const attention of attentions) {
+    if (attention.scope !== 'workspace' || attention.resolvedAt !== null) continue
+    openById.set(attention.id, attention)
+  }
+  const latestByAttention = new Map<
+    string,
+    { eventId: string; occurredAt: string; attention: WorkspaceAttention }
+  >()
+  for (const event of [...events.values()].toSorted((left, right) =>
+    left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
+  )) {
+    if (
+      event.attributes.status !== 'handled' ||
+      event.attributes.visibility !== 'public' ||
+      !event.attributes.reply
+    ) {
+      continue
+    }
+    for (const attentionId of needsYouAttentionIds(event.attributes.reply)) {
+      const attention = openById.get(attentionId)
+      if (!attention) continue
+      latestByAttention.set(attentionId, {
+        eventId: event.attributes.id,
+        occurredAt: event.attributes.receivedAt,
+        attention,
+      })
+    }
+  }
+
   const grouped = new Map<
     string,
     {
       eventId: string
       occurredAt: string
-      attentions: (typeof attentions)[number][]
-      decisionPrompts: Array<{
-        attentionId: string
-        prompt: NonNullable<
-          NonNullable<InboxEventDocument['attributes']['attentionRequest']>['decisionPrompt']
-        >
-      }>
+      attentions: WorkspaceAttention[]
     }
   >()
-  for (const attention of attentions) {
-    if (attention.resolvedAt !== null || !attention.operatorRequest) continue
-    const parsedRequest = parseInboxEventReference(attention.operatorRequest)
-    if (!parsedRequest || parsedRequest.homeId !== homeId) continue
-    const event = events.get(parsedRequest.eventId)
-    if (
-      !event ||
-      event.attributes.status !== 'handled' ||
-      event.attributes.visibility !== 'public'
-    ) {
-      continue
-    }
-    const attentionReference =
-      attention.scope === 'goal'
-        ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
-        : workspaceAttentionReference(homeId, attention.id)
-    const request = event.attributes.attentionRequest
-    if (!request?.attentionRefs.includes(attentionReference)) continue
-
-    const existing = grouped.get(event.attributes.id)
+  for (const entry of latestByAttention.values()) {
+    const existing = grouped.get(entry.eventId)
     if (existing) {
-      existing.attentions.push(attention)
+      existing.attentions.push(entry.attention)
     } else {
-      grouped.set(event.attributes.id, {
-        eventId: event.attributes.id,
-        occurredAt: event.attributes.receivedAt,
-        attentions: [attention],
-        decisionPrompts: request.decisionPrompt
-          ? [{ attentionId: attention.id, prompt: request.decisionPrompt }]
-          : [],
+      grouped.set(entry.eventId, {
+        eventId: entry.eventId,
+        occurredAt: entry.occurredAt,
+        attentions: [entry.attention],
       })
     }
   }
@@ -1615,10 +1610,9 @@ function projectAssistantOpenRequests(
         left.occurredAt.localeCompare(right.occurredAt) ||
         left.eventId.localeCompare(right.eventId),
     )
-    .map(({ eventId, attentions: groupedAttentions, decisionPrompts }) => ({
+    .map(({ eventId, attentions: groupedAttentions }) => ({
       eventId,
       attentions: groupedAttentions,
-      decisionPrompts,
     }))
 }
 
@@ -1938,22 +1932,14 @@ async function presentGoal(
     }),
     attentions: [...goalPackage.attentions.values()]
       .filter((attention) => view === 'full' || attention.attributes.resolvedAt === null)
-      .map((attention) => ({
-        scope: 'goal' as const,
-        projectId,
-        goalId,
-        ...attention.attributes,
-        operatorRequest: attention.attributes.operatorRequest ?? null,
-        ...(view === 'full' ? { body: attention.body } : {}),
-      })),
+      .map((attention) => {
+        const presented = presentGoalAttention(attention, projectId, goalId)
+        if (view === 'full') return presented
+        const { body: _body, ...summary } = presented
+        return summary
+      }),
     projectAttention: projectAttention
-      ? {
-          scope: 'workspace' as const,
-          projectId,
-          ...projectAttention.attributes,
-          operatorRequest: projectAttention.attributes.operatorRequest ?? null,
-          body: projectAttention.body,
-        }
+      ? presentWorkspaceAttention(projectAttention, projectId)
       : null,
   }
   if (view === 'board') return projection

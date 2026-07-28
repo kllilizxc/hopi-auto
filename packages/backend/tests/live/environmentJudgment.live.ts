@@ -176,7 +176,6 @@ async function seedCompletedGoal(integrationRoot: string) {
             createdAt: '2026-07-20T10:46:00.000Z',
             resolvedAt: null,
             notifiedAt: '2026-07-20T10:47:00.000Z',
-            operatorRequest: null,
           },
           body: '## Completion\n\nThe requested spritesheet is complete.\n',
         }),

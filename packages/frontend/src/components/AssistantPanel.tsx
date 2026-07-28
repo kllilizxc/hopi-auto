@@ -173,17 +173,6 @@ export function AssistantPanel({
       ),
     [needsYouAttentionsByGroupId],
   )
-  const decisionPromptsByGroupId = useMemo(
-    () =>
-      new Map(
-        assistantStream.requests.flatMap((request) =>
-          request.decisionPrompts?.length > 0
-            ? [[`inbox:${request.eventId}`, request.decisionPrompts] as const]
-            : [],
-        ),
-      ),
-    [assistantStream.requests],
-  )
   const latestNeedsYouRequest = assistantStream.requests.at(-1)
   const latestNeedsYouGroupId = latestNeedsYouRequest
     ? `inbox:${latestNeedsYouRequest.eventId}`
@@ -198,16 +187,14 @@ export function AssistantPanel({
   )
   const attentionNotificationEventId = useMemo(
     () =>
-      initialReply?.operatorRequest
+      initialReply
         ? findAttentionRequestEventId(assistantStream.requests, initialReply, snapshot?.home.homeId)
         : null,
     [assistantStream.requests, initialReply, snapshot?.home.homeId],
   )
 
   useEffect(() => {
-    const initialNotificationMissing = Boolean(
-      initialReply?.operatorRequest && !attentionNotificationEventId,
-    )
+    const initialNotificationMissing = Boolean(initialReply && !attentionNotificationEventId)
     const needsYouNotificationMissing = visibleNeedsYouCount < needsYouAttentions.length
     if (
       (!initialNotificationMissing && !needsYouNotificationMissing) ||
@@ -222,7 +209,7 @@ export function AssistantPanel({
     assistantStream.isLoadingOlder,
     assistantStream.loadOlder,
     attentionNotificationEventId,
-    initialReply?.operatorRequest,
+    initialReply,
     visibleNeedsYouCount,
     needsYouAttentions.length,
   ])
@@ -369,23 +356,6 @@ export function AssistantPanel({
     })
   }
 
-  const submitDecisionPrompt = useCallback(
-    (groupId: string, answer: string) => {
-      const request = assistantStream.requests.find(
-        (candidate) => `inbox:${candidate.eventId}` === groupId,
-      )
-      if (!request?.attentions.length) return
-      submitMessage({
-        text: answer,
-        images: [],
-        attentions: request.attentions,
-        eventId: request.eventId,
-        clearComposer: false,
-      })
-    },
-    [assistantStream.requests, submitMessage],
-  )
-
   const queueImages = (files: File[]) => {
     setImageError(null)
     const selected = files.filter((file) => file.type.startsWith('image/'))
@@ -497,10 +467,7 @@ export function AssistantPanel({
               }
               focusRequest={messageFocus?.request ?? 0}
               needsYouByGroupId={needsYouByGroupId}
-              decisionPromptsByGroupId={decisionPromptsByGroupId}
-              decisionPromptDisabled={sendPending}
               onReplyNeedsYou={replyToNeedsYouMessage}
-              onSubmitDecisionPrompt={submitDecisionPrompt}
               emptyState={
                 <div className="conversation-empty">
                   {assistantStream.error ? (

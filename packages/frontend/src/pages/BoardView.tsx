@@ -507,15 +507,6 @@ export function BoardView() {
     )
   }
 
-  const openAssistantAttentions = goal.attentions.filter(
-    (attention) => attention.target !== null && attention.resolvedAt === null,
-  )
-  const assistantAttention =
-    openAssistantAttentions.find((attention) => Boolean(attention.operatorRequest)) ??
-    openAssistantAttentions[0]
-  const assistantAttentionLabel = assistantAttention?.operatorRequest
-    ? 'Needs you'
-    : 'Waiting for Assistant'
   const focus =
     goal.works.find((work) => work.projection.primaryBadge === 'Needs you') ??
     goal.works.find((work) => work.projection.primaryBadge === 'Waiting for Assistant') ??
@@ -596,16 +587,8 @@ export function BoardView() {
         </div>
         <div>
           <small>Current focus</small>
-          <strong>
-            {assistantAttention ? assistantAttentionLabel : (focus?.title ?? goal.goal.lifecycle)}
-          </strong>
-          <p>
-            {assistantAttention
-              ? assistantAttention.operatorRequest
-                ? 'Your decision is needed. Open Assistant to reply.'
-                : 'Assistant is diagnosing the blocker and will contact you only if needed.'
-              : (focus?.projection.primaryBadge ?? 'No pending Work')}
-          </p>
+          <strong>{focus?.title ?? goal.goal.lifecycle}</strong>
+          <p>{focus?.projection.primaryBadge ?? 'No pending Work'}</p>
         </div>
         <div>
           <small>Progress</small>

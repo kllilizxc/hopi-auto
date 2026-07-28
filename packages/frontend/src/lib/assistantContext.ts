@@ -69,13 +69,7 @@ export function resolveAssistantInboxContext(
     ]
     if (references.length === 0) return undefined
     const first = replyAttentions[0]
-    const legacyReplyTo =
-      first?.operatorRequest &&
-      replyAttentions.every((attention) => attention.operatorRequest === first.operatorRequest)
-        ? first.operatorRequest
-        : undefined
-    const replyTo =
-      homeId && replyEventId ? `home:${homeId}/event:${replyEventId}` : legacyReplyTo
+    const replyTo = homeId && replyEventId ? `home:${homeId}/event:${replyEventId}` : undefined
     const sharedProjectId =
       first?.projectId &&
       replyAttentions.every((attention) => attention.projectId === first.projectId)

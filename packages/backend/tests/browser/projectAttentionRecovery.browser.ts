@@ -96,9 +96,10 @@ const assistantRunner: AssistantModelRunner = {
     if (mode === 'main' && input.prompt.includes(USER_MESSAGE)) {
       await rm(recoveryBlocker, { force: true })
       const response = await callAssistantTool(input, observer, 'hopi_manage_attention', {
+        projectId: PROJECT_ID,
         change: {
           kind: 'resolve',
-          attentionRef: workspaceAttentionReference(assistantHomeId, attentionToResolve),
+          attentionId: attentionToResolve,
           resolution: USER_MESSAGE,
         },
       })
@@ -111,11 +112,12 @@ const assistantRunner: AssistantModelRunner = {
     }
     if (mode === 'internal' && input.prompt.includes('Task checkpoint failed')) {
       const response = await callAssistantTool(input, observer, 'hopi_manage_attention', {
+        projectId: PROJECT_ID,
         change: {
           kind: 'create',
-          target: `project:${PROJECT_ID}`,
           attentionId: CHECKPOINT_ATTENTION_ID,
           body: CHECKPOINT_ATTENTION_BODY,
+          refs: [`project:${PROJECT_ID}/goal:${GOAL_ID}/work:${WORK_ID}`],
         },
       })
       assistantToolResults.push({
@@ -257,7 +259,7 @@ try {
   assertProjectAttentionDoesNotGateWork(afterFailure)
   assert.equal(
     afterFailure.attentions.filter(
-      (attention) => attention.target !== null && attention.resolvedAt === null,
+      (attention) => typeof attention.target === 'string' && attention.resolvedAt === null,
     ).length,
     0,
     'Project failure must not be projected as Goal or Work Needs you',
@@ -473,9 +475,10 @@ async function initializeRepo(root: string) {
 interface GoalView {
   projectAttention: {
     id: string
-    target: string
     createdAt: string
+    updatedAt: string
     resolvedAt: string | null
+    refs: string[]
     body: string
   } | null
   works: Array<{

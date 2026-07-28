@@ -166,9 +166,9 @@ try {
         ?.goals.find((candidate) => candidate.id === goalId)
       const unexpected = state.attentions.find(
         (attention) =>
-          attention.target !== null &&
+          typeof attention.target === 'string' &&
           attention.resolvedAt === null &&
-          attention.notifiedAt !== null,
+          typeof attention.notifiedAt === 'string',
       )
       if (unexpected) throw new Error(`Unexpected operator Attention: ${unexpected.id}`)
       return { goal, activeRuns: state.activeRuns }

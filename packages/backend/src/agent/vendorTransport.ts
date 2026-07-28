@@ -608,9 +608,7 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     ...(bundle.attentionProposalDir
       ? { HOPI_ATTENTION_PROPOSAL_DIR: runPath(bundle.attentionProposalDir) }
       : {}),
-    ...(bundle.artifactOutputDir
-      ? { HOPI_ARTIFACT_DIR: runPath(bundle.artifactOutputDir) }
-      : {}),
+    ...(bundle.artifactOutputDir ? { HOPI_ARTIFACT_DIR: runPath(bundle.artifactOutputDir) } : {}),
     ...(bundle.proposalCapabilitiesFile
       ? { HOPI_PROPOSAL_CAPABILITIES_FILE: runPath(bundle.proposalCapabilitiesFile) }
       : {}),

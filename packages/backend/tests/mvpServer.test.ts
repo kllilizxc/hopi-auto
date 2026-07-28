@@ -24,7 +24,6 @@ import {
   presentAttempt,
 } from '../src/mvpServer'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
-import { acknowledgeGoalAttention } from '../src/runtime/attentionDelivery'
 import { createGoalController } from '../src/runtime/goalController'
 import { HostDirectoryPickerError } from '../src/runtime/hostDirectoryPicker'
 import { type RunAttemptSummary, createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -1563,7 +1562,7 @@ describe('MVP server', () => {
     expect(await checkoutSnapshot(repoRoot)).toEqual(before)
   })
 
-  test('projects user-owned Attention through the scoped Feed snapshot', async () => {
+  test('projects unresolved NeedsYou replies through the scoped Feed snapshot', async () => {
     const homeRoot = join(temporaryRoot, 'assistant-request-feed-home')
     const repoRoot = await createRepo(join(temporaryRoot, 'assistant-request-feed-repo'))
     const publisher = new PublicationCoordinator()
@@ -1580,9 +1579,6 @@ describe('MVP server', () => {
         updatedAt: timestamp,
         resolvedAt: null,
         refs: ['project:P-1'],
-        target: 'project:P-1',
-        notifiedAt: null,
-        operatorRequest: null,
       },
       body: 'Choose the release window.\n',
     })
@@ -1594,43 +1590,11 @@ describe('MVP server', () => {
     })
     const homeId = (await workspace.readWorkspace()).homeId
     const attentionRef = workspaceAttentionReference(homeId, 'A-choice')
-    await workspace.stageAttentionRequest(event.attributes.id, {
-      attentionRefs: [attentionRef],
-      decisionPrompt: {
-        questions: [
-          {
-            id: 'window',
-            header: 'Release window',
-            question: 'When should the release run?',
-            options: [
-              {
-                id: 'today',
-                label: 'Today',
-                description: 'Run in the current window',
-                recommended: true,
-              },
-              {
-                id: 'tomorrow',
-                label: 'Tomorrow',
-                description: 'Wait for the next window',
-              },
-            ],
-            allowOther: true,
-          },
-        ],
-      },
-    })
     await workspace.handleEvent(event.attributes.id, {
-      reply: 'Choose today or tomorrow.',
+      reply: '<NeedsYou attentionId="A-choice">Choose today or tomorrow.</NeedsYou>',
       disposition: 'operator-requested',
       expose: true,
       handledAt: new Date('2026-07-16T08:01:00.000Z'),
-    })
-    await workspace.updateAttention('A-choice', {
-      notifiedAt: '2026-07-16T08:01:00.000Z',
-      operatorRequest: `home:${homeId}/event:EV-choice`,
-      revisitAt: null,
-      updatedAt: new Date('2026-07-16T08:01:00.000Z'),
     })
 
     const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
@@ -1649,34 +1613,6 @@ describe('MVP server', () => {
             projectId: 'P-1',
             id: 'A-choice',
           }),
-        ],
-        decisionPrompts: [
-          {
-            attentionId: 'A-choice',
-            prompt: {
-              questions: [
-                {
-                  id: 'window',
-                  header: 'Release window',
-                  question: 'When should the release run?',
-                  options: [
-                    {
-                      id: 'today',
-                      label: 'Today',
-                      description: 'Run in the current window',
-                      recommended: true,
-                    },
-                    {
-                      id: 'tomorrow',
-                      label: 'Tomorrow',
-                      description: 'Wait for the next window',
-                    },
-                  ],
-                  allowOther: true,
-                },
-              ],
-            },
-          },
         ],
       },
     ])
@@ -1699,14 +1635,15 @@ describe('MVP server', () => {
         },
       },
     })
-    expect((await workspace.readWorkspace()).attentions.get('A-choice')?.attributes).toMatchObject({
-      operatorRequest: null,
-      resolvedAt: null,
-    })
+    expect(
+      (await workspace.readWorkspace()).attentions.get('A-choice')?.attributes.resolvedAt,
+    ).toBeNull()
     expect(await request(base, '/api/state?view=shell')).toMatchObject({
-      projects: [{ projectId: 'P-1', openAttentionCount: 1, needsYouCount: 0 }],
+      projects: [{ projectId: 'P-1', openAttentionCount: 1, needsYouCount: 1 }],
     })
-    expect((await request(base, '/api/assistant/feed?projectId=P-1&limit=2')).requests).toEqual([])
+    expect((await request(base, '/api/assistant/feed?projectId=P-1&limit=2')).requests).toEqual(
+      feed.requests,
+    )
 
     await workspace.resolveAttention('A-choice', 'Tomorrow was selected.')
     const resolved = await request(
@@ -1754,19 +1691,19 @@ describe('MVP server', () => {
       body: { repoPath: movedRepo },
     })
     const attentions = state.attentions as Array<{
-      target: string
+      refs: string[]
       resolvedAt: string | null
     }>
 
     expect(
-      attentions.find((attention) => attention.target === 'project:P-1')?.resolvedAt,
+      attentions.find((attention) => attention.refs.includes('project:P-1'))?.resolvedAt,
     ).toBeNull()
     expect(state).toMatchObject({
       projects: [{ projectId: 'P-1', openAttentionCount: 1 }],
     })
     const goal = await request(base, '/api/projects/P-1/goals/G-1')
     expect(goal).toMatchObject({
-      projectAttention: { target: 'project:P-1', resolvedAt: null },
+      projectAttention: { refs: ['project:P-1'], resolvedAt: null },
       works: [{ projection: { failedPredicates: [] } }],
     })
     expect((goal as { works: Array<{ blockedBy?: string }> }).works[0]?.blockedBy).not.toBe(
@@ -1794,9 +1731,6 @@ describe('MVP server', () => {
         updatedAt: createdAt,
         resolvedAt: null,
         refs: ['project:P-1', 'G-1', 'plan-initial'],
-        target: 'project:P-1',
-        notifiedAt: null,
-        operatorRequest: null,
       },
       body: 'The current Goal proof needs inspection.\n',
     })
@@ -1906,7 +1840,7 @@ describe('MVP server', () => {
 
     expect(await request(`http://127.0.0.1:${server.port}`, '/api/state')).toMatchObject({
       projects: [{ projectId: 'P-1', openAttentionCount: 1, goals: [] }],
-      attentions: [{ target: 'project:P-1', resolvedAt: null }],
+      attentions: [{ refs: ['project:P-1'], resolvedAt: null }],
       activeRuns: [],
     })
   })
@@ -2189,7 +2123,6 @@ describe('MVP server', () => {
         disposition: 'answered',
         expose: true,
       })
-      await acknowledgeGoalAttention(store, goalId, 'A-complete', new Date())
     }
     const userEvent = await workspace.receiveEvent({
       eventId: 'EV-user-followup',

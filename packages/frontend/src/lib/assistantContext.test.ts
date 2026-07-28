@@ -120,7 +120,6 @@ describe('Assistant automatic context', () => {
       goalId: 'G-1',
       id: 'A-1',
       notifiedAt: NOW,
-      operatorRequest: 'home:H-1/event:EV-public',
     })
     expect(findAttentionRequestEventId([openRequest('EV-public', [target])], target)).toBe(
       'EV-public',
@@ -136,7 +135,6 @@ describe('Assistant automatic context', () => {
           goalId: 'G-1',
           id: 'A-1',
           notifiedAt: NOW,
-          operatorRequest: 'home:H-1/event:EV-public',
         }),
       ),
     ).toBeNull()
@@ -146,7 +144,7 @@ describe('Assistant automatic context', () => {
 const NOW = '2026-07-12T00:00:00.000Z'
 
 function openRequest(eventId: string, attentions: AttentionView[]): AssistantOpenRequest {
-  return { eventId, attentions, decisionPrompts: [] }
+  return { eventId, attentions }
 }
 
 function attention(overrides: Partial<AttentionView>): AttentionView {
@@ -157,7 +155,6 @@ function attention(overrides: Partial<AttentionView>): AttentionView {
     createdAt: NOW,
     resolvedAt: null,
     notifiedAt: null,
-    operatorRequest: null,
     body: 'Needs a decision.',
     ...overrides,
   }

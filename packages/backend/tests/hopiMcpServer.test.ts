@@ -136,12 +136,15 @@ describe('HOPI MCP server', () => {
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.description,
-    ).toContain('transfer Attention ownership using canonical references')
+    ).toContain('durable natural-language Project todo')
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.inputSchema,
     ).toMatchObject({
-      required: ['change'],
-      properties: { change: expect.any(Object) },
+      required: ['projectId', 'change'],
+      properties: {
+        projectId: { type: 'string' },
+        change: { anyOf: expect.any(Array) },
+      },
     })
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema,

@@ -57,13 +57,13 @@ invocation, and run before queued wake work.
 The current Reflection implementation is only the deterministic wake recorder defined by
 [Project Owner And Attention](./mvp_project_owner.md). At an idle boundary it coalesces material
 Project facts and starts the same Assistant in a native fork of that Project's speaking session. It
-also continues unresolved Attention after a settled turn unless the current reply presents that
-Attention through `NeedsYou`, another turn already covers the conversation, or an active Work
-Attempt will provide the next settlement edge.
+also continues each unresolved Attention revision at most once after a settled turn unless another
+turn already covers the conversation or an active Work Attempt will provide the next settlement
+edge.
 
-`NeedsYou` has one operational effect in addition to presentation: it declares that no available
-Assistant or Project action can advance the referenced Attention before an operator response. An
-optional accelerator does not satisfy that condition and therefore does not pause continuation.
+`NeedsYou` is presentation only. It links public text to one unresolved Project Attention so the UI
+can decorate, count, and focus that message. It does not change ownership, scheduling, resolution,
+or continuation; those follow durable Attention and Project state.
 
 Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
 continue changing without advancing the selected Project's cursor; otherwise a cached Project feed

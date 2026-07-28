@@ -141,7 +141,7 @@ describe('derived Work projection', () => {
     const target = 'project:Project-1/goal:G-1/work:W-1'
     const goalPackage = packageWith(
       [work('W-1', 'engineering', 'generate')],
-      [attention('A-info', target, '2026-07-11T01:00:00Z', null)],
+      [attention('A-info', target, '2026-07-11T01:00:00Z')],
     )
 
     expect(
@@ -265,7 +265,6 @@ function attention(
   id: string,
   target: string,
   notifiedAt: string | null = null,
-  operatorRequest?: string | null,
 ): AttentionDocument {
   return {
     attributes: {
@@ -274,12 +273,6 @@ function attention(
       createdAt: '2026-07-11T00:00:00Z',
       resolvedAt: null,
       notifiedAt,
-      operatorRequest:
-        operatorRequest === undefined
-          ? notifiedAt
-            ? `home:H-1/event:EV-${id}`
-            : null
-          : operatorRequest,
     },
     body: 'Needs you.\n',
   }

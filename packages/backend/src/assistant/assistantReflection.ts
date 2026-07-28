@@ -5,6 +5,7 @@ import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import {
   type InboxEventDocument,
+  type WorkspaceAttentionDocument,
   workspaceAttentionProjectId,
 } from '../domain/assistantWorkspaceDocuments'
 import { workspaceAttentionReference } from '../domain/attentionReference'
@@ -13,7 +14,6 @@ import {
   assistantConversationScopeForEvent,
   assistantConversationScopeKey,
 } from './assistantConversationScope'
-import { needsYouAttentionIds } from './assistantNeedsYou'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import { assistantMaterialWakeKeys } from './assistantSupervisionContext'
 
@@ -37,6 +37,11 @@ const wakeCursorSchema = z
     scope: wakeScopeSchema,
     stateDigest: z.string().regex(/^[a-f0-9]{64}$/),
     eventId: z.string().min(1).nullable(),
+    attentionRevisionDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable()
+      .default(null),
     updatedAt: z.string().datetime({ offset: true }),
   })
   .strict()
@@ -131,20 +136,31 @@ export function createAssistantWake(options: {
       )
       const continuations = []
       for (const candidate of attentionContinuationCandidates(workspace, scopes)) {
+        const attentionRevisionDigest = await attentionContinuationDigest(
+          candidate.scopeKey,
+          candidate.attentionRevisions,
+        )
+        const cursor = await readCursor(cursorPath(cursorsRoot, candidate.scopeKey))
         if (
           input.settled &&
           !allPendingScopeKeys.has(candidate.scopeKey) &&
+          cursor?.attentionRevisionDigest !== attentionRevisionDigest &&
           candidate.snapshot.activeRuns.length === 0 &&
           ((await options.canWake?.(candidate.scope)) ?? true)
         ) {
-          continuations.push(candidate)
+          continuations.push({
+            ...candidate,
+            eventId: `EV-attention-${attentionRevisionDigest.slice(0, 24)}`,
+            attentionRevisionDigest,
+          })
         }
       }
       if (continuations.length > 0) {
         const selected = selectWakeScope(continuations, lastScopeKey)
         lastScopeKey = selected.scopeKey
         const operation = publishWake(selected.scope, selected.scopeKey, selected.snapshot, {
-          sourceEventId: selected.sourceEventId,
+          eventId: selected.eventId,
+          attentionRevisionDigest: selected.attentionRevisionDigest,
           attentionIds: selected.attentionIds,
           attentionRefs: selected.attentionRefs,
         }).finally(() => {
@@ -173,6 +189,7 @@ export function createAssistantWake(options: {
               scope: candidate.scope,
               stateDigest: candidate.snapshot.stateDigest,
               eventId: null,
+              attentionRevisionDigest: null,
               updatedAt: now().toISOString(),
             })
             establishedBaseline = true
@@ -217,7 +234,10 @@ export function createAssistantWake(options: {
     async acknowledgeProjects(projectIds) {
       if (stopped || projectIds.length === 0) return
       await active
-      const snapshot = await (options.state.readForReflection?.() ?? options.state.read())
+      const [snapshot, workspace] = await Promise.all([
+        options.state.readForReflection?.() ?? options.state.read(),
+        options.workspace.readWorkspaceForControl(),
+      ])
       const scopes = new Map(
         wakeScopeSnapshots(snapshot).map((candidate) => [candidate.scopeKey, candidate]),
       )
@@ -232,6 +252,7 @@ export function createAssistantWake(options: {
           scope: candidate.scope,
           stateDigest: candidate.snapshot.stateDigest,
           eventId: cursor?.eventId ?? null,
+          attentionRevisionDigest: await workspaceAttentionRevisionDigest(workspace, scopeKey),
           updatedAt: now().toISOString(),
         })
       }
@@ -277,17 +298,22 @@ export function createAssistantWake(options: {
     scopeKey: string,
     snapshot: AssistantStateSnapshot,
     continuation?: {
-      sourceEventId: string
+      eventId: string
+      attentionRevisionDigest: string
       attentionIds: string[]
       attentionRefs: string[]
     },
   ) {
-    const digestKey = await sha256(
-      continuation
-        ? `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${continuation.sourceEventId}\u0000${continuation.attentionIds.join('\u0000')}`
-        : `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${JSON.stringify(assistantMaterialWakeKeys(snapshot))}`,
-    )
-    const eventId = `${continuation ? 'EV-attention' : 'EV-wake'}-${digestKey.slice(0, 24)}`
+    const eventId =
+      continuation?.eventId ??
+      `EV-wake-${(
+        await sha256(
+          `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${JSON.stringify(assistantMaterialWakeKeys(snapshot))}`,
+        )
+      ).slice(0, 24)}`
+    const previousCursor = await readCursor(cursorPath(cursorsRoot, scopeKey))
+    const attentionRevisionDigest =
+      continuation?.attentionRevisionDigest ?? previousCursor?.attentionRevisionDigest ?? null
     const existing = await options.workspace.readEvent(eventId)
     if (existing) {
       await writeCursor(cursorPath(cursorsRoot, scopeKey), {
@@ -295,6 +321,7 @@ export function createAssistantWake(options: {
         scope,
         stateDigest: snapshot.stateDigest,
         eventId,
+        attentionRevisionDigest,
         updatedAt: now().toISOString(),
       })
       return
@@ -359,6 +386,7 @@ export function createAssistantWake(options: {
         scope,
         stateDigest: snapshot.stateDigest,
         eventId,
+        attentionRevisionDigest,
         updatedAt: now().toISOString(),
       })
       await writeJson(manifestPath, {
@@ -456,7 +484,10 @@ function attentionContinuationCandidates(
   scopes: ReturnType<typeof wakeScopeSnapshots>,
 ) {
   const scopeSnapshots = new Map(scopes.map((candidate) => [candidate.scopeKey, candidate]))
-  const openByScope = new Map<string, Array<{ id: string; updatedAt: string; reference: string }>>()
+  const openByScope = new Map<
+    string,
+    Array<{ id: string; updatedAt: string; reference: string; revision: string }>
+  >()
   for (const attention of workspace.attentions.values()) {
     if (attention.attributes.resolvedAt !== null) continue
     const projectId = workspaceAttentionProjectId(attention)
@@ -466,6 +497,7 @@ function attentionContinuationCandidates(
       id: attention.attributes.id,
       updatedAt: attention.attributes.updatedAt,
       reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
+      revision: workspaceAttentionRevisionKey(attention),
     })
     openByScope.set(scopeKey, current)
   }
@@ -492,19 +524,16 @@ function attentionContinuationCandidates(
     const scoped = scopeSnapshots.get(scopeKey)
     const source = latestHandledByScope.get(scopeKey)
     if (!scoped || !source || source.attributes.disposition === 'operational-failed') return []
-    const handedToOperator = new Set(needsYouAttentionIds(source.attributes.reply ?? ''))
-    const remaining = attentions
-      .filter((attention) => !handedToOperator.has(attention.id))
-      .toSorted(
-        (left, right) =>
-          left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
-      )
+    const remaining = attentions.toSorted(
+      (left, right) =>
+        left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
+    )
     if (remaining.length === 0) return []
     return [
       {
         ...scoped,
-        sourceEventId: source.attributes.id,
         attentionIds: remaining.map((attention) => attention.id),
+        attentionRevisions: remaining.map((attention) => attention.revision),
         attentionRefs: remaining.map((attention) => attention.reference),
       },
     ]
@@ -537,13 +566,43 @@ function renderAttentionContinuation(scope: WakeScope, attentionRefs: readonly s
     '',
     `Scope: ${scope.kind === 'project' ? `Project ${scope.projectId}` : 'Home'}`,
     '',
-    'The preceding Assistant turn settled while these Attention items remained unresolved and were not presented through NeedsYou:',
+    'The preceding Assistant turn settled while these Attention items remained unresolved:',
     ...attentionRefs.map((reference) => `- ${reference}`),
     '',
     'This is a durable internal event for a native fork of the Project speaking Session. It is not operator input.',
     'Current state and every unresolved Attention are supplied separately with this turn.',
     '',
   ].join('\n')
+}
+
+async function attentionContinuationDigest(
+  scopeKey: string,
+  attentionRevisions: readonly string[],
+) {
+  return sha256(
+    `${ASSISTANT_WAKE_PROTOCOL_REVISION}\u0000${scopeKey}\u0000${attentionRevisions.join('\u0000')}`,
+  )
+}
+
+async function workspaceAttentionRevisionDigest(workspace: AssistantWorkspace, scopeKey: string) {
+  const revisions = [...workspace.attentions.values()]
+    .filter((attention) => {
+      if (attention.attributes.resolvedAt !== null) return false
+      const projectId = workspaceAttentionProjectId(attention)
+      return (projectId ? `project:${projectId}` : 'home') === scopeKey
+    })
+    .map(workspaceAttentionRevisionKey)
+    .toSorted()
+  return revisions.length > 0 ? attentionContinuationDigest(scopeKey, revisions) : null
+}
+
+function workspaceAttentionRevisionKey(attention: WorkspaceAttentionDocument) {
+  return [
+    attention.attributes.id,
+    attention.attributes.updatedAt,
+    JSON.stringify(attention.attributes.refs),
+    attention.body,
+  ].join('\u0000')
 }
 
 function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
@@ -558,9 +617,7 @@ function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
     if (!Array.isArray(project.goals)) return false
     return project.goals.some(
       (goal) =>
-        isRecord(goal) &&
-        Array.isArray(goal.attentions) &&
-        goal.attentions.some(isOpenAttention),
+        isRecord(goal) && Array.isArray(goal.attentions) && goal.attentions.some(isOpenAttention),
     )
   })
 }

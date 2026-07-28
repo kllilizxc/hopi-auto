@@ -34,13 +34,10 @@ describe('Assistant reply delivery', () => {
     await fixture.workspace.createAttention({
       attributes: {
         id: 'A-event',
-        target: `home:${fixture.homeId}/event:EV-speaking`,
         createdAt: '2026-07-11T00:00:00Z',
         updatedAt: '2026-07-11T00:00:00Z',
         resolvedAt: null,
         refs: [`home:${fixture.homeId}/event:EV-speaking`],
-        notifiedAt: null,
-        operatorRequest: null,
       },
       body: 'Internal Attention body.\n',
     })
@@ -61,7 +58,7 @@ describe('Assistant reply delivery', () => {
     ])
     const state = await fixture.workspace.readWorkspace()
     expect(state.events.get('EV-speaking')?.attributes.webhookDeliveredAt).not.toBeNull()
-    expect(state.attentions.get('A-event')?.attributes.notifiedAt).toBeNull()
+    expect(state.attentions.get('A-event')?.attributes.resolvedAt).toBeNull()
     expect(await worker.deliverOnce()).toBe(0)
   })
 

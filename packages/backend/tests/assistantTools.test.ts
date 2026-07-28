@@ -610,7 +610,6 @@ describe('Assistant HOPI tools', () => {
             createdAt: '2026-07-19T00:00:00Z',
             resolvedAt: null,
             notifiedAt: null,
-            operatorRequest: null,
           },
           body: '## Completion\n\nThe previous delivery appeared complete.\n',
         }),
@@ -1479,7 +1478,6 @@ describe('Assistant HOPI tools', () => {
     expect(goalPackage.works.get('plan-initial')?.body).toContain('/EV-replan-attention.md')
     expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
       resolvedAt: null,
-      operatorRequest: null,
     })
   })
 
@@ -1539,12 +1537,10 @@ describe('Assistant HOPI tools', () => {
       effect: { kind: 'planning_created', mode: 'new_contract_revision' },
     })
     await fixture.tools.executeForEvent('EV-revise', 'hopi_manage_attention', {
+      projectId: 'P-1',
       change: {
         kind: 'resolve',
-        attentionRef: workspaceAttentionReference(
-          (await fixture.workspace.readWorkspace()).homeId,
-          attention.attributes.id,
-        ),
+        attentionId: attention.attributes.id,
         resolution: 'The accepted material revision is now represented by Planning.',
       },
     })
@@ -1570,11 +1566,12 @@ describe('Assistant HOPI tools', () => {
       'EV-project-repaired',
       'hopi_manage_attention',
       {
+        projectId: 'P-1',
         change: {
           kind: 'create',
-          target: 'project:P-1',
           attentionId,
           body: 'The managed integration root is invalid.',
+          refs: [],
         },
       },
     )
@@ -1582,9 +1579,10 @@ describe('Assistant HOPI tools', () => {
       'EV-project-repaired',
       'hopi_manage_attention',
       {
+        projectId: 'P-1',
         change: {
           kind: 'update',
-          attentionRef: workspaceAttentionReference(homeId, attentionId),
+          attentionId,
           body: 'The managed integration root must be verified.',
         },
       },
@@ -1594,9 +1592,10 @@ describe('Assistant HOPI tools', () => {
       'EV-project-repaired',
       'hopi_manage_attention',
       {
+        projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionRef: workspaceAttentionReference(homeId, attentionId),
+          attentionId,
           resolution,
         },
       },
@@ -1605,9 +1604,10 @@ describe('Assistant HOPI tools', () => {
       'EV-project-repaired',
       'hopi_manage_attention',
       {
+        projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionRef: workspaceAttentionReference(homeId, attentionId),
+          attentionId,
           resolution,
         },
       },
@@ -1645,7 +1645,7 @@ describe('Assistant HOPI tools', () => {
     ])
   })
 
-  test('resolves a Goal-local Attention by canonical reference with Inbox Input provenance', async () => {
+  test('does not route a Goal-local Attention through the Project Attention tool', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
@@ -1660,224 +1660,21 @@ describe('Assistant HOPI tools', () => {
       content: 'Resolve the old Goal Attention.',
     })
 
-    const attentionRef = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
-    const result = await fixture.tools.executeForEvent(
-      'EV-goal-attention',
-      'hopi_manage_attention',
-      {
-        change: {
-          kind: 'resolve',
-          attentionRef,
-          resolution: 'The accepted direction now clears the old condition.',
-        },
-      },
-    )
-    const repeated = await fixture.tools.executeForEvent(
-      'EV-goal-attention',
-      'hopi_manage_attention',
-      {
-        change: {
-          kind: 'resolve',
-          attentionRef,
-          resolution: 'The accepted direction now clears the old condition.',
-        },
-      },
-    )
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    const resolved = goalPackage.attentions.get(attention.attributes.id)
-    expect(result).toMatchObject({
-      changed: true,
-      value: {
-        attentionId: attention.attributes.id,
-        attentionRef,
-        resolved: true,
-      },
-    })
-    expect(resolved?.attributes.resolvedAt).not.toBeNull()
-    expect(resolved?.attributes.resolutionInput).toContain('EV-goal-attention.md')
-    expect(resolved?.body).toContain('The accepted direction now clears the old condition.')
-    expect(goalPackage.inputs).toHaveLength(1)
-    expect(repeated).toMatchObject({
-      changed: false,
-      value: {
-        attentionId: attention.attributes.id,
-        attentionRef,
-        resolved: true,
-        resolutionInput: resolved?.attributes.resolutionInput,
-      },
-    })
-  })
-
-  test('schedules one future revisit for workspace and Goal Attention', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const goalAttention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      'Check the external condition later.',
-    )
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-revisit',
-      content: 'Recheck both conditions later.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-    const projectAttention = await createWorkspaceAttentionController(
-      fixture.workspace,
-    ).ensureProjectAttention('P-1', 'Check Project recovery later.')
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    const at = new Date(Date.now() + 60_000).toISOString()
-    const workspaceRef = workspaceAttentionReference(homeId, projectAttention.attributes.id)
-    const goalRef = goalAttentionReference('P-1', 'G-1', goalAttention.attributes.id)
-
-    const workspaceResult = await fixture.tools.executeForEvent(
-      'EV-revisit',
-      'hopi_manage_attention',
-      {
-        change: { kind: 'defer_attention', attentionRef: workspaceRef, until: at },
-      },
-    )
-    const goalResult = await fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
-      change: { kind: 'defer_attention', attentionRef: goalRef, until: at },
-    })
-    const repeated = await fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
-      change: { kind: 'defer_attention', attentionRef: goalRef, until: at },
-    })
-
-    expect(workspaceResult).toMatchObject({
-      changed: true,
-      value: { attentionRef: workspaceRef, revisitAt: at },
-    })
-    expect(goalResult).toMatchObject({
-      changed: true,
-      value: { attentionRef: goalRef, revisitAt: at },
-    })
-    expect(repeated).toMatchObject({
-      changed: false,
-      value: { attentionRef: goalRef, revisitAt: at },
-    })
-    expect(
-      (await fixture.workspace.readWorkspace()).attentions.get(projectAttention.attributes.id)
-        ?.attributes.revisitAt,
-    ).toBe(at)
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get(goalAttention.attributes.id)
-        ?.attributes.revisitAt,
-    ).toBe(at)
-
     await expect(
-      fixture.tools.executeForEvent('EV-revisit', 'hopi_manage_attention', {
+      fixture.tools.executeForEvent('EV-goal-attention', 'hopi_manage_attention', {
+        projectId: 'P-1',
         change: {
-          kind: 'defer_attention',
-          attentionRef: goalRef,
-          until: new Date(Date.now() - 1_000).toISOString(),
+          kind: 'resolve',
+          goalId: 'G-1',
+          attentionId: attention.attributes.id,
+          resolution: 'Resolved.',
         },
       }),
-    ).rejects.toThrow('must be in the future')
-  })
-
-  test('transfers Attention through the exact final reply and clears its revisit', async () => {
-    const fixture = await setup()
-    const attention = await createWorkspaceAttentionController(
-      fixture.workspace,
-    ).ensureProjectAttention('P-1', 'Choose a release window.')
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    const attentionRef = workspaceAttentionReference(homeId, attention.attributes.id)
-    await fixture.workspace.updateAttention(attention.attributes.id, {
-      revisitAt: new Date(Date.now() + 60_000).toISOString(),
-    })
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-transfer',
-      content: 'The release window requires a user decision.',
-      context: { projectId: 'P-1', attentionRefs: [attentionRef] },
-    })
-
-    const staged = await fixture.tools.executeForEvent('EV-transfer', 'hopi_manage_attention', {
-      change: {
-        kind: 'transfer_attention_to_user',
-        attentionRefs: [attentionRef],
-        decisionPrompt: {
-          questions: [
-            {
-              id: 'window',
-              header: 'Release',
-              question: 'Which window?',
-              options: [
-                { id: 'now', label: 'Now', description: 'Use the current window' },
-                { id: 'later', label: 'Later', description: 'Wait for the next window' },
-              ],
-              allowOther: true,
-            },
-          ],
-        },
-      },
-    })
-    expect(staged).toMatchObject({
-      changed: true,
-      value: {
-        effect: { kind: 'attention_transfer_staged', attentionRefs: [attentionRef] },
-      },
-    })
-    expect((await fixture.workspace.readEvent('EV-transfer'))?.attributes.attentionRequest).toEqual(
-      {
-        attentionRefs: [attentionRef],
-        decisionPrompt: expect.objectContaining({
-          questions: [expect.objectContaining({ id: 'window' })],
-        }),
-      },
-    )
-
-    await fixture.workspace.handleEvent('EV-transfer', {
-      reply: 'Which release window should I use?',
-      disposition: 'operator-requested',
-      expose: true,
-    })
-    expect(await fixture.tools.acknowledgeEventAttentionRequest('EV-transfer')).toEqual([
-      attentionRef,
-    ])
-    const transferred = (await fixture.workspace.readWorkspace()).attentions.get(
-      attention.attributes.id,
-    )
-    expect(transferred?.attributes).toMatchObject({
-      operatorRequest: `home:${homeId}/event:EV-transfer`,
-      revisitAt: null,
-      notifiedAt: expect.any(String),
-    })
-    expect(await fixture.tools.acknowledgeEventAttentionRequest('EV-transfer')).toEqual([
-      attentionRef,
-    ])
-  })
-
-  test('creates Goal-local Attention from one canonical Work target', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-create-goal-attention',
-      content: 'The current Planning condition needs Assistant judgment.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-    const attentionId = 'A-planning-judgment'
-    const target = 'project:P-1/goal:G-1/work:plan-initial'
-    const attentionRef = goalAttentionReference('P-1', 'G-1', attentionId)
-
-    const created = await fixture.tools.executeForEvent(
-      'EV-create-goal-attention',
-      'hopi_manage_attention',
-      {
-        change: {
-          kind: 'create',
-          target,
-          attentionId,
-          body: 'Choose whether the current Planning contract remains valid.',
-        },
-      },
-    )
-    const attention = (await fixture.goalStore.readPackage('G-1')).attentions.get(attentionId)
-    expect(created).toMatchObject({
-      changed: true,
-      value: { attentionId, attentionRef, target, resolved: false },
-    })
-    expect(attention?.attributes).toMatchObject({ id: attentionId, target, resolvedAt: null })
+    ).rejects.toThrow()
+    expect(
+      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
+        ?.attributes.resolvedAt,
+    ).toBeNull()
   })
 
   test('explicitly requests deterministic Project recovery', async () => {
@@ -1923,12 +1720,10 @@ describe('Assistant HOPI tools', () => {
     })
 
     await fixture.tools.execute(token, 'hopi_manage_attention', {
+      projectId: 'P-1',
       change: {
         kind: 'resolve',
-        attentionRef: workspaceAttentionReference(
-          (await fixture.workspace.readWorkspace()).homeId,
-          attention.attributes.id,
-        ),
+        attentionId: attention.attributes.id,
         resolution: 'The new Planning run now represents the blocker.',
       },
     })

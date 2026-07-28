@@ -21,7 +21,6 @@ export async function publishTestWorkAttention(
       createdAt: new Date().toISOString(),
       resolvedAt: null,
       notifiedAt: null,
-      operatorRequest: null,
     },
     body: `## Observed condition\n\n${body}\n`,
   }

@@ -907,8 +907,7 @@ function selectedAcceptedInputPaths(
     files.flatMap((file) => {
       if (!file.content || !file.path.startsWith(inputRoot)) return []
       const document = parseInputDocument(decode(file.content))
-      return workBody.includes(file.path) ||
-        workBody.includes(document.attributes.sourceEventId)
+      return workBody.includes(file.path) || workBody.includes(document.attributes.sourceEventId)
         ? [file.path]
         : []
     }),
@@ -1055,8 +1054,6 @@ function proposalCapabilities(
       createdAt: '1970-01-01T00:00:00.000Z',
       resolvedAt: null,
       notifiedAt: null,
-      operatorRequest: null,
-      revisitAt: null,
     },
   }
   if (input.responsibility !== 'planner') {

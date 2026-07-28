@@ -399,13 +399,13 @@ variant of `022`, and dependency Evidence handoff; earlier terminal evidence rem
 | `HOPI-E2E-010` | Conversation and page-context boundary                    | P0       | Live Assistant             | Covered                                                          |
 | `HOPI-E2E-011` | Multiple user instructions while Goals run                | P0       | Contract and Live          | Covered; real chain completed and terminal artifact inspected    |
 | `HOPI-E2E-012` | Design revision during active delivery                    | P0       | Contract/runtime           | Covered by revision race plus real delivery evidence             |
-| `HOPI-E2E-013` | Blocking question, notification, answer, and continuation | P0       | Live                       | Covered                                                          |
+| `HOPI-E2E-013` | Project todo, NeedsYou, answer, and continuation          | P0       | Live                       | Post-redesign Live rerun pending                                 |
 | `HOPI-E2E-014` | Operational failure, bounded recovery, and retry          | P0       | Contract and Browser       | Covered                                                          |
 | `HOPI-E2E-015` | Pause and Resume during an active Run                     | P0       | Browser and Contract       | Covered by lifecycle UI plus process-group contracts             |
 | `HOPI-E2E-016` | Process lifecycle, exclusion, and restart recovery        | P0       | Contract and Live          | Covered; real Coordinator and Agent process replacement passed   |
 | `HOPI-E2E-017` | Multi-Repo full-stack delivery                            | P0       | Contract and Live          | Covered                                                          |
 | `HOPI-E2E-018` | Multi-Repo conflict and post-C1 projection recovery       | P0       | Contract and Browser       | Covered by multi-Repo C1 and Project Attention evidence          |
-| `HOPI-E2E-019` | Reflection notification and user priority                 | P1       | Live and Contract          | Covered; clean Live canary and four poisoned-history variants passed              |
+| `HOPI-E2E-019` | Project wake and user priority                            | P1       | Live and Contract          | Contract updated; post-redesign Live rerun pending                |
 | `HOPI-E2E-020` | Project linking, Repo rebind, and model settings          | P1       | Browser                    | Covered; native-picker boundary and nine UI checkpoints passed   |
 | `HOPI-E2E-021` | Preview creation, readiness, invalidation, and repair     | P1       | Browser and Contract       | Covered                                                          |
 | `HOPI-E2E-022` | Image-driven Goal design and implementation               | P1       | Live multimodal            | Covered; relevant delivery and conversation-only variants passed |
@@ -414,14 +414,14 @@ variant of `022`, and dependency Evidence handoff; earlier terminal evidence rem
 | `HOPI-E2E-025` | Webhook delivery during transport failure                 | P2       | Contract                   | Covered                                                          |
 | `HOPI-E2E-026` | Long conversation and lost vendor session                 | P2       | Contract and Live canary   | Covered                                                          |
 | `HOPI-E2E-027` | Complete Project context without mandatory preparation    | P1       | Contract and Live canary   | Covered by the blank multi-Repo fixture in `017`                 |
-| `HOPI-E2E-028` | Agent-led Project Attention recovery and reblocking       | P0       | Browser and Live canary    | Covered                                                          |
+| `HOPI-E2E-028` | Agent-led Project Attention recovery and supervision      | P0       | Browser and Live canary    | Browser passed post-redesign; Live rerun pending                  |
 | `HOPI-E2E-029` | Terminal Assistant provider error                         | P0       | Contract and Browser       | Covered                                                          |
 | `HOPI-E2E-030` | Project and Assistant-home migration                      | P1       | Contract                   | Covered; complete-set move and rebind passed                     |
 | `HOPI-E2E-031` | Safe Project source selection and scoped execution        | P0       | Browser and Contract       | Covered; scoped lifecycle and C1 escape rejection passed          |
 | `HOPI-E2E-032` | Durable cross-Project preference judgment                 | P1       | Live Assistant and Contract | Covered; focused Live judgment canary passed                     |
 | `HOPI-E2E-033` | Dependency Evidence and artifact handoff                  | P0       | Contract                   | Covered; production Coordinator handoff passed                    |
 | `HOPI-E2E-034` | Idempotent retry during Prepare and edge-triggered idle   | P0       | Contract                    | Covered; production race and deadline wakes passed                |
-| `HOPI-E2E-035` | Durable Attention continuation and NeedsYou handoff       | P0       | Contract                    | Covered; same-session drain and Work deferral passed               |
+| `HOPI-E2E-035` | Durable Attention continuation and NeedsYou presentation  | P0       | Contract                    | Covered; revision-idempotent continuation and Work deferral pass  |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
@@ -655,49 +655,44 @@ Generator is interrupted by a material revision, then proves the replacement Gen
 fresh revision-scoped session/workspace before only one fresh Generator and Reviewer outcome can
 publish/integrate the revised feature. A real Assistant design-judgment canary remains pending.
 
-### HOPI-E2E-013: Blocking Question, Notification, Answer, And Continuation
+### HOPI-E2E-013: Project Todo, NeedsYou, Answer, And Continuation
 
-| Field   | Value                                                                                                                     |
-| ------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Risk    | Work needs a real operator decision but remains silently stuck, asks repeatedly, or resumes before the answer is durable. |
-| Reality | Real Planner, Reflection, speaking Assistant, browser, and subsequent responsibility Runs.                                |
-| Fixture | Project authority explicitly presents two incompatible valid choices and forbids guessing a default.                      |
-| Cost    | High; includes at least one Planner, Reflection, and speaking turn before implementation.                                 |
+| Field   | Value                                                                                                           |
+| ------- | --------------------------------------------------------------------------------------------------------------- |
+| Risk    | A required operator decision is lost, asked repeatedly, or treated as resolved merely because the user replied. |
+| Reality | One real Project Assistant conversation, deterministic wake edges, browser, and responsibility Runs.            |
+| Fixture | Project authority explicitly presents two incompatible valid choices and forbids guessing a default.            |
+| Cost    | High; includes real Assistant and delivery responsibility turns.                                               |
 
 Actions:
 
 1. Ask HOPI to implement the ambiguous requirement.
-2. Wait for a targeted Attention rather than a guessed implementation.
-3. Observe `Waiting for Assistant`, then the single direct operator question and `Needs you` projection.
+2. Wait for one Project Attention rather than a guessed implementation.
+3. Observe one direct Assistant question presented with `NeedsYou`.
 4. Ask an informational follow-up without deciding; verify the Attention remains open.
-5. Give a later natural-language decision, optionally from another Goal page and without an explicit
-   Attention reference.
-6. Let Assistant select the intended Goal, apply the effect, settle the related Attention, and finish
-   delivery.
+5. Give a later natural-language decision through the ordinary conversation.
+6. Let Assistant apply the decision, explicitly resolve the Attention, and finish delivery.
 
 Pass conditions:
 
-- One open targeted Attention is the durable blocker and no covered Work is scheduled.
-- Reflection does not speak; the persistent Assistant exposes one concise question.
+- One open Project Attention preserves the unfinished decision without becoming a Work scheduling
+  predicate.
+- The deterministic wake mechanism does not speak; the persistent Project Assistant exposes one
+  concise question.
 - The question asks only for the decision required to continue and does not leak internal IDs.
-- Explicit reply context is sufficient but not required: semantic target selection plus current state
-  finds the same exact Attention from another page.
-- An informational follow-up does not resolve the Attention; a later instruction that satisfies or
-  supersedes its blocker does.
-- Answer effects publish before Attention resolution.
-- Work resumes once, reaches the selected semantic outcome, and does not repeat the notification.
-- No pending internal handoff or unresolved Attention remains at terminal state.
+- `NeedsYou` changes presentation only; the linked reply preserves the canonical Attention reference.
+- An informational follow-up and a user decision both leave Attention unchanged until Assistant
+  explicitly updates or resolves it.
+- Work reaches the selected semantic outcome without a second question or ownership-transfer step.
+- No pending Assistant turn or unresolved Project Attention remains at terminal state.
 
 Primary invariants: `INV-01`, `INV-04`, `INV-08`, `INV-09`, `INV-14`.
 
 Current implementation: `packages/backend/tests/live/blockingAttention.live.ts` (`bun run e2e:live:013`).
-The retained 2026-07-14 run passes the complete configured-provider path: Planner used the exact
-canonical Work target, Reflection handed off one direct question, Assistant published the answer and
-resolved the blocker, and Planner, Generator, Reviewer, C1, and completion all finished. Earlier
-failed artifacts remain retained as evidence for the document-path contract defect and a later
-provider TLS outage. The retained 2026-07-17 artifact additionally proves that an information-only
-follow-up leaves the blocker open before a later natural-language decision settles it; its final Run
-status records only the subsequently corrected stale delivery-checkout oracle.
+The implementation now exercises Project Attention and `NeedsYou`; retained runs before the Project
+owner redesign are historical evidence for the superseded targeted-Attention protocol and do not
+establish current Live coverage. A new configured-provider run is required before claiming this
+version passed.
 
 ### HOPI-E2E-014: Operational Failure, Assistant Judgment, And Retry
 
@@ -882,14 +877,14 @@ Pass conditions:
 
 Primary invariants: `INV-04`, `INV-05`, `INV-10`, `INV-11`, `INV-14`.
 
-### HOPI-E2E-019: Reflection Notification And User Priority
+### HOPI-E2E-019: Project Wake And User Priority
 
-| Field   | Value                                                                                                 |
-| ------- | ----------------------------------------------------------------------------------------------------- |
-| Risk    | Wake-up runs on noise, misses a rejection loop, duplicates Assistant turns, delays a new public user message, or lets one failed historical turn silence later Attention. |
-| Reality | Deterministic Project wake-up and the persistent Project Assistant with controlled semantic state transitions. |
-| Fixture | One normal progressing Goal, one Reviewer rejection followed by active repair, one deterministic transition to Assistant-owned Attention, and a variant with an older internal turn blocked by event-target Attention. |
-| Cost    | Medium to high depending on the number of semantic digests.                                           |
+| Field   | Value                                                                                                               |
+| ------- | ------------------------------------------------------------------------------------------------------------------- |
+| Risk    | Wake-up runs on noise, misses a rejection loop, duplicates turns, corrupts the speaking Session, or starves input.  |
+| Reality | Deterministic Project wake edges and native forks of one persistent Project Assistant conversation.                |
+| Fixture | Normal progress, repeated Reviewer rejection, one mutating fork, one read-only fork, and user input during a fork.  |
+| Cost    | Medium to high depending on configured-provider coverage.                                                           |
 
 Actions:
 
@@ -897,22 +892,13 @@ Actions:
 2. Confirm transient logs and an ordinary Generator-to-Reviewer handoff do not wake the Assistant.
 3. Reject one candidate and confirm the same Work immediately returns to Generator while the
    Project Assistant receives the durable rejection state without waiting for Project idle.
-4. Create a real Assistant-owned targeted Attention through product behavior.
-5. While its internal speaking handoff is running, submit a new public user message.
-6. Let the public turn finish, then allow current-state revalidation and Attention notification.
-7. Run one focused configured-provider turn that returns an informational final response without a
-   delivery tool; confirm the message records delivery but remains **Waiting for Assistant** and
-   receives a correction turn rather than becoming **Needs you**.
-8. Run the actionable variant with
-   `hopi_manage_attention({ kind: "transfer_attention_to_user", attentionRefs })` followed by the
-   complete question as its final response; confirm its public message is
-   independently understandable from the visible conversation, including the material cause,
-   blocking consequence, exact decision, non-obvious alternative effects, and recommendation when
-   one exists. Confirm **Needs you** points at that exact public event. Send an unrelated Goal message
-   and confirm it does not clear the request, then use its Reply control and confirm only that
-   correlated response returns ownership to Assistant.
-9. In the poisoned-history variant, retain one older blocked internal turn, create an independent
-   Assistant-owned Goal Attention, restart at one boundary, and let the system converge.
+4. Verify the wake runs in a provider-native fork and leaves the parent speaking Session unchanged.
+5. While that fork is running, submit a public user message and another material state edge.
+6. Let the fork settle; verify the user turn runs next and the later wake remains coalesced.
+7. Run a read-only fork with an empty response and confirm it leaves only raw diagnostics.
+8. Run a mutating fork and confirm successful HOPI effects plus any public response become durable
+   receipts for the next speaking turn.
+9. Repeat across another Project and one process restart.
 
 Pass conditions:
 
@@ -922,31 +908,22 @@ Pass conditions:
 - Assistant observation does not delay the next Generator, and an Assistant intervention makes a
   superseded active assignment unable to publish stale authority.
 - Wake-up is deterministic and invokes no separate Reflection model.
-- An eligible pending internal turn suppresses a duplicate wake for its conversation; a blocked
-  historical turn does not silence a newer Goal or Project event.
-- Public input receives speaking priority over pending internal turns.
-- The final direct operator message corresponds to current unresolved Attention and appears once.
-- A direct operator request contains enough causal context to decide without exposing the internal
-  Reflection brief; it is not only a choice list or bare question.
-- Informational delivery never projects **Needs you**; only an acknowledged
-  `transfer_attention_to_user` installs `operatorRequest`.
-- Only a user event with exact `replyTo` correlation clears that request; adjacent ordinary messages
-  do not.
-- The configured speaking model accepts the current notification schema; only its supplied message is public.
-- Debug UI distinguishes `Completed: sent` from `Completed: no action`.
-- Same-Goal, another-Goal, another-Project, and restart variants all notify the new Attention once
-  while preserving the old blocked turn until its own Attention is resolved.
-- Handling a handoff resets loop detection. Recovery settles without creating a new loop-exhaustion
-  Workspace Attention merely because several speaking effects changed the digest.
+- One Project has at most one active Assistant invocation; different Projects may run concurrently.
+- User input persists immediately, does not interrupt an active fork, and runs before queued wake work.
+- Native fork execution never advances or replaces the parent speaking Session.
+- An empty read-only fork is discarded from public conversation while its raw log remains.
+- Successful mutating effects and a public fork reply are delivered once through action receipts and
+  acknowledged only after a speaking turn succeeds.
+- `NeedsYou` is presentation only and does not affect queue order, Attention resolution, or ownership.
+- Restart preserves durable input, wake identity, and unacknowledged receipts without duplicating
+  Assistant effects.
 
 Primary invariants: `INV-04`, `INV-08`, `INV-09`, `INV-14`, `INV-15`.
 
-The focused Live canary in `packages/backend/tests/live/reflectionNotification.live.ts`
-(`bun run e2e:live:019`) proves the configured speaking model, notification schema, raw stream, and
-Assistant-panel presentation. Deterministic production-runtime compositions prove poisoned-history
-isolation for the same Goal, another Goal, another Project, and restart boundaries. Together these
-layers cover the semantic risk without repeating four costly model calls whose output cannot affect
-the asserted ownership boundary.
+Deterministic production-runtime tests cover serialization, user-first queueing, wake coalescing,
+native fork isolation, and receipts. The existing focused Live canary at
+`packages/backend/tests/live/reflectionNotification.live.ts` predates the fork protocol and requires
+replacement evidence before it can establish current configured-provider coverage.
 
 ### HOPI-E2E-020: Project Linking, Repo Rebind, And Model Settings
 
@@ -1253,10 +1230,10 @@ Actions:
 3. Let Assistant publish a `Needs you` message, reply from the Goal Board, and inspect the
    resulting Inbox event.
 4. Ask Assistant to resolve the Project Attention through its normal tool boundary.
-5. Hold Planner long enough to observe that execution did not depend on Attention resolution.
+5. Hold Planner long enough to observe that execution is independent of Attention resolution.
 6. Let Planning publish an Engineering Work whose next real task checkpoint fails closed.
-7. Observe Reflection wake the same Project Assistant, which creates a replacement Attention and
-   publishes the current request.
+7. Observe the material failure edge wake a native fork of the same Project Assistant, which creates
+   a replacement Attention and publishes the current request.
 
 Pass conditions:
 
@@ -1286,9 +1263,10 @@ Current Browser implementation: `packages/backend/tests/browser/projectAttention
 Git worktrees, Inbox routing, tool execution, and checkpoint failure. The configured-provider canary is
 `packages/backend/tests/live/projectAttentionRecovery.live.ts` (`bun run e2e:live:028`); it verifies
 that a real Assistant inspects already-applied external repair evidence, receives a successful
-resolve tool result, and wakes a real Planner. It does not claim the read-only Assistant performed
-the external repair itself or that the Goal completed. Both layers passed in the final integrated
-2026-07-14 regression; the earlier provider-quota failure remains only as historical issue evidence.
+resolve tool result, and leaves independently scheduled Planning untouched. It does not claim the
+Assistant performed the external repair itself or that Attention resolution schedules Work.
+Retained 2026-07-14 runs are historical evidence for the earlier protocol; current Browser and Live
+implementations must produce new evidence after the Project owner redesign.
 
 ### HOPI-E2E-029: Terminal Assistant Provider Error
 
@@ -1476,37 +1454,36 @@ Pass conditions:
   turn remains pending.
 - Prepare duration and complete logs remain attached to the same Attempt that runs the Agent.
 
-### HOPI-E2E-035: Durable Attention Revisit And NeedsYou Handoff
+### HOPI-E2E-035: Durable Attention Continuation And NeedsYou Presentation
 
-| Field   | Value                                                                                                             |
-| ------- | ----------------------------------------------------------------------------------------------------------------- |
-| Risk    | Assistant loses an intentional future check or loops while waiting for an external condition.                       |
-| Reality | Production Inbox, deterministic wake recorder, scoped Assistant session, Coordinator, and Work Run projection.     |
-| Fixture | One Project Attention, one scheduled revisit, `NeedsYou` transfer, and an active independent Work Attempt.          |
-| Cost    | Zero provider calls; deterministic model seam with production orchestration.                                      |
+| Field   | Value                                                                                                         |
+| ------- | ------------------------------------------------------------------------------------------------------------- |
+| Risk    | Assistant loses an unfinished todo, loops on an unchanged todo, or lets UI markup alter scheduling.           |
+| Reality | Production Inbox, deterministic wake recorder, scoped Assistant session, Coordinator, and Work projection.   |
+| Fixture | One Project Attention revision, one idempotent continuation, `NeedsYou`, and an active independent Attempt.   |
+| Cost    | Zero provider calls; deterministic model seam with production orchestration.                                  |
 
 Actions:
 
 1. Create one unresolved Project Attention and let its state edge wake the Project Assistant.
-2. End that turn without resolving, transferring, or scheduling the Attention.
-3. Verify repeated idle reconciliation and restart do not create another turn.
-4. Schedule one future revisit, cross its deadline, and handle the resulting internal turn.
-5. Verify the same timestamp cannot wake again; schedule a different timestamp to request another
-   observation.
-6. Transfer the Attention through `NeedsYou` and verify its pending revisit waits for an exact
-   operator reply.
+2. End that turn without resolving or updating the Attention.
+3. Verify one continuation is created for that exact Attention revision.
+4. Leave the continuation unresolved and verify repeated reconciliation and restart cannot create
+   another turn.
+5. Render the Attention through `NeedsYou` and verify only UI request projection changes.
+6. Update the Attention body and verify the new revision may receive one new continuation.
 
 Pass conditions:
 
-- An unresolved Attention without a new state edge or `revisitAt` produces no repeated turn.
-- One `revisitAt` produces exactly one idempotent event with the canonical Attention reference.
-- The revisit resumes the same Project provider session and receives current state plus all
+- One Attention revision produces at most one idempotent continuation event with its canonical
+  reference.
+- The continuation forks the same Project provider session and receives current state plus all
   unresolved Attention.
-- A current valid `NeedsYou` block suppresses scheduled observation until the exact reply.
+- `NeedsYou` neither creates nor suppresses a continuation and does not resolve Attention.
 - A pending same-scope Inbox turn is used instead of creating a duplicate continuation.
 - A non-stale active Work Attempt defers observation until its own settlement edge; a stale Run can
   still wake supervision.
-- Restart or repeated reconciliation cannot duplicate a deterministic revisit.
+- Restart or repeated reconciliation cannot duplicate the current revision's continuation.
 - `waitForIdle()` includes wake work queued by a completing Reflection record.
 
 ## Harness Self-Verification

@@ -208,24 +208,16 @@ export function createAssistantStateReader(options: {
     const workspaceAttentions = [...workspace.attentions.values()]
       .filter((attention) => attention.attributes.resolvedAt === null)
       .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
-      .map((attention) => {
-        const {
-          target: _target,
-          notifiedAt: _notifiedAt,
-          operatorRequest: _operatorRequest,
-          ...attributes
-        } = attention.attributes
-        return {
-          reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
-          projectId: workspaceAttentionProjectId(attention),
-          ...attributes,
-          body: boundedText(attention.body, 1_200),
-          inspectionPath: resolve(
-            options.workspace.root.path,
-            options.workspace.paths.attention(attention.attributes.id),
-          ),
-        }
-      })
+      .map((attention) => ({
+        reference: workspaceAttentionReference(workspace.homeId, attention.attributes.id),
+        projectId: workspaceAttentionProjectId(attention),
+        ...attention.attributes,
+        body: boundedText(attention.body, 1_200),
+        inspectionPath: resolve(
+          options.workspace.root.path,
+          options.workspace.paths.attention(attention.attributes.id),
+        ),
+      }))
 
     const projects = await Promise.all(
       selected.map(async (project) => {
@@ -485,6 +477,7 @@ export function createAssistantStateReader(options: {
       homeRoot,
       observedAt,
       staleAfterMs,
+      attemptHistoryLimit: input.attemptHistoryLimit ?? 3,
     })
     const projectIds = new Set(projects.map((project) => project.projectId))
     const attentionProjectId = (attention: DigestWorkspaceAttention) =>
@@ -947,6 +940,7 @@ async function readCrossProjectDelegations(input: {
   homeRoot: string
   observedAt: Date
   staleAfterMs: number
+  attemptHistoryLimit: number
 }) {
   const sourceEvents = new Map<
     string,
@@ -1002,6 +996,7 @@ async function readCrossProjectDelegations(input: {
                   attemptStore: input.attemptStore,
                   observedAt: input.observedAt,
                   staleAfterMs: input.staleAfterMs,
+                  attemptHistoryLimit: input.attemptHistoryLimit,
                 })
                 delegations.push({
                   sourceProjectId: source.projectId,

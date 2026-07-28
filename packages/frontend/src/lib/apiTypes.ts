@@ -185,11 +185,12 @@ export type ReflectionRunSummary = Omit<ReflectionRunDetail, 'events'>
 export interface AttentionView {
   scope: 'workspace' | 'goal'
   id: string
-  target: string | null
+  target?: string | null
   createdAt: string
+  updatedAt?: string
   resolvedAt: string | null
-  notifiedAt: string | null
-  operatorRequest: string | null
+  notifiedAt?: string | null
+  refs?: string[]
   body: string
   projectId?: string
   goalId?: string
@@ -230,35 +231,9 @@ export interface AssistantFeedActivity {
   phase: 'waiting' | 'working' | 'thinking'
 }
 
-export interface AssistantDecisionOption {
-  id: string
-  label: string
-  description: string
-  recommended?: boolean
-  detailPrompt?: string
-}
-
-export interface AssistantDecisionQuestion {
-  id: string
-  header: string
-  question: string
-  options: AssistantDecisionOption[]
-  allowOther: boolean
-}
-
-export interface AssistantDecisionPrompt {
-  questions: AssistantDecisionQuestion[]
-}
-
-export interface AssistantAttentionDecisionPrompt {
-  attentionId: string
-  prompt: AssistantDecisionPrompt
-}
-
 export interface AssistantOpenRequest {
   eventId: string
   attentions: AttentionView[]
-  decisionPrompts: AssistantAttentionDecisionPrompt[]
 }
 
 export interface CursorPageInfo {

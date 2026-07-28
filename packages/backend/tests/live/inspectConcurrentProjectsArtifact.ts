@@ -63,7 +63,7 @@ try {
   assert.deepEqual(state.activeRuns, [])
   assert.equal(
     state.attentions.filter(
-      (attention) => attention.target !== null && attention.resolvedAt === null,
+      (attention) => typeof attention.target === 'string' && attention.resolvedAt === null,
     ).length,
     0,
   )

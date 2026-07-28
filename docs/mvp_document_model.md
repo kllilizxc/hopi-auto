@@ -6,6 +6,9 @@ Last updated: 2026-07-24
 > [Project Owner And Attention](./mvp_project_owner.md) owns the minimal Project Attention document
 > and immutable original Goal statement. Legacy Goal-local and Workspace Attention fields remain
 > readable only for migration until this document is consolidated.
+>
+> Any `operatorRequest`, `revisitAt`, Attention owner/target, decision-prompt, or handoff fields
+> described below are historical compatibility details, not active Project Attention schema.
 
 This document owns the file-native layout, canonical document schemas, field authority, references,
 and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs

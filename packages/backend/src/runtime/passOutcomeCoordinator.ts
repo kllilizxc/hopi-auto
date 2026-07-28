@@ -227,8 +227,6 @@ function normalizeNewAttentions(
         ...attention.document.attributes,
         id,
         createdAt,
-        operatorRequest: attention.document.attributes.operatorRequest ?? null,
-        revisitAt: null,
       },
       body: attention.document.body,
     }
@@ -920,13 +918,8 @@ function validateNewAttention(
   if (path !== store.paths.attentionDocument(input.goalId, document.attributes.id)) {
     throw new PassProposalError(`Attention identity does not match proposal path: ${path}`)
   }
-  if (
-    document.attributes.resolvedAt !== null ||
-    document.attributes.notifiedAt !== null ||
-    (document.attributes.operatorRequest ?? null) !== null ||
-    (document.attributes.revisitAt ?? null) !== null
-  ) {
-    throw new PassProposalError('New Attention must be open, unnotified, and unscheduled')
+  if (document.attributes.resolvedAt !== null || document.attributes.notifiedAt !== null) {
+    throw new PassProposalError('New Attention must be open and unnotified')
   }
   const expectedTarget = workRef(store, input.goalId, input.workId)
   if (document.attributes.target === null) {

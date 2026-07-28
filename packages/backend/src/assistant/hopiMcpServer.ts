@@ -102,7 +102,7 @@ server.registerTool(
   'hopi_manage_attention',
   {
     description:
-      'Create, update, resolve, defer, or transfer Attention ownership using canonical references. Deferral keeps Assistant ownership and causes one future observation. Transfer stages the current final reply as the user request; after that reply is persisted, the referenced open Attentions become user-owned until an exact reply arrives. Goal resolution records the current Inbox turn as Input.',
+      'Create, update, or resolve one durable natural-language Project todo. References preserve traceability without changing scheduling or ownership. NeedsYou markup in an Assistant reply only presents an unresolved Attention to the user.',
     inputSchema: assistantMcpToolSchemas.hopi_manage_attention,
   },
   (args) => callTool('hopi_manage_attention', args),

@@ -152,7 +152,7 @@ facts for the next speaking turn or material wake.
 
 A running Work Attempt supplies its own later settlement edge, so unresolved Attention does not
 create polling while delegated work is active. When no responsibility is active, unresolved
-Attention that was not presented through `NeedsYou` may create one idempotent continuation edge.
+Attention may create one idempotent continuation edge per Attention revision.
 
 If the Assistant transport cannot run, HOPI records and presents that operational failure directly.
 It does not rely on the unavailable Assistant to report its own outage.
@@ -221,9 +221,9 @@ All unresolved Attention is supplied together on each wake. The model may consid
 relationships and current Project facts rather than consuming them as a strict FIFO.
 
 Finishing an Assistant turn publishes its effects and optional reply. Unresolved Attention preserves
-unfinished responsibility but does not by itself create another turn. A material state edge, an
-active Attempt's settlement, or one idempotent continuation for an item not surfaced through
-`NeedsYou` wakes the same Project conversation.
+unfinished responsibility without recurring polling. A material state edge, an active Attempt's
+settlement, or one idempotent continuation for the current Attention revision wakes the same Project
+conversation.
 
 The Assistant provider process tree has the same turn lifetime. A shell child still running when the
 turn ends is terminated with that turn; it is not a background job. A Work Attempt has an independent

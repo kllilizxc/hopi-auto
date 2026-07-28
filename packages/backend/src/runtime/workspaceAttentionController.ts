@@ -24,20 +24,16 @@ export function createWorkspaceAttentionController(
     const state = await workspace.readWorkspace()
     const existing = [...state.attentions.values()].find(
       (attention) =>
-        attention.attributes.target === target && attention.attributes.resolvedAt === null,
+        attention.attributes.refs.includes(target) && attention.attributes.resolvedAt === null,
     )
     if (existing) return existing
     const attention: WorkspaceAttentionDocument = {
       attributes: {
         id: `A-${idPrefix}-${crypto.randomUUID()}`,
-        target,
         createdAt: now().toISOString(),
         updatedAt: now().toISOString(),
         resolvedAt: null,
-        revisitAt: null,
         refs: [target],
-        notifiedAt: null,
-        operatorRequest: null,
       },
       body: [
         '## Needs you',

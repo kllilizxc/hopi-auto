@@ -11,7 +11,6 @@ import {
   useState,
 } from 'react'
 import { type Components, Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import type { AssistantAttentionDecisionPrompt } from '../lib/api'
 import {
   type MessageFeedActivityEntry,
   type MessageFeedDisplayRow,
@@ -21,7 +20,6 @@ import {
   summarizeActivityGroup,
 } from '../lib/messageFeed'
 import { cn } from '../lib/utils'
-import { AssistantDecisionPrompt } from './AssistantDecisionPrompt'
 import { MessageFeedSkeleton } from './MessageFeedSkeleton'
 import {
   AppBreathingIndicator,
@@ -51,10 +49,7 @@ interface UnifiedMessageFeedProps {
   focusGroupId?: string | null
   focusRequest?: number
   needsYouByGroupId?: ReadonlyMap<string, number>
-  decisionPromptsByGroupId?: ReadonlyMap<string, readonly AssistantAttentionDecisionPrompt[]>
-  decisionPromptDisabled?: boolean
   onReplyNeedsYou?: (groupId: string) => void
-  onSubmitDecisionPrompt?: (groupId: string, answer: string) => void
 }
 
 const INITIAL_FIRST_ITEM_INDEX = 100_000
@@ -105,10 +100,7 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
   focusGroupId = null,
   focusRequest = 0,
   needsYouByGroupId,
-  decisionPromptsByGroupId,
-  decisionPromptDisabled = false,
   onReplyNeedsYou,
-  onSubmitDecisionPrompt,
 }: UnifiedMessageFeedProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null)
   const handledFocusRequestRef = useRef(0)
@@ -209,30 +201,19 @@ export const UnifiedMessageFeed = memo(function UnifiedMessageFeed({
       if (row.type === 'action_required') return <ActionRequiredRow item={row.item} />
       if (row.type === 'system_update') return <SystemUpdateRow item={row.item} />
       const groupId = row.item.groupId
-      const decisionPrompts = groupId ? decisionPromptsByGroupId?.get(groupId) : undefined
       return (
         <MessageRow
           item={row.item}
           needsYouCount={groupId ? (needsYouByGroupId?.get(groupId) ?? 0) : 0}
-          decisionPrompts={decisionPrompts}
-          decisionPromptDisabled={decisionPromptDisabled}
           onReply={groupId && onReplyNeedsYou ? () => onReplyNeedsYou(groupId) : undefined}
-          onSubmitDecisionPrompt={
-            groupId && onSubmitDecisionPrompt
-              ? (answer) => onSubmitDecisionPrompt(groupId, answer)
-              : undefined
-          }
         />
       )
     },
     [
-      decisionPromptDisabled,
-      decisionPromptsByGroupId,
       expandedItems,
       lastRowId,
       needsYouByGroupId,
       onReplyNeedsYou,
-      onSubmitDecisionPrompt,
     ],
   )
   const itemContent = useCallback(
@@ -352,10 +333,7 @@ function messageFeedPropsEqual(previous: UnifiedMessageFeedProps, next: UnifiedM
     previous.focusGroupId !== next.focusGroupId ||
     previous.focusRequest !== next.focusRequest ||
     previous.needsYouByGroupId !== next.needsYouByGroupId ||
-    previous.decisionPromptsByGroupId !== next.decisionPromptsByGroupId ||
-    previous.decisionPromptDisabled !== next.decisionPromptDisabled ||
-    previous.onReplyNeedsYou !== next.onReplyNeedsYou ||
-    previous.onSubmitDecisionPrompt !== next.onSubmitDecisionPrompt
+    previous.onReplyNeedsYou !== next.onReplyNeedsYou
   ) {
     return false
   }
@@ -379,17 +357,11 @@ function feedRowGroupId(row: RenderedFeedRow) {
 function MessageRow({
   item,
   needsYouCount = 0,
-  decisionPrompts,
-  decisionPromptDisabled = false,
   onReply,
-  onSubmitDecisionPrompt,
 }: {
   item: MessageFeedItem
   needsYouCount?: number
-  decisionPrompts?: readonly AssistantAttentionDecisionPrompt[]
-  decisionPromptDisabled?: boolean
   onReply?: () => void
-  onSubmitDecisionPrompt?: (answer: string) => void
 }) {
   const isUser = item.kind === 'user_message'
   const needsYou = !isUser && needsYouCount > 0
@@ -424,13 +396,6 @@ function MessageRow({
           <div className="unified-feed-message__text">
             <AssistantMessageText text={item.text} />
           </div>
-        ) : null}
-        {needsYou && decisionPrompts?.length && onSubmitDecisionPrompt ? (
-          <AssistantDecisionPrompt
-            disabled={decisionPromptDisabled}
-            prompts={decisionPrompts}
-            onSubmit={onSubmitDecisionPrompt}
-          />
         ) : null}
         {item.attachments && item.attachments.length > 0 ? (
           <div className="unified-feed-message__attachments">

@@ -110,18 +110,13 @@ try {
       const currentAttention = state.attentions.find(
         (candidate) => candidate.id === attention.attributes.id,
       )
-      const plannerActive = state.activeRuns.some(
-        (run) =>
-          run.key.startsWith(`${PROJECT_ID}/${GOAL_ID}/`) && run.responsibility === 'planner',
-      )
-      return { state, event, goal, currentAttention, plannerActive }
+      return { state, event, goal, currentAttention }
     },
     (value) =>
       value.event?.status === 'handled' &&
       value.currentAttention?.resolvedAt != null &&
-      value.goal.projectAttention === null &&
-      value.plannerActive,
-    { timeoutMs: 5 * 60_000, description: 'Claude to verify, resolve, and wake Planner' },
+      value.goal.projectAttention === null,
+    { timeoutMs: 5 * 60_000, description: 'Assistant to verify and resolve Project Attention' },
   )
 
   assert.equal(await Bun.file(repairMarker).text(), 'READY\n')
@@ -130,15 +125,15 @@ try {
   const reply = event.reply?.trim()
   assert.ok(reply, 'Assistant must publish a visible recovery reply')
   const toolCallIndex = event.runtimeEvents.findIndex(
-    (event) => event.entryKind === 'tool_call' && event.toolName === 'hopi_resolve_attention',
+    (event) => event.entryKind === 'tool_call' && event.toolName === 'hopi_manage_attention',
   )
   const toolResultIndex = event.runtimeEvents.findIndex(
     (event, index) =>
       index > toolCallIndex &&
       event.entryKind === 'tool_result' &&
-      event.toolName === 'hopi_resolve_attention',
+      event.toolName === 'hopi_manage_attention',
   )
-  assert.ok(toolCallIndex >= 0, 'Real Assistant must call hopi_resolve_attention')
+  assert.ok(toolCallIndex >= 0, 'Real Assistant must call hopi_manage_attention')
   assert.ok(toolResultIndex > toolCallIndex, 'Successful resolve result must follow the tool call')
   assert.deepEqual(recorder.violations, [])
   const assistantReplyBrowser = await captureAssistantReply(harness, reply)
@@ -150,7 +145,7 @@ try {
     eventId: event.id,
     browserAdmission,
   })
-  await markHarnessCheckpoint(harness, 'planner_woken_after_project_recovery')
+  await markHarnessCheckpoint(harness, 'project_attention_resolution_verified')
   await recorder.stop()
   await shutdownLiveHarness(harness)
   const usage = await finishLiveHarness(harness, 'passed', {

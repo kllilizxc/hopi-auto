@@ -76,8 +76,10 @@ export function assistantSupervisionProjection(snapshot: AssistantStateSnapshot)
               goals: project.goals.map((goal) => {
                 if (!isRecord(goal)) return goal
                 return {
-                  goal: goal.goal,
-                  design: goal.design,
+                  goal: compactDocument(goal.goal, 4_000),
+                  design: Array.isArray(goal.design)
+                    ? goal.design.map((document) => compactDocument(document, 4_000))
+                    : [],
                   attentions: goal.attentions,
                   latestPlanningOutcome: compactWork(goal.latestPlanningOutcome),
                   works: Array.isArray(goal.works) ? goal.works.map(compactWork) : [],
@@ -114,6 +116,18 @@ function collectRuntimeWakeKeys(
   }
 }
 
+function compactDocument(value: unknown, bodyLimit: number) {
+  if (!isRecord(value)) return value
+  return {
+    ...(value.attributes ? { attributes: value.attributes } : {}),
+    ...(value.path ? { path: value.path } : {}),
+    ...(typeof value.body === 'string' ? { body: boundedText(value.body, bodyLimit) } : {}),
+    ...(typeof value.content === 'string'
+      ? { content: boundedText(value.content, bodyLimit) }
+      : {}),
+  }
+}
+
 function compactWork(value: unknown) {
   if (!isRecord(value)) return value
   const runtime = isRecord(value.runtime) ? value.runtime : null
@@ -136,6 +150,11 @@ function compactWork(value: unknown) {
         }
       : {}),
   }
+}
+
+function boundedText(value: string, limit: number) {
+  if (value.length <= limit) return value
+  return `${value.slice(0, limit).trimEnd()}\n[content omitted; inspect the canonical path for the full document]`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

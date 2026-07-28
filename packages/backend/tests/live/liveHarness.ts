@@ -43,11 +43,12 @@ export interface LiveState {
   }>
   attentions: Array<{
     id: string
-    target: string | null
+    target?: string | null
     body: string
     resolvedAt: string | null
-    notifiedAt: string | null
-    operatorRequest: string | null
+    updatedAt?: string
+    refs?: string[]
+    notifiedAt?: string | null
     projectId?: string
     goalId?: string
   }>
@@ -69,10 +70,11 @@ export interface LiveGoalDetail {
   }>
   attentions: Array<{
     id: string
-    target: string | null
+    target?: string | null
     resolvedAt: string | null
-    notifiedAt: string | null
-    operatorRequest: string | null
+    updatedAt?: string
+    refs?: string[]
+    notifiedAt?: string | null
   }>
 }
 
@@ -415,7 +417,7 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
   const statesPath = join(harness.artifactRoot, 'states.jsonl')
   const invariantsPath = join(harness.artifactRoot, 'invariants.jsonl')
 
-  const capture = async (settled = false) => {
+  const capture = async () => {
     const observation = await readObservation(harness.baseUrl)
     const serializedState = JSON.stringify({ state: observation.state, goals: observation.goals })
     if (serializedState !== previous) {
@@ -423,10 +425,7 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
       observations += 1
       await appendFile(statesPath, `${JSON.stringify(observation)}\n`)
     }
-    const currentViolations = [
-      ...stateInvariantViolations(observation),
-      ...(settled ? settledAttentionLivenessViolations(observation.state) : []),
-    ]
+    const currentViolations = stateInvariantViolations(observation)
     for (const violation of currentViolations) {
       if (violations.has(violation)) continue
       violations.add(violation)
@@ -457,7 +456,7 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
     stopping = true
     await loop
     try {
-      await capture(true)
+      await capture()
     } catch {
       // The retained runtime already contains the server-side failure evidence.
     }
@@ -488,18 +487,6 @@ export async function startStateRecorder(harness: LiveHarness): Promise<StateRec
       }
     },
   }
-}
-
-export function settledAttentionLivenessViolations(state: Pick<LiveState, 'attentions'>): string[] {
-  return state.attentions
-    .filter(
-      (attention) =>
-        attention.target !== null && attention.resolvedAt === null && !attention.operatorRequest,
-    )
-    .map(
-      (attention) =>
-        `settled boundary retains Assistant-owned targeted Attention ${attention.id} at ${attention.target}`,
-    )
 }
 
 export async function waitForGoalQuiescence(

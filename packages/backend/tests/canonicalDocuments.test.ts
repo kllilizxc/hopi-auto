@@ -70,7 +70,6 @@ describe('canonical Markdown documents', () => {
           createdAt: '2026-07-11T00:00:00Z',
           resolvedAt: null,
           notifiedAt: null,
-          revisitAt: '2026-07-11T01:00:00Z',
         },
         body: '## Needs you\n\nChoose the storage format.\n',
       }),
@@ -91,7 +90,7 @@ describe('canonical Markdown documents', () => {
 
     expect(input.attributes).not.toHaveProperty('actions')
     expect(attention.attributes).not.toHaveProperty('evidenceRefs')
-    expect(attention.attributes.revisitAt).toBe('2026-07-11T01:00:00Z')
+    expect(attention.attributes).not.toHaveProperty('revisitAt')
     expect(evidence.attributes.producerRun).toContain('/run:R-1')
   })
 

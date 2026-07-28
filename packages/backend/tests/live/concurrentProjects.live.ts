@@ -285,9 +285,9 @@ async function waitForGoalDone(harness: LiveHarness, projectId: string, goalId: 
         ?.goals.find((candidate) => candidate.id === goalId)
       const targeted = state.attentions.find(
         (attention) =>
-          attention.target !== null &&
+          typeof attention.target === 'string' &&
           attention.resolvedAt === null &&
-          attention.notifiedAt !== null,
+          typeof attention.notifiedAt === 'string',
       )
       if (targeted) throw new Error(`Unexpected operator Attention: ${targeted.id}`)
       return goal?.lifecycle === 'done'

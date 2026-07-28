@@ -20,7 +20,6 @@ import {
   workspaceAssistantContextDigest,
   workspaceAssistantRuntimeDigest,
 } from '../src/assistant/workspaceAssistant'
-import { goalAttentionReference } from '../src/domain/attentionReference'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import {
@@ -988,15 +987,12 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain(
       'A Work requested in this turn can start only after the turn settles',
     )
-    expect(seen[0]?.prompt).toContain('Attention remains Assistant-owned')
-    expect(seen[0]?.prompt).toContain('hopi_manage_attention records a resolution')
-    expect(seen[0]?.prompt).not.toContain('<NeedsYou>')
+    expect(seen[0]?.prompt).toContain('hopi_manage_attention persists the Project Assistant todo')
+    expect(seen[0]?.prompt).toContain('<NeedsYou attentionId="A-...">')
     expect(seen[0]?.prompt).not.toContain('<DecisionPrompt>')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
-    expect(seen[0]?.prompt).toContain(
-      'Project Preview is one local managed runtime',
-    )
+    expect(seen[0]?.prompt).toContain('Project Preview is one local managed runtime')
     expect(seen[0]?.prompt).toContain('omit internals unless asked or decision-relevant')
     expect(seen[0]?.prompt).toContain('Only HOPI operatorUrl is linkable')
     expect(seen[0]?.prompt).toContain('task worktrees are disposable')
@@ -1439,7 +1435,11 @@ describe('WorkspaceAssistant conversation', () => {
 
   test('supplies a complete compact state index instead of slicing away later failed Work', async () => {
     const prompts: string[] = []
-    const stateReads: Array<{ projectId?: string; goalId?: string }> = []
+    const stateReads: Array<{
+      projectId?: string
+      goalId?: string
+      attemptHistoryLimit?: number
+    }> = []
     const oversizedArchiveBody = `archive-${'x'.repeat(40_000)}-archive-end`
     const snapshot = {
       observedAt: '2026-07-26T15:09:24.000Z',
@@ -1528,7 +1528,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-complete-state')
 
-    expect(stateReads).toEqual([{ projectId: 'P-1' }, { projectId: 'P-1' }])
+    expect(stateReads).toEqual([{ projectId: 'P-1', attemptHistoryLimit: 12 }])
     const encoded = prompts[0]?.match(/```json\n([\s\S]*?)\n```/)?.[1]
     expect(encoded).toBeDefined()
     const current = JSON.parse(encoded ?? '{}')
@@ -1593,215 +1593,6 @@ describe('WorkspaceAssistant conversation', () => {
       attention.attributes.id,
     )
     expect(current?.attributes.resolvedAt).toBeNull()
-  })
-
-  test('keeps an internal event pending until its Assistant-owned Attention advances', async () => {
-    let calls = 0
-    let attentionRef = ''
-    const sessions: Array<string | null> = []
-    const fixture = await setup(
-      (tools) => ({
-        async run(input, observer) {
-          calls += 1
-          sessions.push(input.session?.sessionId ?? null)
-          await observer?.onSession?.(codexSession(`thread-responsibility-${calls}`))
-          if (calls === 1) {
-            return { reply: '', session: codexSession('thread-responsibility-1') }
-          }
-          await tools.execute(input.toolToken, 'hopi_manage_attention', {
-            change: {
-              kind: 'defer_attention',
-              attentionRef,
-              until: '2027-07-12T00:00:00.000Z',
-            },
-          })
-          return { reply: '', session: codexSession('thread-responsibility-2') }
-        },
-      }),
-      { includeState: true },
-    )
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      1,
-      'The next owner must be recorded.',
-    )
-    attentionRef = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-responsibility',
-      content: 'Current Assistant responsibility changed.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [attentionRef],
-      },
-    })
-
-    await expect(fixture.assistant.process('EV-responsibility')).rejects.toThrow(
-      'canonical Assistant responsibility is unchanged',
-    )
-    expect((await fixture.workspace.readEvent('EV-responsibility'))?.attributes.status).toBe(
-      'pending',
-    )
-    expect((await fixture.conversation.readTurn('EV-responsibility'))?.manifest.status).toBe(
-      'failed',
-    )
-
-    await fixture.assistant.process('EV-responsibility')
-
-    expect(sessions).toEqual([null, null])
-    expect((await fixture.workspace.readEvent('EV-responsibility'))?.attributes).toMatchObject({
-      status: 'handled',
-      visibility: 'internal',
-    })
-    const current = (await fixture.goalStore.readPackage('G-1')).attentions.get(
-      attention.attributes.id,
-    )
-    expect(current?.attributes.revisitAt).toBe('2027-07-12T00:00:00.000Z')
-  })
-
-  test('keeps a settled-failure event pending until its Work gains a durable successor', async () => {
-    let calls = 0
-    const failed = settledFailureSnapshot('finished')
-    let current = failed
-    let stagedWorkspace: ReturnType<typeof createAssistantWorkspaceStore> | null = null
-    const fixture = await setup(
-      () => ({
-        async run(input, observer) {
-          calls += 1
-          await observer?.onSession?.(codexSession(`thread-work-recovery-${calls}`))
-          if (calls === 1) {
-            await stagedWorkspace?.stageAttentionRequest(input.eventId, {
-              attentionRefs: [goalAttentionReference('P-1', 'G-1', 'stale-transfer')],
-            })
-            return {
-              reply: 'The stale transfer cannot settle this Work.',
-              session: codexSession('thread-work-recovery-1'),
-            }
-          }
-          if (calls === 2) current = settledFailureSnapshot('queued')
-          return { reply: '', session: codexSession(`thread-work-recovery-${calls}`) }
-        },
-      }),
-      {
-        assistantState: {
-          async read() {
-            return current
-          },
-        },
-      },
-    )
-    stagedWorkspace = fixture.workspace
-    const workRef = 'project:P-1/goal:G-1/work:W-failed'
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-work-recovery',
-      content: 'Recover the persisted failed Work.',
-      context: { projectId: 'P-1', workRefs: [workRef] },
-    })
-
-    await expect(fixture.assistant.process('EV-work-recovery')).rejects.toThrow(
-      'canonical Assistant responsibility is unchanged',
-    )
-    expect((await fixture.workspace.readEvent('EV-work-recovery'))?.attributes.status).toBe(
-      'pending',
-    )
-    expect(
-      (await fixture.workspace.readEvent('EV-work-recovery'))?.attributes.attentionRequest,
-    ).toBeNull()
-
-    await fixture.assistant.process('EV-work-recovery')
-
-    expect(calls).toBe(2)
-    expect((await fixture.workspace.readEvent('EV-work-recovery'))?.attributes).toMatchObject({
-      status: 'handled',
-      visibility: 'internal',
-    })
-  })
-
-  test('clears a staged transfer left by an interrupted invocation before retry context', async () => {
-    let prompt = ''
-    const fixture = await setup(() => ({
-      async run(input) {
-        prompt = input.prompt
-        return { reply: '', session: codexSession('thread-clean-transfer-retry') }
-      },
-    }))
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-stale-transfer',
-      content: 'Retry this internal event.',
-      context: { projectId: 'P-1' },
-    })
-    await fixture.workspace.stageAttentionRequest('EV-stale-transfer', {
-      attentionRefs: [goalAttentionReference('P-1', 'G-1', 'stale-transfer')],
-    })
-
-    await fixture.assistant.process('EV-stale-transfer')
-
-    expect(prompt).not.toContain('Staged responsibility transfer')
-    expect((await fixture.workspace.readEvent('EV-stale-transfer'))?.attributes).toMatchObject({
-      status: 'handled',
-      visibility: 'internal',
-      attentionRequest: null,
-    })
-  })
-
-  test('publishes one final user request and atomically transfers its Attention', async () => {
-    let attentionRef = ''
-    const fixture = await setup(
-      (tools) => ({
-        async run(input) {
-          await tools.execute(input.toolToken, 'hopi_manage_attention', {
-            change: {
-              kind: 'transfer_attention_to_user',
-              attentionRefs: [attentionRef],
-            },
-          })
-          return {
-            reply: 'Which production window should I use?',
-            session: codexSession('thread-transfer'),
-          }
-        },
-      }),
-      { includeState: true },
-    )
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      1,
-      'A production window is required.',
-    )
-    attentionRef = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-transfer',
-      content: 'Decide who owns the unresolved production window.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [attentionRef],
-      },
-    })
-
-    await fixture.assistant.process('EV-transfer')
-
-    expect((await fixture.workspace.readEvent('EV-transfer'))?.attributes).toMatchObject({
-      status: 'handled',
-      visibility: 'public',
-      reply: 'Which production window should I use?',
-      disposition: 'operator-requested',
-      attentionRequest: { attentionRefs: [attentionRef] },
-    })
-    const current = (await fixture.goalStore.readPackage('G-1')).attentions.get(
-      attention.attributes.id,
-    )
-    expect(current?.attributes).toMatchObject({
-      operatorRequest: expect.stringMatching(/\/event:EV-transfer$/),
-      revisitAt: null,
-      notifiedAt: expect.any(String),
-    })
   })
 
   test('keeps supervision on a native branch and delivers only its action receipt to speaking', async () => {
@@ -1874,51 +1665,6 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[2]?.prompt).toContain('Confirmed actions completed by supervision forks')
     expect(seen[2]?.prompt).toContain('Adjusted the Work contract.')
     expect(await fixture.conversation.readPendingActionReceipts(scope)).toEqual([])
-  })
-
-  test('accepts a transient retry-only internal handoff without a second model call', async () => {
-    let calls = 0
-    const fixture = await setup((tools) => ({
-      async run(input) {
-        calls += 1
-        await tools.execute(input.toolToken, 'hopi_control_work', {
-          projectId: 'P-1',
-          goalId: 'G-1',
-          workId: 'plan-initial',
-          action: { kind: 'retry' },
-        })
-        return { reply: '', session: codexSession('thread-atomic-retry') }
-      },
-    }))
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      3,
-      'stream disconnected before completion',
-    )
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-atomic-retry',
-      content: 'The transient blocker is clear; retry the Work.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [`project:P-1/goal:G-1/attention:${attention.attributes.id}`],
-      },
-    })
-
-    await fixture.assistant.process('EV-atomic-retry')
-
-    expect(calls).toBe(1)
-    expect((await fixture.workspace.readEvent('EV-atomic-retry'))?.attributes).toMatchObject({
-      status: 'handled',
-      visibility: 'internal',
-    })
-    const current = (await fixture.goalStore.readPackage('G-1')).attentions.get(
-      attention.attributes.id,
-    )
-    expect(current?.attributes.resolvedAt).toBeNull()
   })
 })
 
@@ -1999,50 +1745,6 @@ async function setup(
     now: () => new Date('2026-07-11T00:00:00Z'),
   })
   return { homeRoot, workspace, conversation, goalStore, controller, tools, assistant }
-}
-
-function settledFailureSnapshot(latestStatus: 'finished' | 'queued'): AssistantStateSnapshot {
-  const workRef = {
-    attributes: { id: 'W-failed', kind: 'engineering', stage: 'generate' },
-    body: 'Recover this Work.',
-    projection: {
-      failedPredicates: latestStatus === 'finished' ? ['failed_attempt'] : [],
-    },
-    runtime: {
-      latestAttempt: {
-        runId: latestStatus === 'finished' ? 'R-failed' : 'R-successor',
-        responsibility: 'generator',
-        status: latestStatus,
-        result: latestStatus === 'finished' ? 'attention' : null,
-        application: latestStatus === 'finished' ? 'invalid' : null,
-      },
-    },
-  }
-  return {
-    observedAt: '2026-07-11T00:00:00.000Z',
-    stateDigest: latestStatus === 'finished' ? 'a'.repeat(64) : 'b'.repeat(64),
-    conversationDigests: {
-      home: 'c'.repeat(64),
-      projects: { 'P-1': latestStatus === 'finished' ? 'd'.repeat(64) : 'e'.repeat(64) },
-    },
-    activeRuns: [],
-    delegations: [],
-    workspaceAttentions: [],
-    projects: [
-      {
-        projectId: 'P-1',
-        available: true,
-        releaseHead: 'release',
-        goals: [
-          {
-            goal: { attributes: { id: 'G-1' } },
-            attentions: [],
-            works: [workRef],
-          },
-        ],
-      },
-    ],
-  } as AssistantStateSnapshot
 }
 
 async function currentAssistantContextDigest(

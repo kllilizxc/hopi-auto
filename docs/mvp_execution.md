@@ -7,6 +7,9 @@ Last updated: 2026-07-26
 > Coordinator/Reflection and targeted-Attention recovery rules.
 > [Project Runtime Capabilities](./mvp_project_runtime.md) supersedes per-Repo Prepare, formal
 > Planner Preview, canned Preview repair, and Attention-gated Preview rules.
+>
+> Any separate Reflection Agent, Attention ownership/transfer, structured decision prompt, or
+> prescriptive recovery flow below is historical context and does not define active behavior.
 
 This document owns semantic guards, the fixed responsibility profile, scheduling, worktrees,
 recovery, completion assessment, notification, and Preview behavior for

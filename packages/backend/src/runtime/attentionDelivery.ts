@@ -1,8 +1,5 @@
 import { isInternalInboxSource } from '../domain/assistantWorkspaceDocuments'
-import { parseAttentionDocument, renderAttentionDocument } from '../domain/canonicalDocuments'
-import { hashBytes } from '../publication/publisher'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
-import type { GoalPackageStore } from '../storage/goalPackageStore'
 
 export interface AttentionDeliveryMessage {
   key: string
@@ -108,95 +105,4 @@ export function createWebhookAttentionTransport(
       }
     },
   }
-}
-
-export async function acknowledgeGoalAttention(
-  store: GoalPackageStore,
-  goalId: string,
-  attentionId: string,
-  acknowledgedAt: Date,
-  operatorRequest?: string,
-) {
-  const goalPackage = await store.readPackage(goalId)
-  const current = goalPackage.attentions.get(attentionId)
-  if (!current || current.attributes.resolvedAt !== null) {
-    return false
-  }
-  const completion = current.attributes.target === null
-  if (
-    completion &&
-    (goalPackage.goal.attributes.lifecycle !== 'done' ||
-      goalPackage.goal.attributes.completionAttentionId !== attentionId)
-  ) {
-    return false
-  }
-  const nextOperatorRequest = completion
-    ? null
-    : (operatorRequest ?? current.attributes.operatorRequest ?? null)
-  if (
-    current.attributes.notifiedAt !== null &&
-    (current.attributes.operatorRequest ?? null) === nextOperatorRequest
-  ) {
-    return false
-  }
-  const path = store.paths.attentionDocument(goalId, attentionId)
-  const source = await Bun.file(store.paths.absolute(path)).text()
-  const attention = parseAttentionDocument(source)
-  attention.attributes.notifiedAt ??= acknowledgedAt.toISOString()
-  attention.attributes.operatorRequest = nextOperatorRequest
-  if (nextOperatorRequest !== null) attention.attributes.revisitAt = null
-  if (completion) {
-    attention.attributes.resolvedAt = acknowledgedAt.toISOString()
-    attention.body += '\n## Resolution\n\nCompletion update delivered.\n'
-  }
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path,
-      expectedHash: await hashBytes(new TextEncoder().encode(source)),
-      content: renderAttentionDocument(attention),
-    },
-    validateTransition(currentPackage) {
-      const currentGoal = currentPackage.goal.attributes
-      if (
-        completion &&
-        (currentGoal.lifecycle !== 'done' || currentGoal.completionAttentionId !== attentionId)
-      ) {
-        throw new Error('Completion Attention is no longer deliverable')
-      }
-    },
-  })
-  return true
-}
-
-export async function clearGoalAttentionOperatorRequest(
-  store: GoalPackageStore,
-  goalId: string,
-  attentionId: string,
-  expectedRequest?: string,
-) {
-  const goalPackage = await store.readPackage(goalId)
-  const current = goalPackage.attentions.get(attentionId)
-  const operatorRequest = current?.attributes.operatorRequest ?? null
-  if (
-    !current ||
-    current.attributes.resolvedAt !== null ||
-    operatorRequest === null ||
-    (expectedRequest !== undefined && operatorRequest !== expectedRequest)
-  ) {
-    return false
-  }
-  const path = store.paths.attentionDocument(goalId, attentionId)
-  const source = await Bun.file(store.paths.absolute(path)).text()
-  const attention = parseAttentionDocument(source)
-  attention.attributes.operatorRequest = null
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path,
-      expectedHash: await hashBytes(new TextEncoder().encode(source)),
-      content: renderAttentionDocument(attention),
-    },
-  })
-  return true
 }

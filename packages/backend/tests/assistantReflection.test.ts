@@ -71,7 +71,7 @@ describe('Assistant wake trigger', () => {
     expect(projectIds).toEqual(['P-1', 'P-2'])
   })
 
-  test('continues unresolved Project Attention until the Assistant presents NeedsYou', async () => {
+  test('continues each unresolved Project Attention revision at most once', async () => {
     const fixture = await setup(['P-1'])
     await fixture.workspace.createAttention(attention('A-1', 'P-1'))
     fixture.setSnapshot(
@@ -110,12 +110,33 @@ describe('Assistant wake trigger', () => {
     })
     expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
     await fixture.workspace.handleEvent(continuation.attributes.id, {
-      reply: '<NeedsYou attentionId="A-1">Choose the source.</NeedsYou>',
-      disposition: 'notified',
+      reply: 'The todo remains open.',
+      disposition: 'silent',
       expose: true,
     })
-    expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
+    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
     expect((await recoveredWake.listRuns()).length).toBe(2)
+
+    const unchangedTimestamp = new Date('2026-07-25T00:00:00.000Z')
+    await fixture.workspace.updateAttention('A-1', {
+      body: 'Inspect the changed failure.',
+      updatedAt: unchangedTimestamp,
+    })
+    fixture.setSnapshot(
+      snapshot(['P-1'], {
+        workspaceAttentions: [
+          {
+            ...snapshotAttention('A-1', 'P-1'),
+            body: 'Inspect the changed failure.',
+          },
+        ],
+      }),
+    )
+
+    expect(await recoveredWake.observe({ settled: true })).toBe('started')
+    await recoveredWake.waitForIdle()
+    expect((await recoveredWake.listRuns()).length).toBe(3)
+    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
   })
 
   test('lets an active Work Attempt provide the next Attention wake edge', async () => {
@@ -147,6 +168,10 @@ describe('Assistant wake trigger', () => {
           workId: 'W-1',
           responsibility: 'generator',
           runId: 'R-1',
+          status: 'running',
+          requestedAt: '2026-07-25T00:00:00.000Z',
+          startedAt: '2026-07-25T00:00:00.000Z',
+          waitReason: null,
         },
       ],
     })
@@ -251,6 +276,23 @@ describe('Assistant wake trigger', () => {
     await fixture.wake.waitForIdle()
     expect(await fixture.wake.listRuns()).toHaveLength(1)
   })
+
+  test('acknowledges an Assistant-created Attention revision without a redundant continuation', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    await fixture.workspace.createAttention(attention('A-1', 'P-1'))
+    fixture.setSnapshot(
+      snapshot(['P-1'], {
+        workspaceAttentions: [snapshotAttention('A-1', 'P-1')],
+        projectDigests: { 'P-1': '8'.repeat(64) },
+      }),
+    )
+
+    await fixture.wake.acknowledgeProjects(['P-1'])
+
+    expect(await fixture.wake.observe({ settled: true })).toBe('unchanged')
+    expect(await fixture.wake.listRuns()).toEqual([])
+  })
 })
 
 async function setup(projectIds: string[], options: { speakingSession?: boolean } = {}) {
@@ -307,6 +349,7 @@ function snapshot(
       projects: projectDigests,
     },
     activeRuns: [],
+    delegations: [],
     workspaceAttentions: overrides.workspaceAttentions ?? [],
     projects: projectIds.map((projectId) => ({
       projectId,
@@ -326,9 +369,6 @@ function attention(id: string, projectId: string): WorkspaceAttentionDocument {
       updatedAt: timestamp,
       resolvedAt: null,
       refs: [`project:${projectId}`],
-      target: `project:${projectId}`,
-      notifiedAt: null,
-      operatorRequest: null,
     },
     body: 'Inspect the repeated failure.\n',
   }
@@ -365,6 +405,10 @@ function reviewerRejectSnapshot(
         workId: 'W-1',
         responsibility: 'generator',
         runId: generatorRunId,
+        status: 'running',
+        requestedAt: '2026-07-25T00:00:00.000Z',
+        startedAt: '2026-07-25T00:00:00.000Z',
+        waitReason: null,
       },
     ],
     projects: [

@@ -16,7 +16,6 @@ import {
   registerLogicalRunSafety,
   resolveBrowserAuditMode,
   semanticDirectoryDigest,
-  settledAttentionLivenessViolations,
   shutdownLiveHarness,
   waitForValue,
 } from './live/liveHarness'
@@ -31,49 +30,6 @@ test('browser audit degradation is explicit and never fabricates verification', 
   expect(() => resolveBrowserAuditMode({ valid: false }, true)).toThrow(
     'Browser Harness audit verification failed',
   )
-})
-
-test('settled Attention liveness rejects unresolved Assistant-owned targeted blockers', () => {
-  expect(
-    settledAttentionLivenessViolations({
-      attentions: [
-        {
-          id: 'A-orphaned',
-          target: 'project:P-1/goal:G-1',
-          body: 'Needs delivery.',
-          resolvedAt: null,
-          notifiedAt: null,
-          operatorRequest: null,
-        },
-        {
-          id: 'A-notified',
-          target: 'project:P-1/goal:G-2',
-          body: 'Already delivered.',
-          resolvedAt: null,
-          notifiedAt: '2026-07-16T00:00:00.000Z',
-          operatorRequest: 'home:H-1/event:EV-request',
-        },
-        {
-          id: 'A-resolved',
-          target: 'project:P-1/goal:G-3',
-          body: 'Already resolved.',
-          resolvedAt: '2026-07-16T00:00:00.000Z',
-          notifiedAt: null,
-          operatorRequest: null,
-        },
-        {
-          id: 'A-targetless',
-          target: null,
-          body: 'Completion projection.',
-          resolvedAt: null,
-          notifiedAt: null,
-          operatorRequest: null,
-        },
-      ],
-    }),
-  ).toEqual([
-    'settled boundary retains Assistant-owned targeted Attention A-orphaned at project:P-1/goal:G-1',
-  ])
 })
 
 test('reads hidden runtime usage and pending canonical Inbox events', async () => {

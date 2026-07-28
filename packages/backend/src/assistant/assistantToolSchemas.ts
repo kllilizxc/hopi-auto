@@ -1,11 +1,4 @@
 import { z } from 'zod'
-import { assistantDecisionPromptSchema } from '../domain/assistantDecisionPrompt'
-import { parseAttentionReference } from '../domain/attentionReference'
-import {
-  parseGoalAttentionTarget,
-  parseProjectAttentionTarget,
-  parseWorkAttentionTarget,
-} from '../domain/attentionTarget'
 import { PROJECT_LABEL_MAX_LENGTH, optionalProjectLabelSchema } from '../domain/projectLabel'
 import { isNormalizedProjectPath } from '../domain/projectPath'
 import { stableIdSchema } from '../domain/stableId'
@@ -69,30 +62,6 @@ const projectRepoSchema = z
     projectPath: z.string().refine(isNormalizedProjectPath).optional(),
   })
   .strict()
-
-const attentionTargetSchema = z
-  .string()
-  .refine(
-    (target) =>
-      Boolean(
-        parseProjectAttentionTarget(target) ||
-          parseGoalAttentionTarget(target) ||
-          parseWorkAttentionTarget(target),
-      ),
-    'Attention target must be one canonical Project, Goal, or Work reference',
-  )
-
-const attentionReferenceSchema = z
-  .string()
-  .refine(
-    (reference) => parseAttentionReference(reference) !== null,
-    'attentionRef must be canonical',
-  )
-
-const workspaceAttentionReferenceSchema = attentionReferenceSchema.refine(
-  (reference) => parseAttentionReference(reference)?.scope === 'workspace',
-  'Only Assistant-home Attention can be edited',
-)
 
 const planningWorkSchema = z.discriminatedUnion('mode', [
   z.object({ kind: z.literal('planning'), mode: z.literal('same_contract') }).strict(),
@@ -282,47 +251,29 @@ export const assistantToolSchemas = {
     .strict(),
   hopi_manage_attention: z
     .object({
+      projectId: stableIdSchema,
       change: z.discriminatedUnion('kind', [
         z
           .object({
             kind: z.literal('create'),
-            target: attentionTargetSchema,
             attentionId: stableIdSchema.optional(),
             body: z.string().trim().min(1).max(16_000),
+            refs: z.array(z.string().trim().min(1)).default([]),
           })
           .strict(),
         z
           .object({
             kind: z.literal('update'),
-            attentionRef: workspaceAttentionReferenceSchema,
-            body: z.string().trim().min(1).max(16_000),
+            attentionId: stableIdSchema,
+            body: z.string().trim().min(1).max(16_000).optional(),
+            refs: z.array(z.string().trim().min(1)).optional(),
           })
           .strict(),
         z
           .object({
             kind: z.literal('resolve'),
-            attentionRef: attentionReferenceSchema,
+            attentionId: stableIdSchema,
             resolution: z.string().trim().min(1).max(2_000),
-          })
-          .strict(),
-        z
-          .object({
-            kind: z.literal('defer_attention'),
-            attentionRef: attentionReferenceSchema,
-            until: z.string().datetime({ offset: true }),
-          })
-          .strict(),
-        z
-          .object({
-            kind: z.literal('transfer_attention_to_user'),
-            attentionRefs: z
-              .array(attentionReferenceSchema)
-              .min(1)
-              .refine(
-                (values) => new Set(values).size === values.length,
-                'attentionRefs must be unique',
-              ),
-            decisionPrompt: assistantDecisionPromptSchema.optional(),
           })
           .strict(),
       ]),

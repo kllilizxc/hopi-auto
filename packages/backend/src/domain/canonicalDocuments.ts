@@ -83,27 +83,9 @@ export const attentionAttributesSchema = z.preprocess(
       createdAt: timestampSchema,
       resolvedAt: timestampSchema.nullable(),
       notifiedAt: timestampSchema.nullable(),
-      operatorRequest: inboxEventReferenceSchema.nullable().optional(),
-      revisitAt: timestampSchema.nullable().optional(),
       resolutionInput: canonicalRefSchema.nullable().optional(),
     })
-    .strict()
-    .superRefine((attention, context) => {
-      if (attention.target === null && attention.operatorRequest) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['operatorRequest'],
-          message: 'Completion Attention cannot wait for operator input',
-        })
-      }
-      if (attention.resolvedAt !== null && attention.operatorRequest) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['operatorRequest'],
-          message: 'Resolved Attention cannot wait for operator input',
-        })
-      }
-    }),
+    .strict(),
 )
 
 export const inputAttributesSchema = z
@@ -215,6 +197,11 @@ function validatePlanningWorkDependencies(
 
 function stripLegacyAttentionFields(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const { retryRunId: _legacyRetryRunId, ...current } = value as Record<string, unknown>
+  const {
+    retryRunId: _legacyRetryRunId,
+    operatorRequest: _legacyOperatorRequest,
+    revisitAt: _legacyRevisitAt,
+    ...current
+  } = value as Record<string, unknown>
   return current
 }

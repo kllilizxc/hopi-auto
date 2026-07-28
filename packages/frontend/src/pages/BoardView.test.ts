@@ -313,5 +313,5 @@ test('Needs you stays out of the Board banner and belongs to the Assistant messa
 
   expect(source).not.toContain('needs-you-banner')
   expect(source).not.toContain('openAssistant(assistantAttention)')
-  expect(source).toContain('assistantAttentionLabel')
+  expect(source).not.toContain('assistantAttentionLabel')
 })

@@ -704,7 +704,6 @@ export function createGoalController(
         const resolved: AttentionDocument = {
           attributes: {
             ...completion.attributes,
-            operatorRequest: null,
             resolvedAt: now().toISOString(),
           },
           body: `${completion.body}\n## Resolution\n\nSuperseded by explicit Goal reopen.\n`,
@@ -775,7 +774,6 @@ async function planningAttentionResolutionWrites(
     const path = store.paths.attentionDocument(goalId, attentionId)
     const source = await Bun.file(store.paths.absolute(path)).text()
     const resolved = parseAttentionDocument(source)
-    resolved.attributes.operatorRequest = null
     resolved.attributes.resolvedAt = resolvedAt.toISOString()
     resolved.attributes.resolutionInput = acceptedInput.path
     resolved.body = [
@@ -821,7 +819,6 @@ async function supersededCompletionWrites(
     const path = store.paths.attentionDocument(goalId, attention.attributes.id)
     const source = await Bun.file(store.paths.absolute(path)).text()
     const resolved = parseAttentionDocument(source)
-    resolved.attributes.operatorRequest = null
     resolved.attributes.resolvedAt = resolvedAt.toISOString()
     resolved.body = [
       resolved.body.trimEnd(),
@@ -866,7 +863,6 @@ async function resolveAttention(
   const path = store.paths.attentionDocument(goalId, attention.attributes.id)
   const source = await Bun.file(store.paths.absolute(path)).text()
   const next = parseAttentionDocument(source)
-  next.attributes.operatorRequest = null
   next.attributes.resolvedAt = resolvedAt.toISOString()
   next.body += `\n## Resolution\n\n${reason}\n`
   await store.publishGoal(goalId, {

@@ -7,6 +7,10 @@ Last updated: 2026-07-24
 > edge-triggered wake of the persistent Project Assistant and removes Attention
 > ownership/waiting states. [Project Runtime Capabilities](./mvp_project_runtime.md) owns Prepare and
 > Preview lifecycle behavior.
+>
+> Any `operatorRequest`, `revisitAt`, Attention transfer/ownership, separate Reflection Agent, or
+> targeted Attention scheduling semantics below are retained as historical context only. They are
+> not part of the active MVP.
 
 This document visualizes the lifecycle rules accepted in [the MVP design](./mvp_design.md). It is
 not a second source of truth. Schemas belong to [the document model](./mvp_document_model.md),

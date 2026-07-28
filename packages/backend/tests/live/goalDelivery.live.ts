@@ -123,9 +123,9 @@ try {
       if (current?.lifecycle === 'cancelled') throw new Error(`Goal ${goalId} was cancelled`)
       const needsUser = state.attentions.find(
         (attention) =>
-          attention.target !== null &&
+          typeof attention.target === 'string' &&
           attention.resolvedAt === null &&
-          attention.notifiedAt !== null,
+          typeof attention.notifiedAt === 'string',
       )
       if (needsUser) {
         throw new Error(`Goal requires unexpected user action: ${needsUser.id}`)

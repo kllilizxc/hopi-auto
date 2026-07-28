@@ -141,9 +141,6 @@ describe('AssistantWorkspaceStore', () => {
         updatedAt: timestamp,
         resolvedAt: null,
         refs: ['project:P-1'],
-        target: 'project:P-1',
-        notifiedAt: null,
-        operatorRequest: null,
       },
       body: 'Confirm the Project decision.\n',
     })

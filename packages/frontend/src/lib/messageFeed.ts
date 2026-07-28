@@ -200,7 +200,7 @@ export function assistantEventsToMessageFeed(
   attentions: AttentionView[],
 ): MessageFeedItem[] {
   const completions = attentions
-    .filter((attention) => attention.target === null)
+    .filter((attention) => attention.scope === 'goal' && attention.target === null)
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
   const completionByReference = new Map(
     completions.flatMap((attention) => {
