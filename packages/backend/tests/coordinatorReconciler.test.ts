@@ -130,6 +130,54 @@ describe('CoordinatorReconciler', () => {
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.status).toBe('handled')
   })
 
+  test('retains an internal turn until its Project has a speaking Session', async () => {
+    const fixture = await workspaceFixture()
+    await Bun.write(
+      fixture.home.paths.projectLinksPath,
+      projectLinks([['P-1', '/tmp/project-one']]),
+    )
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-system',
+      content: 'Project startup validation failed.',
+      context: { projectId: 'P-1' },
+    })
+    let speakingSession = false
+    const assistant = {
+      hasSpeakingSession: async () => speakingSession,
+      async process(eventId: string) {
+        const event = await fixture.workspace.readEvent(eventId)
+        if (event?.attributes.source === 'user') speakingSession = true
+        await fixture.workspace.handleEvent(eventId, {
+          reply: `Handled ${eventId}`,
+          disposition: 'answered',
+        })
+        return { kind: 'answered' as const, eventId }
+      },
+    }
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant,
+      attentions: fixture.attentions,
+      projects: [],
+    })
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    expect((await fixture.workspace.readEvent('EV-system'))?.attributes.status).toBe('pending')
+
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-user',
+      content: 'What is happening?',
+      context: { projectId: 'P-1' },
+    })
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    await coordinator.waitForIdle()
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    await coordinator.waitForIdle()
+
+    expect((await fixture.workspace.readEvent('EV-user'))?.attributes.status).toBe('handled')
+    expect((await fixture.workspace.readEvent('EV-system'))?.attributes.status).toBe('handled')
+  })
+
   test('serializes each Project Assistant without blocking another Project', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(
