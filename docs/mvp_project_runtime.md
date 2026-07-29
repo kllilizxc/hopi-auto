@@ -38,9 +38,16 @@ Both scripts receive:
 The scripts may call Repo-native package managers or setup helpers. HOPI never assumes every Repo
 has the same setup command.
 
-An optional `runtimeInputs` object may accompany Preview Start. HOPI passes the opaque object only
-in the Preview child environment as `HOPI_PREVIEW_RUNTIME_INPUTS`; names and meaning belong to the
-Project adapter. HOPI does not persist or interpret the object.
+An optional `runtimeInputs` object may accompany Preview Start. It contains at most 32 entries; keys
+are 1–128 characters, values are at most 8,192 characters, and the complete serialized object is at
+most 32 KiB of UTF-8. HOPI passes the opaque object only in the Preview child environment as
+`HOPI_PREVIEW_RUNTIME_INPUTS`; names and meaning belong to the Project adapter. The Preview manager
+does not add the object to its session manifest or log.
+
+This session-only boundary begins at Preview admission. An Assistant message and its model-authored
+tool arguments are durable conversation and provider transcript data, so `runtimeInputs` supplied
+through `hopi_control_preview` must be non-secret. Credential or secret material must not travel
+through an Assistant turn.
 
 The manifest and logs are persisted with the invocation. They are facts available to responsibility
 passes and the Project Assistant.

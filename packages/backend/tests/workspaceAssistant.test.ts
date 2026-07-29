@@ -1579,9 +1579,11 @@ describe('WorkspaceAssistant conversation', () => {
         latestAttempt: {
           runId: 'R-failed',
           result: 'fail',
+          application: 'operational_failure',
         },
       },
     })
+    expect(current.projects[0].goals[0].works[1]).not.toHaveProperty('schedulingEffect')
     expect(prompts[0]).not.toContain('archive-end')
     expect(prompts[0]).not.toContain('... truncated')
   })
@@ -1739,6 +1741,20 @@ describe('WorkspaceAssistant conversation', () => {
     })
     await fixture.assistant.process('EV-bootstrap')
     expect(await fixture.conversation.readSession(scope)).toEqual(codexSession('thread-parent'))
+    const bootstrapTurn = await fixture.conversation.readTurn('EV-bootstrap')
+    expect(bootstrapTurn?.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'message',
+        role: 'coordinator',
+        content:
+          'Established native codex speaking Session thread-parent from the internal bootstrap.',
+      }),
+    )
+    expect(
+      bootstrapTurn?.events.some(
+        (event) => event.kind === 'message' && event.content.startsWith('Forked speaking Session'),
+      ),
+    ).toBe(false)
     expect((await fixture.workspace.readEvent('EV-bootstrap'))?.attributes).toMatchObject({
       source: 'system',
       visibility: 'internal',

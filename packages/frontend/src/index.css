@@ -2881,11 +2881,12 @@ button:disabled,
 }
 
 .unified-feed-message-row.assistant.needs-you .unified-feed-message {
-  padding: 16px 20px 20px;
-  border: 1px solid color-mix(in srgb, var(--color-warning-400) 16%, transparent);
+  padding: 16px 18px 18px;
   border-radius: 16px;
-  background: color-mix(in srgb, var(--color-warning-400) 4%, var(--color-neutral-925));
-  box-shadow: 0 8px 32px color-mix(in srgb, var(--color-black) 24%, transparent);
+  background: color-mix(in srgb, var(--color-warning-400) 3%, var(--color-neutral-925));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-warning-400) 16%, transparent),
+    0 8px 32px color-mix(in srgb, var(--color-black) 24%, transparent);
 }
 
 .unified-feed-message-row.assistant.needs-you .unified-feed-message__text {
@@ -2907,9 +2908,8 @@ button:disabled,
 .unified-feed-needs-you .app-status-chip {
   padding: 4px 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-warning-400) 16%, transparent);
+  background: color-mix(in srgb, var(--color-warning-400) 14%, transparent);
   color: var(--amber);
-  font-family: inherit;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -2920,25 +2920,18 @@ button:disabled,
   min-height: 25px;
   padding: 4px 5px;
   border-radius: 8px;
-  background: transparent;
-  color: var(--color-warning-200);
+  color: var(--color-neutral-350);
   font-size: 12px;
   font-weight: 700;
 }
 
 .unified-feed-needs-you__reply.app-button.button:hover {
-  background: transparent;
-  color: var(--color-warning-100);
+  color: var(--color-warning-200);
 }
 
 .unified-feed-attention-request {
   display: grid;
   gap: 18px;
-}
-
-.unified-feed-attention-request__item + .unified-feed-attention-request__item {
-  padding-top: 14px;
-  border-top: 1px solid color-mix(in srgb, var(--color-neutral-700) 45%, transparent);
 }
 
 .unified-feed-attention-request__details {
@@ -2959,7 +2952,6 @@ button:disabled,
   min-width: 0;
   margin: 0;
   padding: 0;
-  border: 0;
 }
 
 .assistant-decision-question > legend {
@@ -2979,15 +2971,17 @@ button:disabled,
 .assistant-decision-question__options {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .assistant-decision-option.app-button.button {
   display: block;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--color-neutral-700) 40%, transparent);
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-neutral-850) 62%, transparent);
   text-align: left;
   white-space: normal;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-700) 34%, transparent);
 }
 
 .assistant-decision-option.app-button.button > span:first-child {
@@ -3003,16 +2997,35 @@ button:disabled,
 }
 
 .assistant-decision-option.app-button.button[aria-pressed="true"] {
-  border-color: color-mix(in srgb, var(--color-accent-400) 50%, transparent);
-  background: color-mix(in srgb, var(--color-accent-500) 12%, transparent);
+  background: color-mix(in srgb, var(--color-warning-400) 7%, var(--color-neutral-875));
+  box-shadow:
+    inset 3px 0 color-mix(in srgb, var(--color-warning-300) 78%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-warning-400) 28%, transparent);
 }
 
 .assistant-decision-question__other {
-  margin-top: 10px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.assistant-decision-question__other:focus,
+.assistant-decision-question__other[data-focused="true"] {
+  outline: none;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--color-warning-400) 20%, transparent),
+    var(--field-shadow);
 }
 
 .assistant-decision-prompt__submit.app-button.button {
   justify-self: end;
+  --button-bg: var(--color-warning-300);
+  --button-bg-hover: var(--color-warning-200);
+  color: var(--color-warning-950);
+}
+
+.assistant-decision-prompt__submit.app-button.button:disabled {
+  background: var(--color-neutral-800);
+  color: var(--color-neutral-500);
 }
 
 .unified-feed-message__bubble {

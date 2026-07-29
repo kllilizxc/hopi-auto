@@ -1442,22 +1442,10 @@ function compactGoalAttentionStateIndex(value: unknown) {
 function compactWorkStateIndex(value: unknown, includeSummary: boolean) {
   if (!isRecord(value)) return value
   const projection = isRecord(value.projection) ? value.projection : null
-  const failedPredicates = Array.isArray(projection?.failedPredicates)
-    ? projection.failedPredicates
-    : []
-  const waitingOnSettledAttempt = failedPredicates.includes('failed_attempt')
   return {
     attributes: value.attributes,
     ...(typeof value.path === 'string' ? { path: value.path } : {}),
     ...(projection ? { projection } : {}),
-    ...(waitingOnSettledAttempt
-      ? {
-          schedulingEffect: {
-            state: 'waiting_for_assistant',
-            unchangedWorkRedispatch: 'blocked',
-          },
-        }
-      : {}),
     ...(Array.isArray(value.candidateIntegration)
       ? { currentCandidateIntegration: value.candidateIntegration }
       : {}),

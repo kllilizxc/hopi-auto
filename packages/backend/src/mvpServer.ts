@@ -70,6 +70,7 @@ import {
   requireProject,
 } from './runtime/mvpRuntime'
 import { readProjectReleaseHeads } from './runtime/previewManager'
+import { previewRuntimeInputsSchema } from './runtime/previewRuntimeInputs'
 import {
   ProjectDirectoryError,
   classifyProjectDirectory,
@@ -124,7 +125,7 @@ const repoPathSchema = z
   .strict()
 const previewStartSchema = z
   .object({
-    runtimeInputs: z.record(z.string()).optional(),
+    runtimeInputs: previewRuntimeInputsSchema.optional(),
   })
   .strict()
 const projectSchema = z.union([

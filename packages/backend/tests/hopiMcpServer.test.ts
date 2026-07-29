@@ -146,6 +146,12 @@ describe('HOPI MCP server', () => {
         change: { anyOf: expect.any(Array) },
       },
     })
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'bounded non-secret values',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'durable provider transcript',
+    )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema,
     ).toMatchObject({

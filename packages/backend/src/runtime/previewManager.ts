@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { projectReleaseRef } from '../domain/project'
 import { BoundedLineTail } from './boundedLineTail'
+import { type PreviewRuntimeInputs, previewRuntimeInputsSchema } from './previewRuntimeInputs'
 import { createProcessGroupTerminator } from './processGroup'
 import {
   type ProjectPreparationRepoRoot,
@@ -84,7 +85,7 @@ export interface PreviewManager {
     requestedBy: PreviewStartRequester
     primaryRepoId?: string
     repoRoots?: readonly ProjectPreparationRepoRoot[]
-    runtimeInputs?: Readonly<Record<string, string>>
+    runtimeInputs?: Readonly<PreviewRuntimeInputs>
   }): Promise<PreviewStartResult>
   stop(projectId: string, reason?: PreviewStoppedReason): Promise<PreviewSession | null>
   stopAll(): Promise<void>
@@ -196,7 +197,7 @@ export function createPreviewManager(
       preparationRoot: string
       reposFile: string
     },
-    runtimeInputs: Readonly<Record<string, string>> | undefined,
+    runtimeInputs: Readonly<PreviewRuntimeInputs> | undefined,
   ): Promise<PreviewStartResult> {
     const adapterFile = Bun.file(paths.adapter)
     if (!(await adapterFile.exists())) {
@@ -443,6 +444,9 @@ export function createPreviewManager(
       }
     },
     start(input) {
+      const validatedRuntimeInputs = input.runtimeInputs
+        ? previewRuntimeInputsSchema.parse(input.runtimeInputs)
+        : undefined
       const releaseHeads = Object.freeze({ ...input.releaseHeads })
       if (
         Object.keys(releaseHeads).length === 0 ||
@@ -452,7 +456,7 @@ export function createPreviewManager(
       }
       const current = operations.get(input.projectId)
       if (current?.session.status === 'running' || current?.session.status === 'starting') {
-        if (input.runtimeInputs) {
+        if (validatedRuntimeInputs) {
           throw new Error(
             'Preview runtime inputs can be supplied only while admitting a new Preview session',
           )
@@ -511,7 +515,7 @@ export function createPreviewManager(
         requesters: new Set([input.requestedBy]),
       }
       operations.set(input.projectId, operation)
-      let runtimeInputs = input.runtimeInputs ? { ...input.runtimeInputs } : undefined
+      let runtimeInputs = validatedRuntimeInputs
       const startInput = { ...input, runtimeInputs: undefined }
       const paths = {
         projectRoot,
@@ -575,7 +579,7 @@ function previewAdapterEnvironment(input: {
   reposFile: string
   runtimeDir: string
   cacheDir: string
-  runtimeInputs: Readonly<Record<string, string>> | undefined
+  runtimeInputs: Readonly<PreviewRuntimeInputs> | undefined
 }) {
   const { HOPI_PREVIEW_RUNTIME_INPUTS: _inheritedRuntimeInputs, ...environment } = process.env
   return {
@@ -686,13 +690,13 @@ async function consumePreviewStream(
     buffered += decoder.decode(value, { stream: true })
     const lines = buffered.split(/\r?\n/)
     buffered = lines.pop() ?? ''
-    for (const line of lines) recordLine(operation, redact(line), logPath)
+    for (const line of lines) consumePreviewLine(operation, line, logPath, redact)
   }
   buffered += decoder.decode()
-  if (buffered) recordLine(operation, redact(buffered), logPath)
+  if (buffered) consumePreviewLine(operation, buffered, logPath, redact)
 }
 
-function createRuntimeInputRedactor(runtimeInputs: Readonly<Record<string, string>> | undefined) {
+function createRuntimeInputRedactor(runtimeInputs: Readonly<PreviewRuntimeInputs> | undefined) {
   const values = new Set<string>()
   for (const value of Object.values(runtimeInputs ?? {})) {
     if (!value) continue
@@ -710,9 +714,22 @@ function createRuntimeInputRedactor(runtimeInputs: Readonly<Record<string, strin
   }
 }
 
-function recordLine(operation: PreviewOperation, line: string, logPath: string) {
+function consumePreviewLine(
+  operation: PreviewOperation,
+  rawLine: string,
+  logPath: string,
+  redact: (line: string) => string,
+) {
+  observePreviewControlLine(operation, rawLine)
+  recordPreviewLogLine(operation, redact(rawLine), logPath)
+}
+
+function recordPreviewLogLine(operation: PreviewOperation, line: string, logPath: string) {
   operation.logs.push(line)
   operation.logWriteTail = operation.logWriteTail.then(() => appendFile(logPath, `${line}\n`))
+}
+
+function observePreviewControlLine(operation: PreviewOperation, line: string) {
   if (operation.reportedReadiness !== null) return
   const surfaces = /^HOPI_PREVIEW_SURFACES=(.*)$/.exec(line)?.[1]
   const readiness = surfaces === undefined ? null : parsePreviewSurfaces(surfaces)

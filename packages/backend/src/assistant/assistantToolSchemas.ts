@@ -4,6 +4,12 @@ import { parseAttentionReference } from '../domain/attentionReference'
 import { PROJECT_LABEL_MAX_LENGTH, optionalProjectLabelSchema } from '../domain/projectLabel'
 import { isNormalizedProjectPath } from '../domain/projectPath'
 import { stableIdSchema } from '../domain/stableId'
+import {
+  PREVIEW_RUNTIME_INPUT_MAX_ENTRIES,
+  PREVIEW_RUNTIME_INPUT_MAX_SERIALIZED_BYTES,
+  previewRuntimeInputsSchema,
+  previewRuntimeInputsShapeSchema,
+} from '../runtime/previewRuntimeInputs'
 
 const goalReferences = z
   .array(
@@ -287,7 +293,11 @@ export const assistantToolSchemas = {
     .object({
       projectId: stableIdSchema,
       operation: z.enum(['start', 'stop']),
-      runtimeInputs: z.record(z.string()).optional(),
+      runtimeInputs: previewRuntimeInputsSchema
+        .describe(
+          `Optional non-secret Preview inputs. Assistant tool arguments are durable transcript data. At most ${PREVIEW_RUNTIME_INPUT_MAX_ENTRIES} entries and ${PREVIEW_RUNTIME_INPUT_MAX_SERIALIZED_BYTES} serialized bytes.`,
+        )
+        .optional(),
     })
     .strict(),
 } as const
@@ -441,6 +451,17 @@ const mcpControlWorkSchema = z
     ]),
   })
   .strict()
+const mcpControlPreviewSchema = z
+  .object({
+    projectId: stableIdSchema,
+    operation: z.enum(['start', 'stop']),
+    runtimeInputs: previewRuntimeInputsShapeSchema
+      .describe(
+        `Optional non-secret Preview inputs. Assistant tool arguments are durable transcript data. At most ${PREVIEW_RUNTIME_INPUT_MAX_ENTRIES} entries and ${PREVIEW_RUNTIME_INPUT_MAX_SERIALIZED_BYTES} serialized bytes.`,
+      )
+      .optional(),
+  })
+  .strict()
 export const assistantMcpToolSchemas = {
   ...assistantToolSchemas,
   hopi_manage_project: mcpManageProjectSchema,
@@ -449,6 +470,7 @@ export const assistantMcpToolSchemas = {
   hopi_write_design: mcpWriteDesignSchema,
   hopi_control_goal: mcpControlGoalSchema,
   hopi_control_work: mcpControlWorkSchema,
+  hopi_control_preview: mcpControlPreviewSchema,
 } as const
 
 export function parseAssistantToolArguments<Name extends AssistantToolName>(

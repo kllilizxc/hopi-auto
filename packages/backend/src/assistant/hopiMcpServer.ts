@@ -111,7 +111,8 @@ server.registerTool(
 server.registerTool(
   'hopi_control_preview',
   {
-    description: 'Start or stop the reviewed Project Preview runtime.',
+    description:
+      'Start or stop the reviewed Project Preview runtime. Optional runtime inputs are bounded non-secret values because Assistant tool arguments remain in its durable provider transcript.',
     inputSchema: assistantMcpToolSchemas.hopi_control_preview,
   },
   (args) => callTool('hopi_control_preview', args),

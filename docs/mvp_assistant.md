@@ -282,7 +282,9 @@ receipt cursor only after its provider turn and public reply are durable.
 For each speaking turn, normalized Assistant messages, tool calls, tool results, status, and errors
 append to runtime `events.jsonl`; process output appends to `transcript.log`. Before either stream or
 the final public reply is persisted, exact values inherited through secret-like environment names
-are replaced with one redaction marker. Supervision forks and responsibility Runs use the same boundary.
+are replaced with one redaction marker. Model-authored tool arguments are conversation output rather
+than inherited environment and receive no non-persistence guarantee; Assistant tools must not carry
+secret values. Supervision forks and responsibility Runs use the same boundary.
 The UI may poll or stream public turn events while a turn is pending. The final Assistant message is
 copied into the Inbox turn before it becomes handled. Runtime events improve observability but never
 authorize a Goal or Work transition.

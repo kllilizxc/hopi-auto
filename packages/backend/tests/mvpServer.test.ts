@@ -1066,6 +1066,18 @@ describe('MVP server', () => {
     expect(manifest).not.toContain('first-runtime-value')
     expect(manifest).not.toContain('second-runtime-value')
     await request(base, '/api/projects/P-credential/preview/stop', { method: 'POST' })
+    await expect(
+      request(base, '/api/projects/P-credential/preview/start', {
+        method: 'POST',
+        body: {
+          runtimeInputs: {
+            first: '界'.repeat(4_000),
+            second: '界'.repeat(4_000),
+            third: '界'.repeat(4_000),
+          },
+        },
+      }),
+    ).rejects.toThrow('400')
   })
 
   test('bootstraps a Project speaking session from its first Preview system event', async () => {

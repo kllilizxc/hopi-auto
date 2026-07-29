@@ -117,6 +117,7 @@ describe('PreviewManager', () => {
         'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/runtime-inputs.json`, JSON.stringify({',
         '  firstReceived: inputs.first === "first-runtime-value",',
         '  secondReceived: inputs.second === "second-runtime-value",',
+        '  tokenReceived: inputs.token === "http",',
         '}))',
         previewSurfaceSignal('http://127.0.0.1:4321'),
         'process.on("SIGTERM", () => process.exit(0))',
@@ -134,6 +135,7 @@ describe('PreviewManager', () => {
       runtimeInputs: {
         first: 'first-runtime-value',
         second: 'second-runtime-value',
+        token: 'http',
       },
     })
 
@@ -143,11 +145,16 @@ describe('PreviewManager', () => {
     ).toEqual({
       firstReceived: true,
       secondReceived: true,
+      tokenReceived: true,
     })
+    expect(result.session.surfaces).toEqual([
+      { id: 'default', label: 'Preview', url: 'http://127.0.0.1:4321' },
+    ])
     const manifest = await Bun.file(result.session.manifestPath).text()
     const log = await Bun.file(result.session.logPath).text()
     expect(log).not.toContain('first-runtime-value')
     expect(log).toContain('input=[REDACTED_RUNTIME_INPUT]')
+    expect(log).toContain('[REDACTED_RUNTIME_INPUT]://127.0.0.1:4321')
     expect(manifest).not.toContain('first-runtime-value')
     expect(manifest).not.toContain('second-runtime-value')
     expect(await manager.stop('P-1')).toMatchObject({ status: 'stopped' })
@@ -175,6 +182,24 @@ describe('PreviewManager', () => {
     expect(failed.logs).toContain('failed-input=[REDACTED_RUNTIME_INPUT]')
     expect(await Bun.file(failed.session.logPath).text()).not.toContain('failed-runtime-value')
     expect(await Bun.file(failed.session.manifestPath).text()).not.toContain('failed-runtime-value')
+  })
+
+  test('rejects unbounded runtime inputs before admitting a Preview operation', () => {
+    const manager = createPreviewManager(join(temporaryRoot, 'home'))
+    expect(() =>
+      manager.start({
+        projectId: 'P-1',
+        projectRoot: temporaryRoot,
+        requestedBy: 'assistant',
+        releaseHeads: { primary: 'release-head' },
+        runtimeInputs: {
+          first: '界'.repeat(4_000),
+          second: '界'.repeat(4_000),
+          third: '界'.repeat(4_000),
+        },
+      }),
+    ).toThrow('serialized bytes')
+    expect(manager.inspect('P-1')).toBeNull()
   })
 
   test('never reuses a Preview session after the managed release head changes', async () => {

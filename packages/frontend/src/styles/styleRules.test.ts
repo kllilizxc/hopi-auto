@@ -285,10 +285,18 @@ test('Assistant Attention chrome stays quiet, aligned, and free of duplicate ico
     styles.match(
       /\.unified-feed-message-row\.assistant\.needs-you \.unified-feed-message\s*\{([^}]*)\}/,
     )?.[1] ?? ''
+  const decisionDetailFocusRule =
+    styles.match(
+      /\.assistant-decision-question__other\[data-focused="true"\]\s*\{([^}]*)\}/,
+    )?.[1] ?? ''
   const cornerRule = styles.match(/\.assistant-corner-chrome\s*\{([^}]*)\}/)?.[1] ?? ''
 
-  expect(needsYouRule).toContain('border: 1px solid')
+  expect(needsYouRule).not.toContain('border: 1px solid')
+  expect(needsYouRule).toContain('inset 0 0 0 1px')
   expect(needsYouRule).not.toContain('inset 3px 0')
+  expect(decisionDetailFocusRule).toContain('outline: none')
+  expect(decisionDetailFocusRule).toContain('var(--color-warning-400)')
+  expect(decisionDetailFocusRule).not.toContain('var(--color-accent-500)')
   expect(cornerRule).toContain('align-items: center')
   expect(cornerRule).toContain('justify-content: flex-end')
   expect(cornerRule).toContain('min-height: 54px')
