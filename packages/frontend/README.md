@@ -73,6 +73,9 @@ refresh toolbar. Goal and Kanban surfaces retain their derived Work state withou
 Completed presentation follows the same human-summary boundary without becoming Attention: the
 final Planner Evidence stays the technical completion record, while its short operator-facing result
 summary is the text shown in the deterministic Completed update.
+The Assistant feed retains the established `body` wire field for rolling-deploy compatibility. Its
+reader also accepts the transitional `summary` spelling and safely degrades malformed browser-cache
+entries instead of allowing one stale record to break the entire Assistant surface.
 The shared Project switcher projects the same unresolved NeedsYou Attention count onto each direct
 shortcut and overflow option; it does not reuse the broader open-Attention count. It also shows one
 success marker when that browser observes a new Goal completion after establishing its initial

@@ -219,13 +219,24 @@ export interface AttentionView {
 
 export type AttentionSummaryView = Omit<AttentionView, 'body'>
 
-export interface GoalCompletionView {
+interface GoalCompletionBaseView {
   projectId: string
   goalId: string
   evidenceId: string
   completedAt: string
-  summary: string
 }
+
+export type GoalCompletionView = GoalCompletionBaseView &
+  (
+    | {
+        body: string
+        summary?: string
+      }
+    | {
+        body?: string
+        summary: string
+      }
+  )
 
 export type AssistantFeedEntry =
   | {

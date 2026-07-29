@@ -2353,11 +2353,11 @@ describe('MVP server', () => {
           goalId: 'G-modern',
           evidenceId: 'E-final',
           completedAt: '2026-07-26T11:32:06.638Z',
-          summary: '## Modern Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
+          body: '## Modern Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
         },
       },
     ])
-    expect(feed.streamId).toBe('initial:project:P-1:projection:3')
+    expect(feed.streamId).toBe('initial:project:P-1:projection:2')
     const replay = await request(
       `http://127.0.0.1:${server.port}`,
       '/api/assistant/feed/changes?projectId=P-1&cursor=2026-07-26T12%3A00%3A00.000Z&streamId=initial%3Aproject%3AP-1',

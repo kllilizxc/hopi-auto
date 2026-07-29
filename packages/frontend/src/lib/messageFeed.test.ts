@@ -74,7 +74,7 @@ describe('unified message feed adapters', () => {
           goalId: 'G-1',
           evidenceId: 'E-final',
           completedAt: '2026-07-26T11:32:06.638Z',
-          summary: '## Ship the Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
+          body: '## Ship the Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
         },
       },
     ])
@@ -90,6 +90,45 @@ describe('unified message feed adapters', () => {
         groupId: 'goal-completion:P-1:G-1',
       },
     ])
+  })
+
+  test('accepts transitional summary-only completion payloads', () => {
+    const items = assistantFeedEntriesToMessageFeed([
+      {
+        kind: 'goal_completion',
+        id: 'goal-completion:project:P-1/goal:G-1/evidence:E-final',
+        occurredAt: '2026-07-26T11:32:06.638Z',
+        completion: {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          evidenceId: 'E-final',
+          completedAt: '2026-07-26T11:32:06.638Z',
+          summary: '## Ship the Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
+        },
+      },
+    ])
+
+    expect(items[0]?.text).toBe(
+      'Ship the Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
+    )
+  })
+
+  test('renders a safe fallback for malformed cached completion payloads', () => {
+    const items = assistantFeedEntriesToMessageFeed([
+      {
+        kind: 'goal_completion',
+        id: 'goal-completion:project:P-1/goal:G-1/evidence:E-final',
+        occurredAt: '2026-07-26T11:32:06.638Z',
+        completion: {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          evidenceId: 'E-final',
+          completedAt: '2026-07-26T11:32:06.638Z',
+        },
+      } as AssistantFeedEntry,
+    ])
+
+    expect(items[0]?.text).toBe('Goal completed.')
   })
 
   test('hides Assistant protocol lifecycle noise while preserving useful tools and replies', () => {

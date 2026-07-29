@@ -101,7 +101,7 @@ export type MvpServer = Bun.Server<undefined> & {
   shutdown(): Promise<void>
 }
 
-const ASSISTANT_FEED_PROJECTION_VERSION = 3
+const ASSISTANT_FEED_PROJECTION_VERSION = 2
 
 const projectIdentitySchema = z.object({
   projectId: stableIdSchema.optional(),
@@ -1400,7 +1400,7 @@ interface ScopedGoalCompletion {
   goalId: string
   evidenceId: string
   completedAt: string
-  summary: string
+  body: string
 }
 
 export function goalCompletionProjection(
@@ -1439,7 +1439,7 @@ export function goalCompletionProjection(
     goalId,
     evidenceId: evidence.attributes.id,
     completedAt: evidence.attributes.createdAt,
-    summary: `## ${goal.title}\n\n${summary}`,
+    body: `## ${goal.title}\n\n${summary}`,
   }
 }
 
