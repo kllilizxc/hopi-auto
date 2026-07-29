@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util'
-import { defaultAssistantHomeRoot } from '../packages/backend/src/runtime/assistantHomeMigration'
+import { defaultAssistantHomeRoot } from '../packages/backend/src/runtime/assistantHomeRoot'
 import { applyProjectReset, planProjectReset } from '../packages/backend/src/runtime/projectReset'
 
 const { values, positionals } = parseArgs({

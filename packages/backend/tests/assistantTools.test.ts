@@ -1492,7 +1492,10 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       change: {
         kind: 'resolve',
-        attentionId: attention.attributes.id,
+        attentionRef: workspaceAttentionReference(
+          (await fixture.workspace.readWorkspace()).homeId,
+          attention.attributes.id,
+        ),
         resolution: 'The accepted material revision is now represented by Planning.',
       },
     })
@@ -1548,7 +1551,7 @@ describe('Assistant HOPI tools', () => {
         projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionId,
+          attentionRef: workspaceAttentionReference(homeId, attentionId),
           resolution,
         },
       },
@@ -1560,7 +1563,7 @@ describe('Assistant HOPI tools', () => {
         projectId: 'P-1',
         change: {
           kind: 'resolve',
-          attentionId,
+          attentionRef: workspaceAttentionReference(homeId, attentionId),
           resolution,
         },
       },
@@ -1724,7 +1727,7 @@ describe('Assistant HOPI tools', () => {
     })
   })
 
-  test('does not route a Goal-local Attention through the Project Attention tool', async () => {
+  test('resolves Goal Attention by exact reference and records the current Inbox turn', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
@@ -1737,23 +1740,36 @@ describe('Assistant HOPI tools', () => {
     await fixture.workspace.receiveEvent({
       eventId: 'EV-goal-attention',
       content: 'Resolve the old Goal Attention.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
     })
 
-    await expect(
-      fixture.tools.executeForEvent('EV-goal-attention', 'hopi_manage_attention', {
+    const result = await fixture.tools.executeForEvent(
+      'EV-goal-attention',
+      'hopi_manage_attention',
+      {
         projectId: 'P-1',
         change: {
           kind: 'resolve',
-          goalId: 'G-1',
-          attentionId: attention.attributes.id,
-          resolution: 'Resolved.',
+          attentionRef: goalAttentionReference('P-1', 'G-1', attention.attributes.id),
+          resolution: 'The current Inbox answer clears the owning condition.',
         },
-      }),
-    ).rejects.toThrow()
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
-        ?.attributes.resolvedAt,
-    ).toBeNull()
+      },
+    )
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    const resolved = goalPackage.attentions.get(attention.attributes.id)
+    expect(result).toMatchObject({
+      changed: true,
+      value: {
+        attentionId: attention.attributes.id,
+        resolved: true,
+        attentionRef: goalAttentionReference('P-1', 'G-1', attention.attributes.id),
+      },
+    })
+    expect(resolved?.attributes.resolvedAt).not.toBeNull()
+    expect(resolved?.attributes.resolutionInput).toContain('EV-goal-attention')
+    const resolutionInput = resolved?.attributes.resolutionInput
+    if (!resolutionInput) throw new Error('Expected Goal Attention resolution Input')
+    expect(await Bun.file(fixture.goalStore.paths.absolute(resolutionInput)).exists()).toBe(true)
   })
 
   test('explicitly requests deterministic Project recovery', async () => {
@@ -1802,7 +1818,10 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       change: {
         kind: 'resolve',
-        attentionId: attention.attributes.id,
+        attentionRef: workspaceAttentionReference(
+          (await fixture.workspace.readWorkspace()).homeId,
+          attention.attributes.id,
+        ),
         resolution: 'The new Planning run now represents the blocker.',
       },
     })

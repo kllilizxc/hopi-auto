@@ -102,9 +102,11 @@ export function createStableWorktreeManager(): StableWorktreeManager {
           true,
         )
       ).exitCode === 0
+    const checkoutConfig = ['-c', 'core.autocrlf=false', '-c', 'core.hooksPath=/dev/null']
     const args = branchExists
-      ? ['worktree', 'add', '--force', expected.path, expected.branch]
+      ? [...checkoutConfig, 'worktree', 'add', '--force', expected.path, expected.branch]
       : [
+          ...checkoutConfig,
           'worktree',
           'add',
           '-b',

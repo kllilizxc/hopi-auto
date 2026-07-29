@@ -987,9 +987,7 @@ describe('WorkspaceAssistant conversation', () => {
       'A Work requested in this turn can start only after the turn settles',
     )
     expect(seen[0]?.prompt).toContain('hopi_manage_attention persists Project Attention')
-    expect(seen[0]?.prompt).toContain(
-      'transfer_attention_to_user presents referenced open Attention',
-    )
+    expect(seen[0]?.prompt).toContain('resolves exact Project or Goal Attention references')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
     expect(seen[0]?.prompt).toContain('Project Preview is one local managed runtime')

@@ -103,7 +103,7 @@ const assistantRunner: AssistantModelRunner = {
         projectId: PROJECT_ID,
         change: {
           kind: 'resolve',
-          attentionId: attentionToResolve,
+          attentionRef: workspaceAttentionReference(assistantHomeId, attentionToResolve),
           resolution: USER_MESSAGE,
         },
       })

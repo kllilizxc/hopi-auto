@@ -663,7 +663,11 @@ idempotent. HOPI does not parse reply prose to reconstruct effects.
 Attention is the Project Assistant's durable todo set. It has a natural-language body, canonical
 target or refs, a short operator summary, and an optional decision prompt, but no owner, kind,
 priority, waiting, notification, or retry state.
-All unresolved Attention is supplied together; Assistant may create, update, merge, or resolve it.
+All unresolved Attention is supplied together. Assistant may create or update Project Attention and
+may resolve any exact Project or Goal Attention reference after its owning condition clears. Goal
+Attention resolution also publishes the current Inbox turn as the durable Goal Input that explains
+the judgment; Assistant does not need to replace or cancel an otherwise valid Work merely to close
+its prior question.
 An operator message or reply does not mutate Attention automatically.
 
 `transfer_attention_to_user` stages one or more exact open Attention references on the current public

@@ -1124,13 +1124,13 @@ export function createAssistantTools(options: {
               },
             }
           }
-          const attention = state.attentions.get(change.attentionId)
-          if (!attention || workspaceAttentionProjectId(attention) !== project.projectId) {
-            throw new AssistantToolRequestError(
-              `Project Attention not found: ${change.attentionId}`,
-            )
-          }
           if (change.kind === 'update') {
+            const attention = state.attentions.get(change.attentionId)
+            if (!attention || workspaceAttentionProjectId(attention) !== project.projectId) {
+              throw new AssistantToolRequestError(
+                `Project Attention not found: ${change.attentionId}`,
+              )
+            }
             if (
               change.body === undefined &&
               change.refs === undefined &&
@@ -1163,17 +1163,71 @@ export function createAssistantTools(options: {
               },
             }
           }
+
+          const parsedReference = parseAttentionReference(change.attentionRef)
+          if (!parsedReference) {
+            throw new AssistantToolRequestError(
+              `Invalid Attention reference: ${change.attentionRef}`,
+            )
+          }
+          if (parsedReference.scope === 'goal') {
+            if (parsedReference.projectId !== project.projectId) {
+              throw new AssistantToolRequestError(
+                `Attention is outside Project ${project.projectId}: ${change.attentionRef}`,
+              )
+            }
+            const admission = await goalInputAdmission(
+              options.workspace,
+              project.store,
+              parsedReference.goalId,
+              event,
+            )
+            const changed = await resolveGoalAttention(
+              project.store,
+              parsedReference.goalId,
+              parsedReference.attentionId,
+              change.resolution,
+              admission,
+              now(),
+            )
+            return {
+              summary: `Resolved Goal Attention ${parsedReference.attentionId}.`,
+              changed,
+              value: {
+                attentionId: parsedReference.attentionId,
+                resolved: true,
+                attentionRef: change.attentionRef,
+                resolutionInput: admission.path,
+              },
+            }
+          }
+
+          if (parsedReference.homeId !== state.homeId) {
+            throw new AssistantToolRequestError(
+              `Attention is outside the current Home: ${change.attentionRef}`,
+            )
+          }
+          const attention = state.attentions.get(parsedReference.attentionId)
+          if (!attention || workspaceAttentionProjectId(attention) !== project.projectId) {
+            throw new AssistantToolRequestError(
+              `Project Attention not found: ${parsedReference.attentionId}`,
+            )
+          }
           const changed = attention.attributes.resolvedAt === null
           if (changed) {
-            await options.workspace.resolveAttention(change.attentionId, change.resolution, now())
+            await options.workspace.resolveAttention(
+              parsedReference.attentionId,
+              change.resolution,
+              now(),
+            )
           }
           return {
-            summary: `Resolved Project Attention ${change.attentionId}.`,
+            summary: `Resolved Project Attention ${parsedReference.attentionId}.`,
             changed,
             value: {
-              attentionId: change.attentionId,
+              attentionId: parsedReference.attentionId,
               resolved: true,
-              attentionRef: workspaceAttentionReference(state.homeId, change.attentionId),
+              attentionRef: change.attentionRef,
             },
           }
         }

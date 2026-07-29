@@ -1324,11 +1324,12 @@ delta, but it cannot prove that a new dispatch will repeat it. Planner may reque
 worktree repair only from a current Coordinator synchronization diagnostic that aborted before the
 responsibility pass; otherwise it plans the semantic continuation under the synchronization rule.
 
-HOPI materializes managed integration and task worktrees with `core.autocrlf=false` for the checkout
-operation, regardless of the operator's global Git preference. This does not change the user Repo
-configuration or checkout. It preserves committed blob line endings in HOPI-owned roots so an
-executable script that passed review cannot become `bash\r` merely because a later Work gets a fresh
-checkout.
+HOPI materializes managed integration and task worktrees with `core.autocrlf=false` and an empty
+`core.hooksPath` for the checkout operation, regardless of the operator's global Git preference.
+This does not change the user Repo configuration or checkout. It preserves committed blob line
+endings in HOPI-owned roots and prevents user-checkout hooks from adding side effects or blocking a
+Coordinator-owned source projection. Reviewed Repo preparation remains the explicit
+`scripts/hopi/prepare` capability.
 
 ### Repo preparation
 

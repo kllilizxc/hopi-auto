@@ -270,7 +270,7 @@ export const assistantToolSchemas = {
         z
           .object({
             kind: z.literal('resolve'),
-            attentionId: stableIdSchema,
+            attentionRef: attentionReferenceSchema,
             resolution: z.string().trim().min(1).max(2_000),
           })
           .strict(),

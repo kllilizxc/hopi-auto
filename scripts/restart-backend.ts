@@ -4,7 +4,7 @@ import {
   type CoordinatorLockOwner,
   readCoordinatorLockOwner,
 } from '../packages/backend/src/publication/instanceLock'
-import { defaultAssistantHomeRoot } from '../packages/backend/src/runtime/assistantHomeMigration'
+import { defaultAssistantHomeRoot } from '../packages/backend/src/runtime/assistantHomeRoot'
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),

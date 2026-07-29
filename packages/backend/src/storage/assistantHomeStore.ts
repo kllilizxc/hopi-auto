@@ -850,9 +850,10 @@ async function createManagedRepoRoot(
   const targetExists =
     (await runGit(repo.repoPath, ['show-ref', '--verify', '--quiet', releaseRef], true))
       .exitCode === 0
+  const checkoutConfig = ['-c', 'core.autocrlf=false', '-c', 'core.hooksPath=/dev/null']
   const args = targetExists
-    ? ['-c', 'core.autocrlf=false', 'worktree', 'add', integrationRoot, releaseBranch]
-    : ['-c', 'core.autocrlf=false', 'worktree', 'add', '-b', releaseBranch, integrationRoot, 'HEAD']
+    ? [...checkoutConfig, 'worktree', 'add', integrationRoot, releaseBranch]
+    : [...checkoutConfig, 'worktree', 'add', '-b', releaseBranch, integrationRoot, 'HEAD']
   const result = await runGit(repo.repoPath, args, true)
   if (result.exitCode !== 0) {
     throw new AssistantHomeStoreError(

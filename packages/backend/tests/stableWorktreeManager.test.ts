@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, rm } from 'node:fs/promises'
+import { chmod, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { projectReleaseBranch } from '../src/domain/project'
 import {
@@ -107,6 +107,28 @@ describe('createStableWorktreeManager', () => {
     expect(await Bun.file(join(prepared.path, 'run.sh')).text()).toBe(
       '#!/usr/bin/env bash\nprintf "ready\\n"\n',
     )
+  })
+
+  test('does not execute user Git hooks while materializing managed worktrees', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoPath = await createRepo(join(temporaryRoot, 'repo'))
+    const marker = join(temporaryRoot, 'post-checkout-ran')
+    const hook = join(repoPath, '.git', 'hooks', 'post-checkout')
+    await Bun.write(hook, `#!/bin/sh\nprintf hook > ${JSON.stringify(marker)}\n`)
+    await chmod(hook, 0o755)
+
+    const project = await createAssistantHomeStore(homeRoot).linkProject({
+      projectId: 'P-1',
+      repoPath,
+    })
+    await createStableWorktreeManager().prepare({
+      projectRoot: project.integrationRoot,
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+    })
+
+    expect(await Bun.file(marker).exists()).toBe(false)
   })
 
   test('creates sibling task worktrees for multiple Repos without dirtying primary', async () => {
