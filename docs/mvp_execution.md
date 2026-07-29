@@ -12,7 +12,7 @@ Last updated: 2026-07-26
 > prescriptive recovery flow below is historical context and does not define active behavior.
 
 This document owns semantic guards, the fixed responsibility profile, scheduling, worktrees,
-recovery, completion assessment, notification, and Preview behavior for
+recovery, completion assessment, and notification for
 [the HOPI MVP design](./mvp_design.md). Document schemas belong to
 [the document model](./mvp_document_model.md), Assistant conversation and tools to
 [the Assistant design](./mvp_assistant.md), lifecycle visualization to
@@ -1737,20 +1737,3 @@ Manual completion confirmation is not required.
 ## Preview Capability (P2)
 
 See `mvp_project_runtime.md`. It is the sole source of truth for this capability.
-observed on the next Start is treated as an ordinary startup conflict and routed through Preview
-repair. The MVP adds no durable Preview lease, PID document, or orphan scanner.
-
-On Start, Coordinator first checks for the reviewed adapter. The operator's Start command itself
-expresses the desired outcome: a working Preview for the Project's current managed release. If the
-adapter is missing, preparation fails, or startup fails, Preview first persists the failed session
-and then publishes that command result as one ordinary durable user Inbox turn. The turn contains
-the target capability, adapter path, available failure logs, and immutable Project context. Project
-context locates current authority without forcing any existing Goal to receive the repair.
-
-The turn contains no workflow prescription. Assistant judges the appropriate ordinary Goal and Work
-effect from current documents and its existing capabilities. Coordinator does not synthesize a Work
-because Goal ownership and a complete acceptance contract are semantic choices. An
-Assistant-initiated Start receives the same failure directly as its tool result instead of creating
-a duplicate Inbox turn. Failures after a successful Start and stops caused by release change or
-runtime recovery remain factual Project system events. There is no Preview setup Action, setup
-state, or Reconciler-created Work.
