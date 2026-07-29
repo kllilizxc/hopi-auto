@@ -96,6 +96,49 @@ describe('PassOutcomeCoordinator', () => {
     )
   })
 
+  test('retains Planner project context while an existing Attention keeps Planning open', async () => {
+    const fixture = await createFixture()
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-existing')
+    await fixture.store.publishGoal('goal-1', {
+      supportingWrites: [
+        {
+          path: attentionPath,
+          expectedHash: null,
+          content: renderAttentionDocument({
+            attributes: {
+              id: 'A-existing',
+              target: 'project:project-1/goal:goal-1/work:plan-initial',
+              createdAt: '2026-07-10T00:00:00.000Z',
+              resolvedAt: null,
+              summary: 'Restore the operator-owned local identity.',
+            },
+            body: '## Observed condition\n\nRestore the operator-owned local identity.\n',
+          }),
+        },
+      ],
+    })
+    const context = await fixture.stage('plan-initial', 'run-existing-attention', 'planner')
+    await Bun.write(
+      join(context.proposalRoot, '.hopi', 'docs', 'repos.md'),
+      '# Project Repositories\n\n- `primary`: real application and Preview adapter.\n',
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-existing-attention', 'planner', context, 'attention'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toMatchObject({ kind: 'published', result: 'attention' })
+    expect(goalPackage.attentions.get('A-existing')?.attributes.resolvedAt).toBeNull()
+    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
+      stage: 'plan',
+      evidenceRefs: ['E-run-existing-attention'],
+    })
+    expect(await Bun.file(join(fixture.projectRoot, '.hopi', 'docs', 'repos.md')).text()).toContain(
+      'real application and Preview adapter',
+    )
+  })
+
   test('lets Planner atomically rewire current dependencies around cancelled Work', async () => {
     const fixture = await createFixture()
     const base = engineeringWork('W-base', 'generate')

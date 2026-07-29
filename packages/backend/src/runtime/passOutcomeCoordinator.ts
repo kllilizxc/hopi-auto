@@ -411,15 +411,17 @@ function buildPlannerApplication(
 
   if (input.outcome.result === 'fail' || input.outcome.result === 'attention') {
     const failed = appendEvidence(currentWork, evidence.attributes.id)
+    const evidenceSupport = evidenceWrite(store, input.goalId, evidence)
     return {
-      supportingWrites: [evidenceWrite(store, input.goalId, evidence)],
+      supportingWrites: [evidenceSupport],
+      projectContextWrites: proposal.projectContextWrites,
       gateWrite: workWrite(store, input.goalId, failed, input.context.workHash),
       async validateTransition(before, candidate, currentAuthority) {
         await validatePassSemanticGuard(
           store,
           input,
           before,
-          [evidenceWrite(store, input.goalId, evidence)],
+          [evidenceSupport, ...proposal.projectContextWrites],
           { currentAuthority },
         )
         assertOnlyOwningWorkAndEvidenceChanged(
