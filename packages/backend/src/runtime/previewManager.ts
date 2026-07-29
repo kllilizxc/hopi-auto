@@ -271,9 +271,10 @@ export function createPreviewManager(
     operation.process = child
     operation.session.processId = child.pid
     await persistSession(operation.session)
+    const redactRuntimeInputs = createRuntimeInputRedactor(runtimeInputs)
     operation.streams = [
-      consumePreviewStream(child.stdout, operation, paths.logPath),
-      consumePreviewStream(child.stderr, operation, paths.logPath),
+      consumePreviewStream(child.stdout, operation, paths.logPath, redactRuntimeInputs),
+      consumePreviewStream(child.stderr, operation, paths.logPath, redactRuntimeInputs),
     ]
 
     const startup = await Promise.race([
@@ -674,6 +675,7 @@ async function consumePreviewStream(
   stream: ReadableStream<Uint8Array>,
   operation: PreviewOperation,
   logPath: string,
+  redact: (line: string) => string,
 ) {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
@@ -684,10 +686,28 @@ async function consumePreviewStream(
     buffered += decoder.decode(value, { stream: true })
     const lines = buffered.split(/\r?\n/)
     buffered = lines.pop() ?? ''
-    for (const line of lines) recordLine(operation, line, logPath)
+    for (const line of lines) recordLine(operation, redact(line), logPath)
   }
   buffered += decoder.decode()
-  if (buffered) recordLine(operation, buffered, logPath)
+  if (buffered) recordLine(operation, redact(buffered), logPath)
+}
+
+function createRuntimeInputRedactor(runtimeInputs: Readonly<Record<string, string>> | undefined) {
+  const values = new Set<string>()
+  for (const value of Object.values(runtimeInputs ?? {})) {
+    if (!value) continue
+    values.add(value)
+    const escaped = JSON.stringify(value).slice(1, -1)
+    if (escaped !== value) values.add(escaped)
+  }
+  const candidates = [...values].sort((left, right) => right.length - left.length)
+  return (line: string) => {
+    let redacted = line
+    for (const value of candidates) {
+      redacted = redacted.split(value).join('[REDACTED_RUNTIME_INPUT]')
+    }
+    return redacted
+  }
 }
 
 function recordLine(operation: PreviewOperation, line: string, logPath: string) {

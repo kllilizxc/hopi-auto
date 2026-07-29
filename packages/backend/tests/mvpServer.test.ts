@@ -1014,6 +1014,7 @@ describe('MVP server', () => {
       [
         '#!/usr/bin/env bun',
         'const inputs = JSON.parse(process.env.HOPI_PREVIEW_RUNTIME_INPUTS ?? "{}")',
+        'console.error(`input=${inputs.first}`)',
         'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/runtime-inputs.json`, JSON.stringify({',
         '  firstReceived: inputs.first === "first-runtime-value",',
         '  secondReceived: inputs.second === "second-runtime-value",',
@@ -1059,6 +1060,9 @@ describe('MVP server', () => {
       secondReceived: true,
     })
     const manifest = await Bun.file(session.manifestPath).text()
+    const log = await Bun.file(session.logPath).text()
+    expect(log).not.toContain('first-runtime-value')
+    expect(log).toContain('input=[REDACTED_RUNTIME_INPUT]')
     expect(manifest).not.toContain('first-runtime-value')
     expect(manifest).not.toContain('second-runtime-value')
     await request(base, '/api/projects/P-credential/preview/stop', { method: 'POST' })

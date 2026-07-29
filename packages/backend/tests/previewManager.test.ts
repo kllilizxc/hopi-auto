@@ -81,6 +81,7 @@ describe('PreviewManager', () => {
       [
         '#!/usr/bin/env bun',
         'const inputs = JSON.parse(process.env.HOPI_PREVIEW_RUNTIME_INPUTS ?? "{}")',
+        'console.error(`input=${inputs.first}`)',
         'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/runtime-inputs.json`, JSON.stringify({',
         '  firstReceived: inputs.first === "first-runtime-value",',
         '  secondReceived: inputs.second === "second-runtime-value",',
@@ -112,9 +113,36 @@ describe('PreviewManager', () => {
       secondReceived: true,
     })
     const manifest = await Bun.file(result.session.manifestPath).text()
+    const log = await Bun.file(result.session.logPath).text()
+    expect(log).not.toContain('first-runtime-value')
+    expect(log).toContain('input=[REDACTED_RUNTIME_INPUT]')
     expect(manifest).not.toContain('first-runtime-value')
     expect(manifest).not.toContain('second-runtime-value')
     expect(await manager.stop('P-1')).toMatchObject({ status: 'stopped' })
+
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        'const inputs = JSON.parse(process.env.HOPI_PREVIEW_RUNTIME_INPUTS ?? "{}")',
+        'console.error(`failed-input=${inputs.first}`)',
+        'process.exit(2)',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await commitAll(projectRoot, 'make Preview fail')
+    const failed = await manager.start({
+      projectId: 'P-1',
+      projectRoot,
+      runtimeInputs: { first: 'failed-runtime-value' },
+    })
+    expect(failed.kind).toBe('failed')
+    if (failed.kind !== 'failed') throw new Error('Expected failed Preview')
+    expect(failed.logs).not.toContain('failed-runtime-value')
+    expect(failed.logs).toContain('failed-input=[REDACTED_RUNTIME_INPUT]')
+    expect(await Bun.file(failed.session.logPath).text()).not.toContain('failed-runtime-value')
+    expect(await Bun.file(failed.session.manifestPath).text()).not.toContain('failed-runtime-value')
   })
 
   test('never reuses a Preview session after the managed release head changes', async () => {
