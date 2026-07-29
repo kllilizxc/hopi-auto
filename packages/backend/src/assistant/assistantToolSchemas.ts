@@ -287,6 +287,7 @@ export const assistantToolSchemas = {
     .object({
       projectId: stableIdSchema,
       operation: z.enum(['start', 'stop']),
+      runtimeInputs: z.record(z.string()).optional(),
     })
     .strict(),
 } as const

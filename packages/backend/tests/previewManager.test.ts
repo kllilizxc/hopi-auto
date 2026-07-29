@@ -71,7 +71,7 @@ describe('PreviewManager', () => {
     })
   })
 
-  test('hands session credential references only to the adapter and excludes them from persistence', async () => {
+  test('hands runtime inputs only to the adapter and excludes them from persistence', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
     await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
@@ -80,9 +80,10 @@ describe('PreviewManager', () => {
       adapter,
       [
         '#!/usr/bin/env bun',
-        'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/credential-handoff.json`, JSON.stringify({',
-        '  certificateReferenceReceived: process.env.HOPI_RFID_CERT_SOURCE === "session-certificate-reference",',
-        '  privateKeyReferenceReceived: process.env.HOPI_RFID_KEY_SOURCE === "session-private-key-reference",',
+        'const inputs = JSON.parse(process.env.HOPI_PREVIEW_RUNTIME_INPUTS ?? "{}")',
+        'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/runtime-inputs.json`, JSON.stringify({',
+        '  firstReceived: inputs.first === "first-runtime-value",',
+        '  secondReceived: inputs.second === "second-runtime-value",',
         '}))',
         previewSurfaceSignal('http://127.0.0.1:4321'),
         'process.on("SIGTERM", () => process.exit(0))',
@@ -97,22 +98,22 @@ describe('PreviewManager', () => {
     const result = await manager.start({
       projectId: 'P-1',
       projectRoot,
-      sessionCredentialReferences: {
-        rfidCertificate: 'session-certificate-reference',
-        rfidPrivateKey: 'session-private-key-reference',
+      runtimeInputs: {
+        first: 'first-runtime-value',
+        second: 'second-runtime-value',
       },
     })
 
     if (result.kind !== 'started') throw new Error('Expected started Preview')
     expect(
-      await Bun.file(join(dirname(result.session.logPath), 'credential-handoff.json')).json(),
+      await Bun.file(join(dirname(result.session.logPath), 'runtime-inputs.json')).json(),
     ).toEqual({
-      certificateReferenceReceived: true,
-      privateKeyReferenceReceived: true,
+      firstReceived: true,
+      secondReceived: true,
     })
     const manifest = await Bun.file(result.session.manifestPath).text()
-    expect(manifest).not.toContain('session-certificate-reference')
-    expect(manifest).not.toContain('session-private-key-reference')
+    expect(manifest).not.toContain('first-runtime-value')
+    expect(manifest).not.toContain('second-runtime-value')
     expect(await manager.stop('P-1')).toMatchObject({ status: 'stopped' })
   })
 
@@ -210,11 +211,12 @@ describe('PreviewManager', () => {
     })
 
     try {
+      const releaseHeads = { primary: await readGitHead(projectRoot) }
       const result = await manager.start({
         projectId: 'P-1',
         projectRoot,
         requestedBy: 'assistant',
-        releaseHeads: { primary: 'release-1' },
+        releaseHeads,
       })
 
       expect(result).toMatchObject({
@@ -313,7 +315,7 @@ describe('PreviewManager', () => {
         appendOrder('web'),
         'const manifest = await Bun.file(process.env.HOPI_REPOS_FILE).json()',
         'if (manifest.projection !== "release") process.exit(4)',
-        'if (manifest.releaseHeads?.web !== "release-web" || manifest.releaseHeads?.api !== "release-api") process.exit(3)',
+        'if (!manifest.releaseHeads?.web || !manifest.releaseHeads?.api) process.exit(3)',
       ].join('\n'),
     )
     await writePrepareAdapter(apiRoot, appendOrder('api'))
@@ -331,6 +333,10 @@ describe('PreviewManager', () => {
     await makePreviewAdapterExecutable(adapter)
     await initializeGit(projectRoot)
     await initializeGit(apiRoot)
+    const releaseHeads = {
+      web: await readGitHead(projectRoot),
+      api: await readGitHead(apiRoot),
+    }
     const manager = createTestPreviewManager({
       startupTimeoutMs: 2_000,
       stopGraceMs: 500,
@@ -340,7 +346,7 @@ describe('PreviewManager', () => {
       projectId: 'P-1',
       projectRoot,
       primaryRepoId: 'web',
-      releaseHeads: { web: 'release-web', api: 'release-api' },
+      releaseHeads,
       repoRoots: [
         { repoId: 'web', path: projectRoot },
         { repoId: 'api', path: apiRoot },
@@ -681,11 +687,12 @@ describe('PreviewManager', () => {
     })
 
     try {
+      const releaseHeads = { primary: await readGitHead(projectRoot) }
       const starting = manager.start({
         projectId: 'P-1',
         projectRoot,
         requestedBy: 'assistant',
-        releaseHeads: { primary: 'release-1' },
+        releaseHeads,
       })
       await probeEntered
       expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', surfaces: [] })
@@ -740,11 +747,12 @@ describe('PreviewManager', () => {
     })
 
     try {
+      const releaseHeads = { primary: await readGitHead(projectRoot) }
       const result = await manager.start({
         projectId: 'P-1',
         projectRoot,
         requestedBy: 'assistant',
-        releaseHeads: { primary: 'release-1' },
+        releaseHeads,
       })
       expect(result).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
       if (result.kind !== 'failed') throw new Error('Expected failed Preview')
@@ -917,22 +925,34 @@ function createTestPreviewManager(options: PreviewManagerOptions = {}) {
     surfaceProbe: async () => undefined,
     ...options,
   })
+  const hasCustomPreparer = options.preparer !== undefined
   return {
     ...manager,
     start(input: TestPreviewStartInput) {
       const repos =
         input.repoRoots && input.repoRoots.length > 0
           ? input.repoRoots
-          : [{ repoId: input.primaryRepoId ?? 'primary' }]
+          : [{ repoId: input.primaryRepoId ?? 'primary', path: input.projectRoot }]
+      const releaseHeads =
+        input.releaseHeads ??
+        (hasCustomPreparer
+          ? Object.fromEntries(repos.map((repo) => [repo.repoId, `release-${repo.repoId}`]))
+          : Object.fromEntries(repos.map((repo) => [repo.repoId, readGitHeadSync(repo.path)])))
       return manager.start({
         ...input,
         requestedBy: input.requestedBy ?? 'assistant',
-        releaseHeads:
-          input.releaseHeads ??
-          Object.fromEntries(repos.map((repo) => [repo.repoId, `release-${repo.repoId}`])),
+        releaseHeads,
       })
     },
   }
+}
+
+function readGitHeadSync(cwd: string) {
+  const result = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], { cwd })
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.toString() || result.stdout.toString())
+  }
+  return result.stdout.toString().trim()
 }
 
 function dirname(path: string) {

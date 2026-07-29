@@ -1003,9 +1003,9 @@ describe('MVP server', () => {
     })
   })
 
-  test('passes session-only Preview credential references without persisting them', async () => {
-    const homeRoot = join(temporaryRoot, 'credential-preview-home')
-    const repoRoot = await createRepo(join(temporaryRoot, 'credential-preview-repo'))
+  test('passes session-only Preview runtime inputs without persisting them', async () => {
+    const homeRoot = join(temporaryRoot, 'runtime-input-preview-home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'runtime-input-preview-repo'))
     const adapterRoot = join(repoRoot, 'scripts', 'hopi')
     await mkdir(adapterRoot, { recursive: true })
     await Bun.write(join(adapterRoot, 'prepare'), '#!/usr/bin/env bun\nconsole.log("prepare ok")\n')
@@ -1013,9 +1013,10 @@ describe('MVP server', () => {
       join(adapterRoot, 'preview'),
       [
         '#!/usr/bin/env bun',
-        'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/credential-handoff.json`, JSON.stringify({',
-        '  certificateReferenceReceived: process.env.HOPI_RFID_CERT_SOURCE === "session-certificate-reference",',
-        '  privateKeyReferenceReceived: process.env.HOPI_RFID_KEY_SOURCE === "session-private-key-reference",',
+        'const inputs = JSON.parse(process.env.HOPI_PREVIEW_RUNTIME_INPUTS ?? "{}")',
+        'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/runtime-inputs.json`, JSON.stringify({',
+        '  firstReceived: inputs.first === "first-runtime-value",',
+        '  secondReceived: inputs.second === "second-runtime-value",',
         '}))',
         'const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ready") })',
         'console.log(`HOPI_PREVIEW_SURFACES=${JSON.stringify([{ id: "default", label: "Preview", url: `http://127.0.0.1:${server.port}/` }])}`)',
@@ -1027,7 +1028,7 @@ describe('MVP server', () => {
     await chmod(join(adapterRoot, 'prepare'), 0o755)
     await chmod(join(adapterRoot, 'preview'), 0o755)
     await git(repoRoot, ['add', '.'])
-    await git(repoRoot, ['commit', '-m', 'add credential Preview adapters'])
+    await git(repoRoot, ['commit', '-m', 'add runtime-input Preview adapters'])
     const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
     activeServers.add(server)
     const base = `http://127.0.0.1:${server.port}`
@@ -1039,9 +1040,9 @@ describe('MVP server', () => {
     await request(base, '/api/projects/P-credential/preview/start', {
       method: 'POST',
       body: {
-        sessionCredentialReferences: {
-          rfidCertificate: 'session-certificate-reference',
-          rfidPrivateKey: 'session-private-key-reference',
+        runtimeInputs: {
+          first: 'first-runtime-value',
+          second: 'second-runtime-value',
         },
       },
     })
@@ -1053,15 +1054,13 @@ describe('MVP server', () => {
       manifestPath: string
       logPath: string
     }
-    expect(
-      await Bun.file(join(dirname(session.logPath), 'credential-handoff.json')).json(),
-    ).toEqual({
-      certificateReferenceReceived: true,
-      privateKeyReferenceReceived: true,
+    expect(await Bun.file(join(dirname(session.logPath), 'runtime-inputs.json')).json()).toEqual({
+      firstReceived: true,
+      secondReceived: true,
     })
     const manifest = await Bun.file(session.manifestPath).text()
-    expect(manifest).not.toContain('session-certificate-reference')
-    expect(manifest).not.toContain('session-private-key-reference')
+    expect(manifest).not.toContain('first-runtime-value')
+    expect(manifest).not.toContain('second-runtime-value')
     await request(base, '/api/projects/P-credential/preview/stop', { method: 'POST' })
   })
 
@@ -1607,12 +1606,14 @@ describe('MVP server', () => {
       failureReason: 'missing',
       error: expect.stringContaining('scripts/hopi/preview'),
     })
-    expect(await waitForPreviewRequestEvent(homeRoot, publisher)).toMatchObject({
+    expect(await waitForPreviewFailureEvent(homeRoot, publisher)).toMatchObject({
       attributes: {
         status: 'pending',
-        visibility: 'public',
+        source: 'system',
+        visibility: 'internal',
         context: { projectId: 'P-1' },
       },
+      body: expect.stringContaining('Project Preview start failed.'),
     })
     expect(await checkoutSnapshot(repoRoot)).toEqual(before)
   })
@@ -2723,14 +2724,14 @@ async function waitForPreviewSession(
   throw new Error(`Preview ${projectId} did not reach ${status}`)
 }
 
-async function waitForPreviewRequestEvent(homeRoot: string, publisher: PublicationCoordinator) {
+async function waitForPreviewFailureEvent(homeRoot: string, publisher: PublicationCoordinator) {
   const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
     const event = [...(await workspace.readWorkspace()).events.values()].find(
       (candidate) =>
-        candidate.attributes.source === 'user' &&
-        candidate.body.includes('Start a working Project Preview'),
+        candidate.attributes.source === 'system' &&
+        candidate.body.includes('Project Preview start failed.'),
     )
     if (event) return event
     await Bun.sleep(10)

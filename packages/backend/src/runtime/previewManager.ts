@@ -34,17 +34,6 @@ export interface PreviewSurface {
   url: string
 }
 
-/**
- * File references admitted for one managed Preview startup.  They are never
- * part of PreviewSession and are discarded after the adapter process is
- * spawned.  The adapter remains responsible for validating the referenced
- * material before it starts any child service.
- */
-export interface PreviewSessionCredentialReferences {
-  rfidCertificate: string
-  rfidPrivateKey: string
-}
-
 export interface PreviewSession {
   sessionId: string
   projectId: string
@@ -95,7 +84,7 @@ export interface PreviewManager {
     requestedBy: PreviewStartRequester
     primaryRepoId?: string
     repoRoots?: readonly ProjectPreparationRepoRoot[]
-    sessionCredentialReferences?: PreviewSessionCredentialReferences
+    runtimeInputs?: Readonly<Record<string, string>>
   }): Promise<PreviewStartResult>
   stop(projectId: string, reason?: PreviewStoppedReason): Promise<PreviewSession | null>
   stopAll(): Promise<void>
@@ -207,7 +196,7 @@ export function createPreviewManager(
       preparationRoot: string
       reposFile: string
     },
-    sessionCredentialReferences: PreviewSessionCredentialReferences | undefined,
+    runtimeInputs: Readonly<Record<string, string>> | undefined,
   ): Promise<PreviewStartResult> {
     const adapterFile = Bun.file(paths.adapter)
     if (!(await adapterFile.exists())) {
@@ -262,7 +251,7 @@ export function createPreviewManager(
       reposFile: paths.reposFile,
       runtimeDir: paths.sessionRoot,
       cacheDir: runtimeCacheRoot(homeRoot),
-      sessionCredentialReferences,
+      runtimeInputs,
     })
     const child = (() => {
       try {
@@ -274,10 +263,9 @@ export function createPreviewManager(
           detached: true,
         })
       } finally {
-        // The child receives a private environment snapshot.  Do not retain the
-        // path references in this manager's environment object after that handoff.
-        childEnvironment.HOPI_RFID_CERT_SOURCE = undefined
-        childEnvironment.HOPI_RFID_KEY_SOURCE = undefined
+        // The child receives a private environment snapshot. Do not retain
+        // Project-owned inputs in the manager object after that handoff.
+        childEnvironment.HOPI_PREVIEW_RUNTIME_INPUTS = undefined
       }
     })()
     operation.process = child
@@ -463,9 +451,9 @@ export function createPreviewManager(
       }
       const current = operations.get(input.projectId)
       if (current?.session.status === 'running' || current?.session.status === 'starting') {
-        if (input.sessionCredentialReferences) {
+        if (input.runtimeInputs) {
           throw new Error(
-            'Preview credential references can be supplied only while admitting a new Preview session',
+            'Preview runtime inputs can be supplied only while admitting a new Preview session',
           )
         }
         if (sameReleaseHeads(current.session.releaseHeads, releaseHeads)) {
@@ -522,10 +510,8 @@ export function createPreviewManager(
         requesters: new Set([input.requestedBy]),
       }
       operations.set(input.projectId, operation)
-      let sessionCredentialReferences = input.sessionCredentialReferences
-        ? { ...input.sessionCredentialReferences }
-        : undefined
-      const startInput = { ...input, sessionCredentialReferences: undefined }
+      let runtimeInputs = input.runtimeInputs ? { ...input.runtimeInputs } : undefined
+      const startInput = { ...input, runtimeInputs: undefined }
       const paths = {
         projectRoot,
         adapter,
@@ -535,10 +521,10 @@ export function createPreviewManager(
         reposFile,
       }
       operation.startPromise = persistSession(session)
-        .then(() => runStart(operation, startInput, paths, sessionCredentialReferences))
+        .then(() => runStart(operation, startInput, paths, runtimeInputs))
         .catch((error) => failUnexpectedStart(operation, paths, error))
         .finally(() => {
-          sessionCredentialReferences = undefined
+          runtimeInputs = undefined
           operation.settled = true
         })
       return operation.startPromise
@@ -588,28 +574,17 @@ function previewAdapterEnvironment(input: {
   reposFile: string
   runtimeDir: string
   cacheDir: string
-  sessionCredentialReferences: PreviewSessionCredentialReferences | undefined
+  runtimeInputs: Readonly<Record<string, string>> | undefined
 }) {
-  const {
-    HOPI_RFID_CERT_SOURCE: _inheritedCertificateReference,
-    HOPI_RFID_KEY_SOURCE: _inheritedKeyReference,
-    ...environment
-  } = process.env
-  const references = input.sessionCredentialReferences
-  if (references && (!references.rfidCertificate.trim() || !references.rfidPrivateKey.trim())) {
-    throw new Error('Preview credentials must contain both session file references')
-  }
+  const { HOPI_PREVIEW_RUNTIME_INPUTS: _inheritedRuntimeInputs, ...environment } = process.env
   return {
     ...environment,
     HOPI_PROJECT_ROOT: input.projectRoot,
     HOPI_REPOS_FILE: input.reposFile,
     HOPI_PREVIEW_RUNTIME_DIR: input.runtimeDir,
     HOPI_CACHE_DIR: input.cacheDir,
-    ...(references
-      ? {
-          HOPI_RFID_CERT_SOURCE: references.rfidCertificate,
-          HOPI_RFID_KEY_SOURCE: references.rfidPrivateKey,
-        }
+    ...(input.runtimeInputs
+      ? { HOPI_PREVIEW_RUNTIME_INPUTS: JSON.stringify(input.runtimeInputs) }
       : {}),
   }
 }
@@ -643,6 +618,7 @@ const previewSessionSchema = z
           'failed',
           'source_changed',
           'skipped_dirty',
+          'release_mismatch',
         ]),
         adapterPath: z.string(),
         exitCode: z.number().int().nullable(),

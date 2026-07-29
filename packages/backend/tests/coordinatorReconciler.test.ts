@@ -130,7 +130,7 @@ describe('CoordinatorReconciler', () => {
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.status).toBe('handled')
   })
 
-  test('retains an internal turn until its Project has a speaking Session', async () => {
+  test('admits a first internal turn so its Project can bootstrap a speaking Session', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
@@ -145,8 +145,7 @@ describe('CoordinatorReconciler', () => {
     const assistant = {
       hasSpeakingSession: async () => speakingSession,
       async process(eventId: string) {
-        const event = await fixture.workspace.readEvent(eventId)
-        if (event?.attributes.source === 'user') speakingSession = true
+        speakingSession = true
         await fixture.workspace.handleEvent(eventId, {
           reply: `Handled ${eventId}`,
           disposition: 'answered',
@@ -161,20 +160,9 @@ describe('CoordinatorReconciler', () => {
       projects: [],
     })
 
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
-    expect((await fixture.workspace.readEvent('EV-system'))?.attributes.status).toBe('pending')
-
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-user',
-      content: 'What is happening?',
-      context: { projectId: 'P-1' },
-    })
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
     await coordinator.waitForIdle()
-    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
-    await coordinator.waitForIdle()
-
-    expect((await fixture.workspace.readEvent('EV-user'))?.attributes.status).toBe('handled')
+    expect(speakingSession).toBe(true)
     expect((await fixture.workspace.readEvent('EV-system'))?.attributes.status).toBe('handled')
   })
 

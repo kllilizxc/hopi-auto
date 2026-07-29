@@ -11,6 +11,7 @@ export type ProjectPreparationKind =
   | 'failed'
   | 'source_changed'
   | 'skipped_dirty'
+  | 'release_mismatch'
 
 export interface ProjectPreparationResult {
   kind: ProjectPreparationKind
@@ -88,6 +89,33 @@ export function createProjectPreparer(): ProjectPreparer {
       )
 
       const observedRoots = repoRoots.map((repo) => repo.path)
+      if (releaseHeads && (input.projection ?? 'release') === 'release') {
+        const mismatches = (
+          await Promise.all(
+            repoRoots.map(async (repo) => {
+              const actual = await gitHead(repo.path)
+              const expected = releaseHeads[repo.repoId]
+              return actual === expected
+                ? null
+                : `${repo.repoId}: expected ${expected}, got ${actual}`
+            }),
+          )
+        ).filter((mismatch): mismatch is string => mismatch !== null)
+        if (mismatches.length > 0) {
+          return finishPreparation(
+            {
+              kind: 'release_mismatch',
+              adapterPath: join(resolve(input.projectRoot), ...PROJECT_PREPARE_PATH.split('/')),
+              exitCode: null,
+              logs: `Managed release roots do not match the declared Project release heads:\n${mismatches.join('\n')}`,
+              logPath,
+              reposFile,
+            },
+            logPath,
+            startedAt,
+          )
+        }
+      }
       const initialStatuses = await sourceStatuses(observedRoots)
       const dirtyRoots = [...initialStatuses].filter(([, status]) => status)
       if (dirtyRoots.length > 0) {
@@ -284,6 +312,21 @@ async function sourceStatus(cwd: string) {
     child.exited,
   ])
   if (exitCode !== 0) throw new Error(stderr || 'Cannot inspect Repo preparation source status')
+  return stdout.trim()
+}
+
+async function gitHead(cwd: string) {
+  const child = Bun.spawn(['git', 'rev-parse', 'HEAD'], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) throw new Error(stderr || 'Cannot inspect managed release HEAD')
   return stdout.trim()
 }
 

@@ -47,6 +47,25 @@ describe('ProjectPreparer', () => {
     expect(await git(fixture.repo, ['status', '--porcelain'])).toBe('')
   })
 
+  test('rejects a managed release root whose HEAD does not match the declared release', async () => {
+    const fixture = await createFixture()
+    await writeAdapter(fixture.repo, 'await Bun.write("adapter-ran.txt", "unexpected")')
+    await git(fixture.repo, ['add', '.'])
+    await git(fixture.repo, ['commit', '-m', 'add prepare'])
+
+    const result = await createProjectPreparer().prepare({
+      projectRoot: fixture.repo,
+      runtimeDir: fixture.runtime,
+      cacheDir: fixture.cache,
+      releaseHeads: { primary: 'not-the-managed-head' },
+      projection: 'release',
+    })
+
+    expect(result).toMatchObject({ kind: 'release_mismatch', exitCode: null })
+    expect(result.logs).toContain('primary: expected not-the-managed-head')
+    expect(await Bun.file(join(fixture.repo, 'adapter-ran.txt')).exists()).toBe(false)
+  })
+
   test('supplies the Home-owned persistent cache outside the checkout', async () => {
     const fixture = await createFixture()
     await writeAdapter(

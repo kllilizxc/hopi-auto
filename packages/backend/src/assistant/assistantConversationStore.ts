@@ -254,11 +254,20 @@ export function createAssistantConversationStore(
 
     async recordActionReceipt(scope, receipt) {
       const path = receiptPath(scope, receipt.receiptId)
-      const existing = await readJson(path, actionReceiptSchema)
-      if (existing) return existing
+      const expectedScope = assistantConversationScopeKey(scope)
+      const existing = await readJson(path, actionReceiptSchema, true)
+      if (existing?.scope === expectedScope) return existing
+      if (existing) {
+        reportInvalidRuntimeRecord(
+          path,
+          new Error(
+            `Action receipt scope mismatch: expected ${expectedScope}, got ${existing.scope}`,
+          ),
+        )
+      }
       const stored = actionReceiptSchema.parse({
         ...receipt,
-        scope: assistantConversationScopeKey(scope),
+        scope: expectedScope,
         createdAt: now().toISOString(),
         deliveredAt: null,
       })
@@ -268,18 +277,30 @@ export function createAssistantConversationStore(
 
     async readPendingActionReceipts(scope) {
       const directory = receiptScopeRoot(scope)
+      const expectedScope = assistantConversationScopeKey(scope)
       const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
       const receipts = await Promise.all(
         entries
           .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
-          .map((entry) => readJson(join(directory, entry.name), actionReceiptSchema)),
+          .map(async (entry) => {
+            const path = join(directory, entry.name)
+            const receipt = await readJson(path, actionReceiptSchema, true)
+            if (receipt && receipt.scope !== expectedScope) {
+              reportInvalidRuntimeRecord(
+                path,
+                new Error(
+                  `Action receipt scope mismatch: expected ${expectedScope}, got ${receipt.scope}`,
+                ),
+              )
+              return null
+            }
+            return receipt
+          }),
       )
       return receipts
         .filter(
           (receipt): receipt is AssistantActionReceipt =>
-            receipt !== null &&
-            receipt.scope === assistantConversationScopeKey(scope) &&
-            receipt.deliveredAt === null,
+            receipt !== null && receipt.deliveredAt === null,
         )
         .sort(
           (left, right) =>
@@ -290,14 +311,20 @@ export function createAssistantConversationStore(
 
     async acknowledgeActionReceipts(scope, receiptIds) {
       const deliveredAt = now().toISOString()
+      const expectedScope = assistantConversationScopeKey(scope)
       for (const receiptId of [...new Set(receiptIds)]) {
         const path = receiptPath(scope, receiptId)
-        const receipt = await readJson(path, actionReceiptSchema)
-        if (
-          !receipt ||
-          receipt.scope !== assistantConversationScopeKey(scope) ||
-          receipt.deliveredAt !== null
-        ) {
+        const receipt = await readJson(path, actionReceiptSchema, true)
+        if (receipt && receipt.scope !== expectedScope) {
+          reportInvalidRuntimeRecord(
+            path,
+            new Error(
+              `Action receipt scope mismatch: expected ${expectedScope}, got ${receipt.scope}`,
+            ),
+          )
+          continue
+        }
+        if (!receipt || receipt.deliveredAt !== null) {
           continue
         }
         await writeJson(path, { ...receipt, deliveredAt })

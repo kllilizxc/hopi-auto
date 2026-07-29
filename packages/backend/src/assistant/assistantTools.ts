@@ -1257,6 +1257,7 @@ export function createAssistantTools(options: {
               ),
               primaryRepoId: project.primaryRepoId,
               repoRoots,
+              runtimeInputs: args.runtimeInputs,
             })
             return {
               summary: `Preview start requested for ${project.projectId}.`,

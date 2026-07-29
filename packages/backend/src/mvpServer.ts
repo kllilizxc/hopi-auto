@@ -124,13 +124,7 @@ const repoPathSchema = z
   .strict()
 const previewStartSchema = z
   .object({
-    sessionCredentialReferences: z
-      .object({
-        rfidCertificate: z.string().trim().min(1).max(4_096),
-        rfidPrivateKey: z.string().trim().min(1).max(4_096),
-      })
-      .strict()
-      .optional(),
+    runtimeInputs: z.record(z.string()).optional(),
   })
   .strict()
 const projectSchema = z.union([
@@ -899,7 +893,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             ),
             primaryRepoId: project.primaryRepoId,
             repoRoots,
-            sessionCredentialReferences: startRequest.sessionCredentialReferences,
+            runtimeInputs: startRequest.runtimeInputs,
           })
           const session = runtime.preview.inspect(project.projectId)
           if (!session) throw new Error('Preview operation was not admitted')

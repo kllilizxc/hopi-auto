@@ -56,7 +56,14 @@ export interface PreviewSession {
   endedAt: string | null
   processId: number | null
   preparation: {
-    kind: 'ready' | 'absent' | 'not_executable' | 'failed' | 'source_changed' | 'skipped_dirty'
+    kind:
+      | 'ready'
+      | 'absent'
+      | 'not_executable'
+      | 'failed'
+      | 'source_changed'
+      | 'skipped_dirty'
+      | 'release_mismatch'
     adapterPath: string
     exitCode: number | null
     logPath: string

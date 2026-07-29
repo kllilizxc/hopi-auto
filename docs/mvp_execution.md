@@ -1180,12 +1180,9 @@ The Harness command's absence is an environment fact rather than a fictitious to
 project-native browser tooling, package installation, network access, local ports, and Run scratch
 remain available under the ordinary execution envelope.
 
-Changing, creating, or repairing a browser-facing `scripts/hopi/preview` always makes that client
-boundary material. Reviewer starts the candidate adapter independently and uses an available real
-browser client to prove the user-visible state promised by accepted design. The adapter's own probe,
-an HTTP success status, an application-shell response, loaded static assets, or a ready marker cannot
-independently prove that state. The design supplies the observable product outcome; HOPI does not
-replace it with a generic console-error rule, DOM selector list, or prescribed browser product.
+Project Preview behavior, invocation, evidence, and failure routing are owned exclusively by
+`mvp_project_runtime.md`. Reviewer uses the evidence appropriate to the accepted Work and available
+environment; this document adds no Preview-specific proof rule.
 
 Reviewer decides the proof plan before installing optional tools. It reuses the Project's documented
 entrypoint and existing test/browser stack, does not install competing harnesses after decisive proof
@@ -1361,54 +1358,9 @@ Generator, Reviewer, retries, and worktree replacement. This distinction is an e
 new artifact class or workflow state; accepted deliverables still enter source or Evidence through
 the existing publication boundaries.
 
-Project Preview is deliberately Project-level. Before startup, Coordinator invokes every managed
-integration Repo's `scripts/hopi/prepare` in stable manifest order with the complete integration-root
-manifest and the Home cache. Each invocation receives its Repo identity and runs in its own checkout;
-missing, non-executable, failing, timing-out, or source-mutating preparation prevents Preview from
-claiming readiness. Each process is a bounded process-group leader so descendants are terminated
-before failure is reported. Only after all Repo preparation succeeds does the primary Repo's
-`scripts/hopi/preview` start.
-This is one HOPI-managed local runtime assembled from the Project's managed release projections.
-“Release Preview” names the immutable local Git inputs being exercised, not a deployment target or
-an instruction to publish them to a remote environment. Surfaces are opaque named operator entries;
-the primary adapter starts the Project runtime and announces every available entry together, while
-HOPI does not infer their internal topology or relationships.
-The fixed responsibility prompt exposes the adapter's exact ready signal,
-`HOPI_PREVIEW_SURFACES=<json-array>`, whenever an Engineering Work may create, repair, or review the
-script. A merely human-readable bare URL is not enough for HOPI to leave `starting`. There is no
-initialized flag, prepare revision, setup Action, or preparation Kanban state.
-
-The public Project Preview API always starts the current managed integration release. Every Preview
-session records the exact release head of every Project Repo, and a Start request never reuses a
-session whose recorded heads differ from the managed integration roots. It therefore cannot prove a
-pre-C1 task candidate. Engineering Work contains only acceptance criteria that Generator and
-Reviewer can prove by executing the candidate script directly with that Run's Repo manifest.
-
-When the Project exposes `scripts/hopi/preview`, a Planning Run admitted with no nonterminal
-Engineering Work receives the formal release Preview session as immutable environment context.
-The session, recorded Repo heads, surfaces, and available artifacts are evidence supplied to the
-Planner. Coordinator does not prescribe which artifact, age, or observation is sufficient. Planner
-judges whether the evidence exposes and exercises the accepted outcome, and either completes,
-plans the smallest repair, or requests genuinely missing authority. Coordinator still verifies the
-canonical completion shape and managed C1 projection.
-
-A Project without a Preview capability does not gain a synthetic Preview requirement: its completion
-evidence remains the exact managed release/C1 projection and any other accepted external proof. This
-keeps the invariant capability-based rather than turning Preview into a mandatory UI concept for
-backend-only or documentation-only Projects. Final Planning remains the semantic completion pass;
-there is no post-C1 role, candidate-Preview mode, or automatic completion heuristic.
-The fixed API paths are `POST /api/projects/:projectId/preview/start`,
-`GET /api/projects/:projectId/preview`, and `POST /api/projects/:projectId/preview/stop`; Planner
-does not discover variants from Project source.
-
-A Preview Start request normally has an empty body. An adapter that needs approved client material
-may receive the fixed, paired RFID certificate and private-key file references in the start body's
-`sessionCredentialReferences` object. HOPI admits only that pair, never writes either value to the
-Preview session, manifest, log, artifact, or manager environment, and clears its handoff object as
-soon as it has spawned the adapter. A second Start cannot attach references to an existing session.
-The adapter must validate the files and their public-key match before any child starts, then remove
-the references before launching its services. This is a local, one-session handoff rather than a
-credential store, authentication bypass, or generic environment-injection API.
+Project Preview is a Project runtime capability governed exclusively by
+`mvp_project_runtime.md`. This execution design deliberately does not duplicate its adapter,
+surface, input, lifecycle, completion-evidence, or failure-routing contract.
 
 If setup or verification is wrong, the relevant Agent-run checks and Reviewer expose the defect
 against the accepted Work rather than a universal Coordinator preflight. Process launch, provider
@@ -1784,70 +1736,7 @@ Manual completion confirmation is not required.
 
 ## Preview Capability (P2)
 
-Preview is a Project capability, not a Goal lifecycle, Work stage, or responsibility pass. After the
-shared reviewed `scripts/hopi/prepare` succeeds, a reviewed executable at `scripts/hopi/preview` owns
-only project-specific startup and shutdown behavior. The UI asks Coordinator to run these adapters
-directly, so ordinary Start and Stop operations do not invoke a model.
-
-The combined contract is one-click from a clean managed integration worktree. `prepare` may use a
-shared package cache or project-native installation commands; `preview` makes every declared
-operator-facing surface reachable before advertising them together. A clear missing-dependency error is useful diagnosis, not successful
-Preview behavior; requiring the operator to enter the managed worktree and install dependencies
-violates the Project contract.
-
-For a browser-facing Project, each advertised surface is a named operator-usable entry into
-the release, not merely a transport-ready HTML shell. A Project may expose one or several surfaces;
-surface identity is unrelated to Goal and Repo identity. Any host context, service, fixture, proxy, or
-other runtime support required by the accepted user-visible state belongs to the Project adapter
-contract. If that state cannot be produced in the provided environment, the adapter fails with
-diagnosis instead of advertising a blank, fatally unmounted, or otherwise unusable page.
-
-The first version always runs the Project's current integration target. It does not select a task
-worktree, combine unintegrated Work, or construct a speculative Goal checkout. Coordinator owns the
-disposable process, logs, surfaces, and health facts under runtime storage; none is canonical
-workflow truth. Preview does not imply cross-Repo delivery support.
-
-A running Preview is a lease on the release materialized when it started, not a hot-reload contract.
-After C1 has durably advanced the Project-qualified release and verified the managed integration projection,
-Coordinator immediately stops any running or starting Preview for that Project, clears its active surfaces,
-and records runtime reason `release_updated`. Recovery that observes the C1 ref already advanced
-performs the same idempotent invalidation. Planning, task-worktree changes, canonical document-only
-publication, and failed or rejected C1 do not invalidate Preview. HOPI does not automatically restart:
-the next explicit Start launches the current release. Preview teardown is strictly after the durable
-C1 boundary and cannot roll back or reclassify a successful integration if process cleanup fails.
-
-An open Project-target Attention blocks Preview Start because the managed integration target has not
-been proven safe. Stop remains a direct runtime operation.
-
-The executable runs as a foreground child with the managed integration root as its working
-directory. Coordinator supplies `HOPI_PROJECT_ROOT` and a disposable
-`HOPI_PREVIEW_RUNTIME_DIR`, stops it with `SIGTERM` (then bounded `SIGKILL`), and captures both
-streams in runtime storage. Exactly one line
-`HOPI_PREVIEW_SURFACES=<json-array>` is the current ready signal. Each array entry contains one
-unique `id`, operator-facing `label`, and HTTP(S) `url`; the adapter emits the complete declaration
-only after every surface is ready. Coordinator independently probes every declared surface in parallel and
-keeps the session at `starting` until the complete declaration and all successful probes exist,
-adapter exit occurs, or one bounded startup timeout expires. The
-public Start request admits that operation and returns the current session immediately; it never
-holds an HTTP connection across Repo preparation or adapter startup. Existing Project-state polling
-observes `starting -> running|failed`. Only transport readiness produces `running`; exit, timeout,
-an invalid declaration, or a failed probe records the named surface, captured logs, and ordinary
-Assistant repair prompt on the same
-disposable session, so a lost Start response cannot lose the diagnosis or leave the UI with only a
-transport error. These are adapter I/O conventions, not generic responsibility-Run environment,
-canonical Project configuration, or workflow state. Ordinary Start does not rerun semantic browser
-review: the reviewed adapter and integration boundary own that evidence.
-
-One Project has one serialized Preview operation. Concurrent Start calls share the same launch;
-Stop during preparation prevents the adapter from launching, and a later Start waits for that
-preparation to settle before beginning a new operation. Every unexpected preparation, filesystem,
-spawn, stream, or cleanup exception closes `starting` as `failed`, preserves available diagnostics,
-and permits a fresh Start instead of retaining a rejected promise.
-
-Graceful Coordinator shutdown stops every owned Preview child. A hard kill cannot be made portable
-by storing a PID: PID reuse, detached descendants, and cross-platform process semantics would create
-another unreliable state machine. Production deployment therefore runs Coordinator in a supervisor
-or container whose process group or cgroup is terminated with the parent. A hard-kill orphan
+See `mvp_project_runtime.md`. It is the sole source of truth for this capability.
 observed on the next Start is treated as an ordinary startup conflict and routed through Preview
 repair. The MVP adds no durable Preview lease, PID document, or orphan scanner.
 

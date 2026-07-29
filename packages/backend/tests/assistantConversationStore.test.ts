@@ -17,6 +17,17 @@ const projectSessionPath = (projectId: string) =>
   join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'sessions', 'projects', `${projectId}.json`)
 const turnEventsPath = (eventId: string) =>
   join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'turns', eventId, 'events.jsonl')
+const projectReceiptPath = (projectId: string, receiptId: string) =>
+  join(
+    temporaryRoot,
+    '.hopi',
+    'runtime',
+    'assistant',
+    'receipts',
+    'projects',
+    projectId,
+    `${receiptId}.json`,
+  )
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
@@ -170,5 +181,39 @@ describe('AssistantConversationStore session cache', () => {
 
     await store.acknowledgeActionReceipts(scope, ['AR-tool-1'])
     expect(await store.readPendingActionReceipts(scope)).toEqual([])
+  })
+
+  test('isolates corrupt action receipts while healthy receipts remain readable and writable', async () => {
+    const store = createAssistantConversationStore(temporaryRoot, {
+      now: () => new Date('2026-07-28T00:00:00Z'),
+    })
+    const scope = { kind: 'project', projectId: 'P-A' } as const
+    await store.recordActionReceipt(scope, {
+      receiptId: 'AR-healthy',
+      eventId: 'EV-healthy',
+      kind: 'tool',
+      summary: 'Healthy effect.',
+      detail: null,
+    })
+    const corruptPath = projectReceiptPath('P-A', 'AR-corrupt')
+    await mkdir(join(corruptPath, '..'), { recursive: true })
+    await Bun.write(corruptPath, '{not-json')
+
+    expect(await store.readPendingActionReceipts(scope)).toMatchObject([
+      { receiptId: 'AR-healthy' },
+    ])
+    await store.acknowledgeActionReceipts(scope, ['AR-corrupt', 'AR-healthy'])
+    expect(await store.readPendingActionReceipts(scope)).toEqual([])
+
+    await store.recordActionReceipt(scope, {
+      receiptId: 'AR-corrupt',
+      eventId: 'EV-rebuilt',
+      kind: 'reply',
+      summary: 'Rebuilt effect.',
+      detail: null,
+    })
+    expect(await store.readPendingActionReceipts(scope)).toMatchObject([
+      { receiptId: 'AR-corrupt', eventId: 'EV-rebuilt' },
+    ])
   })
 })

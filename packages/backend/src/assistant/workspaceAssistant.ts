@@ -568,6 +568,7 @@ export function createWorkspaceAssistant(input: {
           contextDigest,
           runtimeDigest,
         )
+        const bootstrappingSpeakingSession = internal && session === null
         const pendingActionReceipts = internal
           ? []
           : await input.conversation.readPendingActionReceipts(conversationScope)
@@ -600,7 +601,7 @@ export function createWorkspaceAssistant(input: {
               toolMode,
               executionPlan,
               signal,
-              invocation: internal ? 'supervision' : 'speaking',
+              invocation: internal && !bootstrappingSpeakingSession ? 'supervision' : 'speaking',
             },
             observer,
           )
@@ -646,7 +647,7 @@ export function createWorkspaceAssistant(input: {
         if (!reply && !internal && !presentedAttention) {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }
-        if (!internal) {
+        if (!internal || bootstrappingSpeakingSession) {
           await input.conversation.writeSession(
             conversationScope,
             result.session,

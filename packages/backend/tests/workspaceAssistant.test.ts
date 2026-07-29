@@ -1705,6 +1705,65 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[2]?.prompt).toContain('Adjusted the Work contract.')
     expect(await fixture.conversation.readPendingActionReceipts(scope)).toEqual([])
   })
+
+  test('bootstraps the scoped speaking session from the first internal event', async () => {
+    const seen: Array<{
+      eventId: string
+      invocation: string | undefined
+      sessionId: string | null
+    }> = []
+    const fixture = await setup(() => ({
+      async run(input, observer) {
+        seen.push({
+          eventId: input.eventId,
+          invocation: input.invocation,
+          sessionId: input.session?.sessionId ?? null,
+        })
+        if (input.invocation === 'supervision') {
+          await observer?.onSession?.(codexSession('thread-branch'))
+          return { reply: '', session: codexSession('thread-branch') }
+        }
+        await observer?.onSession?.(codexSession('thread-parent'))
+        return {
+          reply: input.eventId === 'EV-user' ? 'Current state.' : '',
+          session: codexSession('thread-parent'),
+        }
+      },
+    }))
+    const context = { projectId: 'P-1' }
+    const scope = { kind: 'project', projectId: 'P-1' } as const
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-bootstrap',
+      content: 'The first Project runtime event.',
+      context,
+    })
+    await fixture.assistant.process('EV-bootstrap')
+    expect(await fixture.conversation.readSession(scope)).toEqual(codexSession('thread-parent'))
+    expect((await fixture.workspace.readEvent('EV-bootstrap'))?.attributes).toMatchObject({
+      source: 'system',
+      visibility: 'internal',
+      status: 'handled',
+    })
+
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-follow-up',
+      content: 'A later Project runtime event.',
+      context,
+    })
+    await fixture.assistant.process('EV-follow-up')
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-user',
+      content: 'What is the current state?',
+      context,
+    })
+    await fixture.assistant.process('EV-user')
+
+    expect(seen).toEqual([
+      { eventId: 'EV-bootstrap', invocation: 'speaking', sessionId: null },
+      { eventId: 'EV-follow-up', invocation: 'supervision', sessionId: 'thread-parent' },
+      { eventId: 'EV-user', invocation: 'speaking', sessionId: 'thread-parent' },
+    ])
+  })
 })
 
 async function setup(

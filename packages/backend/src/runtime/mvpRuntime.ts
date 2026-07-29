@@ -141,18 +141,15 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const preview = createPreviewManager(options.homeRoot, {
     onEvent: async (event) => {
       if (event.kind === 'start_failed') {
-        if (!event.requesters.includes('operator')) return
-        await workspace.receiveEvent({
-          eventId: `EV-preview-start-${event.sessionId}`,
-          context: { projectId: event.projectId },
-          content: [
-            "Start a working Project Preview for this Project's current managed release.",
-            'The requested Preview start failed.',
+        await recordProjectSystemEvent(workspace, {
+          projectId: event.projectId,
+          summary: 'Project Preview start failed.',
+          details: [
             `Reason: ${event.reason}.`,
             `Detail: ${event.message}`,
             `Session manifest: ${event.manifestPath}`,
             `Log: ${event.logPath}`,
-          ].join('\n'),
+          ],
         })
         wakeCoordinator()
         return

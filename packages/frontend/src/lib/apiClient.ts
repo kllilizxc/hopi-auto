@@ -300,10 +300,13 @@ export function controlGoal(projectId: string, goalId: string, control: GoalCont
   return apiRequest<GoalDetail>(`${goalPath(projectId, goalId)}/${control}`, { method: 'POST' })
 }
 
-export function startPreview(projectId: string) {
+export function startPreview(
+  projectId: string,
+  runtimeInputs?: Readonly<Record<string, string>>,
+) {
   return apiRequest<PreviewStartResult>(
     `/api/projects/${encodeURIComponent(projectId)}/preview/start`,
-    { method: 'POST' },
+    { method: 'POST', ...(runtimeInputs ? { body: { runtimeInputs } } : {}) },
   )
 }
 

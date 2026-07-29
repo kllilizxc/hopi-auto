@@ -1,12 +1,7 @@
-import { assistantConversationScopeForEvent } from '../assistant/assistantConversationScope'
 import type { AssistantWake } from '../assistant/assistantReflection'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
-import {
-  type InboxEventAttributes,
-  type InboxEventDocument,
-  isInternalInboxSource,
-} from '../domain/assistantWorkspaceDocuments'
+import type { InboxEventAttributes } from '../domain/assistantWorkspaceDocuments'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
 import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
@@ -257,10 +252,7 @@ export function createCoordinatorReconciler(
           if (result.kind !== 'assistant_started') armDeadline(result.nextWakeAt ?? null)
           if (epoch === reconcileEpoch && options.reflection) {
             const workspace = await options.workspace.readWorkspaceForControl()
-            if (
-              (await eligiblePendingEvents(workspace, assistantActive, options.assistant))
-                .length === 0
-            ) {
+            if (eligiblePendingEvents(workspace, assistantActive).length === 0) {
               await options.reflection.observe({
                 settled:
                   result.kind === 'idle' && !startedWithReservation && reservations.size === 0,
@@ -336,9 +328,7 @@ export function createCoordinatorReconciler(
     const workspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const event =
-      directAssistantCommands === 0
-        ? await eligiblePendingEvent(workspace, assistantActive, options.assistant)
-        : undefined
+      directAssistantCommands === 0 ? eligiblePendingEvent(workspace, assistantActive) : undefined
     if (event) {
       const controller = new AbortController()
       const context = event.attributes.context
@@ -619,21 +609,19 @@ async function readReconciliationPackages(store: GoalPackageStore) {
   return goalPackages
 }
 
-async function eligiblePendingEvent(
+function eligiblePendingEvent(
   workspace: AssistantWorkspace,
   active: ReadonlyMap<string, Pick<ActiveAssistantTurn, 'scopeKey'>>,
-  assistant: WorkspaceAssistant,
 ) {
-  return (await eligiblePendingEvents(workspace, active, assistant))[0]
+  return eligiblePendingEvents(workspace, active)[0]
 }
 
-async function eligiblePendingEvents(
+function eligiblePendingEvents(
   workspace: AssistantWorkspace,
   active: ReadonlyMap<string, Pick<ActiveAssistantTurn, 'scopeKey'>>,
-  assistant: WorkspaceAssistant,
 ) {
   const activeScopeKeys = new Set([...active.values()].map((entry) => entry.scopeKey))
-  const candidates = [...workspace.events.values()]
+  return [...workspace.events.values()]
     .filter(
       (event) =>
         event.attributes.status === 'pending' &&
@@ -646,16 +634,6 @@ async function eligiblePendingEvents(
         left.attributes.receivedAt.localeCompare(right.attributes.receivedAt) ||
         left.attributes.id.localeCompare(right.attributes.id),
     )
-  const eligibility = await Promise.all(
-    candidates.map((event) => assistantCanProcessEvent(assistant, event)),
-  )
-  return candidates.filter((_, index) => eligibility[index])
-}
-
-async function assistantCanProcessEvent(assistant: WorkspaceAssistant, event: InboxEventDocument) {
-  if (!isInternalInboxSource(event.attributes.source) || !assistant.hasSpeakingSession) return true
-  const scope = assistantConversationScopeForEvent(event)
-  return assistant.hasSpeakingSession(scope)
 }
 
 function assistantEventScopeKey(event: { attributes: Pick<InboxEventAttributes, 'context'> }) {

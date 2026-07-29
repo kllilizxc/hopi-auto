@@ -79,8 +79,9 @@ not a Reflection role, handoff target, or second product identity.
 
 Native fork is a transport capability. HOPI does not approximate it by rebuilding a fresh prompt or
 copying a transcript. A configured transport that cannot fork reports that capability failure
-directly. A Project with no matching speaking session cannot run a supervision fork until a
-speaking turn establishes one.
+directly. When no matching speaking session exists, the first internal Project event establishes
+one speaking session from durable Project context without changing that event into user input.
+Subsequent Project wakes use native forks.
 
 The Assistant has the Project's configured execution access. A provider transport may still enforce
 its physical boundary, but HOPI adds no smaller semantic command allowlist for the Assistant.

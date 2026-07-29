@@ -267,9 +267,10 @@ session storage on every turn.
 Losing or invalidating vendor session state does not lose product truth: a user turn starts a new
 speaking session from the durable Home instructions, a fixed character budget of the newest public
 user-visible exchanges in that same Home or Project scope, pending action receipts, and that turn.
-A wake does not emulate fork by rebuilding this prompt. Without a matching speaking session the
-internal turn remains pending. A later user turn can establish the speaking session, after which
-Coordinator admits the retained turn to the native fork.
+A wake does not emulate a missing fork. Without a matching speaking session, the first internal
+turn runs once as a speaking bootstrap from the durable scoped context and persists the returned
+session. It remains a system or reflection event rather than fabricated user input. Later internal
+turns use provider-native forks of that session.
 Long-lived decisions belong in Project, Goal, design, Input, Work, Evidence, or preference documents
 rather than an unbounded vendor thread transcript.
 

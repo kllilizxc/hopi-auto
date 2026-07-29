@@ -21,6 +21,11 @@ owns Project-specific orchestration across all linked Repos.
 No additional workflow stage, adapter registry, per-Repo HOPI configuration, or freshness state is
 introduced.
 
+HOPI also owns the managed release boundary. Before Project code runs, it verifies that every
+supplied Repo root is at the declared Project release head and has no source change outside
+`.hopi/**`. Project scripts consume those roots directly; they do not repeat Git validation or
+materialize another release copy.
+
 ## Shared Invocation Context
 
 Both scripts receive:
@@ -32,6 +37,10 @@ Both scripts receive:
 
 The scripts may call Repo-native package managers or setup helpers. HOPI never assumes every Repo
 has the same setup command.
+
+An optional `runtimeInputs` object may accompany Preview Start. HOPI passes the opaque object only
+in the Preview child environment as `HOPI_PREVIEW_RUNTIME_INPUTS`; names and meaning belong to the
+Project adapter. HOPI does not persist or interpret the object.
 
 The manifest and logs are persisted with the invocation. They are facts available to responsibility
 passes and the Project Assistant.
@@ -64,8 +73,9 @@ Prepare script prevents Preview startup and produces a factual Project event.
 
 ## Preview
 
-`scripts/hopi/preview` owns all Project-specific local service startup across linked Repos. It starts the
-exact managed release heads, never an unintegrated Work candidate.
+`scripts/hopi/preview` owns only Project-specific local service startup across linked Repos. HOPI
+has already established the exact managed release boundary before invoking it. The adapter uses the
+provided Repo roots and never an unintegrated Work candidate.
 
 The script announces:
 
@@ -82,8 +92,10 @@ relationships between entries. The Project adapter starts whatever the Project n
 all currently available entries together. The product UI exposes them through one Preview control
 whose menu opens the selected surface.
 
-The Preview child is a process-group leader. Stop, release replacement, restart recovery, and failed
-startup terminate the complete process group.
+The Preview child is a process-group leader owned by HOPI. Project children remain in that group.
+The adapter may clean up non-process resources it explicitly creates, such as containers, but does
+not implement a second generic process supervisor. Stop, release replacement, restart recovery, and
+failed startup terminate the complete process group.
 
 HOPI persists a Preview session manifest containing:
 
@@ -112,7 +124,9 @@ Preview file.
 ## Failure Routing
 
 Missing Preview capability, Prepare failure, startup failure, unreachable surfaces, unexpected exit,
-and release-triggered stop are factual Project events. New events wake the Project Assistant.
+and release-triggered stop are factual internal Project events. New events wake the Project
+Assistant. The event contains the observed status and diagnostic references, not an instruction to
+repair or create Work.
 
 HOPI does not:
 
