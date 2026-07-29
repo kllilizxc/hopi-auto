@@ -1601,7 +1601,7 @@ describe('Assistant HOPI tools', () => {
     ])
   })
 
-  test('transfers current Attention references while keeping presentation on Attention', async () => {
+  test('presents current Attention references while keeping presentation on Attention', async () => {
     const fixture = await setup()
     await fixture.workspace.receiveEvent({
       eventId: 'EV-attention-transfer',
@@ -1662,13 +1662,13 @@ describe('Assistant HOPI tools', () => {
     )
     const secondAttentionRef = (secondCreated.value as { attentionRef: string }).attentionRef
 
-    const transferred = await fixture.tools.executeForEvent(
+    const presented = await fixture.tools.executeForEvent(
       'EV-attention-transfer',
       'hopi_manage_attention',
       {
         projectId: 'P-1',
         change: {
-          kind: 'transfer_attention_to_user',
+          kind: 'present_attention_to_user',
           attentionRefs: [attentionRef],
         },
       },
@@ -1679,7 +1679,7 @@ describe('Assistant HOPI tools', () => {
       {
         projectId: 'P-1',
         change: {
-          kind: 'transfer_attention_to_user',
+          kind: 'present_attention_to_user',
           attentionRefs: [secondAttentionRef, secondAttentionRef],
         },
       },
@@ -1690,7 +1690,7 @@ describe('Assistant HOPI tools', () => {
       {
         projectId: 'P-1',
         change: {
-          kind: 'transfer_attention_to_user',
+          kind: 'present_attention_to_user',
           attentionRefs: [secondAttentionRef],
         },
       },
@@ -1698,11 +1698,11 @@ describe('Assistant HOPI tools', () => {
     const event = await fixture.workspace.readEvent('EV-attention-transfer')
     const attention = (await fixture.workspace.readWorkspace()).attentions.get('A-release-window')
 
-    expect(transferred).toMatchObject({
+    expect(presented).toMatchObject({
       changed: true,
       value: {
         effect: {
-          kind: 'attention_transfer_staged',
+          kind: 'attention_presentation_staged',
           attentionRefs: [attentionRef],
         },
       },

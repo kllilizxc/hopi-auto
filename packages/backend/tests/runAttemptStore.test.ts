@@ -222,6 +222,31 @@ describe('RunAttemptStore', () => {
     })
   })
 
+  test('isolates a corrupt Attempt manifest from healthy listing and restart recovery', async () => {
+    const store = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
+    await store.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-healthy',
+      responsibility: 'generator',
+      runRoot: runRoot('R-healthy'),
+    })
+    const corruptRoot = runRoot('R-corrupt')
+    await mkdir(corruptRoot, { recursive: true })
+    await Bun.write(join(corruptRoot, 'attempt.json'), '{not-json')
+
+    expect((await store.snapshot()).running().map((attempt) => attempt.runId)).toEqual([
+      'R-healthy',
+    ])
+    expect(await store.interruptRunningAttempts()).toBe(1)
+    expect(await store.read('P-1', 'G-1', 'W-1', 'R-healthy')).toMatchObject({
+      status: 'interrupted',
+    })
+  })
+
   test('keeps a queued Attempt durable across restart until it runs or is cancelled', async () => {
     const first = createRunAttemptStore(temporaryRoot, {
       now: () => new Date('2026-07-11T00:00:00Z'),

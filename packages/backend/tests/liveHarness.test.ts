@@ -103,7 +103,7 @@ test('logical Run safety stops a runaway once and cleans up through the Test Run
   try {
     await writeTestRunReport(context, 'running')
     for (const id of ['RF-1', 'RF-2']) {
-      const reflectionRoot = join(homeRoot, '.hopi', 'runtime', 'assistant', 'reflections', id)
+      const reflectionRoot = join(homeRoot, '.hopi', 'runtime', 'assistant', 'wakes', 'runs', id)
       await mkdir(reflectionRoot, { recursive: true })
       await Bun.write(join(reflectionRoot, 'reflection.json'), '{}\n')
     }

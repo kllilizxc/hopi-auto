@@ -10,6 +10,7 @@ import {
 } from '../domain/assistantWorkspaceDocuments'
 import { workspaceAttentionReference } from '../domain/attentionReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
+import { readDurableJsonLines, reportInvalidRuntimeRecord } from '../storage/jsonLines'
 import {
   assistantConversationScopeForEvent,
   assistantConversationScopeKey,
@@ -683,7 +684,12 @@ function cursorPath(root: string, scopeKey: string) {
 async function readCursor(path: string) {
   const file = Bun.file(path)
   if (!(await file.exists())) return null
-  return wakeCursorSchema.parse(await file.json())
+  try {
+    return wakeCursorSchema.parse(await file.json())
+  } catch (error) {
+    reportInvalidRuntimeRecord(path, error)
+    return null
+  }
 }
 
 async function writeCursor(path: string, cursor: z.infer<typeof wakeCursorSchema>) {
@@ -714,60 +720,66 @@ async function readWakeRunSummaries(root: string) {
   const runs = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory())
-      .map(async (entry): Promise<ReflectionRunSummary> => {
+      .map(async (entry): Promise<ReflectionRunSummary | null> => {
         const runRoot = join(root, entry.name)
-        const manifest = reflectionManifestSchema.parse(
-          await Bun.file(join(runRoot, 'reflection.json')).json(),
-        )
-        if (manifest.reflectionId !== entry.name) {
-          throw new Error(`Reflection identity mismatch: ${entry.name}`)
-        }
-        return {
-          manifest,
-          paths: {
-            prompt: join(runRoot, 'prompt.md'),
-            transcript: join(runRoot, 'transcript.log'),
-            events: join(runRoot, 'events.jsonl'),
-          },
+        const path = join(runRoot, 'reflection.json')
+        try {
+          const manifest = reflectionManifestSchema.parse(await Bun.file(path).json())
+          if (manifest.reflectionId !== entry.name) {
+            throw new Error(`Reflection identity mismatch: ${entry.name}`)
+          }
+          return {
+            manifest,
+            paths: {
+              prompt: join(runRoot, 'prompt.md'),
+              transcript: join(runRoot, 'transcript.log'),
+              events: join(runRoot, 'events.jsonl'),
+            },
+          }
+        } catch (error) {
+          reportInvalidRuntimeRecord(path, error)
+          return null
         }
       }),
   )
-  return runs.sort(
-    (left, right) =>
-      right.manifest.startedAt.localeCompare(left.manifest.startedAt) ||
-      right.manifest.reflectionId.localeCompare(left.manifest.reflectionId),
-  )
+  return runs
+    .filter((run): run is ReflectionRunSummary => run !== null)
+    .sort(
+      (left, right) =>
+        right.manifest.startedAt.localeCompare(left.manifest.startedAt) ||
+        right.manifest.reflectionId.localeCompare(left.manifest.reflectionId),
+    )
 }
 
 async function readWakeRunEvents(root: string, wakeId: string) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(wakeId)) return null
   const runRoot = join(root, wakeId)
-  const file = Bun.file(join(runRoot, 'reflection.json'))
+  const manifestPath = join(runRoot, 'reflection.json')
+  const file = Bun.file(manifestPath)
   if (!(await file.exists())) return null
-  const manifest = reflectionManifestSchema.parse(await file.json())
-  if (manifest.reflectionId !== wakeId) {
-    throw new Error(`Reflection identity mismatch: ${wakeId}`)
+  try {
+    const manifest = reflectionManifestSchema.parse(await file.json())
+    if (manifest.reflectionId !== wakeId) {
+      throw new Error(`Reflection identity mismatch: ${wakeId}`)
+    }
+  } catch (error) {
+    reportInvalidRuntimeRecord(manifestPath, error)
+    return null
   }
   return readWakeEvents(join(runRoot, 'events.jsonl'))
 }
 
 async function readWakeEvents(path: string) {
-  const file = Bun.file(path)
-  if (!(await file.exists())) return []
-  const events: ReflectionRuntimeEvent[] = []
-  for (const line of (await file.text()).split('\n')) {
-    if (!line.trim()) continue
-    const value = JSON.parse(line) as unknown
+  return readDurableJsonLines(path, (value) => {
     if (
       !isRecord(value) ||
       typeof value.eventId !== 'string' ||
       typeof value.createdAt !== 'string'
     ) {
-      continue
+      throw new Error('eventId and createdAt are required')
     }
-    events.push(value as ReflectionRuntimeEvent)
-  }
-  return events
+    return value as ReflectionRuntimeEvent
+  })
 }
 
 async function sha256(value: string) {

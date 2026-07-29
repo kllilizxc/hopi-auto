@@ -115,8 +115,9 @@ An Attention document owns:
 - optional `decisionPrompt` choices
 - detailed Markdown for the Assistant
 
-`transfer_attention_to_user` attaches complete Attention references to the current Assistant reply.
-The UI presents the concise summary and choices. This transfer does not mutate Attention, Work, or
+`present_attention_to_user` attaches complete Attention references to the current Assistant reply.
+The UI presents the Assistant reply followed by each concise summary and its choices. Presentation
+does not mutate Attention, Work, or
 scheduling. A user reply preserves exact reply provenance; the Assistant then judges current facts
 and explicitly performs any needed domain action or resolves the Attention.
 

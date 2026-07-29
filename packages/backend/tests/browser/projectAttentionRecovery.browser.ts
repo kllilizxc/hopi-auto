@@ -91,7 +91,7 @@ const assistantRunner: AssistantModelRunner = {
       await callAssistantTool(input, observer, 'hopi_manage_attention', {
         projectId: PROJECT_ID,
         change: {
-          kind: 'transfer_attention_to_user',
+          kind: 'present_attention_to_user',
           attentionRefs: [workspaceAttentionReference(assistantHomeId, attentionToResolve)],
         },
       })
@@ -135,7 +135,7 @@ const assistantRunner: AssistantModelRunner = {
       await callAssistantTool(input, observer, 'hopi_manage_attention', {
         projectId: PROJECT_ID,
         change: {
-          kind: 'transfer_attention_to_user',
+          kind: 'present_attention_to_user',
           attentionRefs: [attentionRef],
         },
       })

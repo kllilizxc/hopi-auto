@@ -415,7 +415,7 @@ function MessageRow({
         ) : null}
         {isUser && item.text.trim() ? (
           <div className="unified-feed-message__bubble">{item.text}</div>
-        ) : !isUser && !needsYou ? (
+        ) : !isUser && item.text.trim() ? (
           <div className="unified-feed-message__text">
             <AssistantMessageText text={item.text} />
           </div>

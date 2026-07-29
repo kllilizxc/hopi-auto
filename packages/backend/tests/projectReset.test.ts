@@ -9,6 +9,7 @@ import {
   renderInboxEventDocument,
   renderWorkspaceAttentionDocument,
 } from '../src/domain/assistantWorkspaceDocuments'
+import { ASSISTANT_HOME_SCHEMA_EPOCH } from '../src/domain/project'
 import { acquireCoordinatorInstanceLock } from '../src/publication/instanceLock'
 import { managedRepoWorktreePaths } from '../src/runtime/managedWorktreePaths'
 import { ProjectResetError, applyProjectReset, planProjectReset } from '../src/runtime/projectReset'
@@ -215,7 +216,10 @@ async function createFixture() {
   await Bun.write(join(taskRoot, 'uncommitted.txt'), 'discard me\n')
 
   await mkdir(join(homeRoot, '.hopi'), { recursive: true })
-  await Bun.write(join(homeRoot, '.hopi/home.yml'), stringify({ homeId: 'H-1' }))
+  await Bun.write(
+    join(homeRoot, '.hopi/home.yml'),
+    stringify({ schemaEpoch: ASSISTANT_HOME_SCHEMA_EPOCH, homeId: 'H-1' }),
+  )
   await Bun.write(
     join(homeRoot, '.hopi/projects.yml'),
     stringify({

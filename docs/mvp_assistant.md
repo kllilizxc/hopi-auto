@@ -61,9 +61,9 @@ also continues each unresolved Attention revision at most once after a settled t
 turn already covers the conversation or an active Work Attempt will provide the next settlement
 edge.
 
-`transfer_attention_to_user` links a public turn to one or more unresolved Attention records.
+`present_attention_to_user` links a public turn to one or more unresolved Attention records.
 Needs You renders their current operator summaries and optional shared choice UI; complete rationale
-stays in Attention detail. The transfer does not change scheduling or resolution.
+stays in Attention detail. Presentation does not change scheduling or resolution.
 
 Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
 continue changing without advancing the selected Project's cursor; otherwise a cached Project feed
@@ -590,7 +590,7 @@ workflow concept.
 A supervision fork receives exactly the same validated MCP capability as a speaking turn. It may
 inspect, create or revise durable documents, manage Work and Attention, control Preview, or publish a
 concise update. If operator action is required, the fork creates or updates the relevant Attention
-with an operator summary and optional choices, then transfers its exact canonical reference through
+with an operator summary and optional choices, then presents its exact canonical reference through
 the current turn. The final text remains an ordinary concise receipt; the UI reads request wording
 from current Attention state.
 
@@ -670,9 +670,10 @@ the judgment; Assistant does not need to replace or cancel an otherwise valid Wo
 its prior question.
 An operator message or reply does not mutate Attention automatically.
 
-`transfer_attention_to_user` stages one or more exact open Attention references on the current public
+`present_attention_to_user` stages one or more exact open Attention references on the current public
 turn. While any reference remains unresolved, the turn renders as `Needs you` using each Attention's
-current summary and optional shared choice UI; complete bodies remain available as detail. Reply
+current Assistant reply, each Attention's current summary, and optional shared choice UI; complete
+bodies remain available as detail. Reply
 stores the message and exact Attention references as context but leaves the next action to Assistant
 judgment. The header count navigates to the newest visible unresolved request.
 
@@ -706,7 +707,7 @@ includes the complete current set of unresolved operator requests, already joine
 canonical Attention to its exact public Inbox event using one scoped read. The counter, message
 decoration, navigation, and reply context consume that set; they do not call a separate Attention
 endpoint, rescan Goal packages in the browser, or infer ownership from cached conversation rows.
-Open requests are a full current projection rather than cursor deltas, so resolving or transferring
+Open requests are a full current projection rather than cursor deltas, so resolving or presenting
 Attention replaces the set even when its linked conversation event is older than the current page.
 
 Within that scope, the drawer shows one chronological conversation:

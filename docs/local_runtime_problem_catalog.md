@@ -40,7 +40,7 @@
 - Workspace Attention：`<assistant-home>/docs/attention/<attentionId>.md`
 - Goal/Work/Attention/Evidence：`<goal-root>/{goal.md,work,attention,evidence,inputs}`
 - Role Run：`<run-root>/{attempt.json,context.md,prompt.md,result.json,events.jsonl,transcript.log,repos.json}`
-- Reflection：`<assistant-home>/runtime/assistant/reflections/<reflectionId>/`
+- Reflection：`<assistant-home>/.hopi/runtime/assistant/wakes/runs/<wakeId>/`
 - Assistant Turn：`<assistant-home>/runtime/assistant/turns/<eventId>/`
 - Preview：`<assistant-home>/runtime/preview/<projectId>/<previewId>/`
 
@@ -93,10 +93,10 @@ O-01 属于外部传输故障加恢复体验问题；O-03～O-05 是当前 Proje
 
 | ID | 发生过什么 | 根因/判断 | 状态与证据 | 第一代码位置 |
 | --- | --- | --- | --- | --- |
-| H-15 | `request_user` 的名字让模型以为“调用后系统会询问并暂停”，但它只是在消息上标记需要用户注意；早期调用后调度仍继续。 | 工具名称、持久化 effect 和调度后果不一致。 | 当前 `transfer_attention_to_user` 只把开放 Attention 的精确引用写入当前公开 turn；摘要和选项来自 Attention，不改变调度或所有权。 | `assistant/assistantTools.ts`、`assistant/workspaceAssistant.ts`、`domain/assistantWorkspaceDocuments.ts` |
+| H-15 | `request_user` 的名字让模型以为“调用后系统会询问并暂停”，但它只是在消息上标记需要用户注意；早期调用后调度仍继续。 | 工具名称、持久化 effect 和调度后果不一致。 | 当前 `present_attention_to_user` 只把开放 Attention 的精确引用写入当前公开 turn；摘要和选项来自 Attention，不改变调度或所有权。 | `assistant/assistantTools.ts`、`assistant/workspaceAssistant.ts`、`domain/assistantWorkspaceDocuments.ts` |
 | H-16 | 旧 Attention 一直存在就被 Reflection 当成当前失败，导致“reprojection still missing”等误判反复出现。 | 历史文档和当前 live diagnostic 混为一体。 | `926b88e` 分离 live diagnostics 与 Attention history，`c7eebd7` 让 Reflection 以当前状态为准，`c6842a7` 去掉 phantom reprojection。 | `assistant/assistantState.ts`、`assistant/assistantReflection.ts` |
 | H-17 | Retry 曾触发新的规则分支、重复 Attention 或重复 Work；解决 Attention 后 Work 仍可能不运行。 | Retry 被当成另一个流程，而不是同一 Work authority 的新尝试。 | Work 现在只有 `continue`：每次请求都对应可恢复的 queued Attempt，是否已请求不再依赖内存或 Attention。 | `assistant/assistantTools.ts`、`runtime/runAttemptStore.ts`、`scheduler/projectReconciler.ts` |
-| H-18 | 用户没有回答 Needs you，Agent 却继续执行；另一端又出现 Assistant 自己能修的问题也被标成 Needs you。 | “通知”“用户拥有”“Work 阻塞”曾共用同一个 Attention 状态。 | Needs You 现在只是公开 turn 对开放 Attention 的投影；transfer、回复和 Attention 都不控制 Work 调度，Assistant 只在确需用户权限或决定时创建该投影。 | `domain/assistantWorkspaceDocuments.ts`、`assistant/workspaceAssistant.ts`、`mvpServer.ts` |
+| H-18 | 用户没有回答 Needs you，Agent 却继续执行；另一端又出现 Assistant 自己能修的问题也被标成 Needs you。 | “通知”“用户拥有”“Work 阻塞”曾共用同一个 Attention 状态。 | Needs You 现在只是公开 turn 对开放 Attention 的投影；presentation、回复和 Attention 都不控制 Work 调度，Assistant 只在确需用户权限或决定时创建该投影。 | `domain/assistantWorkspaceDocuments.ts`、`assistant/workspaceAssistant.ts`、`mvpServer.ts` |
 | H-19 | Background Reflection 连续 3 次 handoff 不收敛，产生 Workspace Attention；常见底层原因是相同 Planner failure、Chrome/npm 阻塞或脏 integration 被重复叙述。 | Reflection checkpoint 只看全局 digest，Project A 的变化会吞掉 Project B 的通知，也会对同一 scope 反复触发。 | 6 个 Workspace Attention 属于此类；`0f53b3a` 按 conversation scope 隔离 checkpoint。O-06 表明进程重启后的 `running` manifest 终结仍需补齐。 | `assistant/assistantReflection.ts`、`assistant/assistantState.ts` |
 | H-20 | Expert Mirror 所有 Work 已 terminal，却没有发 completed；Mystore/NSO completion 会互相影响。 | Reflection 使用 Home 全局 checkpoint，先处理一个 Project 后把另一个 Project 的完成状态一起记为已见。 | `0f53b3a` 已修复并有 scope 回归测试。 | `assistant/assistantReflection.ts::reflectionScopeSnapshots` |
 | H-21 | 8 个 Assistant Turn 因“回复没有包含 Evidence artifact 的 operatorUrl”被强制判失败，即使模型的完成判断本身正确。 | 把回复格式当成完成正确性的硬规则，违反“让模型判断”的设计原则。 | `c32fb4e` 删除该完成规则并信任 Assistant judgement；旧 Turn 仍保留失败记录。 | `assistant/assistantTools.ts`、`assistant/assistantState.ts` |
@@ -122,7 +122,7 @@ O-01 属于外部传输故障加恢复体验问题；O-03～O-05 是当前 Proje
 | H-31 | 不同 Project 不能绑定同一 Git commonDir，Assistant 要求“迁移所有权”；Expert 同时服务 MystoreMyBusiness 与 NSORebateFunding 时创建失败。 | Repo 被建模为 Project 独占资源，release ref 和 integration path 又是 Repo 全局的。 | `00f55b0` 把关系改为多对多 binding：`hopi/project/<projectId>/release` 和 `projects/<projectId>/…` worktree。 | `storage/assistantHomeStore.ts`、`runtime/managedWorktreePaths.ts`、`runtime/stableWorktreeManager.ts` |
 | H-32 | HOPI 修改或校验用户 checkout 的 delivery branch；checkout 在 `main` 而预期 `fix/*` 会让 Project blocked。 | 用户 checkout 被误当成交付投影。 | `4e567f5` 先降为 nonblocking，`00f55b0` 的 v4 binding 删除本地 delivery projection。 | `storage/assistantHomeStore.ts`、`runtime/completionVerifier.ts` |
 | H-33 | Work 的 `repos` 子集漏掉 RFID；Reviewer 被明确禁止发现未列入 `repos.json` 的 sibling Repo，于是同一 Preview Work反复报 missing RFID。 | Project 已知完整 topology，却让每个 Work 人工维护一个限制性子集。 | `dba52db` 改为每个 Work 获取完整 Project Repo 集合；`dba52db` 之后的文档/代码删除 Work repo 白名单。 | `runtime/roleContextStager.ts`、`domain/projectDocument.ts` |
-| H-34 | 同一 Work 的 task checkout、integration 和 release 不在同一 Project namespace；迁移后仍有旧 `/<repo>/work/...` 路径和新路径并存。 | v1-v3 路径是 Repo 级，v4 是 binding 级；本地还保留历史 worktree 以便恢复。 | `00f55b0` 包含幂等迁移。旧目录存在不是当前 authority，应通过 `projects.yml` 和 Git ref 判定。 | `storage/assistantHomeStore.ts::migrateManagedWorktrees`、`runtime/managedWorktreePaths.ts` |
+| H-34 | 同一 Work 的 task checkout、integration 和 release 曾不在同一 Project namespace，导致路径碰撞。 | worktree 和 release 当时不属于 Project × Repo binding。 | 当前路径统一为 `projects/<projectId>/…`，release 为 `hopi/project/<projectId>/release`。代码只读取当前 `schemaEpoch`；另一 epoch 必须离线执行 `reset:home` 整体丢弃，不迁移。 | `domain/project.ts`、`runtime/managedWorktreePaths.ts`、`runtime/homeReset.ts` |
 | H-35 | task checkpoint 触发 husky/lint-staged/commitlint，或直接执行仓库依赖的 Yorkie runner，导致 HOPI 内部 checkpoint 失败。 | 内部快照误用了用户仓库的普通 commit hook 环境。 | Workspace Attention 有 NSO commitlint 和 Mystore Yorkie 两例；当前 checkpoint 使用隔离身份并跳过 hooks，诊断由 `7c67049` 保留。 | `runtime/taskCheckpoint.ts` |
 | H-36 | managed integration 出现未追踪 E2E 文件后，C1 exact-materialization 校验连续创建多个 Project Attention。 | 受管 release 投影被其他进程写脏，恢复只报告，不自动重建。 | Mystore 有 6 个重复 Project Attention。`b415693` 让 managed repo execution self-recovering；用户 checkout 不参与。 | `runtime/stableWorktreeManager.ts`、`runtime/coordinatorBootstrap.ts` |
 | H-37 | 当前 candidate 已经可合并，但 Assistant state 丢失 `candidateIntegration`，Reflection 误报 frontend reprojection missing。 | compact `hopi_read_state` 删除了判断所需字段。 | `e180e7a`、`d2142ef` 暴露 candidate state，`a107211` 保留 compact preflight，`c6842a7` 去掉错误叙述。 | `assistant/assistantState.ts::readCandidateIntegration`、`assistant/assistantTools.ts` |

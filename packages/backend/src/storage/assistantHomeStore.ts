@@ -7,6 +7,7 @@ import {
   normalizeAssistantPreference,
 } from '../domain/assistantPreference'
 import {
+  ASSISTANT_HOME_SCHEMA_EPOCH,
   type AssistantHomeDocument,
   DEFAULT_PRIMARY_REPO_ID,
   type LinkedProject,
@@ -39,6 +40,7 @@ import { withFileLock } from './lock'
 
 const assistantHomeDocumentSchema = z
   .object({
+    schemaEpoch: z.literal(ASSISTANT_HOME_SCHEMA_EPOCH),
     homeId: z.string().regex(STABLE_ID_PATTERN),
   })
   .strict()
@@ -221,6 +223,7 @@ export function createAssistantHomeStore(
         }
 
         const home: AssistantHomeDocument = {
+          schemaEpoch: ASSISTANT_HOME_SCHEMA_EPOCH,
           homeId: `H-${crypto.randomUUID()}`,
         }
         await writeYamlAtomically(paths.homeDocumentPath, home)
@@ -1343,7 +1346,7 @@ async function readOptionalYaml<T>(
   } catch (error) {
     throw new AssistantHomeStoreError(
       label === 'Assistant home' || label === 'Project links' ? 'invalid_home' : 'invalid_project',
-      `${label} YAML is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      `${label} YAML is invalid: ${error instanceof Error ? error.message : String(error)}${label === 'Assistant home' ? assistantHomeResetHelp(path) : ''}`,
     )
   }
 
@@ -1354,10 +1357,16 @@ async function readOptionalYaml<T>(
       .join(', ')
     throw new AssistantHomeStoreError(
       label === 'Assistant home' || label === 'Project links' ? 'invalid_home' : 'invalid_project',
-      `${label} document is invalid: ${issues}`,
+      `${label} document is invalid: ${issues}${label === 'Assistant home' ? assistantHomeResetHelp(path) : ''}`,
     )
   }
   return result.data
+}
+
+function assistantHomeResetHelp(homeDocumentPath: string) {
+  const homeRoot = dirname(dirname(homeDocumentPath))
+  const quotedRoot = JSON.stringify(homeRoot)
+  return `. This code reads only schema epoch ${ASSISTANT_HOME_SCHEMA_EPOCH}; discard this Home with: bun run reset:home -- --home ${quotedRoot} --apply --confirm ${quotedRoot}`
 }
 
 async function writeYamlAtomically(path: string, value: unknown) {

@@ -1404,7 +1404,7 @@ describe('WorkspaceAssistant conversation', () => {
     )
   })
 
-  test('publishes a transferred Attention even when the model adds no duplicate reply text', async () => {
+  test('publishes a presented Attention even when the model adds no duplicate reply text', async () => {
     const fixture = await setup((tools) => ({
       async run(input) {
         const created = await tools.execute(input.toolToken, 'hopi_manage_attention', {
@@ -1420,7 +1420,7 @@ describe('WorkspaceAssistant conversation', () => {
         await tools.execute(input.toolToken, 'hopi_manage_attention', {
           projectId: 'P-1',
           change: {
-            kind: 'transfer_attention_to_user',
+            kind: 'present_attention_to_user',
             attentionRefs: [(created.value as { attentionRef: string }).attentionRef],
           },
         })

@@ -16,12 +16,17 @@ import {
 } from './assistantWorkspaceDocuments'
 import { parseAttentionReference } from './attentionReference'
 import { parseInboxEventReference } from './inboxEventReference'
-import type { ProjectLink } from './project'
+import { ASSISTANT_HOME_SCHEMA_EPOCH, type ProjectLink } from './project'
 import { projectLabelSchema } from './projectLabel'
 import { isNormalizedProjectPath } from './projectPath'
 import { STABLE_ID_PATTERN, stableIdSchema } from './stableId'
 
-const homeSchema = z.object({ homeId: stableIdSchema }).strict()
+const homeSchema = z
+  .object({
+    schemaEpoch: z.literal(ASSISTANT_HOME_SCHEMA_EPOCH),
+    homeId: stableIdSchema,
+  })
+  .strict()
 const linksSchema = z
   .object({
     projects: z.array(

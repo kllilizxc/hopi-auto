@@ -68,12 +68,13 @@ describe('AssistantConversationStore session cache', () => {
     expect(await Bun.file(projectSessionPath('P-A')).exists()).toBe(true)
   })
 
-  test('rejects malformed session metadata', async () => {
+  test('isolates and discards malformed session metadata', async () => {
     const store = createAssistantConversationStore(temporaryRoot)
     await mkdir(join(homeSessionPath, '..'), { recursive: true })
     await Bun.write(homeSessionPath, '{not-json')
 
-    expect(store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE)).rejects.toThrow()
+    expect(await store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE)).toBeNull()
+    expect(await Bun.file(homeSessionPath).exists()).toBe(false)
   })
 
   test('invalidates a session created under another Assistant contract', async () => {
@@ -98,7 +99,28 @@ describe('AssistantConversationStore session cache', () => {
     expect((await store.readTurn('EV-live'))?.events).toHaveLength(1)
 
     await appendFile(turnEventsPath('EV-live'), '\n')
-    await expect(store.readTurn('EV-live')).rejects.toThrow('Invalid durable JSONL record')
+    expect((await store.readTurn('EV-live'))?.events).toHaveLength(1)
+  })
+
+  test('interrupts healthy turns when a sibling manifest is corrupt', async () => {
+    const store = createAssistantConversationStore(temporaryRoot)
+    await store.begin('EV-healthy')
+    const corruptPath = join(
+      temporaryRoot,
+      '.hopi',
+      'runtime',
+      'assistant',
+      'turns',
+      'EV-corrupt',
+      'turn.json',
+    )
+    await mkdir(join(corruptPath, '..'), { recursive: true })
+    await Bun.write(corruptPath, '{not-json')
+
+    await store.interruptRunning()
+
+    expect((await store.readTurn('EV-healthy'))?.manifest.status).toBe('interrupted')
+    expect(await store.readTurn('EV-corrupt')).toBeNull()
   })
 
   test('discards an interrupted turn tail before recording its resumed attempt', async () => {

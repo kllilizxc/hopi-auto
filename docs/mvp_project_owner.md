@@ -210,16 +210,16 @@ target, kind, priority, waiting, working, notification, or recurring retry state
 operator presentation; `body` is the complete Agent record. `decisionPrompt` is optional and reuses
 one UI contract for one or more related questions, choices, recommendations, and free-form answers.
 It belongs to Attention so editing the condition updates its current presentation without duplicating
-question data in an Inbox event or transfer call.
+question data in an Inbox event or presentation call.
 
 The Assistant may create, edit, merge, or resolve Attention. An operator message is not
 automatically converted into Attention, and an operator reply never automatically resolves one.
 Attention does not block unrelated Work or Preview. Historical resolved documents remain auditable.
 
 The model-facing Attention mutation tool operates on the Project-level set. Responsibility passes
-may also publish Goal-local Attention as scoped execution facts. Assistant reads and may transfer
+may also publish Goal-local Attention as scoped execution facts. Assistant reads and may present
 either form by exact canonical reference; it does not copy one into the other. Historical completion
-Attention remains compatibility evidence rather than a second user channel.
+Attention remains historical evidence rather than a second user channel.
 
 Attention tool results report the resulting fact:
 
@@ -257,22 +257,22 @@ This adds no cross-Project dependency document, callback record, or workflow sta
 
 ## Needs You
 
-Needs You is the operator presentation of one or more open Attention records transferred by the
-Project Assistant in a public Inbox turn. `transfer_attention_to_user` records only their exact
+Needs You is the operator presentation of one or more open Attention records presented by the
+Project Assistant in a public Inbox turn. `present_attention_to_user` records only their exact
 canonical references on that turn. The UI reads current `summary` and optional `decisionPrompt`
 directly from Attention; the detailed `body` remains available behind disclosure.
 
-- a transfer may batch several related Attention records and several related questions
-- an exact unresolved Attention referenced by the transfer renders as `Needs you`
+- one presentation may batch several related Attention records and several related questions
+- an exact unresolved Attention referenced by the presentation renders as `Needs you`
 - the header count is the number of distinct unresolved Attention records represented by visible
   requests
 - selecting the count opens the newest represented request
 - replying sends one ordinary user message with the source message and Attention reference as context
 - the reply does not automatically resolve or modify Attention
 - resolving every referenced Attention removes the request presentation
-- retransferring an Attention makes the newest public request its current presentation
+- presenting an Attention again makes the newest public request its current presentation
 
-Requests use the transfer tool; neither transfer nor a choice submission changes Work readiness or
+Requests use the presentation tool; neither presentation nor a choice submission changes Work readiness or
 resolves Attention by itself.
 
 The Assistant's ordinary final text is still a durable public receipt, but it is not the source of

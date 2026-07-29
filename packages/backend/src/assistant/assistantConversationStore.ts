@@ -4,7 +4,11 @@ import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { VendorSession } from '../agent/vendorAssistantOutput'
 import { assertStableId } from '../domain/stableId'
-import { readDurableJsonLines, repairDurableJsonLineTail } from '../storage/jsonLines'
+import {
+  readDurableJsonLines,
+  repairDurableJsonLineTail,
+  reportInvalidRuntimeRecord,
+} from '../storage/jsonLines'
 import {
   type AssistantConversationScope,
   assistantConversationScopeKey,
@@ -126,7 +130,7 @@ export function createAssistantConversationStore(
       const glob = new Bun.Glob('*/turn.json')
       for await (const relative of glob.scan({ cwd: turnsRoot, onlyFiles: true })) {
         const path = join(turnsRoot, relative)
-        const manifest = await readJson(path, turnManifestSchema)
+        const manifest = await readJson(path, turnManifestSchema, true)
         if (!manifest || manifest.status !== 'running') continue
         const timestamp = now().toISOString()
         await writeJson(path, {
@@ -140,7 +144,7 @@ export function createAssistantConversationStore(
     },
 
     async begin(eventId) {
-      const previous = await readJson(manifestPath(eventId), turnManifestSchema)
+      const previous = await readJson(manifestPath(eventId), turnManifestSchema, true)
       const timestamp = now().toISOString()
       const manifest: AssistantTurnManifest = {
         eventId,
@@ -191,7 +195,7 @@ export function createAssistantConversationStore(
     },
 
     async readTurn(eventId) {
-      const manifest = await readJson(manifestPath(eventId), turnManifestSchema)
+      const manifest = await readJson(manifestPath(eventId), turnManifestSchema, true)
       if (!manifest) return null
       return { manifest, events: await readEvents(eventsPath(eventId)) }
     },
@@ -201,7 +205,14 @@ export function createAssistantConversationStore(
       const expectedScope = assistantConversationScopeKey(scope)
       const file = Bun.file(path)
       if (!(await file.exists())) return null
-      const current = sessionManifestSchema.parse(await file.json())
+      let current: z.infer<typeof sessionManifestSchema>
+      try {
+        current = sessionManifestSchema.parse(await file.json())
+      } catch (error) {
+        reportInvalidRuntimeRecord(path, error)
+        await rm(path, { force: true })
+        return null
+      }
       if (current.scope !== expectedScope) {
         await rm(path, { force: true })
         return null
@@ -301,7 +312,7 @@ async function finishManifest(
   error: string | null,
   now: () => Date,
 ) {
-  const manifest = await readJson(path, turnManifestSchema)
+  const manifest = await readJson(path, turnManifestSchema, true)
   if (!manifest) return
   const timestamp = now().toISOString()
   await writeJson(path, {
@@ -317,10 +328,16 @@ async function readEvents(path: string) {
   return readDurableJsonLines(path, (value) => storedEventSchema.parse(value) as AssistantTurnEvent)
 }
 
-async function readJson<T>(path: string, schema: z.ZodType<T>) {
+async function readJson<T>(path: string, schema: z.ZodType<T>, isolate = false) {
   const file = Bun.file(path)
   if (!(await file.exists())) return null
-  return schema.parse(await file.json())
+  try {
+    return schema.parse(await file.json())
+  } catch (error) {
+    if (!isolate) throw error
+    reportInvalidRuntimeRecord(path, error)
+    return null
+  }
 }
 
 async function writeJson(path: string, value: unknown) {

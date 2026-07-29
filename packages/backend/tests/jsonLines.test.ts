@@ -16,12 +16,10 @@ afterEach(async () => {
 })
 
 describe('durable JSONL recovery', () => {
-  test('keeps rejecting NUL corruption inside a durable record', async () => {
-    await Bun.write(eventsPath, '{"id":\0 1}\n')
+  test('reports and skips one corrupt durable record while preserving its siblings', async () => {
+    await Bun.write(eventsPath, '{"id":1}\n{"id":\0 2}\n{"id":3}\n')
 
-    await expect(readDurableJsonLines(eventsPath, parseId)).rejects.toThrow(
-      'Invalid durable JSONL record',
-    )
+    expect(await readDurableJsonLines(eventsPath, parseId)).toEqual([1, 3])
   })
 })
 

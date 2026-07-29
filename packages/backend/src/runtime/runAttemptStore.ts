@@ -13,7 +13,11 @@ import {
 } from '../agent/runtimeEvents'
 import { codingReasoningEffortSchema } from '../domain/projectCodingDefaults'
 import { stableIdSchema } from '../domain/stableId'
-import { readDurableJsonLines, repairDurableJsonLineTail } from '../storage/jsonLines'
+import {
+  readDurableJsonLines,
+  repairDurableJsonLineTail,
+  reportInvalidRuntimeRecord,
+} from '../storage/jsonLines'
 import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
 import { cleanupRunScratch } from './runArtifacts'
 import { type RunAttemptDiagnostics, readRunAttemptDiagnostics } from './runAttemptDiagnostics'
@@ -703,7 +707,12 @@ async function readSummary(
 async function readStoredManifest(path: string) {
   const file = Bun.file(path)
   if (!(await file.exists())) return null
-  return attemptManifestSchema.parse(await file.json())
+  try {
+    return attemptManifestSchema.parse(await file.json())
+  } catch (error) {
+    reportInvalidRuntimeRecord(path, error)
+    return null
+  }
 }
 
 async function readEvents(path: string) {

@@ -1,7 +1,7 @@
 # HOPI MVP Document Model
 
 Status: forward document and authority reference
-Last updated: 2026-07-24
+Last updated: 2026-07-29
 
 > [Project Owner And Attention](./mvp_project_owner.md) owns the minimal Project Attention document
 > and immutable original Goal statement. Only the current schemas described here are readable.
@@ -34,17 +34,24 @@ to [the execution design](./mvp_execution.md), lifecycle visualization to
   runtime/
     agent-adapters.json
     assistant/
-      session.json
+      sessions/
+        home.json
+        projects/
+          <projectId>.json
       turns/
         <eventId>/
+          turn.json
           events.jsonl
           transcript.log
-      reflections/
-        <reflectionId>/
-          reflection.json
-          prompt.md
-          events.jsonl
-          transcript.log
+      receipts/
+      wakes/
+        cursors/
+        runs/
+          <wakeId>/
+            reflection.json
+            prompt.md
+            events.jsonl
+            transcript.log
     delivery/
     leases/
     index/
@@ -67,8 +74,9 @@ Managed Git checkouts are deliberately outside Assistant home and outside the se
 
 ```text
 <repo-parent>/.hopi-worktrees/<repo-name>/
-  integration/
-  work/<goalId>/<workId>/
+  projects/<projectId>/
+    integration/
+    work/<goalId>/<workId>/
 ```
 
 An inbox event is conceptually `pending | handled`.
@@ -94,10 +102,10 @@ reply: null
 disposition: null
 ```
 
-`source` is `user | reflection`; `visibility` is `public | internal`. New operator turns are exactly
+`source` is `user | system | reflection`; `visibility` is `public | internal`. New operator turns are exactly
 `source: user, visibility: public`. A useful read-only Reflection creates exactly
-`source: reflection, visibility: internal`. Older events without these fields default to
-`user/public`.
+`source: reflection, visibility: internal`. Every field shown by the current schema is required;
+documents from another schema are rejected rather than defaulted or migrated.
 
 `context` is optional. `projectId` and `goalId` appear together when the turn has a UI location.
 `attentionRefs` contains zero or more complete canonical delivery identities:
@@ -123,7 +131,7 @@ was observed. Neither value is proof of a side effect; canonical documents and t
 truth.
 Visibility is also immutable except for one transition: when a Reflection-sourced speaking turn
 finishes, Coordinator publishes `internal -> public` atomically with any non-empty final reply.
-`transfer_attention_to_user` stages exact Attention references on the pending turn; no staged request
+`present_attention_to_user` stages exact Attention references on the pending turn; no staged request
 remains internal. The UI renders current summaries and choices from those Attention documents rather
 than parsing the final reply. Visibility never moves back and a user-sourced turn can never become
 internal.
@@ -185,12 +193,13 @@ Assistant, tool-call, tool-result, status, and error events. `transcript.log` pr
 output for debugging after exact inherited secret values are redacted.
 
 Every runtime `events.jsonl` uses newline as its record durability boundary. A concurrent reader
-omits the sole non-newline-terminated tail and sees it on a later read after append completes. A
-malformed newline-terminated record is durable corruption and remains a visible error; readers do
-not silently discard it. Assistant turns, responsibility Attempts, and Reflection diagnostics share
-this one rule.
+omits the sole non-newline-terminated tail and sees it on a later read after append completes.
+Runtime records are diagnostic or rebuildable, so one malformed manifest, session, cursor, or event
+is reported with its path and omitted without hiding healthy sibling records. Canonical documents
+under `docs/` and managed Project release trees remain strict authority and fail validation rather
+than being skipped.
 
-Each `runtime/assistant/reflections/<reflectionId>/reflection.json` records a disposable assessment's
+Each `runtime/assistant/wakes/runs/<wakeId>/reflection.json` records a disposable assessment's
 state digest, timing, and terminal runtime outcome. Its prompt, normalized events, and raw transcript
 exist only for diagnostics. Reflection directories are not canonical conversation history and may be
 removed. Only a submitted internal Inbox brief survives runtime cleanup. There is no durable
@@ -201,9 +210,17 @@ It is used for inbox, project, or invalid-package problems without a safe Goal-l
 It uses the same five control fields as Goal-local Attention except that `target` is non-null and
 must be exactly `home:<homeId>/event:<eventId>` or `project:<projectId>`.
 
-`home.yml` is created once during Assistant-home initialization and owns immutable `homeId`. It is
-required before Coordinator starts and travels with every lossless Assistant-home export; the
-filesystem path of Assistant home is only a current machine binding.
+`home.yml` is created once during Assistant-home initialization and owns immutable `homeId` plus the
+single global `schemaEpoch`. It is required before Coordinator starts and travels with every lossless
+Assistant-home export; the filesystem path of Assistant home is only a current machine binding.
+Every canonical and runtime record below that Home belongs to the same epoch. A missing or different
+epoch stops startup with the explicit `reset:home` command. HOPI has no compatibility readers or
+field defaults.
+
+`bun run reset:home -- --home <hopi-home> --apply --confirm <absolute-hopi-home>` is the only
+cross-epoch reset. It requires Coordinator to be stopped and deletes the Home's `.hopi` tree plus
+HOPI-managed worktrees and `hopi/project/*` and `hopi/work/*` refs discovered from its Repo
+bindings. It never changes a selected user checkout's branch, HEAD, index, or working tree.
 
 Each `projects.yml` link owns `{ projectId, label?, primaryRepoId, repos }`. `label` is
 optional Home-local presentation metadata: trimmed non-empty Unicode text up to 80 characters. It
@@ -699,7 +716,7 @@ An ordinary Project state event records every currently actionable Assistant-own
 exact canonical reference. These references are responsibility facts, not suggested actions. At turn
 admission HOPI snapshots each referenced Attention and its canonical target. The event can settle
 only after every responsibility still owned at admission has a changed canonical successor state.
-The comparison is structural and does not parse Assistant prose. An Attention already transferred to
+The comparison is structural and does not parse Assistant prose. An Attention already presented to
 the operator, deferred to a future revisit, or backed by a queued or running target Work is not
 reintroduced as an actionable responsibility by an unrelated state event.
 
@@ -758,7 +775,7 @@ separate publication. A cross-root answer uses the receipt sequence defined unde
 Publication. In its project phase, effects precede Goal Input, and Goal-local Attention resolution
 is the final unblocking gate after that receipt.
 
-`transfer_attention_to_user` stages complete open Attention references on the pending Assistant
+`present_attention_to_user` stages complete open Attention references on the pending Assistant
 turn. The handled public reply exposes each referenced Attention's `summary` and optional
 `decisionPrompt`; it does not mutate the Attention or scheduling state. Only the explicit Reply
 action creates a user turn with `replyTo` and those exact references. The Assistant then judges the

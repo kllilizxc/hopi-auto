@@ -642,8 +642,8 @@ export function createWorkspaceAssistant(input: {
 
         const reply = result.reply.trim()
         const stagedEvent = await input.workspace.readEvent(eventId)
-        const transferredAttention = Boolean(stagedEvent?.attributes.attentionRequest)
-        if (!reply && !internal && !transferredAttention) {
+        const presentedAttention = Boolean(stagedEvent?.attributes.attentionRequest)
+        if (!reply && !internal && !presentedAttention) {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }
         if (!internal) {
@@ -653,7 +653,7 @@ export function createWorkspaceAssistant(input: {
             contextDigest,
             runtimeDigest,
           )
-        } else if (reply || transferredAttention) {
+        } else if (reply || presentedAttention) {
           const receipt = reply || 'Your input is needed.'
           await input.conversation.recordActionReceipt(conversationScope, {
             receiptId: await assistantActionReceiptId(eventId, 'reply', receipt),
@@ -664,7 +664,7 @@ export function createWorkspaceAssistant(input: {
           })
         }
         await input.workspace.handleEvent(eventId, {
-          reply: reply || (transferredAttention ? 'Your input is needed.' : 'No operator update.'),
+          reply: reply || (presentedAttention ? 'Your input is needed.' : 'No operator update.'),
           disposition: internal
             ? reply
               ? 'notified'
@@ -675,7 +675,7 @@ export function createWorkspaceAssistant(input: {
               ? 'tools-used'
               : 'answered',
           handledAt: now(),
-          expose: internal && (Boolean(reply) || transferredAttention),
+          expose: internal && (Boolean(reply) || presentedAttention),
         })
         await input.conversation.complete(eventId)
         if (!internal && pendingActionReceipts.length > 0) {
@@ -1042,7 +1042,7 @@ const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
   'Project Preview is one local managed runtime. The Project adapter announces all opaque named surfaces together; HOPI only presents them.',
   'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
-  'hopi_manage_attention persists Project Attention, resolves exact Project or Goal Attention references, and transfers referenced open Attention summaries and optional choices to the operator without changing Work scheduling.',
+  'hopi_manage_attention persists Project Attention, resolves exact Project or Goal Attention references, and presents referenced open Attention summaries and optional choices to the operator without changing Work scheduling.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
 ] as const

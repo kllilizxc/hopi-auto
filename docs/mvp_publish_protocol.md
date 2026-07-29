@@ -141,5 +141,6 @@ After process replacement:
 - facts present without their gate remain unconsumed evidence;
 - pending Inbox turns resume from durable conversation and tool receipts.
 
-Only current schemas are accepted. Development state from another schema is discarded and recreated;
-there are no schema readers, importers, or migrations.
+Only the `schemaEpoch` declared by current code is accepted. State from another epoch is discarded
+with the explicit whole-Home reset; there are no schema readers, importers, field defaults, or
+migrations.

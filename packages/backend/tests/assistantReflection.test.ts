@@ -293,6 +293,30 @@ describe('Assistant wake trigger', () => {
     expect(await fixture.wake.observe({ settled: true })).toBe('unchanged')
     expect(await fixture.wake.listRuns()).toEqual([])
   })
+
+  test('isolates a corrupt Wake run from healthy diagnostics', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '2'.repeat(64) } }))
+    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    await fixture.wake.waitForIdle()
+
+    const corruptPath = join(
+      fixture.homeRoot,
+      '.hopi',
+      'runtime',
+      'assistant',
+      'wakes',
+      'runs',
+      'WK-corrupt',
+      'reflection.json',
+    )
+    await mkdir(join(corruptPath, '..'), { recursive: true })
+    await Bun.write(corruptPath, '{not-json')
+
+    expect(await fixture.wake.listRuns()).toHaveLength(1)
+    expect(await fixture.wake.readRunEvents('WK-corrupt')).toBeNull()
+  })
 })
 
 async function setup(projectIds: string[], options: { speakingSession?: boolean } = {}) {
@@ -314,6 +338,7 @@ async function setup(projectIds: string[], options: { speakingSession?: boolean 
   const canWake = () => speakingSession
   const wake = createAssistantWake({ homeRoot, workspace, state, canWake })
   return {
+    homeRoot,
     wake,
     workspace,
     setSnapshot(next: AssistantStateSnapshot) {

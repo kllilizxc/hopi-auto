@@ -276,7 +276,7 @@ export const assistantToolSchemas = {
           .strict(),
         z
           .object({
-            kind: z.literal('transfer_attention_to_user'),
+            kind: z.literal('present_attention_to_user'),
             attentionRefs: z.array(attentionReferenceSchema).min(1),
           })
           .strict(),

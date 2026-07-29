@@ -120,7 +120,7 @@ export function createAssistantTools(options: {
   const assistantDispatchQueues = new Map<string, Promise<void>>()
   const now = options.now ?? (() => new Date())
 
-  async function assertTransferableAttentionReferences(
+  async function assertPresentableAttentionReferences(
     event: InboxEventDocument,
     projectId: string,
     references: readonly string[],
@@ -128,7 +128,7 @@ export function createAssistantTools(options: {
     const scope = assistantConversationScopeForEvent(event)
     if (scope.kind !== 'project' || scope.projectId !== projectId) {
       throw new AssistantToolRequestError(
-        'Attention can be transferred only from its Project conversation',
+        'Attention can be presented only from its Project conversation',
       )
     }
     const workspace = await options.workspace.readWorkspace()
@@ -1051,9 +1051,9 @@ export function createAssistantTools(options: {
           const change = args.change
           const state = await options.workspace.readWorkspace()
           const target = `project:${project.projectId}`
-          if (change.kind === 'transfer_attention_to_user') {
+          if (change.kind === 'present_attention_to_user') {
             const requestedReferences = [...new Set(change.attentionRefs)]
-            await assertTransferableAttentionReferences(
+            await assertPresentableAttentionReferences(
               event,
               project.projectId,
               requestedReferences,
@@ -1066,11 +1066,11 @@ export function createAssistantTools(options: {
             })
             const attentionRefs = staged.attributes.attentionRequest?.attentionRefs ?? []
             return {
-              summary: `Transferred ${attentionRefs.length} Attention${attentionRefs.length === 1 ? '' : 's'} to the user through this turn.`,
+              summary: `Presented ${attentionRefs.length} Attention${attentionRefs.length === 1 ? '' : 's'} to the user through this turn.`,
               changed: requestedReferences.some((reference) => !previousReferences.has(reference)),
               value: {
                 effect: {
-                  kind: 'attention_transfer_staged',
+                  kind: 'attention_presentation_staged',
                   attentionRefs,
                 },
               },

@@ -3,7 +3,11 @@ import { mkdir, realpath, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
 import { DEFAULT_ASSISTANT_PREFERENCE } from '../src/domain/assistantPreference'
-import { projectReleaseBranch, projectReleaseRef } from '../src/domain/project'
+import {
+  ASSISTANT_HOME_SCHEMA_EPOCH,
+  projectReleaseBranch,
+  projectReleaseRef,
+} from '../src/domain/project'
 import {
   AssistantHomeStoreError,
   createAssistantHomeStore,
@@ -29,11 +33,23 @@ describe('createAssistantHomeStore', () => {
     const second = await store.initialize()
 
     expect(first).toEqual(second)
+    expect(first.schemaEpoch).toBe(ASSISTANT_HOME_SCHEMA_EPOCH)
     expect(first.homeId).toMatch(/^H-/)
     expect(await readYaml(store.paths.homeDocumentPath)).toEqual(first)
     expect(await readYaml(store.paths.projectLinksPath)).toEqual({ projects: [] })
     expect(await Bun.file(store.paths.preferenceDocumentPath).text()).toBe(
       DEFAULT_ASSISTANT_PREFERENCE,
+    )
+  })
+
+  test('rejects another schema epoch with the explicit whole-Home reset command', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const store = createAssistantHomeStore(homeRoot)
+    await mkdir(join(store.paths.homeDocumentPath, '..'), { recursive: true })
+    await Bun.write(store.paths.homeDocumentPath, 'schemaEpoch: 0\nhomeId: H-old\n')
+
+    await expect(store.initialize()).rejects.toThrow(
+      `bun run reset:home -- --home "${homeRoot}" --apply --confirm "${homeRoot}"`,
     )
   })
 

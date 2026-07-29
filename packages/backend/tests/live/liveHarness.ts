@@ -2199,7 +2199,7 @@ export async function countLogicalRuns(
       typeof manifest.attempt === 'number' && manifest.attempt > 0 ? manifest.attempt : 1
   }
   for await (const path of new Bun.Glob(
-    '.hopi/runtime/assistant/reflections/*/reflection.json',
+    '.hopi/runtime/assistant/wakes/runs/*/reflection.json',
   ).scan({ cwd: homeRoot, onlyFiles: true, dot: true })) {
     if (await Bun.file(join(homeRoot, path)).exists()) logicalRuns.reflection += 1
   }

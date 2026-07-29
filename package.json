@@ -10,6 +10,7 @@
     "dev:backend:watch": "cd packages/backend && bun dev",
     "dev:frontend": "cd packages/frontend && bun dev",
     "remote:frontend": "cd packages/frontend && bun run remote",
+    "reset:home": "bun run scripts/reset-home.ts",
     "reset:project": "bun run scripts/reset-project.ts",
     "dev": "bun run verify:runtime && bun run dev:backend",
     "test:contract": "cd packages/backend && bun test tests/contract",

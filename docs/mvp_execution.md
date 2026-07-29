@@ -1709,7 +1709,7 @@ inconsistency after its durable ref. Neither adds another Goal or Work lifecycle
 
 ### Notification
 
-Open targeted Attention remains an Agent-facing record until the Project Assistant transfers exact
+Open targeted Attention remains an Agent-facing record until the Project Assistant presents exact
 canonical references in a public turn. That handled turn then projects as **Needs you** while any
 referenced Attention remains open. Its default wording and optional choices come from the current
 Attention documents; their full bodies remain Agent detail. This adds no ownership field to

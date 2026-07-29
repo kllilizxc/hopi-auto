@@ -19,13 +19,15 @@ export async function readDurableJsonLines<T>(
     try {
       values.push(parse(JSON.parse(line)))
     } catch (error) {
-      throw new Error(
-        `Invalid durable JSONL record at ${path}:${index + 1}: ${errorMessage(error)}`,
-      )
+      reportInvalidRuntimeRecord(`${path}:${index + 1}`, error)
     }
   }
 
   return values
+}
+
+export function reportInvalidRuntimeRecord(path: string, error: unknown) {
+  console.warn(`[hopi ignored corrupt runtime record] ${path}: ${errorMessage(error)}`)
 }
 
 export async function repairDurableJsonLineTail(path: string): Promise<boolean> {
