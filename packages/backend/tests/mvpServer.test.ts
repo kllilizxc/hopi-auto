@@ -1068,6 +1068,114 @@ describe('MVP server', () => {
     await request(base, '/api/projects/P-credential/preview/stop', { method: 'POST' })
   })
 
+  test('bootstraps a Project speaking session from its first Preview system event', async () => {
+    const homeRoot = join(temporaryRoot, 'preview-bootstrap-home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'preview-bootstrap-repo'))
+    const publisher = new PublicationCoordinator()
+    const calls: Array<{
+      eventId: string
+      invocation: string | undefined
+      sessionId: string | null
+      prompt: string
+    }> = []
+    const assistantRunner: AssistantModelRunner = {
+      async run(input) {
+        calls.push({
+          eventId: input.eventId,
+          invocation: input.invocation,
+          sessionId: input.session?.sessionId ?? null,
+          prompt: input.prompt,
+        })
+        const isPublic = input.prompt.includes('Continue after the Preview diagnosis.')
+        return {
+          reply: isPublic ? 'Continuing in the bootstrapped Project session.' : '',
+          session: {
+            transport: 'codex',
+            sessionId: input.session?.sessionId ?? 'preview-bootstrap-session',
+          },
+        }
+      },
+    }
+    const server = createServer({
+      rootDir: homeRoot,
+      port: 0,
+      assistantRunner,
+      publisher,
+    })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    await request(base, '/api/projects', {
+      method: 'POST',
+      body: { projectId: 'P-preview-bootstrap', repoPath: repoRoot },
+    })
+
+    await request(base, '/api/projects/P-preview-bootstrap/preview/start', {
+      method: 'POST',
+    })
+    await waitForAssistantCalls(calls, 1)
+    expect(calls[0]).toMatchObject({
+      invocation: 'speaking',
+      sessionId: null,
+      prompt: expect.stringContaining('Project Preview start failed.'),
+    })
+    const projectSessionPath = join(
+      homeRoot,
+      '.hopi',
+      'runtime',
+      'assistant',
+      'sessions',
+      'projects',
+      'P-preview-bootstrap.json',
+    )
+    await waitForFile(projectSessionPath)
+
+    await request(base, '/api/projects/P-preview-bootstrap/preview/start', {
+      method: 'POST',
+    })
+    await waitForAssistantCalls(calls, 2)
+    expect(calls[1]).toMatchObject({
+      invocation: 'supervision',
+      sessionId: 'preview-bootstrap-session',
+      prompt: expect.stringContaining('Project Preview start failed.'),
+    })
+
+    const submitted = await request(base, '/api/inbox', {
+      method: 'POST',
+      body: {
+        content: 'Continue after the Preview diagnosis.',
+        context: { projectId: 'P-preview-bootstrap' },
+      },
+    })
+    const submittedEventId = String(submitted.eventId)
+    await waitForAssistantCalls(calls, 3)
+    await waitForInboxHandled(homeRoot, publisher, submittedEventId)
+    expect(calls[2]).toMatchObject({
+      eventId: submittedEventId,
+      invocation: 'speaking',
+      sessionId: 'preview-bootstrap-session',
+    })
+    expect(await Bun.file(projectSessionPath).json()).toMatchObject({
+      scope: 'project:P-preview-bootstrap',
+      sessionId: 'preview-bootstrap-session',
+    })
+
+    const workspace = await createAssistantWorkspaceStore(homeRoot, publisher).readWorkspace()
+    const previewEvents = [...workspace.events.values()].filter((event) =>
+      event.body.includes('Project Preview start failed.'),
+    )
+    expect(previewEvents).toHaveLength(2)
+    expect(
+      previewEvents.every(
+        (event) =>
+          event.attributes.source === 'system' &&
+          event.attributes.visibility === 'internal' &&
+          event.attributes.status === 'handled' &&
+          event.attributes.disposition === 'silent',
+      ),
+    ).toBe(true)
+  })
+
   test('derives an omitted Project ID from the primary selected folder', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'monorepo'))
@@ -2741,6 +2849,39 @@ async function waitForPreviewFailureEvent(homeRoot: string, publisher: Publicati
     await Bun.sleep(10)
   }
   throw new Error('Preview Start failure did not reach the Assistant Inbox')
+}
+
+async function waitForAssistantCalls(calls: readonly unknown[], count: number) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if (calls.length >= count) return
+    await Bun.sleep(10)
+  }
+  throw new Error(`Assistant did not receive ${count} call(s)`)
+}
+
+async function waitForFile(path: string) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if (await Bun.file(path).exists()) return
+    await Bun.sleep(10)
+  }
+  throw new Error(`File was not created: ${path}`)
+}
+
+async function waitForInboxHandled(
+  homeRoot: string,
+  publisher: PublicationCoordinator,
+  eventId: string,
+) {
+  const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if ((await workspace.readWorkspace()).events.get(eventId)?.attributes.status === 'handled')
+      return
+    await Bun.sleep(10)
+  }
+  throw new Error(`Inbox event was not handled: ${eventId}`)
 }
 
 async function createRepo(path: string) {

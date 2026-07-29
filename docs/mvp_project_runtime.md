@@ -1,7 +1,7 @@
 # Project Runtime Capabilities
 
 Status: authoritative MVP design
-Last updated: 2026-07-24
+Last updated: 2026-07-29
 
 This document owns Prepare and Preview.
 
