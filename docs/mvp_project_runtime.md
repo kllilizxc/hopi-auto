@@ -96,7 +96,10 @@ The Preview child is a process-group leader owned by HOPI. Project children rema
 The adapter may clean up non-process resources it explicitly creates, such as containers, but does
 not implement a second generic process supervisor. Stop, release replacement, restart recovery, and
 failed startup first signal the foreground adapter and allow its bounded cleanup window, then
-terminate anything still present in the complete process group.
+terminate anything still present in the complete process group. The foreground adapter exiting is
+not by itself proof of cleanup: HOPI finishes Stop only after the process group is observed absent.
+An OS denial remains an error only while that absence cannot be established; a group that drains
+during bounded escalation is a successful Stop.
 
 HOPI persists a Preview session manifest containing:
 

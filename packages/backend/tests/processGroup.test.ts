@@ -79,6 +79,24 @@ describe('process-group termination', () => {
     expect(signals.at(-1)).toEqual([42, 0])
   })
 
+  test('accepts a denied final signal when the process group drains immediately after it', async () => {
+    let denied = false
+    const kill = spyOn(process, 'kill').mockImplementation(((pid, signal) => {
+      if (pid > 0) throw systemError('ESRCH')
+      if (signal === 'SIGKILL') {
+        denied = true
+        throw systemError('EPERM')
+      }
+      if (denied && signal === 0) throw systemError('ESRCH')
+      return true
+    }) as typeof process.kill)
+
+    await expect(createProcessGroupTerminator(42)()).resolves.toBeUndefined()
+
+    expect(kill).toHaveBeenCalledWith(-42, 'SIGKILL')
+    expect(kill).not.toHaveBeenCalledWith(42, 0)
+  })
+
   test('shares one observed termination promise across concurrent cleanup triggers', async () => {
     const kill = spyOn(process, 'kill').mockImplementation((() => {
       throw systemError('EPERM')

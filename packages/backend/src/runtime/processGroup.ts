@@ -74,7 +74,25 @@ async function terminateTarget(target: number) {
     await Bun.sleep(50)
     if (!signalProcess(target, 0)) return
   }
-  signalProcess(target, 'SIGKILL')
+  try {
+    signalProcess(target, 'SIGKILL')
+  } catch (error) {
+    if (!isPermissionDenied(error)) throw error
+    if (await observeTargetAbsent(target)) return
+    throw error
+  }
+}
+
+async function observeTargetAbsent(target: number) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await Bun.sleep(50)
+    try {
+      if (!signalProcess(target, 0)) return true
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error
+    }
+  }
+  return false
 }
 
 function signalProcess(target: number, signal: 0 | NodeJS.Signals) {
