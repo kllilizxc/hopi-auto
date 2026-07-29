@@ -104,6 +104,7 @@ export interface ProjectReconciler {
     goalId: string,
     runtime?: Partial<WorkRuntimeFacts>,
   ): Promise<ProjectReconcileResult>
+  decisionWhenEligible?(goalId: string, goalPackage?: GoalPackage): Promise<ReconcileDecision>
   liveWorkIds(): ReadonlySet<string>
   settledFailureWorkIds?(goalId: string, goalPackage?: GoalPackage): Promise<ReadonlySet<string>>
   requestWorkRun?(
@@ -202,6 +203,35 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     interruptRuns,
     liveWorkIds() {
       return new Set(runSlots.keys())
+    },
+    async decisionWhenEligible(goalId, suppliedPackage) {
+      const goalPackage = suppliedPackage ?? (await options.store.readPackage(goalId))
+      const snapshot = await attempts.snapshot()
+      const queued = queuedWorkIds(snapshot.queued(), options.projectId, goalId)
+      const livePrefix = `${goalId}/`
+      const live = [...runSlots]
+        .filter(([key]) => key.startsWith(livePrefix))
+        .map(([key]) => key.slice(livePrefix.length))
+      return decideGoalReconciliation({
+        projectId: options.projectId,
+        goalId,
+        goalPackage,
+        runtime: {
+          projectEligible: true,
+          liveRunWorkIds: new Set([...live, ...queued]),
+          settledFailureWorkIds: await deriveSettledFailureWorkIds(
+            goalPackage,
+            snapshot.listGoal(options.projectId, goalId),
+            queued,
+          ),
+          passCapacity: {
+            planner: true,
+            generator: true,
+            reviewer: true,
+          },
+          now: now(),
+        },
+      })
     },
     async settledFailureWorkIds(goalId, suppliedPackage) {
       const goalPackage = suppliedPackage ?? (await options.store.readPackage(goalId))

@@ -308,12 +308,27 @@ The Assistant changes Work through the same canonical Work document used by resp
 Changing dependencies replaces the nonterminal Engineering Work's `dependsOn` set and is accepted
 only when the resulting graph is valid and acyclic.
 
+An unchanged nonterminal Work whose latest settled Attempt is `attention`, `fail`, `invalid`, or an
+operational failure is already waiting for Assistant judgment. It is not redispatched merely because
+an Attention remains open or a supervision wake occurs. Attention records any responsibility that
+must remain visible; the settled Attempt remains the execution blocker for that exact Work
+assignment.
+
 Continuing with a message appends a timestamped, source-traced Project Owner note to that document.
 If an Attempt is active, HOPI interrupts it and schedules the changed Work in the same persistent
 responsibility lineage. This is transport recovery, not a new queue or workflow state: the resumed
 Agent receives the current Work document and its prior provider session. Project Owner message
 blocks do not change the responsibility-session compatibility fingerprint; ordinary Work contract
 or dependency changes still do.
+
+Cancelling Work means that execution path is no longer part of the Goal. It terminates the target and
+its nonterminal dependent closure, including queued or running Attempts. It does not suspend the
+Goal: an active Goal with no remaining nonterminal Work is eligible for fresh Planning. Pausing is
+the distinct Goal-wide scheduling control; it is not inferred from Attention or Needs You.
+
+Work-control results include the resulting Work and Goal state. Cancellation also reports the
+Coordinator decision derived for an eligible Project after the Assistant turn settles, so the model
+does not have to infer whether the active Goal will wait or create Planning.
 
 ## Prompt Contract
 
@@ -324,6 +339,9 @@ Prompts describe only:
 - available capabilities
 - the real effects of using those capabilities
 - for Planner and Reviewer, the current Goal or Work boundary being judged
+
+Supervision events contain observed facts, not action instructions. The Assistant judges any action
+against current canonical state and the reported effects of its tools.
 
 Prompts do not prescribe recovery playbooks, attempt thresholds, recommended choices, step order, or
 structured final output. Documents and tools carry authority; model prose is not parsed into hidden

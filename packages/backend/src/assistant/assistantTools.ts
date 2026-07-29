@@ -22,6 +22,7 @@ import {
   renderInputDocument,
 } from '../domain/canonicalDocuments'
 import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
+import type { GoalPackage } from '../domain/goalPackage'
 import { inboxEventReference } from '../domain/inboxEventReference'
 import type { LinkedProject, LinkedProjectRepo } from '../domain/project'
 import { resolveProjectPath } from '../domain/projectPath'
@@ -37,6 +38,7 @@ import type {
 import { type PreviewManager, readProjectReleaseHeads } from '../runtime/previewManager'
 import { withPreparedProjectRepositories } from '../runtime/projectDirectory'
 import type { WorkRunRequest } from '../scheduler/projectReconciler'
+import { type ReconcileDecision, decideGoalReconciliation } from '../scheduler/reconcileDecision'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
@@ -67,6 +69,9 @@ export interface AssistantToolProject {
   reconciler?: {
     interruptRuns(goalId?: string, workId?: string): void
     interruptQueuedRuns?(goalId?: string, workId?: string): Promise<number>
+    liveWorkIds?(): ReadonlySet<string>
+    decisionWhenEligible?(goalId: string, goalPackage?: GoalPackage): Promise<ReconcileDecision>
+    settledFailureWorkIds?(goalId: string, goalPackage?: GoalPackage): Promise<ReadonlySet<string>>
     requestWorkRun?(
       goalId: string,
       workId: string,
@@ -268,6 +273,54 @@ export function createAssistantTools(options: {
     }
   }
 
+  async function postWorkActionState(
+    project: AssistantToolProject,
+    goalId: string,
+    includeCoordinatorDecision: boolean,
+  ) {
+    const goalPackage = await project.store.readPackage(goalId)
+    const remainingNonterminalWorkIds = [...goalPackage.works.values()]
+      .filter((work) => !isWorkTerminal(work.attributes))
+      .map((work) => work.attributes.id)
+      .toSorted()
+    const state = {
+      goalLifecycle: goalPackage.goal.attributes.lifecycle,
+      remainingNonterminalWorkIds,
+    }
+    if (!includeCoordinatorDecision) return state
+
+    const livePrefix = `${goalId}/`
+    const liveWorkIds = new Set(
+      [...(project.reconciler?.liveWorkIds?.() ?? [])]
+        .filter((key) => key.startsWith(livePrefix))
+        .map((key) => key.slice(livePrefix.length)),
+    )
+    const settledFailureWorkIds =
+      (await project.reconciler?.settledFailureWorkIds?.(goalId, goalPackage)) ?? new Set<string>()
+    const coordinatorDecisionWhenEligible =
+      (await project.reconciler?.decisionWhenEligible?.(goalId, goalPackage)) ??
+      decideGoalReconciliation({
+        projectId: project.projectId,
+        goalId,
+        goalPackage,
+        runtime: {
+          projectEligible: true,
+          liveRunWorkIds: liveWorkIds,
+          settledFailureWorkIds,
+          passCapacity: {
+            planner: true,
+            generator: true,
+            reviewer: true,
+          },
+          now: now(),
+        },
+      })
+    return {
+      ...state,
+      coordinatorDecisionWhenEligible,
+    }
+  }
+
   async function currentWorkResult(input: {
     project: AssistantToolProject
     goalId: string
@@ -283,6 +336,15 @@ export function createAssistantTools(options: {
     if (!currentWork) throw new Error(`Work not found after control: ${input.workId}`)
     const runRequest = input.kind === 'work_continue_requested' ? input.runRequest : undefined
     const changed = runRequest ? runRequest.disposition === 'scheduled' : true
+    const postActionState = await postWorkActionState(
+      input.project,
+      input.goalId,
+      input.kind === 'work_cancelled',
+    )
+    const cancellationConsequence =
+      input.kind === 'work_cancelled' && 'coordinatorDecisionWhenEligible' in postActionState
+        ? ` Goal ${input.goalId} is ${postActionState.goalLifecycle} with ${postActionState.remainingNonterminalWorkIds.length} remaining nonterminal Work; its eligible Coordinator decision is ${postActionState.coordinatorDecisionWhenEligible.kind}.`
+        : ''
     return {
       summary: runRequest
         ? runRequest.disposition === 'already_active'
@@ -290,7 +352,7 @@ export function createAssistantTools(options: {
           : runRequest.disposition === 'already_scheduled'
             ? `Work ${input.workId} is already scheduled as ${runRequest.runId}.`
             : `Scheduled Work ${input.workId} as ${runRequest.runId}.`
-        : `${input.kind} applied to Work ${input.workId}.`,
+        : `${input.kind} applied to Work ${input.workId}.${cancellationConsequence}`,
       changed,
       value: {
         effect: {
@@ -305,6 +367,7 @@ export function createAssistantTools(options: {
             ? { runId: runRequest.runId, runDisposition: runRequest.disposition }
             : {}),
         },
+        postActionState,
         settledAttentionRefs: input.settledRefs ?? [],
         pendingAttentionRefs: input.pendingRefs ?? [],
       },
@@ -1378,10 +1441,23 @@ function compactGoalAttentionStateIndex(value: unknown) {
 
 function compactWorkStateIndex(value: unknown, includeSummary: boolean) {
   if (!isRecord(value)) return value
+  const projection = isRecord(value.projection) ? value.projection : null
+  const failedPredicates = Array.isArray(projection?.failedPredicates)
+    ? projection.failedPredicates
+    : []
+  const waitingOnSettledAttempt = failedPredicates.includes('failed_attempt')
   return {
     attributes: value.attributes,
     ...(typeof value.path === 'string' ? { path: value.path } : {}),
-    ...(isRecord(value.projection) ? { projection: value.projection } : {}),
+    ...(projection ? { projection } : {}),
+    ...(waitingOnSettledAttempt
+      ? {
+          schedulingEffect: {
+            state: 'waiting_for_assistant',
+            unchangedWorkRedispatch: 'blocked',
+          },
+        }
+      : {}),
     ...(Array.isArray(value.candidateIntegration)
       ? { currentCandidateIntegration: value.candidateIntegration }
       : {}),
@@ -1455,6 +1531,7 @@ function compactRuntimeStateIndex(value: Record<string, unknown>, includeSummary
         responsibility: value.latestAttempt.responsibility,
         status: value.latestAttempt.status,
         result: value.latestAttempt.result,
+        application: value.latestAttempt.application,
         ...(includeSummary && typeof value.latestAttempt.summary === 'string'
           ? { summary: boundedStateText(value.latestAttempt.summary, 500) }
           : {}),

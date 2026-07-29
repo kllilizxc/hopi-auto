@@ -131,10 +131,22 @@ function compactDocument(value: unknown, bodyLimit: number) {
 function compactWork(value: unknown) {
   if (!isRecord(value)) return value
   const runtime = isRecord(value.runtime) ? value.runtime : null
+  const projection = isRecord(value.projection) ? value.projection : null
+  const failedPredicates = Array.isArray(projection?.failedPredicates)
+    ? projection.failedPredicates
+    : []
   return {
     attributes: value.attributes,
     path: value.path,
-    ...(value.projection ? { projection: value.projection } : {}),
+    ...(projection ? { projection } : {}),
+    ...(failedPredicates.includes('failed_attempt')
+      ? {
+          schedulingEffect: {
+            state: 'waiting_for_assistant',
+            unchangedWorkRedispatch: 'blocked',
+          },
+        }
+      : {}),
     ...(value.candidateIntegration ? { candidateIntegration: value.candidateIntegration } : {}),
     ...(runtime
       ? {

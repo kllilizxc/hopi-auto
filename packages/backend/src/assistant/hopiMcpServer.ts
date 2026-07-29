@@ -92,7 +92,7 @@ server.registerTool(
   'hopi_control_work',
   {
     description:
-      'Continue one Work now or at a future instant, change dependencies, or cancel one Work. Continue durably queues the next Attempt in the same responsibility lineage and may attach source-traced guidance. Cancellation terminates queued and running Attempts while preserving history.',
+      'Continue one Work now or at a future instant, change dependencies, or cancel one Work. Continue durably queues the next Attempt in the same responsibility lineage and may attach source-traced guidance. Cancellation removes that execution path, terminates queued and running Attempts while preserving history, and reports the resulting Goal state and eligible Coordinator decision; it does not pause the Goal.',
     inputSchema: assistantMcpToolSchemas.hopi_control_work,
   },
   (args) => callTool('hopi_control_work', args),

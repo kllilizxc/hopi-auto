@@ -1040,7 +1040,9 @@ const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
 
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
+  'System and supervision events report observed facts rather than requested actions; judge any intervention from current canonical state.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
+  'A nonterminal Work blocked by failed_attempt is already waiting and will not redispatch unchanged. Cancel removes that path; an active Goal with no remaining nonterminal Work is eligible for Planning, while pause is the distinct Goal-wide suspension control.',
   'Project Preview is one local managed runtime. The Project adapter announces all opaque named surfaces together; HOPI only presents them.',
   'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
   'hopi_manage_attention persists Project Attention, resolves exact Project or Goal Attention references, and presents referenced open Attention summaries and optional choices to the operator without changing Work scheduling.',
@@ -1080,7 +1082,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 16
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 17
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')

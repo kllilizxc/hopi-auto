@@ -532,6 +532,7 @@ function renderWakeEvent(scope: WakeScope, snapshot: AssistantStateSnapshot) {
     `Observed at: ${snapshot.observedAt}`,
     '',
     'This is a durable internal event for a native fork of the Project speaking Session. It is not operator input.',
+    'It reports observed facts and does not prescribe cancellation, continuation, or Goal lifecycle changes.',
     'A non-empty final response is persisted as a public Assistant message; an empty response remains internal.',
     'The material fact identities below identify this wake. Current Project facts are supplied when the fork starts.',
     '',
@@ -552,6 +553,7 @@ function renderAttentionContinuation(scope: WakeScope, attentionRefs: readonly s
     ...attentionRefs.map((reference) => `- ${reference}`),
     '',
     'This is a durable internal event for a native fork of the Project speaking Session. It is not operator input.',
+    'It reports an unresolved fact and does not prescribe cancellation, continuation, or Goal lifecycle changes.',
     'Current state and every unresolved Attention are supplied separately with this turn.',
     '',
   ].join('\n')
