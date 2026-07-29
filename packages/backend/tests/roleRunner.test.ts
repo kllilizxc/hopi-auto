@@ -27,6 +27,19 @@ describe('ConfiguredRoleRunner', () => {
     expect(result).toMatchObject({ result: 'success', summary: 'planned', exitCode: 0 })
   })
 
+  test('rejects a Planner summary that cannot fit the operator-facing completion update', async () => {
+    const fixture = await createFixture()
+    const runner = processRunner(
+      'await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"x".repeat(601),artifacts:[]}))',
+    )
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
+
+    expect(result.result).toBe('fail')
+    expect(result.summary).toContain('summary')
+    expect(result.summary).toContain('600')
+  })
+
   test('preserves raw stdout and stderr before transcript normalization', async () => {
     const fixture = await createFixture()
     const runner = processRunner(

@@ -70,6 +70,9 @@ Resolution restores the ordinary message without adding a status row. Assistant 
 header; the global open count remains as a quiet floating badge only when non-zero. Its Reflection
 entry is hidden in a masked top-right hover/focus region, and the Reflection list adds no title or
 refresh toolbar. Goal and Kanban surfaces retain their derived Work state without a duplicate banner.
+Completed presentation follows the same human-summary boundary without becoming Attention: the
+final Planner Evidence stays the technical completion record, while its short operator-facing result
+summary is the text shown in the deterministic Completed update.
 The shared Project switcher projects the same unresolved NeedsYou Attention count onto each direct
 shortcut and overflow option; it does not reuse the broader open-Attention count. It also shows one
 success marker when that browser observes a new Goal completion after establishing its initial

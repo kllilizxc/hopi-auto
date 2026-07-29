@@ -596,14 +596,14 @@ function goalCompletionItem(completion: GoalCompletionView): MessageFeedItem {
     createdAt: completion.completedAt,
     kind: 'system_update',
     role: 'system',
-    text: readableCompletionBody(completion.body),
+    text: readableCompletionSummary(completion.summary),
     label: 'Completed',
     groupId: `goal-completion:${completion.projectId}:${completion.goalId}`,
   }
 }
 
-function readableCompletionBody(body: string) {
-  return body
+function readableCompletionSummary(summary: string) {
+  return summary
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/^[ \t]*[-*][ \t]+/gm, '• ')
     .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')

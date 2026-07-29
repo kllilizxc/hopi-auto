@@ -41,6 +41,10 @@ const roleResultSchema = z
   })
   .strict()
 
+const plannerResultSchema = roleResultSchema.extend({
+  summary: z.string().trim().min(1).max(600),
+})
+
 export interface RoleRunInput {
   projectId: string
   goalId: string
@@ -189,7 +193,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
     let processFailure = executionFailure(input, execution)
     if (processFailure) return processFailure
 
-    let parsed = await readResult(input.context.resultFile, execution)
+    let parsed = await readResult(input.context.resultFile, execution, input.responsibility)
     if (
       !parsed.success &&
       transport !== null &&
@@ -217,7 +221,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
       execution = combineExecutions(execution, recovery)
       processFailure = executionFailure(input, execution)
       if (processFailure) return processFailure
-      parsed = await readResult(input.context.resultFile, execution)
+      parsed = await readResult(input.context.resultFile, execution, input.responsibility)
       if (!parsed.success) {
         await observer?.onSessionInvalid?.()
         return failedResult(
@@ -396,10 +400,18 @@ function outcomeRecoveryPrompt(responsibility: Responsibility) {
   ].join('\n')
 }
 
-async function readResult(path: string, execution: ProcessExecution) {
+async function readResult(
+  path: string,
+  execution: ProcessExecution,
+  responsibility: Responsibility,
+) {
   const candidateFailures: string[] = []
   if (execution.structuredOutcome !== undefined) {
-    const parsed = parseResultCandidate(execution.structuredOutcome, 'structured vendor outcome')
+    const parsed = parseResultCandidate(
+      execution.structuredOutcome,
+      'structured vendor outcome',
+      responsibility,
+    )
     if (parsed.success) {
       await persistResult(path, parsed.value)
       return parsed
@@ -411,14 +423,18 @@ async function readResult(path: string, execution: ProcessExecution) {
   if (await file.exists()) {
     const source = await file.text()
     if (source.trim()) {
-      const parsed = parseResultCandidate(source, 'result.json')
+      const parsed = parseResultCandidate(source, 'result.json', responsibility)
       if (parsed.success) return parsed
       candidateFailures.push(parsed.error)
     }
   }
 
   if (execution.finalText?.trim()) {
-    const parsed = parseResultCandidate(execution.finalText, 'vendor final response')
+    const parsed = parseResultCandidate(
+      execution.finalText,
+      'vendor final response',
+      responsibility,
+    )
     if (parsed.success) {
       await persistResult(path, parsed.value)
       return parsed
@@ -436,10 +452,12 @@ async function readResult(path: string, execution: ProcessExecution) {
   }
 }
 
-function parseResultCandidate(candidate: unknown, source: string) {
+function parseResultCandidate(candidate: unknown, source: string, responsibility: Responsibility) {
   try {
     const value = typeof candidate === 'string' ? JSON.parse(candidate) : candidate
-    const parsed = roleResultSchema.safeParse(value)
+    const parsed = (
+      responsibility === 'planner' ? plannerResultSchema : roleResultSchema
+    ).safeParse(value)
     if (!parsed.success) {
       return {
         success: false as const,

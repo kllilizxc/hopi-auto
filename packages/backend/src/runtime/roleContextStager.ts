@@ -1098,6 +1098,16 @@ function resultSchema(responsibility: Responsibility) {
     responsibility === 'reviewer'
       ? ['success', 'reject', 'attention', 'fail']
       : ['success', 'attention', 'fail']
+  const summary =
+    responsibility === 'planner'
+      ? {
+          type: 'string',
+          minLength: 1,
+          maxLength: 600,
+          description:
+            'Operator-facing outcome in one or two short sentences. On Goal completion, state what was delivered without internal responsibility, Work, Evidence, validation, or lifecycle mechanics.',
+        }
+      : { type: 'string', minLength: 1 }
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     type: 'object',
@@ -1105,7 +1115,7 @@ function resultSchema(responsibility: Responsibility) {
     required: ['result', 'summary'],
     properties: {
       result: { enum: results },
-      summary: { type: 'string', minLength: 1 },
+      summary,
       artifacts: {
         type: 'array',
         items: { type: 'string', minLength: 1 },
@@ -1576,6 +1586,7 @@ function plannerPrompt(paths: {
       ? ['Operator preferences are defaults below current Input and Project/Goal authority.']
       : []),
     'Current Goal authority may shrink or replace earlier nonterminal plans. Deferred or future outcomes are outside current completion unless the Goal includes them.',
+    "The terminal result summary is operator-facing. When success completes the Goal, use one or two short sentences to state what was delivered in the operator's language; do not narrate Planner, Work, Evidence, validation, or lifecycle mechanics.",
     'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
     'The proposal owns the current nonterminal dependsOn graph and may atomically add, remove, or redirect edges. Leave one valid acyclic graph; terminal Work is immutable.',
     'Owned Project Repo context: .hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology.',

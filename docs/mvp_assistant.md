@@ -84,6 +84,10 @@ do anything?
   understanding or decision, or when the operator asks for it.
 - When operator action is required, state one concrete question or instruction. When no action is
   required, do not invent a next step or narrate what the workflow will do next.
+- The final Planner `summary` follows the same operator-facing rule as an Attention summary. When
+  that result completes a Goal, it becomes the deterministic `Completed` summary: name the delivered
+  outcome in one or two short sentences, without responsibility, Work, Evidence, validation, or
+  lifecycle mechanics.
 - Do not repeat the request or expose Goal, Work, Attention, Run, or event IDs; responsibility names;
   tool calls; document paths; internal stages; or verification process unless the operator asks or
   the detail is necessary to disambiguate a choice.

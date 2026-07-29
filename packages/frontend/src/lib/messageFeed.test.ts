@@ -74,7 +74,7 @@ describe('unified message feed adapters', () => {
           goalId: 'G-1',
           evidenceId: 'E-final',
           completedAt: '2026-07-26T11:32:06.638Z',
-          body: '## Ship the Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
+          summary: '## Ship the Goal\n\nThe reviewed outcome satisfies every accepted criterion.',
         },
       },
     ])

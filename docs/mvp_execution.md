@@ -1677,8 +1677,11 @@ canonical references in a public turn. That handled turn then projects as **Need
 referenced Attention remains open. Its default wording and optional choices come from the current
 Attention documents; their full bodies remain Agent detail. This adds no ownership field to
 Attention and does not change Work readiness. Goal completion appears from the Goal transition and
-final Planning Evidence as a deterministic **Completed** conversation update; it is presentation of
-canonical completion, not another notification document or required model phrase.
+final Planning Evidence as a deterministic **Completed** conversation update. Its visible summary is
+the final Planner result summary, written for the operator in one or two short sentences and stating
+the delivered outcome rather than Planner, Work, Evidence, validation, or lifecycle mechanics. The
+Evidence remains the canonical technical record; completion is its human-facing projection, not
+another notification document or required Assistant phrase.
 
 Completion delivery is an Assistant judgment over current Goal authority, Attention, Evidence, and
 conversation. A Goal-scoped Evidence read exposes resolved artifacts and their browser-facing
@@ -1727,10 +1730,12 @@ Coordinator then verifies only structural conditions:
   IDs that are prefixes of other Work IDs never match
 - no open targeted Attention covers the Goal or its Work
 
-The final Planning Evidence is the completion record. Completion creates no Attention, approval
-field, dedicated role, or second lifecycle gate. Reflection observes the ordinary Goal transition
-and its final Planning Evidence. Reopen increments revision when required and creates Planning Work;
-historical Evidence remains immutable.
+The final Planning Evidence is the completion record. Its result summary is operator-facing because
+the same text is projected as the deterministic `Completed` summary; diagnostic proof remains in the
+Evidence, artifacts, and Attempt history. Completion creates no Attention, approval field, dedicated
+role, or second lifecycle gate. Reflection observes the ordinary Goal transition and its final
+Planning Evidence. Reopen increments revision when required and creates Planning Work; historical
+Evidence remains immutable.
 
 Manual completion confirmation is not required.
 

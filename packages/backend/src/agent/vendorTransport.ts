@@ -581,12 +581,22 @@ function roleOutcomeJsonSchema(role: string | undefined) {
     role === 'planner' || role === 'generator'
       ? ['success', 'attention', 'fail']
       : ['success', 'reject', 'attention', 'fail']
+  const summary =
+    role === 'planner'
+      ? {
+          type: 'string',
+          minLength: 1,
+          maxLength: 600,
+          description:
+            'Operator-facing outcome in one or two short sentences. On Goal completion, state what was delivered without internal responsibility, Work, Evidence, validation, or lifecycle mechanics.',
+        }
+      : { type: 'string', minLength: 1 }
   return {
     type: 'object',
     additionalProperties: false,
     properties: {
       result: { type: 'string', enum: results },
-      summary: { type: 'string', minLength: 1 },
+      summary,
       artifacts: {
         type: 'array',
         items: { type: 'string', minLength: 1 },

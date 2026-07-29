@@ -224,7 +224,7 @@ export interface GoalCompletionView {
   goalId: string
   evidenceId: string
   completedAt: string
-  body: string
+  summary: string
 }
 
 export type AssistantFeedEntry =

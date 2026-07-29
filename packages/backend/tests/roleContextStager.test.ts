@@ -140,6 +140,18 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Coordinator Evidence owns that commit identity')
     expect(prompt).toContain('owns the current nonterminal dependsOn graph')
     expect(prompt).toContain('may atomically add, remove, or redirect edges')
+    expect(prompt).toContain('The terminal result summary is operator-facing')
+    expect(prompt).toContain("state what was delivered in the operator's language")
+    expect(await Bun.file(bundle.resultSchemaFile).json()).toMatchObject({
+      properties: {
+        summary: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 600,
+          description: expect.stringContaining('Operator-facing outcome'),
+        },
+      },
+    })
     expect(prompt).toContain('Browser harness, when installed')
     expect(prompt).toContain('$HOPI_BROWSER_HARNESS_COMMAND')
     const browserHarnessBackend = resolveBrowserHarnessBackendCommand()
