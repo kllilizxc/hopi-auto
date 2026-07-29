@@ -77,17 +77,18 @@ describe('process-group termination', () => {
     expect(signals).toContainEqual([-42, 'SIGTERM'])
     expect(signals).toContainEqual([-42, 'SIGKILL'])
     expect(signals.at(-1)).toEqual([42, 0])
-  })
+  }, 7_000)
 
-  test('accepts a denied final signal when the process group drains immediately after it', async () => {
+  test('accepts a denied final signal when the process group drains during bounded observation', async () => {
     let denied = false
+    let postDenialProbes = 0
     const kill = spyOn(process, 'kill').mockImplementation(((pid, signal) => {
       if (pid > 0) throw systemError('ESRCH')
       if (signal === 'SIGKILL') {
         denied = true
         throw systemError('EPERM')
       }
-      if (denied && signal === 0) throw systemError('ESRCH')
+      if (denied && signal === 0 && ++postDenialProbes > 12) throw systemError('ESRCH')
       return true
     }) as typeof process.kill)
 

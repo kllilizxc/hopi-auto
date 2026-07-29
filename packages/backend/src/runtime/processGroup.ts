@@ -84,7 +84,7 @@ async function terminateTarget(target: number) {
 }
 
 async function observeTargetAbsent(target: number) {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     await Bun.sleep(50)
     try {
       if (!signalProcess(target, 0)) return true
