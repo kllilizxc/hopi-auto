@@ -56,10 +56,12 @@ invocation, and run before queued wake work.
 
 The current Reflection implementation is only the deterministic wake recorder defined by
 [Project Owner And Attention](./mvp_project_owner.md). At an idle boundary it coalesces material
-Project facts and starts the same Assistant in a native fork of that Project's speaking session. It
-also continues each unresolved Attention revision at most once after a settled turn unless another
-turn already covers the conversation or an active Work Attempt will provide the next settlement
-edge.
+Project facts and starts the same Assistant. A compatible speaking session uses a provider-native
+fork; a missing or invalidated session uses the same internal event to bootstrap a replacement
+speaking session from durable scoped history. Session-cache availability is therefore not wake
+eligibility. Reflection also continues each unresolved Attention revision at most once after a
+settled turn unless another turn already covers the conversation or an active Work Attempt will
+provide the next settlement edge.
 
 `present_attention_to_user` links a public turn to one or more unresolved Attention records.
 Needs You renders their current operator summaries and optional shared choice UI; complete rationale

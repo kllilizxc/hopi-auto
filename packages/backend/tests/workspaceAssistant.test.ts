@@ -1780,6 +1780,46 @@ describe('WorkspaceAssistant conversation', () => {
       { eventId: 'EV-user', invocation: 'speaking', sessionId: 'thread-parent' },
     ])
   })
+
+  test('bootstraps from an internal event after the cached session contract is invalidated', async () => {
+    const seen: Array<{
+      invocation: string | undefined
+      sessionId: string | null
+    }> = []
+    const fixture = await setup(() => ({
+      async run(input, observer) {
+        seen.push({
+          invocation: input.invocation,
+          sessionId: input.session?.sessionId ?? null,
+        })
+        await observer?.onSession?.(codexSession('thread-rebuilt'))
+        return { reply: '', session: codexSession('thread-rebuilt') }
+      },
+    }))
+    const scope = { kind: 'project', projectId: 'P-1' } as const
+    await fixture.conversation.writeSession(
+      scope,
+      codexSession('thread-stale'),
+      'stale-contract-digest',
+      'stale-runtime-digest',
+    )
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-contract-change',
+      content: 'A material Project fact arrived after the Assistant contract changed.',
+      context: { projectId: 'P-1' },
+    })
+
+    await fixture.assistant.process('EV-contract-change')
+
+    expect(seen).toEqual([{ invocation: 'speaking', sessionId: null }])
+    expect(await fixture.conversation.readSession(scope)).toEqual(codexSession('thread-rebuilt'))
+    expect((await fixture.workspace.readEvent('EV-contract-change'))?.attributes).toMatchObject({
+      source: 'system',
+      visibility: 'internal',
+      status: 'handled',
+      disposition: 'silent',
+    })
+  })
 })
 
 async function setup(

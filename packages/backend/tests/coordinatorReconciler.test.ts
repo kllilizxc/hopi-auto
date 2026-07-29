@@ -143,7 +143,6 @@ describe('CoordinatorReconciler', () => {
     })
     let speakingSession = false
     const assistant = {
-      hasSpeakingSession: async () => speakingSession,
       async process(eventId: string) {
         speakingSession = true
         await fixture.workspace.handleEvent(eventId, {

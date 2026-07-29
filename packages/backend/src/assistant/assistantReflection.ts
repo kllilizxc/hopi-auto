@@ -85,7 +85,6 @@ export function createAssistantWake(options: {
   homeRoot: string
   workspace: AssistantWorkspaceStore
   state: AssistantStateReader
-  canWake?(scope: WakeScope): boolean | Promise<boolean>
   now?: () => Date
   onWake?(): void
 }): AssistantWake {
@@ -137,8 +136,7 @@ export function createAssistantWake(options: {
           input.settled &&
           !allPendingScopeKeys.has(candidate.scopeKey) &&
           cursor?.attentionRevisionDigest !== attentionRevisionDigest &&
-          candidate.snapshot.activeRuns.length === 0 &&
-          ((await options.canWake?.(candidate.scope)) ?? true)
+          candidate.snapshot.activeRuns.length === 0
         ) {
           continuations.push({
             ...candidate,
@@ -194,10 +192,6 @@ export function createAssistantWake(options: {
           continue
         }
         if (!input.settled && !immediate) {
-          deferred = true
-          continue
-        }
-        if (!((await options.canWake?.(candidate.scope)) ?? true)) {
           deferred = true
           continue
         }

@@ -40,7 +40,6 @@ import { createProcessGroupTerminator } from '../runtime/processGroup'
 import { runtimeCacheRoot } from '../runtime/runPaths'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import {
-  type AssistantConversationScope,
   assistantConversationScopeForEvent,
   assistantEventBelongsToScope,
 } from './assistantConversationScope'
@@ -111,7 +110,6 @@ export interface AssistantModelRunner {
 
 export interface WorkspaceAssistant {
   process(eventId: string, signal?: AbortSignal): Promise<WorkspaceAssistantResult>
-  hasSpeakingSession?(scope: AssistantConversationScope): Promise<boolean>
 }
 
 export type WorkspaceAssistantResult = { kind: 'answered'; eventId: string }
@@ -477,12 +475,6 @@ export function createWorkspaceAssistant(input: {
   const workspaceRoot = join(resolve(input.homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
   const runtimeDigest = workspaceAssistantRuntimeDigest(input.homeRoot)
   return {
-    async hasSpeakingSession(scope) {
-      const workspaceState = await input.workspace.readWorkspace()
-      const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
-      return (await input.conversation.readSession(scope, contextDigest, runtimeDigest)) !== null
-    },
-
     async process(eventId, signal) {
       const workspaceState = await input.workspace.readWorkspace()
       const event = workspaceState.events.get(eventId)

@@ -202,15 +202,11 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(1)
   })
 
-  test('preserves a state edge until the Project has a speaking Session to fork', async () => {
-    const fixture = await setup(['P-1'], { speakingSession: false })
+  test('publishes a state edge without requiring a cached speaking Session', async () => {
+    const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
     fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '8'.repeat(64) } }))
 
-    expect(await fixture.wake.observe({ settled: true })).toBe('deferred')
-    expect((await fixture.workspace.readWorkspace()).events.size).toBe(0)
-
-    fixture.setSpeakingSession(true)
     expect(await fixture.wake.observe({ settled: true })).toBe('started')
     await fixture.wake.waitForIdle()
     expect((await fixture.workspace.readWorkspace()).events.size).toBe(1)
@@ -319,7 +315,7 @@ describe('Assistant wake trigger', () => {
   })
 })
 
-async function setup(projectIds: string[], options: { speakingSession?: boolean } = {}) {
+async function setup(projectIds: string[]) {
   const homeRoot = join(temporaryRoot, 'home')
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(homeRoot, publisher)
@@ -334,9 +330,7 @@ async function setup(projectIds: string[], options: { speakingSession?: boolean 
     read: async () => current,
     readForReflection: async () => current,
   }
-  let speakingSession = options.speakingSession ?? true
-  const canWake = () => speakingSession
-  const wake = createAssistantWake({ homeRoot, workspace, state, canWake })
+  const wake = createAssistantWake({ homeRoot, workspace, state })
   return {
     homeRoot,
     wake,
@@ -344,11 +338,8 @@ async function setup(projectIds: string[], options: { speakingSession?: boolean 
     setSnapshot(next: AssistantStateSnapshot) {
       current = next
     },
-    setSpeakingSession(value: boolean) {
-      speakingSession = value
-    },
     recreateWake() {
-      return createAssistantWake({ homeRoot, workspace, state, canWake })
+      return createAssistantWake({ homeRoot, workspace, state })
     },
   }
 }

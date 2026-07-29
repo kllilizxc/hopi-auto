@@ -306,7 +306,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     homeRoot: options.homeRoot,
     workspace,
     state: assistantState,
-    canWake: async (scope) => (await assistant.hasSpeakingSession?.(scope)) ?? false,
     onWake: () => wakeCoordinator(),
   })
   const delivery = options.attentionTransport
