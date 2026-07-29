@@ -4,6 +4,7 @@ async function terminateProcessGroup(pid: number) {
     await terminateTarget(-pid)
   } catch (error) {
     if (!isPermissionDenied(error)) throw error
+    if (await observeTargetAbsent(-pid)) return
 
     let fallbackError: unknown
     try {
@@ -74,13 +75,7 @@ async function terminateTarget(target: number) {
     await Bun.sleep(50)
     if (!signalProcess(target, 0)) return
   }
-  try {
-    signalProcess(target, 'SIGKILL')
-  } catch (error) {
-    if (!isPermissionDenied(error)) throw error
-    if (await observeTargetAbsent(target)) return
-    throw error
-  }
+  signalProcess(target, 'SIGKILL')
 }
 
 async function observeTargetAbsent(target: number) {

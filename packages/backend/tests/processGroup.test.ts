@@ -98,19 +98,31 @@ describe('process-group termination', () => {
     expect(kill).not.toHaveBeenCalledWith(42, 0)
   })
 
+  test('accepts a denied group probe when the process group drains during bounded observation', async () => {
+    let probes = 0
+    const kill = spyOn(process, 'kill').mockImplementation(((pid, signal) => {
+      if (pid > 0) throw systemError('ESRCH')
+      if (signal === 0 && ++probes > 12) throw systemError('ESRCH')
+      throw systemError('EPERM')
+    }) as typeof process.kill)
+
+    await expect(createProcessGroupTerminator(42)()).resolves.toBeUndefined()
+
+    expect(kill).not.toHaveBeenCalledWith(42, 0)
+  })
+
   test('shares one observed termination promise across concurrent cleanup triggers', async () => {
     const kill = spyOn(process, 'kill').mockImplementation((() => {
-      throw systemError('EPERM')
+      throw systemError('ESRCH')
     }) as typeof process.kill)
     const terminate = createProcessGroupTerminator(42)
 
     const first = terminate()
-    await Bun.sleep(0)
     const second = terminate()
 
     expect(second).toBe(first)
-    await expect(second).rejects.toThrow('OS denied signaling process group 42')
-    expect(kill).toHaveBeenCalledTimes(2)
+    await expect(second).resolves.toBeUndefined()
+    expect(kill).toHaveBeenCalledTimes(1)
   })
 })
 
