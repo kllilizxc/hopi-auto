@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { resetProjectAssistantConversationEpoch } from '../src/assistant/assistantConversationEpoch'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
@@ -1001,6 +1001,68 @@ describe('MVP server', () => {
       ],
       failureReason: null,
     })
+  })
+
+  test('passes session-only Preview credential references without persisting them', async () => {
+    const homeRoot = join(temporaryRoot, 'credential-preview-home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'credential-preview-repo'))
+    const adapterRoot = join(repoRoot, 'scripts', 'hopi')
+    await mkdir(adapterRoot, { recursive: true })
+    await Bun.write(join(adapterRoot, 'prepare'), '#!/usr/bin/env bun\nconsole.log("prepare ok")\n')
+    await Bun.write(
+      join(adapterRoot, 'preview'),
+      [
+        '#!/usr/bin/env bun',
+        'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/credential-handoff.json`, JSON.stringify({',
+        '  certificateReferenceReceived: process.env.HOPI_RFID_CERT_SOURCE === "session-certificate-reference",',
+        '  privateKeyReferenceReceived: process.env.HOPI_RFID_KEY_SOURCE === "session-private-key-reference",',
+        '}))',
+        'const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ready") })',
+        'console.log(`HOPI_PREVIEW_SURFACES=${JSON.stringify([{ id: "default", label: "Preview", url: `http://127.0.0.1:${server.port}/` }])}`)',
+        'process.on("SIGTERM", () => { server.stop(true); process.exit(0) })',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await chmod(join(adapterRoot, 'prepare'), 0o755)
+    await chmod(join(adapterRoot, 'preview'), 0o755)
+    await git(repoRoot, ['add', '.'])
+    await git(repoRoot, ['commit', '-m', 'add credential Preview adapters'])
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    await request(base, '/api/projects', {
+      method: 'POST',
+      body: { projectId: 'P-credential', repoPath: repoRoot },
+    })
+    await request(base, '/api/projects/P-credential/preview/start', {
+      method: 'POST',
+      body: {
+        sessionCredentialReferences: {
+          rfidCertificate: 'session-certificate-reference',
+          rfidPrivateKey: 'session-private-key-reference',
+        },
+      },
+    })
+    const session = (await waitForPreviewSession(
+      base,
+      'P-credential',
+      'running',
+    )) as PreviewSessionView & {
+      manifestPath: string
+      logPath: string
+    }
+    expect(
+      await Bun.file(join(dirname(session.logPath), 'credential-handoff.json')).json(),
+    ).toEqual({
+      certificateReferenceReceived: true,
+      privateKeyReferenceReceived: true,
+    })
+    const manifest = await Bun.file(session.manifestPath).text()
+    expect(manifest).not.toContain('session-certificate-reference')
+    expect(manifest).not.toContain('session-private-key-reference')
+    await request(base, '/api/projects/P-credential/preview/stop', { method: 'POST' })
   })
 
   test('derives an omitted Project ID from the primary selected folder', async () => {

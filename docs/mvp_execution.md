@@ -634,8 +634,10 @@ Every HOPI-launched Codex process uses HOPI's explicit model, reasoning, sandbox
 configuration without loading the operator's global Codex configuration. Provider access is selected
 when each process starts. Its shell environment explicitly inherits the environment passed to that
 Codex process rather than a provider default subset or a cached interactive-shell snapshot. The same
-adapter rule applies to Planner, Generator, Reviewer, and Assistant; a credential missing from the
-HOPI process remains missing everywhere, while a credential present there is not role-dependent.
+adapter rule applies to Planner, Generator, Reviewer, and Assistant. A credential missing from the
+HOPI process remains missing from those responsibility environments, and a credential present there
+is not role-dependent. The sole Preview exception is an explicitly admitted session-only file
+reference; it is not inherited by responsibility processes or retained by the HOPI manager.
 Project Assistant, responsibility Runs, and Preview also receive the same Home-level
 `HOPI_CACHE_DIR`; this names shared reusable runtime data rather than Work or conversation state.
 The default bounded mode uses the adapter's workspace and declared-root policy. A Project-local UI
@@ -1398,6 +1400,15 @@ there is no post-C1 role, candidate-Preview mode, or automatic completion heuris
 The fixed API paths are `POST /api/projects/:projectId/preview/start`,
 `GET /api/projects/:projectId/preview`, and `POST /api/projects/:projectId/preview/stop`; Planner
 does not discover variants from Project source.
+
+A Preview Start request normally has an empty body. An adapter that needs approved client material
+may receive the fixed, paired RFID certificate and private-key file references in the start body's
+`sessionCredentialReferences` object. HOPI admits only that pair, never writes either value to the
+Preview session, manifest, log, artifact, or manager environment, and clears its handoff object as
+soon as it has spawned the adapter. A second Start cannot attach references to an existing session.
+The adapter must validate the files and their public-key match before any child starts, then remove
+the references before launching its services. This is a local, one-session handoff rather than a
+credential store, authentication bypass, or generic environment-injection API.
 
 If setup or verification is wrong, the relevant Agent-run checks and Reviewer expose the defect
 against the accepted Work rather than a universal Coordinator preflight. Process launch, provider

@@ -71,6 +71,51 @@ describe('PreviewManager', () => {
     })
   })
 
+  test('hands session credential references only to the adapter and excludes them from persistence', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+    await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(projectRoot)
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        'await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/credential-handoff.json`, JSON.stringify({',
+        '  certificateReferenceReceived: process.env.HOPI_RFID_CERT_SOURCE === "session-certificate-reference",',
+        '  privateKeyReferenceReceived: process.env.HOPI_RFID_KEY_SOURCE === "session-private-key-reference",',
+        '}))',
+        previewSurfaceSignal('http://127.0.0.1:4321'),
+        'process.on("SIGTERM", () => process.exit(0))',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await initializeGit(projectRoot)
+    const manager = createTestPreviewManager({ startupTimeoutMs: 2_000, stopGraceMs: 500 })
+
+    const result = await manager.start({
+      projectId: 'P-1',
+      projectRoot,
+      sessionCredentialReferences: {
+        rfidCertificate: 'session-certificate-reference',
+        rfidPrivateKey: 'session-private-key-reference',
+      },
+    })
+
+    if (result.kind !== 'started') throw new Error('Expected started Preview')
+    expect(
+      await Bun.file(join(dirname(result.session.logPath), 'credential-handoff.json')).json(),
+    ).toEqual({
+      certificateReferenceReceived: true,
+      privateKeyReferenceReceived: true,
+    })
+    const manifest = await Bun.file(result.session.manifestPath).text()
+    expect(manifest).not.toContain('session-certificate-reference')
+    expect(manifest).not.toContain('session-private-key-reference')
+    expect(await manager.stop('P-1')).toMatchObject({ status: 'stopped' })
+  })
+
   test('never reuses a Preview session after the managed release head changes', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')

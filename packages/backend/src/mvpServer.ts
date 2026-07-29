@@ -122,6 +122,17 @@ const repoPathSchema = z
     projectPath: z.string().refine(isNormalizedProjectPath).optional(),
   })
   .strict()
+const previewStartSchema = z
+  .object({
+    sessionCredentialReferences: z
+      .object({
+        rfidCertificate: z.string().trim().min(1).max(4_096),
+        rfidPrivateKey: z.string().trim().min(1).max(4_096),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
 const projectSchema = z.union([
   projectIdentitySchema
     .extend({
@@ -872,6 +883,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
 
         const previewRoute = matchPreviewRoute(parts)
         if (previewRoute && request.method === 'POST' && previewRoute.action === 'start') {
+          const startRequest = await parsePreviewStartRequest(request)
           const project = requireProject(runtime.projects, previewRoute.projectId)
           const repoRoots = project.repos.map((repo) => ({
             repoId: repo.repoId,
@@ -887,6 +899,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             ),
             primaryRepoId: project.primaryRepoId,
             repoRoots,
+            sessionCredentialReferences: startRequest.sessionCredentialReferences,
           })
           const session = runtime.preview.inspect(project.projectId)
           if (!session) throw new Error('Preview operation was not admitted')
@@ -2180,6 +2193,20 @@ async function parseBody<T extends z.ZodTypeAny>(
   schema: T,
 ): Promise<z.output<T>> {
   return schema.parse(await request.json())
+}
+
+async function parsePreviewStartRequest(request: Request) {
+  const body = await request.text()
+  if (!body.trim()) return {}
+  let value: unknown
+  try {
+    value = JSON.parse(body)
+  } catch {
+    throw new ApiError(400, 'Invalid Preview start request')
+  }
+  const parsed = previewStartSchema.safeParse(value)
+  if (!parsed.success) throw new ApiError(400, 'Invalid Preview start request')
+  return parsed.data
 }
 
 async function parseInboxRequest(request: Request) {
