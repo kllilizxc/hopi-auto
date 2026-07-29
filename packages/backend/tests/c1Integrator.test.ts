@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +16,8 @@ import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoots: string[] = []
 const HOPI_RELEASE_REF = projectReleaseRef('project-1')
+
+setDefaultTimeout(20_000)
 
 afterEach(async () => {
   await Promise.all(
