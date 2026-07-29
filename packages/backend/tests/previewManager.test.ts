@@ -71,6 +71,38 @@ describe('PreviewManager', () => {
     })
   })
 
+  test('allows the foreground adapter to clean non-process resources before group termination', async () => {
+    const projectRoot = join(temporaryRoot, 'integration')
+    const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')
+    await mkdir(join(projectRoot, 'scripts', 'hopi'), { recursive: true })
+    await writePrepareAdapter(projectRoot)
+    await Bun.write(
+      adapter,
+      [
+        '#!/usr/bin/env bun',
+        previewSurfaceSignal('http://127.0.0.1:4321'),
+        'process.once("SIGTERM", () => {',
+        '  setTimeout(async () => {',
+        '    await Bun.write(`${process.env.HOPI_PREVIEW_RUNTIME_DIR}/cleanup.txt`, "done\\n")',
+        '    process.exit(0)',
+        '  }, 700)',
+        '})',
+        'await new Promise(() => {})',
+        '',
+      ].join('\n'),
+    )
+    await makePreviewAdapterExecutable(adapter)
+    await initializeGit(projectRoot)
+    const manager = createTestPreviewManager({ startupTimeoutMs: 2_000, stopGraceMs: 1_500 })
+
+    const result = await manager.start({ projectId: 'P-1', projectRoot })
+    if (result.kind !== 'started') throw new Error('Expected started Preview')
+    const sessionRoot = dirname(result.session.logPath)
+
+    expect(await manager.stop('P-1')).toMatchObject({ status: 'stopped' })
+    expect(await Bun.file(join(sessionRoot, 'cleanup.txt')).text()).toBe('done\n')
+  })
+
   test('hands runtime inputs only to the adapter and excludes them from persistence', async () => {
     const projectRoot = join(temporaryRoot, 'integration')
     const adapter = join(projectRoot, 'scripts', 'hopi', 'preview')

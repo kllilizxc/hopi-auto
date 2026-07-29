@@ -801,7 +801,8 @@ async function settlePreviewLogs(operation: PreviewOperation) {
 }
 
 async function terminatePreview(process: ReturnType<typeof Bun.spawn>, stopGraceMs: number) {
-  void stopGraceMs
+  process.kill('SIGTERM')
+  await Promise.race([process.exited, Bun.sleep(stopGraceMs)])
   await createProcessGroupTerminator(process.pid)()
 }
 
