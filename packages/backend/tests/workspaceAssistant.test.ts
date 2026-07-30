@@ -1470,6 +1470,62 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
+  test('silently supersedes an internal state observation before invoking the model', async () => {
+    let modelCalls = 0
+    const fixture = await setup(() => ({
+      async run() {
+        modelCalls += 1
+        return { reply: '', session: codexSession('thread-current') }
+      },
+    }))
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-stale-observation',
+      content: 'A previously observed Project failure.',
+      context: {
+        projectId: 'P-1',
+        observedDigest: '0'.repeat(64),
+      },
+    })
+
+    expect(await fixture.assistant.process('EV-stale-observation')).toEqual({
+      kind: 'answered',
+      eventId: 'EV-stale-observation',
+    })
+
+    expect(modelCalls).toBe(0)
+    expect(await fixture.conversation.readTurn('EV-stale-observation')).toBeNull()
+    expect((await fixture.workspace.readEvent('EV-stale-observation'))?.attributes).toMatchObject({
+      source: 'system',
+      visibility: 'internal',
+      status: 'handled',
+      reply: null,
+      disposition: 'superseded',
+    })
+
+    const currentDigest = (await fixture.state.read({ projectId: 'P-1', attemptHistoryLimit: 12 }))
+      .conversationDigests.projects['P-1']
+    if (!currentDigest) throw new Error('Missing current Project conversation digest')
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-current-observation',
+      content: 'The current Project observation.',
+      context: {
+        projectId: 'P-1',
+        observedDigest: currentDigest,
+      },
+    })
+
+    await fixture.assistant.process('EV-current-observation')
+
+    expect(modelCalls).toBe(1)
+    expect((await fixture.workspace.readEvent('EV-current-observation'))?.attributes).toMatchObject(
+      {
+        status: 'handled',
+        visibility: 'internal',
+        disposition: 'silent',
+      },
+    )
+  })
+
   test('supplies a complete compact state index instead of slicing away later failed Work', async () => {
     const prompts: string[] = []
     const stateReads: Array<{
@@ -1917,7 +1973,7 @@ async function setup(
     onTurnSettled() {},
     now: () => new Date('2026-07-11T00:00:00Z'),
   })
-  return { homeRoot, workspace, conversation, goalStore, controller, tools, assistant }
+  return { homeRoot, workspace, conversation, goalStore, controller, tools, state, assistant }
 }
 
 async function currentAssistantContextDigest(

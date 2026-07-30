@@ -234,6 +234,10 @@ documents and the recorded tool result remain the only evidence of an effect.
 only the conversation projection.
 User turns are always public. Wake turns begin internal; a non-empty final response publishes them
 while an empty response leaves them hidden. These fields do not grant mutation authority.
+Before invoking the model for an internal turn that carries an observed scope digest, HOPI compares
+that digest with the current scoped state. A mismatch settles the turn silently as superseded; the
+model never receives an obsolete operational observation. User turns are never discarded by this
+check.
 
 The vendor-qualified session cache and normalized live events are runtime data under
 `.hopi/runtime/assistant/`. Home uses `sessions/home.json`; each Project uses

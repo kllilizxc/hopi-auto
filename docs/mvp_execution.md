@@ -474,9 +474,11 @@ identity. After the manifest becomes terminal the Work is publicly non-running; 
 responsibility or retry receives a new Run ID.
 
 Coordinator reconciliation is edge-triggered. Startup, canonical publication, Assistant effects,
-Run completion, Preview events, and topology changes coalesce into one wake. When time alone can
-change readiness, Coordinator arms one timer for the earliest `notBefore` or delivery retry
-deadline. An idle Coordinator does not repeatedly scan every Project, Goal, and Attempt.
+Run completion, Preview events, topology changes, and Project availability changes coalesce into
+one wake. Project startup and recovery validation therefore update eligibility and diagnostics but
+do not create a second Assistant Inbox event. When time alone can change readiness, Coordinator
+arms one timer for the earliest `notBefore` or delivery retry deadline. An idle Coordinator does
+not repeatedly scan every Project, Goal, and Attempt.
 
 Vendor-native task tracking is normalized at this boundary. A Codex todo snapshot is already
 complete. Claude `TaskCreate`, `TaskUpdate`, and `TaskList` operations are reduced into the same
@@ -1571,10 +1573,11 @@ Wake is a deterministic state observer, not a second model. When a scope becomes
 publishes one internal Inbox event in that same Assistant conversation. The event carries the current
 scope digest and the exact open, Assistant-owned Attention references that have no already-durable
 successor or future revisit. A scheduled revisit carries its exact Attention reference. The speaking
-thread receives the current state separately, revalidates it, and owns every judgment and optional
-operator notification. Wake reports `started` only after its runtime record and Inbox handoff are
-durable; publication failure remains a Coordinator failure and retries through the ordinary wake
-edge.
+thread receives the current state separately. Immediately before model execution HOPI compares the
+event's observed scope digest with that current state; a mismatch settles the obsolete internal turn
+silently without invoking the model. A matching turn owns every judgment and optional operator
+notification. Wake reports `started` only after its runtime record and Inbox handoff are durable;
+publication failure remains a Coordinator failure and retries through the ordinary wake edge.
 
 The state event describes consequences rather than prescribing an action. Coordinator does not
 parse prose, infer intent, or select among Attention and Work capabilities.

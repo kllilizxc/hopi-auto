@@ -14,7 +14,6 @@ import {
   reconcileProjectReleaseProjection,
 } from './c1Integrator'
 import { createCompletionStructureVerifier } from './completionVerifier'
-import { recordProjectSystemEvent } from './projectSystemEvent'
 
 export interface CoordinatorBootstrapProject {
   projectId: string
@@ -66,13 +65,8 @@ export async function bootstrapCoordinator(input: {
     try {
       await recoverCoordinatorProject(input.home, project)
       eligible.add(project.projectId)
-    } catch (error) {
+    } catch {
       blocked.add(project.projectId)
-      await recordProjectSystemEvent(input.workspace, {
-        projectId: project.projectId,
-        summary: 'Project startup validation failed.',
-        details: [errorMessage(error)],
-      })
     }
   }
   return { homeId, eligibleProjectIds: eligible, blockedProjectIds: blocked }

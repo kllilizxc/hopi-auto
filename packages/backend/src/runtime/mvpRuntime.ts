@@ -327,11 +327,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       coordinator.setProjectEligible(projectId, false)
-      await recordProjectSystemEvent(workspace, {
-        projectId,
-        summary: 'Project recovery validation failed.',
-        details: [message],
-      })
       return { eligible: false, error: message }
     }
   }

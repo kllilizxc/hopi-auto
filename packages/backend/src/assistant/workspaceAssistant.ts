@@ -480,10 +480,33 @@ export function createWorkspaceAssistant(input: {
       if (event.attributes.status === 'handled') {
         return { kind: 'answered', eventId }
       }
+      const conversationScope = assistantConversationScopeForEvent(event)
+      const projectId =
+        conversationScope.kind === 'project' ? conversationScope.projectId : undefined
+      const internal = isInternalInboxSource(event.attributes.source)
+      let stateSnapshot: AssistantStateSnapshot | null = null
+      const observedDigest = internal ? event.attributes.context?.observedDigest : undefined
+      if (observedDigest) {
+        stateSnapshot = await input.state.read({
+          ...(projectId ? { projectId } : {}),
+          attemptHistoryLimit: 12,
+        })
+        const currentDigest = projectId
+          ? stateSnapshot.conversationDigests.projects[projectId]
+          : stateSnapshot.conversationDigests.home
+        if (currentDigest !== observedDigest) {
+          await input.workspace.handleEvent(eventId, {
+            reply: null,
+            disposition: 'superseded',
+            handledAt: now(),
+          })
+          await input.onTurnSettled(eventId)
+          return { kind: 'answered', eventId }
+        }
+      }
       const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
 
       await input.conversation.begin(eventId)
-      const conversationScope = assistantConversationScopeForEvent(event)
       const conversationWorkspace =
         conversationScope.kind === 'project'
           ? join(workspaceRoot, 'projects', encodeURIComponent(conversationScope.projectId))
@@ -498,7 +521,6 @@ export function createWorkspaceAssistant(input: {
       )
       const toolToken = input.tools.issue(eventId)
       let usedTool = false
-      const internal = isInternalInboxSource(event.attributes.source)
       let bootstrappingSpeakingSession = false
 
       const observer: AssistantModelObserver = {
@@ -531,10 +553,8 @@ export function createWorkspaceAssistant(input: {
 
       try {
         const imageFiles = await resolveEventImages(input.workspace, event)
-        const projectId =
-          conversationScope.kind === 'project' ? conversationScope.projectId : undefined
         const toolMode = isInternalInboxSource(event.attributes.source) ? 'internal' : 'main'
-        const stateSnapshot = await input.state.read({
+        stateSnapshot ??= await input.state.read({
           ...(projectId ? { projectId } : {}),
           ...(internal ? { attemptHistoryLimit: 12 } : {}),
         })

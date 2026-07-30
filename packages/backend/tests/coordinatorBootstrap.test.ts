@@ -80,7 +80,7 @@ describe('bootstrapCoordinator', () => {
     )
   })
 
-  test('records each invalid canonical identity observation without creating a gate', async () => {
+  test('returns invalid canonical identity as blocked state without duplicating Wake in Inbox', async () => {
     const fixture = await setup()
     await Bun.write(
       join(fixture.projectRoot, '.hopi', 'project.yml'),
@@ -96,14 +96,7 @@ describe('bootstrapCoordinator', () => {
     expect([...first.blockedProjectIds]).toEqual(['P-1'])
     expect([...second.blockedProjectIds]).toEqual(['P-1'])
     expect(workspace.attentions.size).toBe(0)
-    const events = [...workspace.events.values()].filter(
-      (event) =>
-        event.attributes.source === 'system' &&
-        event.attributes.context?.projectId === 'P-1' &&
-        event.body.includes('Project startup validation failed.'),
-    )
-    expect(events).toHaveLength(2)
-    expect(events.every((event) => event.body.includes('projectId'))).toBe(true)
+    expect(workspace.events.size).toBe(0)
   })
 
   test('repairs a regressed managed ref without consulting a newer selected checkout', async () => {
