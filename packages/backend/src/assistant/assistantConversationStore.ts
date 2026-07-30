@@ -1,10 +1,11 @@
-import { appendFile, mkdir, readdir, rm } from 'node:fs/promises'
+import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { VendorSession } from '../agent/vendorAssistantOutput'
 import { assertStableId } from '../domain/stableId'
 import { writeJsonAtomically } from '../storage/atomicFile'
+import { readDirectoryEntriesIfExists } from '../storage/filesystem'
 import {
   readDurableJsonLines,
   repairDurableJsonLineTail,
@@ -279,7 +280,7 @@ export function createAssistantConversationStore(
     async readPendingActionReceipts(scope) {
       const directory = receiptScopeRoot(scope)
       const expectedScope = assistantConversationScopeKey(scope)
-      const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+      const entries = await readDirectoryEntriesIfExists(directory)
       const receipts = await Promise.all(
         entries
           .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))

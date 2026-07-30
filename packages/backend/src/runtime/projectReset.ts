@@ -1,4 +1,4 @@
-import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { resetProjectAssistantConversationEpoch } from '../assistant/assistantConversationEpoch'
 import { assistantConversationScopeForEvent } from '../assistant/assistantConversationScope'
@@ -12,6 +12,11 @@ import { assertStableId } from '../domain/stableId'
 import { acquireCoordinatorInstanceLock } from '../publication/instanceLock'
 import { PublicationCoordinator } from '../publication/publisher'
 import { createAssistantHomeStore } from '../storage/assistantHomeStore'
+import {
+  canonicalPathOrMissing,
+  filesystemErrorCode,
+  readDirectoryEntriesIfExists,
+} from '../storage/filesystem'
 import { managedRepoWorktreePaths } from './managedWorktreePaths'
 
 const GOALS_ROOT = '.hopi/docs/goals'
@@ -385,34 +390,53 @@ async function removeGoalHistoryFromRelease(plan: ProjectResetPlan) {
   if (plan.goals.trackedFiles.length === 0) return null
 
   const parent = (await git(plan.primaryIntegrationRoot, ['rev-parse', plan.releaseRef])).stdout
-  await git(plan.primaryIntegrationRoot, ['add', '-A', '--', GOALS_ROOT])
-  const tree = (await git(plan.primaryIntegrationRoot, ['write-tree'])).stdout
-  const message = `chore(hopi): reset ${plan.projectId} goals\n\nGeneration-Mode: AI-Pure\n`
-  const commit = (
-    await git(plan.primaryIntegrationRoot, ['commit-tree', tree, '-p', parent], false, message)
-  ).stdout
-  const changedPaths = await gitNullList(plan.primaryIntegrationRoot, [
-    'diff-tree',
-    '--no-commit-id',
-    '--name-only',
-    '-r',
-    '-z',
-    parent,
-    commit,
-  ])
-  if (changedPaths.some((path) => !path.startsWith(`${GOALS_ROOT}/`))) {
-    throw new ProjectResetError(
-      `Project reset commit changed source outside ${GOALS_ROOT}: ${changedPaths.join(', ')}`,
-    )
+  const previousIndexTree = (await git(plan.primaryIntegrationRoot, ['write-tree'])).stdout
+  let releaseAdvanced = false
+  try {
+    await git(plan.primaryIntegrationRoot, ['add', '-u', '--', GOALS_ROOT])
+    const tree = (await git(plan.primaryIntegrationRoot, ['write-tree'])).stdout
+    const message = `chore(hopi): reset ${plan.projectId} goals\n\nGeneration-Mode: AI-Pure\n`
+    const commit = (
+      await git(plan.primaryIntegrationRoot, ['commit-tree', tree, '-p', parent], false, message)
+    ).stdout
+    const changedPaths = await gitNullList(plan.primaryIntegrationRoot, [
+      'diff-tree',
+      '--no-commit-id',
+      '--name-only',
+      '-r',
+      '-z',
+      parent,
+      commit,
+    ])
+    if (changedPaths.some((path) => !path.startsWith(`${GOALS_ROOT}/`))) {
+      throw new ProjectResetError(
+        `Project reset commit changed source outside ${GOALS_ROOT}: ${changedPaths.join(', ')}`,
+      )
+    }
+    await git(plan.primaryIntegrationRoot, ['update-ref', plan.releaseRef, commit, parent])
+    releaseAdvanced = true
+    const staged = await git(plan.primaryIntegrationRoot, ['diff', '--cached', '--quiet'], true)
+    if (staged.exitCode !== 0) {
+      throw new ProjectResetError(
+        `Project release index did not converge after Goal deletion: ${plan.primaryIntegrationRoot}`,
+      )
+    }
+    return commit
+  } catch (error) {
+    if (!releaseAdvanced) {
+      const rollback = await git(
+        plan.primaryIntegrationRoot,
+        ['read-tree', previousIndexTree],
+        true,
+      )
+      if (rollback.exitCode !== 0) {
+        throw new ProjectResetError(
+          `${errorMessage(error)}; index rollback failed: ${rollback.stderr}`,
+        )
+      }
+    }
+    throw error
   }
-  await git(plan.primaryIntegrationRoot, ['update-ref', plan.releaseRef, commit, parent])
-  const staged = await git(plan.primaryIntegrationRoot, ['diff', '--cached', '--quiet'], true)
-  if (staged.exitCode !== 0) {
-    throw new ProjectResetError(
-      `Project release index did not converge after Goal deletion: ${plan.primaryIntegrationRoot}`,
-    )
-  }
-  return commit
 }
 
 async function matchingManifestRoots(
@@ -511,7 +535,7 @@ async function git(
 }
 
 async function markdownFiles(root: string) {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  const entries = await readDirectoryEntriesIfExists(root)
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
     .map((entry) => join(root, entry.name))
@@ -519,7 +543,7 @@ async function markdownFiles(root: string) {
 }
 
 async function directoryNames(root: string) {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  const entries = await readDirectoryEntriesIfExists(root)
   return entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
@@ -534,9 +558,13 @@ async function existingPaths(paths: string[]) {
 }
 
 async function pathExists(path: string) {
-  return stat(path)
-    .then(() => true)
-    .catch(() => false)
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if (filesystemErrorCode(error) === 'ENOENT') return false
+    throw error
+  }
 }
 
 function workspaceAttentionProjectIds(refs: readonly string[]) {
@@ -565,8 +593,8 @@ async function removeEmptyAttachmentDirectories(homeRoot: string, paths: readonl
   for (const path of paths) {
     let directory = dirname(path)
     while (isInside(root, directory)) {
-      const entries = await readdir(directory).catch(() => null)
-      if (!entries || entries.length > 0) break
+      const entries = await readDirectoryEntriesIfExists(directory)
+      if (entries.length > 0) break
       await rm(directory, { recursive: true, force: true })
       directory = dirname(directory)
     }
@@ -580,8 +608,8 @@ function isInside(root: string, path: string) {
 
 async function isInsideCanonical(root: string, path: string) {
   const [canonicalRoot, canonicalPath] = await Promise.all([
-    realpath(root).catch(() => resolve(root)),
-    realpath(path).catch(() => resolve(path)),
+    canonicalPathOrMissing(root),
+    canonicalPathOrMissing(path),
   ])
   return isInside(canonicalRoot, canonicalPath)
 }

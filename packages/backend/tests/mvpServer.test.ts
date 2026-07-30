@@ -176,6 +176,37 @@ describe('MVP server', () => {
     })
   })
 
+  test('surfaces invalid canonical Project state instead of presenting an empty Project', async () => {
+    const homeRoot = join(temporaryRoot, 'home')
+    const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
+    const publisher = new PublicationCoordinator()
+    const home = createAssistantHomeStore(homeRoot, publisher)
+    const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
+    const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
+    await store.createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+    })
+    const workPath = store.paths.absolute(store.paths.workDocument('G-1', 'plan-initial'))
+    const workSource = await Bun.file(workPath).text()
+    await Bun.write(workPath, workSource.replace('contextRefs: []\nownerMessages: []\n', ''))
+
+    const server = createServer({ rootDir: homeRoot, port: 0, startCoordinator: false })
+    activeServers.add(server)
+    const base = `http://127.0.0.1:${server.port}`
+
+    expect(await request(base, '/api/state')).toMatchObject({
+      projects: [
+        {
+          projectId: 'P-1',
+          goals: [],
+          validationError: expect.stringContaining('contextRefs: Required'),
+        },
+      ],
+    })
+  })
+
   test('reports capacity only when a queued responsibility has filled its global slots', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))

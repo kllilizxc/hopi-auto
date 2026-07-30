@@ -54,11 +54,13 @@ export async function presentState(
       goalId: string
       goalPackage: GoalPackage
     }> = []
+    let validationError: string | null = null
     try {
       for (const [goalId, goalPackage] of await project.store.readReconciliationSnapshot()) {
         readableGoalPackages.push({ goalId, goalPackage })
       }
     } catch (error) {
+      validationError = error instanceof Error ? error.message : String(error)
       console.error(`[state projection failed] ${project.projectId}`, error)
     }
     for (const { goalId, goalPackage } of readableGoalPackages) {
@@ -123,6 +125,7 @@ export async function presentState(
       projectPath: project.projectPath,
       guidance: await readProjectGuidance(project.sourceRoot),
       preview: runtime.preview.inspect(project.projectId),
+      validationError,
       openAttentionCount: goalOpenAttentionCount + projectAttentions.length,
       needsYouCount,
       goals,

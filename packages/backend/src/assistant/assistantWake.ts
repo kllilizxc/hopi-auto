@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir } from 'node:fs/promises'
+import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
@@ -12,6 +12,7 @@ import {
 import { workspaceAttentionReference } from '../domain/attentionReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import { writeJsonAtomically } from '../storage/atomicFile'
+import { readDirectoryEntriesIfExists } from '../storage/filesystem'
 import { readDurableJsonLines, reportInvalidRuntimeRecord } from '../storage/jsonLines'
 import {
   assistantConversationScopeForEvent,
@@ -664,7 +665,7 @@ async function appendWakeEvent(path: string, event: AgentRuntimeEvent) {
 }
 
 async function readWakeRunSummaries(root: string) {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  const entries = await readDirectoryEntriesIfExists(root)
   const runs = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory())

@@ -216,13 +216,18 @@ must be exactly `home:<homeId>/event:<eventId>` or `project:<projectId>`.
 single global `schemaEpoch`. It is required before Coordinator starts and travels with every lossless
 Assistant-home export; the filesystem path of Assistant home is only a current machine binding.
 Every canonical and runtime record below that Home belongs to the same epoch. A missing or different
-epoch stops startup with the explicit `reset:home` command. HOPI has no compatibility readers or
-field defaults.
+epoch stops startup. HOPI has no compatibility readers or field defaults.
 
-`bun run reset:home -- --home <hopi-home> --apply --confirm <absolute-hopi-home>` is the only
-cross-epoch reset. It requires Coordinator to be stopped and deletes the Home's `.hopi` tree plus
-HOPI-managed worktrees and `hopi/project/*` and `hopi/work/*` refs discovered from its Repo
-bindings. It never changes a selected user checkout's branch, HEAD, index, or working tree.
+An epoch change is an offline replacement boundary, never a runtime compatibility branch. With the
+Coordinator stopped, the operator either:
+
+- runs the version-specific migration supplied for that epoch, which first backs up every file it
+  will rewrite, validates the complete replacement state, and flips `home.yml` last; or
+- runs `bun run reset:home -- --home <hopi-home> --apply --confirm <absolute-hopi-home>` to discard
+  the old Home and its managed refs.
+
+Version-specific migrations do not remain in readers and do not make mixed-epoch state valid.
+`reset:home` never changes a selected user checkout's branch, HEAD, index, or working tree.
 
 Each `projects.yml` link owns `{ projectId, label?, primaryRepoId, repos }`. `label` is
 optional Home-local presentation metadata: trimmed non-empty Unicode text up to 80 characters. It

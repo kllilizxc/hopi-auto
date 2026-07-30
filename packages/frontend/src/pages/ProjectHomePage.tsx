@@ -816,7 +816,11 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       </div>
 
       <div className="project-goal-list">
-        {project.goals.length ? (
+        {project.validationError ? (
+          <AppAlert className="inline-error">
+            Project state is invalid: {project.validationError}
+          </AppAlert>
+        ) : project.goals.length ? (
           project.goals.map((goal) => (
             <AppRouterLink
               key={goal.id}

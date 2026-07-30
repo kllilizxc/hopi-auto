@@ -185,6 +185,7 @@ async function createFixture() {
   await git(repoRoot, ['config', 'user.name', 'HOPI Test'])
   await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
   await Bun.write(join(repoRoot, 'app.txt'), 'source\n')
+  await Bun.write(join(repoRoot, '.gitignore'), '.hopi/docs\n')
   await mkdir(join(repoRoot, '.hopi'), { recursive: true })
   await Bun.write(
     join(repoRoot, '.hopi/project.yml'),
@@ -205,7 +206,7 @@ async function createFixture() {
   const goalPath = join(managed.integration, '.hopi/docs/goals/G-1/goal.md')
   await mkdir(join(goalPath, '..'), { recursive: true })
   await Bun.write(goalPath, '# Goal\n')
-  await git(managed.integration, ['add', '.hopi/docs/goals'])
+  await git(managed.integration, ['add', '-f', '.hopi/docs/goals'])
   await git(managed.integration, ['commit', '-m', 'goal state'])
 
   const workBranch = 'hopi/work/P-1/G-1/W-1'

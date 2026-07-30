@@ -56,6 +56,13 @@ test('Project cards control the one Project Preview session and expose every nam
   expect(source).not.toContain('requestPreviewRepair')
 })
 
+test('Project cards distinguish invalid canonical state from a Project with no Goals', async () => {
+  const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
+
+  expect(source).toContain('Project state is invalid: {project.validationError}')
+  expect(source).toContain('Describe the first outcome in Project Assistant.')
+})
+
 test('Project linking leaves identity generation to the backend', async () => {
   const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
   const api = await Bun.file(new URL('../lib/apiClient.ts', import.meta.url)).text()

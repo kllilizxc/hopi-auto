@@ -141,6 +141,8 @@ After process replacement:
 - facts present without their gate remain unconsumed evidence;
 - pending Inbox turns resume from durable conversation and tool receipts.
 
-Only the `schemaEpoch` declared by current code is accepted. State from another epoch is discarded
-with the explicit whole-Home reset; there are no schema readers, importers, field defaults, or
-migrations.
+Only the `schemaEpoch` declared by current code is accepted. There are no compatibility readers or
+field defaults. An older Home must be replaced offline, with the Coordinator stopped, by either the
+explicit whole-Home reset or the version-specific migration for that epoch. A migration backs up
+every rewritten file, validates the complete target state, and changes `home.yml` last; it is an
+operator tool, not a second runtime schema.

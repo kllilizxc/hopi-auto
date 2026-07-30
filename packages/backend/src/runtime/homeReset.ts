@@ -1,7 +1,8 @@
-import { realpath, rename, rm } from 'node:fs/promises'
+import { rename, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { acquireCoordinatorInstanceLock } from '../publication/instanceLock'
+import { canonicalPathOrMissing } from '../storage/filesystem'
 import { HOPI_WORKTREE_DIRECTORY } from './managedWorktreePaths'
 
 export interface HomeResetRepoPlan {
@@ -169,8 +170,8 @@ async function git(repoPath: string, args: string[]) {
 
 async function isInside(root: string, candidate: string) {
   const [canonicalRoot, canonicalCandidate] = await Promise.all([
-    realpath(root).catch(() => resolve(root)),
-    realpath(candidate).catch(() => resolve(candidate)),
+    canonicalPathOrMissing(root),
+    canonicalPathOrMissing(candidate),
   ])
   const path = relative(canonicalRoot, canonicalCandidate)
   return path === '' || (!path.startsWith('..') && !isAbsolute(path))

@@ -1,10 +1,11 @@
-import { readdir, rm } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import { isEngineeringWork, parseWorkDocument } from '../domain/canonicalDocuments'
 import { projectReleaseRef } from '../domain/project'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
+import { readDirectoryEntriesIfExists } from '../storage/filesystem'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import {
   type C1ProjectRepo,
@@ -200,7 +201,7 @@ function parseWorkReference(projectId: string, reference: string) {
 }
 
 async function removeAbandonedTemporaryFiles(root: string, skipped: ReadonlySet<string>) {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  const entries = await readDirectoryEntriesIfExists(root)
   for (const entry of entries) {
     const path = join(root, entry.name)
     if (HOPI_TEMPORARY_FILE.test(entry.name)) {

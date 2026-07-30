@@ -1,7 +1,7 @@
 import { assertStableId } from './stableId'
 
 export const DEFAULT_PRIMARY_REPO_ID = 'primary'
-export const ASSISTANT_HOME_SCHEMA_EPOCH = 1 as const
+export const ASSISTANT_HOME_SCHEMA_EPOCH = 2 as const
 
 export function projectReleaseBranch(projectId: string) {
   assertStableId(projectId, 'projectId')

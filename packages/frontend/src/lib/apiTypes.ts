@@ -113,6 +113,7 @@ export interface ProjectSummary {
   projectPath: string
   guidance: string | null
   preview: PreviewSession | null
+  validationError: string | null
   openAttentionCount: number
   needsYouCount: number
   goals: GoalSummary[]

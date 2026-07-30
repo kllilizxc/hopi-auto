@@ -1,7 +1,8 @@
-import { appendFile, chmod, mkdir, readdir } from 'node:fs/promises'
+import { appendFile, chmod, mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { projectReleaseRef } from '../domain/project'
+import { readDirectoryEntriesIfExists } from '../storage/filesystem'
 import { BoundedLineTail } from './boundedLineTail'
 import { type PreviewRuntimeInputs, previewRuntimeInputsSchema } from './previewRuntimeInputs'
 import { createProcessGroupTerminator } from './processGroup'
@@ -642,11 +643,11 @@ const previewSessionSchema = z
 
 async function readLatestPreviewSessions(runtimeRoot: string) {
   const sessions: PreviewSession[] = []
-  const projectEntries = await readdir(runtimeRoot, { withFileTypes: true }).catch(() => [])
+  const projectEntries = await readDirectoryEntriesIfExists(runtimeRoot)
   for (const projectEntry of projectEntries) {
     if (!projectEntry.isDirectory()) continue
     const projectRoot = join(runtimeRoot, projectEntry.name)
-    const sessionEntries = await readdir(projectRoot, { withFileTypes: true }).catch(() => [])
+    const sessionEntries = await readDirectoryEntriesIfExists(projectRoot)
     let latest: PreviewSession | null = null
     for (const sessionEntry of sessionEntries) {
       if (!sessionEntry.isDirectory()) continue
