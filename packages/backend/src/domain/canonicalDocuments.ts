@@ -91,6 +91,18 @@ const workAttributesByKindSchema = z
   })
 
 export const workAttributesSchema = workAttributesByKindSchema
+const historicalWorkAttributesSchema = z.preprocess((raw) => {
+  if (
+    typeof raw === 'object' &&
+    raw !== null &&
+    !Array.isArray(raw) &&
+    !Object.hasOwn(raw, 'contextRefs') &&
+    !Object.hasOwn(raw, 'ownerMessages')
+  ) {
+    return { ...raw, contextRefs: [], ownerMessages: [] }
+  }
+  return raw
+}, workAttributesSchema)
 
 export const attentionAttributesSchema = z
   .object({
@@ -154,6 +166,10 @@ export function parseGoalDocument(source: string) {
 
 export function parseWorkDocument(source: string) {
   return parseMarkdownDocument(source, workAttributesSchema, 'Work document')
+}
+
+export function parseHistoricalWorkDocument(source: string) {
+  return parseMarkdownDocument(source, historicalWorkAttributesSchema, 'Historical Work document')
 }
 
 export function parseAttentionDocument(source: string) {

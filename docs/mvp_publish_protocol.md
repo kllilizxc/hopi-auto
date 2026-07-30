@@ -49,3 +49,14 @@ Deterministic validation covers schema, identity, lifecycle, DAG acyclicity, imm
 expected hashes, path ownership, and release provenance. Whether a Report answers a question or an
 implementation satisfies the Goal remains the Assistant's semantic judgment expressed through an
 explicit subsequent command.
+
+## Immutable release history
+
+The live-state rule does not require rewriting immutable Git provenance. When C1 recovery reads a
+parent commit solely to recover the previous secondary Repo release, it accepts the current
+`project.yml` or the former v2 document with its exact `version: 2` wrapper, normalizes it in memory,
+and validates the resulting Project topology. When startup verifies completed Work embedded in an
+immutable reachable C1, its historical-only reader may supply empty `contextRefs` and
+`ownerMessages` only when both fields are absent, then validates the complete current Work schema.
+The current C1 and materialized release remain strict current documents; no historical form is
+republished.

@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "hopi-agent-orchestrator-root",
+      "dependencies": {
+        "yaml": "^2.6.1",
+      },
     },
     "packages/backend": {
       "name": "hopi-agent-orchestrator",

@@ -127,6 +127,19 @@ not satisfy readiness.
 Work status moves only from `open` to `done` or `cancelled`. Running, queued, waiting for user,
 blocked, and ready are projections, not stored statuses.
 
+## Immutable release history
+
+Materialized releases always contain current strict canonical documents. When C1 recovery reads a
+previous secondary release from an immutable parent, it accepts the current Project manifest or the
+former v2 document with its exact `version: 2` wrapper, strips that wrapper in memory, and applies
+the same topology validation.
+
+Coordinator startup also verifies completed Work stored in each immutable reachable C1. Its
+historical-only reader accepts either the current Work form or the former form that predates both
+`contextRefs` and `ownerMessages`; it supplies empty arrays in memory and then applies the complete
+current Work schema. A live Work missing either field, a historical Work missing only one field, and
+all unknown historical formats still fail closed. Historical forms are never republished.
+
 ## Attempts
 
 Attempt is the sole Run record. The immutable request contains:

@@ -23,24 +23,35 @@ export const projectDocumentSchema = z
   })
   .strict()
 
+const historicalProjectDocumentV2Schema = projectDocumentSchema
+  .extend({
+    version: z.literal(2),
+  })
+  .strict()
+
 class ProjectDocumentError extends Error {}
 
 export function parseProjectDocument(source: string): ProjectDocument {
-  let value: unknown
-  try {
-    value = parse(source)
-  } catch (error) {
-    throw new ProjectDocumentError(`project.yml YAML is invalid: ${errorMessage(error)}`)
-  }
+  const value = parseProjectYaml(source)
   const parsed = projectDocumentSchema.safeParse(value)
   if (!parsed.success) {
-    throw new ProjectDocumentError(
-      `project.yml is invalid: ${parsed.error.issues
-        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-        .join(', ')}`,
-    )
+    throw invalidProjectDocument(parsed.error.issues)
   }
   const document: ProjectDocument = parsed.data
+  validateProjectDocument(document)
+  return document
+}
+
+export function parseHistoricalProjectDocument(source: string): ProjectDocument {
+  const value = parseProjectYaml(source)
+  const current = projectDocumentSchema.safeParse(value)
+  if (current.success) {
+    validateProjectDocument(current.data)
+    return current.data
+  }
+  const historical = historicalProjectDocumentV2Schema.safeParse(value)
+  if (!historical.success) throw invalidProjectDocument(historical.error.issues)
+  const { version: _version, ...document } = historical.data
   validateProjectDocument(document)
   return document
 }
@@ -100,4 +111,20 @@ export function repoRelease(document: ProjectDocument, repoId: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function parseProjectYaml(source: string) {
+  try {
+    return parse(source)
+  } catch (error) {
+    throw new ProjectDocumentError(`project.yml YAML is invalid: ${errorMessage(error)}`)
+  }
+}
+
+function invalidProjectDocument(issues: readonly z.ZodIssue[]) {
+  return new ProjectDocumentError(
+    `project.yml is invalid: ${issues
+      .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+      .join(', ')}`,
+  )
 }

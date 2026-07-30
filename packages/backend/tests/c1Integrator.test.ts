@@ -58,6 +58,38 @@ describe('C1Integrator', () => {
     })
   })
 
+  test('normalizes known historical Work metadata only inside an immutable C1', async () => {
+    const fixture = await createFixture()
+    const integrated = await fixture.integrator.complete(await fixture.completionInput())
+    if (integrated.kind !== 'integrated') throw new Error('Expected C1 integration')
+
+    const workPath = join(fixture.projectRoot, fixture.store.paths.workDocument('goal-1', 'W-1'))
+    const currentSource = await Bun.file(workPath).text()
+    const historicalSource = currentSource.replace('contextRefs: []\nownerMessages: []\n', '')
+    expect(historicalSource).not.toBe(currentSource)
+    await Bun.write(workPath, historicalSource)
+    await git(fixture.projectRoot, ['add', fixture.store.paths.workDocument('goal-1', 'W-1')])
+    await git(fixture.projectRoot, ['commit', '--amend', '--no-edit'])
+    const historicalC1 = await git(fixture.projectRoot, ['rev-parse', 'HEAD'])
+
+    await Bun.write(workPath, currentSource)
+    await git(fixture.projectRoot, ['add', fixture.store.paths.workDocument('goal-1', 'W-1')])
+    await git(fixture.projectRoot, ['commit', '-m', 'publish current Work metadata'])
+    await fixture.store.invalidateCache()
+
+    const goalPackage = await fixture.store.readPackage('goal-1')
+    expect(
+      await findIntegrationCommits(
+        fixture.projectRoot,
+        releaseRef,
+        'project:project-1/goal:goal-1/work:W-1',
+      ),
+    ).toEqual([historicalC1])
+    expect(
+      await createCompletionStructureVerifier(fixture.store).verify('goal-1', goalPackage),
+    ).toBe(true)
+  })
+
   test('integrates task-side deletions and supports canonical-only completion', async () => {
     const deletion = await createFixture()
     await rm(join(deletion.taskWorktreePath, 'README.md'))

@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
-import { isEngineeringWork, parseWorkDocument } from '../domain/canonicalDocuments'
+import { isEngineeringWork, parseHistoricalWorkDocument } from '../domain/canonicalDocuments'
 import { projectReleaseRef } from '../domain/project'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
@@ -203,7 +203,7 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
       project.projectRoot,
       `${record.commit}:${project.store.paths.workDocument(identity.goalId, identity.workId)}`,
     )
-    if (!source || parseWorkDocument(source).attributes.status !== 'done') {
+    if (!source || parseHistoricalWorkDocument(source).attributes.status !== 'done') {
       throw new Error(`C1 ${record.commit} does not contain done Work ${record.workReference}`)
     }
   }

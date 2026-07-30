@@ -1,7 +1,7 @@
 import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   isEngineeringWork,
-  parseWorkDocument,
+  parseHistoricalWorkDocument,
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
@@ -39,7 +39,10 @@ export function createCompletionStructureVerifier(
           store.paths.projectRoot,
           `${commit}:${store.paths.workDocument(goalId, work.attributes.id)}`,
         )
-        if (!source || renderWorkDocument(parseWorkDocument(source)) !== renderWorkDocument(work)) {
+        if (
+          !source ||
+          renderWorkDocument(parseHistoricalWorkDocument(source)) !== renderWorkDocument(work)
+        ) {
           return false
         }
       }

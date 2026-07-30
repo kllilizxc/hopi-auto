@@ -15,6 +15,7 @@ import {
   projectReleaseRef,
 } from '../domain/project'
 import {
+  parseHistoricalProjectDocument,
   parseProjectDocument,
   renderProjectDocument,
   repoRelease,
@@ -728,7 +729,9 @@ async function readProjectDocumentAtIfPresent(repoRoot: string, commit: string) 
     '--',
     '.hopi/project.yml',
   ])
-  return paths.length === 0 ? null : readProjectDocumentAt(repoRoot, commit)
+  if (paths.length === 0) return null
+  const content = await gitBytes(repoRoot, ['show', `${commit}:.hopi/project.yml`])
+  return parseHistoricalProjectDocument(new TextDecoder().decode(content))
 }
 
 async function replaceCanonicalIndex(

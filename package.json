@@ -19,5 +19,8 @@
     "check": "bun run verify:runtime && bun test scripts/verify-runtime.test.ts && bun run check:backend && bun run check:frontend",
     "check:backend": "cd packages/backend && bun run check",
     "check:frontend": "cd packages/frontend && bun run check"
+  },
+  "dependencies": {
+    "yaml": "^2.6.1"
   }
 }

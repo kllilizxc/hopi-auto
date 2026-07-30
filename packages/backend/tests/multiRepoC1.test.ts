@@ -115,6 +115,25 @@ describe('multi-Repo C1', () => {
     )
   })
 
+  test('reads a known v2 Project manifest only from an immutable release parent', async () => {
+    const fixture = await createFixture(['api'])
+    const projectPath = join(fixture.linked.integrationRoot, '.hopi', 'project.yml')
+    const current = await Bun.file(projectPath).text()
+
+    await Bun.write(projectPath, `version: 2\n${current}`)
+    await git(fixture.linked.integrationRoot, ['add', '.hopi/project.yml'])
+    await git(fixture.linked.integrationRoot, ['commit', '-m', 'historical project manifest'])
+    await Bun.write(projectPath, current)
+    await git(fixture.linked.integrationRoot, ['add', '.hopi/project.yml'])
+    await git(fixture.linked.integrationRoot, ['commit', '-m', 'current project manifest'])
+
+    await reconcileProjectReleaseProjection(fixture.layout)
+
+    expect(parseProjectDocument(await Bun.file(projectPath).text())).toEqual(
+      parseProjectDocument(current),
+    )
+  })
+
   test('recovers secondary projections after primary C1 without rebuilding delivery state', async () => {
     const fixture = await createFixture(['api', 'worker'])
     let projected = 0

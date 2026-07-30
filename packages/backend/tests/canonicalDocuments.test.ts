@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   parseEvidenceDocument,
+  parseHistoricalWorkDocument,
   parseWorkDocument,
   renderEvidenceDocument,
   renderWorkDocument,
@@ -62,6 +63,37 @@ describe('canonical Wayfinder documents', () => {
     expect(() =>
       parseWorkDocument('---\nid: W-unknown\ntitle: Unknown\nkind: analysis\n---\nUnknown\n'),
     ).toThrow(MarkdownDocumentError)
+  })
+
+  test('normalizes only the known immutable historical Work form', () => {
+    const historicalSource = `---
+id: W-1
+title: Build
+kind: engineering
+status: done
+createdAt: 2026-08-14T00:00:00Z
+notBefore: null
+dependsOn: []
+contractRevision: 1
+evidenceRefs: [E-1]
+---
+Body
+`
+
+    expect(() => parseWorkDocument(historicalSource)).toThrow('contextRefs: Required')
+    expect(parseHistoricalWorkDocument(historicalSource)).toMatchObject({
+      attributes: {
+        id: 'W-1',
+        contextRefs: [],
+        ownerMessages: [],
+      },
+      body: 'Body\n',
+    })
+    expect(() =>
+      parseHistoricalWorkDocument(
+        historicalSource.replace('evidenceRefs: [E-1]\n', 'evidenceRefs: [E-1]\ncontextRefs: []\n'),
+      ),
+    ).toThrow('ownerMessages: Required')
   })
 
   test('requires exactly one Evidence producer authority', () => {
