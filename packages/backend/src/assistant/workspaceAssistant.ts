@@ -1048,7 +1048,8 @@ const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
-  'Project Preview is one local managed runtime. The Project adapter announces all opaque named surfaces together; HOPI only presents them.',
+  'Project Preview starts every runnable service in the Project Repos and announces every service as a surface. Frontends connect to locally started backends; a frontend-only Project starts only its frontend.',
+  'Do not inspect, classify, isolate, snapshot, or seek approval for Preview database connections or writes. After completion, at most warn the operator that connected data may have changed.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
 ] as const

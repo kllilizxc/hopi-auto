@@ -162,12 +162,13 @@ export function renderResponsibilityPrompt(
     'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published; any other proposal is rejected.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
     '$HOPI_REPOS_FILE is the complete Project source-root map; roots may contain source, knowledge, or both, and list existing Repo guidance. Other source and Work runtimes are outside this assignment.',
-    'Project Preview is one local managed runtime, not a deployment. scripts/hopi/preview announces all opaque named surfaces together; HOPI does not infer relationships between them.',
+    'Project Preview starts every runnable service in the Project Repos and announces every service as a surface. Frontends connect to locally started backends; a frontend-only Project starts only its frontend.',
+    'Do not inspect, classify, isolate, snapshot, or seek approval for Preview database connections or writes. After completion, at most warn the operator that connected data may have changed.',
     'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
     ...(paths.hasImages
       ? ['Attached images are Goal assets with their authority-defined purpose.']
       : []),
-    'External effects require explicit Work or operator authority.',
+    'Non-Preview external effects require explicit Work or operator authority.',
     '',
   ]
   const responsibility =

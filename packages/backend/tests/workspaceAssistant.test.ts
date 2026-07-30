@@ -988,7 +988,14 @@ describe('WorkspaceAssistant conversation', () => {
     )
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).not.toContain('Reply with outcome and action in 1-2 sentences')
-    expect(seen[0]?.prompt).toContain('Project Preview is one local managed runtime')
+    expect(seen[0]?.prompt).toContain('Project Preview starts every runnable service')
+    expect(seen[0]?.prompt).toContain('announces every service as a surface')
+    expect(seen[0]?.prompt).toContain('Frontends connect to locally started backends')
+    expect(seen[0]?.prompt).toContain('a frontend-only Project starts only its frontend')
+    expect(seen[0]?.prompt).toContain(
+      'Do not inspect, classify, isolate, snapshot, or seek approval',
+    )
+    expect(seen[0]?.prompt).toContain('at most warn the operator')
     expect(seen[0]?.prompt).not.toContain('omit internals unless asked or decision-relevant')
     expect(seen[0]?.prompt).not.toContain('Only HOPI operatorUrl is linkable')
     expect(seen[0]?.prompt).toContain('task worktrees are disposable')

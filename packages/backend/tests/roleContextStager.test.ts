@@ -107,10 +107,12 @@ describe('RoleContextStager', () => {
     expect(prompt).not.toContain('plan separate Work for independent outcomes')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
-    expect(prompt).toContain('Project Preview is one local managed runtime')
-    expect(prompt).toContain('not a deployment')
-    expect(prompt).toContain('announces all opaque named surfaces together')
-    expect(prompt).toContain('does not infer relationships')
+    expect(prompt).toContain('Project Preview starts every runnable service')
+    expect(prompt).toContain('announces every service as a surface')
+    expect(prompt).toContain('Frontends connect to locally started backends')
+    expect(prompt).toContain('a frontend-only Project starts only its frontend')
+    expect(prompt).toContain('Do not inspect, classify, isolate, snapshot, or seek approval')
+    expect(prompt).toContain('at most warn the operator')
     expect(prompt).toContain(
       '.hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology',
     )
@@ -658,7 +660,7 @@ describe('RoleContextStager', () => {
       'A detached shell descendant is not an independent Work Attempt',
     )
     expect(generatorPrompt).toContain(
-      'External effects require explicit Work or operator authority',
+      'Non-Preview external effects require explicit Work or operator authority',
     )
     expect(generatorPrompt).toContain('### Engineering Work: Engineering Work')
     expect(generatorPrompt).toContain(

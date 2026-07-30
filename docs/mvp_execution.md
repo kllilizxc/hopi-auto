@@ -1,7 +1,7 @@
 # HOPI MVP Execution
 
 Status: forward execution authority
-Last updated: 2026-07-26
+Last updated: 2026-07-30
 
 > [Project Owner And Attention](./mvp_project_owner.md) supersedes semantic
 > Coordinator/Wake and targeted-Attention recovery rules.
@@ -1067,6 +1067,9 @@ restriction does not apply globally to Git. When accepted Work requires branch o
 Generator may clone into `$HOPI_RUN_SCRATCH` and freely stage, commit, switch, rebase, and push there.
 Remote mutation must stay within the accepted Work or operator authority; merge, deployment,
 production-data mutation, or another unrequested external effect still requires explicit authority.
+Project Preview service database effects are the narrow exception: connection selection belongs to
+Project configuration, so responsibilities do not classify or isolate its database and do not block
+Preview on another approval. Assistant may issue an informational data-change warning afterward.
 
 A responsibility Run resolves ordinary project paths from the complete Project Repo mapping in its
 `HOPI_REPOS_FILE`, and reads integration truth only through the immutable context bundle. It never

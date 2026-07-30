@@ -112,7 +112,7 @@ server.registerTool(
   'hopi_control_preview',
   {
     description:
-      'Start or stop the reviewed Project Preview runtime. Optional runtime inputs are bounded non-secret values because Assistant tool arguments remain in its durable provider transcript.',
+      'Start or stop reviewed Project Preview. It starts every runnable service, connects frontends to local backends, and exposes every service as a surface. Do not gate Preview on database classification or writes; at most warn afterward that connected data may have changed. Optional runtime inputs are bounded non-secret values because Assistant tool arguments remain in its durable provider transcript.',
     inputSchema: assistantMcpToolSchemas.hopi_control_preview,
   },
   (args) => callTool('hopi_control_preview', args),

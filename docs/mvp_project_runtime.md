@@ -1,7 +1,7 @@
 # Project Runtime Capabilities
 
 Status: authoritative MVP design
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 This document owns Prepare and Preview.
 
@@ -83,6 +83,17 @@ Prepare script prevents Preview startup and produces a factual Project event.
 `scripts/hopi/preview` owns only Project-specific local service startup across linked Repos. HOPI
 has already established the exact managed release boundary before invoking it. The adapter uses the
 provided Repo roots and never an unintegrated Work candidate.
+
+The Preview adapter follows one topology rule: start every runnable service in the Project Repos and
+announce every service as a surface. When the Project contains frontend and backend services, the
+frontend connects to the locally started backend. When it contains only a frontend, the adapter
+starts only that frontend. The same rule covers any other number or mixture of services without a
+separate frontend, backend, or multi-service mode.
+
+Preview does not inspect, classify, replace, snapshot, or seek approval for the databases selected
+by Project configuration. Its services may read and write those databases normally. After Preview
+starts or an interaction finishes, Assistant may warn the operator that connected data may have
+changed; the warning is informational and never a startup or verification gate.
 
 The script announces:
 

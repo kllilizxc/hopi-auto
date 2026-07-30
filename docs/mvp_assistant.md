@@ -1,7 +1,7 @@
 # HOPI MVP Assistant
 
 Status: forward Assistant authority
-Last updated: 2026-07-28
+Last updated: 2026-07-30
 
 > [Project Owner And Attention](./mvp_project_owner.md) owns wake-up, Attention, and notification
 > policy. This document owns conversation transport, context, attachments, tools, and UI details.
@@ -420,6 +420,11 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Control Work | Retry or defer one Work, or cancel one Engineering Work | One transient retry reservation, a `notBefore` Work update, or validated cancellation |
 | Manage Attention | Create, update, or resolve one Project todo | Assistant-owned durable Attention |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
+
+Preview starts every runnable Project service, connects frontends to locally started backends, and
+announces every service as a surface. Database selection and writes belong to Project configuration
+and do not require Preview analysis or approval. Assistant may warn after completion that connected
+data may have changed, but does not turn that warning into prior work or a gate.
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.

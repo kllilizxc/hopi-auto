@@ -149,6 +149,15 @@ describe('HOPI MCP server', () => {
       'bounded non-secret values',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'starts every runnable service',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'connects frontends to local backends',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'Do not gate Preview on database classification or writes',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
       'durable provider transcript',
     )
     expect(
