@@ -65,8 +65,11 @@ export async function bootstrapCoordinator(input: {
     try {
       await recoverCoordinatorProject(input.home, project)
       eligible.add(project.projectId)
-    } catch {
+    } catch (error) {
       blocked.add(project.projectId)
+      console.error(
+        `[project bootstrap blocked] ${project.projectId}: ${errorMessage(error)}`,
+      )
     }
   }
   return { homeId, eligibleProjectIds: eligible, blockedProjectIds: blocked }
