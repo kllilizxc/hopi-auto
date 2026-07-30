@@ -28,8 +28,8 @@ import {
   IconButton,
 } from './ui'
 
-const ReflectionDebugPanel = lazy(() =>
-  import('./ReflectionDebugPanel').then((module) => ({ default: module.ReflectionDebugPanel })),
+const WakeDebugPanel = lazy(() =>
+  import('./WakeDebugPanel').then((module) => ({ default: module.WakeDebugPanel })),
 )
 
 interface AssistantPanelProps {
@@ -75,7 +75,7 @@ export function AssistantPanel({
   const [imageError, setImageError] = useState<string | null>(null)
   const [replyAttentions, setReplyAttentions] = useState<AttentionView[]>([])
   const [replyEventId, setReplyEventId] = useState<string | null>(null)
-  const [showReflectionDebug, setShowReflectionDebug] = useState(false)
+  const [showWakeDebug, setShowWakeDebug] = useState(false)
   const [assistantScrolling, setAssistantScrolling] = useState(false)
   const [messageFocus, setMessageFocus] = useState<{
     source: 'external' | 'needs-you'
@@ -112,7 +112,7 @@ export function AssistantPanel({
     if (focusRequest === 0) return
     setReplyAttentions(initialReply ? [initialReply] : [])
     setReplyEventId(null)
-    setShowReflectionDebug(false)
+    setShowWakeDebug(false)
     setMessageFocus({
       source: 'external',
       request: ++messageFocusSequenceRef.current,
@@ -122,9 +122,9 @@ export function AssistantPanel({
 
   const assistantStream = useAssistantFeedStream({
     ...(scopeProjectId ? { projectId: scopeProjectId } : {}),
-    enabled: isOpen && !showReflectionDebug,
+    enabled: isOpen && !showWakeDebug,
     refetchInterval:
-      isOpen && !showReflectionDebug && !assistantScrolling
+      isOpen && !showWakeDebug && !assistantScrolling
         ? ACTIVE_STREAM_POLL_INTERVAL_MS
         : false,
     historyPageSize: 10,
@@ -243,7 +243,7 @@ export function AssistantPanel({
       ? needsYouAttentionsByGroupId.get(latestNeedsYouGroupId)
       : null
     if (!attentions?.length) return
-    setShowReflectionDebug(false)
+    setShowWakeDebug(false)
     setReplyAttentions(attentions)
     setReplyEventId(latestNeedsYouRequest?.eventId ?? null)
     setMessageFocus({
@@ -404,22 +404,22 @@ export function AssistantPanel({
       aria-hidden={!isOpen}
     >
       <div
-        className={cn('assistant-corner-chrome', showReflectionDebug && 'reflection-open')}
+        className={cn('assistant-corner-chrome', showWakeDebug && 'wake-open')}
         aria-label="Assistant controls"
       >
         <IconButton
-          className={cn('reflection-debug-button', showReflectionDebug && 'active')}
+          className={cn('wake-debug-button', showWakeDebug && 'active')}
           type="button"
-          onClick={() => setShowReflectionDebug((value) => !value)}
+          onClick={() => setShowWakeDebug((value) => !value)}
           aria-label={
-            showReflectionDebug ? 'Back to Assistant conversation' : 'Open Reflection debug'
+            showWakeDebug ? 'Back to Assistant conversation' : 'Open Wake debug'
           }
-          aria-pressed={showReflectionDebug}
-          title={showReflectionDebug ? 'Back to conversation' : 'Reflection debug'}
+          aria-pressed={showWakeDebug}
+          title={showWakeDebug ? 'Back to conversation' : 'Wake debug'}
         >
-          {showReflectionDebug ? <ArrowLeft /> : <Activity />}
+          {showWakeDebug ? <ArrowLeft /> : <Activity />}
         </IconButton>
-        {!showReflectionDebug && needsYouAttentions.length > 0 ? (
+        {!showWakeDebug && needsYouAttentions.length > 0 ? (
           <AppButton
             className="assistant-needs-you-jump"
             variant="ghost"
@@ -440,15 +440,15 @@ export function AssistantPanel({
         )}
       </div>
 
-      {showReflectionDebug ? (
+      {showWakeDebug ? (
         <Suspense
           fallback={
-            <div className="reflection-debug-empty">
+            <div className="wake-debug-empty">
               <AppSpinner size="sm" /> Loading runtime stream
             </div>
           }
         >
-          <ReflectionDebugPanel enabled={isOpen} />
+          <WakeDebugPanel enabled={isOpen} />
         </Suspense>
       ) : (
         <>

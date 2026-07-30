@@ -38,7 +38,7 @@ interface FeedView {
 let harness: LiveHarness | null = null
 
 try {
-  harness = await startLiveHarness(SCENARIO, { deterministicReflection: true })
+  harness = await startLiveHarness(SCENARIO)
   await requestJson<LiveState>(harness.baseUrl, '/api/state')
   const workspace = createAssistantWorkspaceStore(harness.homeRoot, new PublicationCoordinator())
   const initial = (await workspace.readWorkspace()).preference

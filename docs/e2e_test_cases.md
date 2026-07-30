@@ -125,7 +125,7 @@ or model call. It records a testing Agent's visual conclusion as a separate Insp
 
 Only `e2e`, `e2e:live`, and `e2e:regression:live` may be reported as a current real-Agent E2E
 success. Contract tests use deterministic implementations at existing adapter seams. Artifact
-inspection rereads an earlier real run; it does not reproduce Assistant, Reflection, Planner,
+inspection rereads an earlier real run; it does not reproduce Assistant, Wake, Planner,
 Generator, Reviewer, scheduling, or publication behavior.
 
 Use this applicability rule:
@@ -215,7 +215,7 @@ The important files are:
 | `states.jsonl`                  | Changed public state observations, not timer samples                        |
 | `invariants.jsonl`              | First observation of each invariant violation; absent or empty is expected  |
 | `screenshots/`                  | Required UI evidence captured at semantic checkpoints                       |
-| `home/.hopi/runtime/assistant/` | Speaking and Reflection prompts, raw streams, and normalized events         |
+| `home/.hopi/runtime/assistant/` | Speaking and Wake prompts, raw streams, and normalized events         |
 | `home/.hopi/runtime/runs/`      | Planner, Generator, and Reviewer Attempt evidence                           |
 | `home/.hopi/projects/`          | Managed integration roots and release truth                                 |
 | `repo/`                         | Original fixture checkout that must remain unchanged                        |
@@ -262,7 +262,7 @@ upgrade an incomplete or inconsistent canonical state to success.
 Find retained diagnostics without parsing model prose into workflow state:
 
 ```sh
-find "$RUN/home/.hopi/runtime" -type f \( -name attempt.json -o -name turn.json -o -name reflection.json -o -name events.jsonl -o -name transcript.log \) -print
+find "$RUN/home/.hopi/runtime" -type f \( -name attempt.json -o -name turn.json -o -name wake.json -o -name events.jsonl -o -name transcript.log \) -print
 git -C "$RUN/repo" status --short --branch
 ```
 
@@ -317,7 +317,7 @@ Gap: untested risk or reason a stronger claim is not justified
 ```
 
 Never report a deterministic runner as a real model, an artifact inspection as a new execution, or
-a Goal reaching `done` before pending Inbox, Reflection, active Run, and Attention facts settle.
+a Goal reaching `done` before pending Inbox, Wake, active Run, and Attention facts settle.
 
 ## Scenario Model
 
@@ -343,14 +343,14 @@ not arbitrary sleeps. Model freedom ends at durable authority, safety, and verif
 | `INV-05` | User-selected checkouts retain their branch, HEAD, index, and working tree; only HOPI-managed refs and worktrees advance.       |
 | `INV-06` | Generator changes remain isolated until successful Reviewer evidence and C1 publication.                                      |
 | `INV-07` | Reviewer may write owned scratch and cache but is read-only across every candidate Repo in its assigned workspace.                    |
-| `INV-08` | Public Assistant turns remain FIFO; internal Reflection never speaks or mutates directly.                                     |
+| `INV-08` | Public Assistant turns remain FIFO; internal Wake never speaks or mutates directly.                                     |
 | `INV-09` | One semantic Attention notification produces one public reply and one acknowledgement, not duplicates.                        |
 | `INV-10` | Restart recovers from durable documents, refs, and logs without fabricating success or repeating C1.                          |
 | `INV-11` | Multi-Repo delivery moves the primary C1 boundary once and projects its reviewed manifest without partial pre-C1 integration. |
 | `INV-12` | Preview reads only the managed reviewed integration and never the user checkout or unreviewed task worktree.                  |
 | `INV-13` | Accepted images remain byte-identical, and Project truth cites only adopted Goal-local assets.                                |
 | `INV-14` | Every model process retains its raw stream even when parsing, publication, or presentation fails.                             |
-| `INV-15` | At a settled boundary, every unresolved unnotified targeted Attention has an active Reflection or eligible speaking owner; an ineligible event cannot block unrelated notification. |
+| `INV-15` | At a settled boundary, every unresolved unnotified targeted Attention has an active Wake or eligible speaking owner; an ineligible event cannot block unrelated notification. |
 | `INV-16` | Before dispatch, a stable task branch contains the current release or Planning owns an exact synchronization conflict; discarding an old task delta always uses a new Work identity. |
 
 ## Coverage Catalog
@@ -442,7 +442,7 @@ is the only intentional execution exclusion.
 | `HOPI-E2E-016` | `tests/e2e/restartDuringGenerator.e2e.ts`                                                                                    |
 | `HOPI-E2E-017` | `tests/projectReconciler.test.ts`, `tests/multiRepoC1.test.ts`                                                               |
 | `HOPI-E2E-018` | `tests/multiRepoC1.test.ts`, `tests/mvpServer.test.ts`                                                                       |
-| `HOPI-E2E-019` | `tests/assistantReflection.test.ts`, `tests/coordinatorReconciler.test.ts`, `tests/assistantAttentionE2E.test.ts`            |
+| `HOPI-E2E-019` | `tests/assistantWake.test.ts`, `tests/coordinatorReconciler.test.ts`, `tests/assistantAttentionE2E.test.ts`                  |
 | `HOPI-E2E-020` | `tests/e2e/configurationRebind.e2e.ts`                                                                                       |
 | `HOPI-E2E-021` | `tests/previewManager.test.ts`, `tests/projectReconciler.test.ts`                                                            |
 | `HOPI-E2E-022` | `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts`, `tests/live/conversationImage.live.ts`                    |
@@ -458,7 +458,7 @@ is the only intentional execution exclusion.
 | `HOPI-E2E-032` | `tests/assistantWorkspaceStore.test.ts`, `tests/workspaceAssistant.test.ts`, `tests/assistantTools.test.ts`, `tests/roleContextStager.test.ts` |
 | `HOPI-E2E-033` | `tests/contract/dependencyEvidenceHandoff.test.ts`, `tests/roleContextStager.test.ts`                                      |
 | `HOPI-E2E-034` | `tests/projectReconciler.test.ts`, `tests/coordinatorReconciler.test.ts`, `tests/assistantTools.test.ts`                       |
-| `HOPI-E2E-035` | `tests/assistantReflection.test.ts`, `tests/assistantAttentionE2E.test.ts`, `tests/coordinatorReconciler.test.ts`             |
+| `HOPI-E2E-035` | `tests/assistantWake.test.ts`, `tests/assistantAttentionE2E.test.ts`, `tests/coordinatorReconciler.test.ts`                   |
 
 ## Detailed Cases
 
@@ -494,7 +494,7 @@ Current implementation: `packages/backend/tests/browser/globalAssistant.browser.
 | Field   | Value                                                                                                              |
 | ------- | ------------------------------------------------------------------------------------------------------------------ |
 | Risk    | The full Agent chain looks active but cannot safely repair, review, integrate, or explain completion.              |
-| Reality | Real Assistant, Reflection, Planner, Generator, Reviewer, worktrees, Git, C1, project test, frontend, and browser. |
+| Reality | Real Assistant, Wake, Planner, Generator, Reviewer, worktrees, Git, C1, project test, frontend, and browser. |
 | Fixture | One committed Bun project whose clamp test fails because the implementation reverses its bounds.                   |
 | Cost    | High; current baseline is approximately 552,000 input and 13,500 output tokens.                                    |
 
@@ -503,7 +503,7 @@ Actions:
 1. Link the fixture through the public Project API as setup.
 2. Ask the Assistant through the real browser to create a Goal, diagnose, fix, verify, and deliver.
 3. Let Coordinator and production Agents converge without driving individual responsibilities.
-4. Wait for Goal completion, no active Run, no pending Inbox, and settled Reflection.
+4. Wait for Goal completion, no active Run, no pending Inbox, and settled Wake.
 5. Verify the integration with the Project's real `bun test` command.
 6. Capture the completion update and terminal Kanban.
 
@@ -699,7 +699,7 @@ version passed.
 | Field   | Value                                                                                                   |
 | ------- | ------------------------------------------------------------------------------------------------------- |
 | Risk    | A broken command advances Work, loops forever, invents a blocker, or leaves only an unreadable log. |
-| Reality | Production Coordinator, Reflection, speaking Assistant, Attempt store, UI, and a real process boundary. |
+| Reality | Production Coordinator, Wake, speaking Assistant, Attempt store, UI, and a real process boundary. |
 | Fixture | One responsibility command fails operationally, then becomes repairable without changing the Work contract. |
 | Cost    | Zero provider calls in the deterministic contract scenario.                                      |
 
@@ -707,7 +707,7 @@ Actions:
 
 1. Dispatch Engineering into an executable that exits before producing a semantic role result.
 2. Observe one retained failure, restart Coordinator, and confirm unchanged Work is not redispatched.
-3. Let Reflection inspect the failed Attempt and hand the concrete recovery decision to speaking Assistant.
+3. Let Wake inspect the failed Attempt and hand the concrete recovery decision to speaking Assistant.
 4. Observe one direct operator-facing question without a synthetic Attention.
 5. Repair the external condition, reply naturally, and let Assistant continue the Work once.
 6. Let the same Work complete.
@@ -719,7 +719,7 @@ Pass conditions:
 - Coordinator creates no Attention, retry threshold, or failure-kind recovery policy.
 - Kanban shows ordinary `waiting` rather than an infinite spinner or invented failure stage.
 - Raw stdout/stderr is present for every failed process.
-- Reflection and speaking Assistant make the recovery judgment from current state.
+- Wake and speaking Assistant make the recovery judgment from current state.
 - One natural user reply plus explicit Work continuation affects only the failed Work.
 - Success clears the failed-Attempt projection without deleting history.
 - Final Planner success completes the Goal directly; recovery and completion create no Attention.
@@ -790,7 +790,7 @@ Actions:
 2. Let Assistant durably apply one tool effect, then kill Coordinator before its final reply.
 3. Start a replacement and verify the pending Inbox turn converges once without repeating the effect.
 4. Start delivery, wait for Generator source delta and an active Attempt, and kill Coordinator again.
-5. Start the final replacement and let checkpoint recovery, Review, C1, Reflection, and UI settle.
+5. Start the final replacement and let checkpoint recovery, Review, C1, Wake, and UI settle.
 
 Pass conditions:
 
@@ -907,7 +907,7 @@ Pass conditions:
   repeated rejection edges coalesce only while one Assistant invocation is already running.
 - Assistant observation does not delay the next Generator, and an Assistant intervention makes a
   superseded active assignment unable to publish stale authority.
-- Wake-up is deterministic and invokes no separate Reflection model.
+- Wake-up is deterministic and invokes no separate Wake model.
 - One Project has at most one active Assistant invocation; different Projects may run concurrently.
 - User input persists immediately, does not interrupt an active fork, and runs before queued wake work.
 - Native fork execution never advances or replaces the parent speaking Session.
@@ -922,7 +922,7 @@ Primary invariants: `INV-04`, `INV-08`, `INV-09`, `INV-14`, `INV-15`.
 
 Deterministic production-runtime tests cover serialization, user-first queueing, wake coalescing,
 native fork isolation, and receipts. The existing focused Live canary at
-`packages/backend/tests/live/reflectionNotification.live.ts` predates the fork protocol and requires
+`packages/backend/tests/live/wakeNotification.live.ts` predates the fork protocol and requires
 replacement evidence before it can establish current configured-provider coverage.
 
 ### HOPI-E2E-020: Project Linking, Repo Rebind, And Model Settings
@@ -1051,8 +1051,8 @@ Pass conditions:
 
 - Browser receipt preserves exact image bytes and renders a thumbnail.
 - The selected vendor receives the image on new and compatible resumed sessions.
-- Relevant image adoption atomically creates a Goal-local asset and `design/references.md` provenance.
-- Goal and Work prose cite only portable Goal-local paths; raw Assistant-home paths are rejected.
+- Relevant image adoption atomically creates a Goal-local asset and accepted Goal Input.
+- Work `contextRefs` use only portable Goal-local paths; raw Assistant-home paths are rejected.
 - Planner, Generator, and Reviewer receive the image path and its stated purpose.
 - The irrelevant variant remains conversation-only and creates no Goal effect.
 - Final UI passes semantic checks and retains before/reference/after screenshots for human inspection.
@@ -1136,12 +1136,12 @@ Pass conditions:
 - A compatible same-vendor speaking or Work responsibility session resumes; a vendor switch starts
   a new session from durable context.
 - Responsibility sessions never cross Work, role, or material Work-revision boundaries, and
-  Reflection never inherits one.
+  Wake never inherits one.
 - Interrupted responsibility files remain available to the compatible replacement Attempt and are
   never reconstructed from model memory alone.
 - Codex responsibility commands ignore implicit user configuration while retaining explicit HOPI
   model, reasoning, sandbox, network, writable roots, authentication, and project instructions.
-- Internal Reflection briefs are excluded from reconstructed public conversation history.
+- Internal Wake briefs are excluded from reconstructed public conversation history.
 - Tool effects are proven by canonical documents rather than assistant prose.
 - Stderr and malformed vendor events remain visible without corrupting public success projection.
 - The rotating Codex Live canary retains the raw stream and fails if it observes WebSocket setup,
@@ -1164,9 +1164,9 @@ Current implementation: `packages/backend/tests/e2e/webhookDelivery.e2e.ts`
 
 ### HOPI-E2E-026: Long Conversation And Lost Vendor Session
 
-Build enough public turns to cross the reconstruction budget, include internal Reflection activity,
+Build enough public turns to cross the reconstruction budget, include internal Wake activity,
 then remove or invalidate the runtime session cache and restart. The next speaking turn must rebuild
-from bounded newest public exchanges plus the oldest pending turn, exclude internal Reflection
+from bounded newest public exchanges plus the oldest pending turn, exclude internal Wake
 briefs, preserve accepted image references, and anchor attention on the current Inbox event. Product
 truth must remain available from documents even when conversational history is truncated.
 
@@ -1174,7 +1174,7 @@ The transport assertion and the model assertion are distinct: retained prompts p
 history was supplied, while the final reply proves that the configured model obeyed current-turn
 priority. The recovery turn must ask for the newest public-history marker without repeating any
 marker value itself; otherwise a matching reply proves only current-turn copying. The reply must
-contain the newest marker, exclude the older marker, and exclude internal Reflection content.
+contain the newest marker, exclude the older marker, and exclude internal Wake content.
 Seeing the newest marker in retained history but following an older instruction is a model-contract
 failure, not evidence that session storage lost the marker.
 
@@ -1289,7 +1289,7 @@ Pass conditions:
 - Terminal `is_error` wins over a contradictory `success` subtype.
 - The event-specific speaking manifest remains at `attempt: 1`; Coordinator creates one event-target
   Attention and does not retry that user turn.
-- Reflection may independently inspect the new Attention. Its runner invocation is not a retry of the
+- Wake may independently inspect the new Attention. Its runner invocation is not a retry of the
   failed speaking turn and therefore does not affect the event-specific attempt assertion.
 - Cached session recovery is not attempted for provider failure.
 - The conversation displays the provider error once, stops showing `Working`, and exposes neither
@@ -1354,7 +1354,7 @@ actual zero provider usage, clean cleanup, and an unchanged sibling checkout aft
 | Field   | Value                                                                                                                |
 | ------- | -------------------------------------------------------------------------------------------------------------------- |
 | Risk    | Assistant forgets reusable feedback, stores one-off direction as a global rule, or silently changes active delivery. |
-| Reality | Real Browser ingress and configured speaking Assistant; canonical Home document; deterministic Reflection.          |
+| Reality | Real Browser ingress and configured speaking Assistant; canonical Home document; deterministic Wake.          |
 | Fixture | Empty Home with no linked Project or Goal.                                                                            |
 | Cost    | Two speaking-Assistant calls; no Planner, Generator, Reviewer, or delivery chain.                                     |
 
@@ -1372,7 +1372,7 @@ Pass conditions:
 - The second turn follows the local instruction without calling the preference writer or changing
   the preference digest.
 - Neither preference write nor one-off direction creates a Project, Goal, Planning request,
-  responsibility Run, Attention, or Reflection trigger of its own.
+  responsibility Run, Attention, or Wake trigger of its own.
 - Deterministic contracts prove stale-digest rejection, empty-document clearing, same-session
   refresh, session rebuild, Planner-only immutable staging, and downstream role isolation.
 - Browser screenshots, canonical documents, normalized events, raw Assistant streams, and model
@@ -1484,7 +1484,7 @@ Pass conditions:
 - A non-stale active Work Attempt defers observation until its own settlement edge; a stale Run can
   still wake supervision.
 - Restart or repeated reconciliation cannot duplicate the current revision's continuation.
-- `waitForIdle()` includes wake work queued by a completing Reflection record.
+- `waitForIdle()` includes wake work queued by a completing Wake record.
 
 ## Harness Self-Verification
 

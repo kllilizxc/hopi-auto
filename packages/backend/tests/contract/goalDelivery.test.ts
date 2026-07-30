@@ -64,7 +64,11 @@ test('contracts one ordinary Assistant instruction through Planner, Generator, R
 
     const linked = await requestJson<StateView>(baseUrl, '/api/projects', {
       method: 'POST',
-      body: { projectId: PROJECT_ID, repoId: 'primary', repoPath: repoRoot },
+      body: {
+        projectId: PROJECT_ID,
+        primaryRepoId: 'primary',
+        repos: [{ repoId: 'primary', repoPath: repoRoot }],
+      },
     })
     const integrationRoot = linked.projects
       .find((project) => project.projectId === PROJECT_ID)
@@ -194,6 +198,8 @@ async function planDelivery(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: '## Acceptance Criteria\n\n- `src/feature.ts` exports feature with value 2.\n',
       }),

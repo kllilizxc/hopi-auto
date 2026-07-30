@@ -1,7 +1,6 @@
-import { mkdir, rename } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { z } from 'zod'
 import { projectAgentAccessPath } from './assistantRuntimePaths'
+import { writeJsonAtomically } from './atomicFile'
 
 const projectAgentAccessStateSchema = z
   .object({
@@ -54,11 +53,5 @@ async function readState(path: string): Promise<ProjectAgentAccessState> {
 }
 
 async function writeState(path: string, state: ProjectAgentAccessState) {
-  await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.${crypto.randomUUID()}.tmp`
-  await Bun.write(
-    temporary,
-    `${JSON.stringify(projectAgentAccessStateSchema.parse(state), null, 2)}\n`,
-  )
-  await rename(temporary, path)
+  await writeJsonAtomically(path, projectAgentAccessStateSchema.parse(state))
 }

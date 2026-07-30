@@ -1,9 +1,10 @@
-import { appendFile, mkdir, readdir, rename, rm } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
 import type { VendorSession } from '../agent/vendorAssistantOutput'
 import { assertStableId } from '../domain/stableId'
+import { writeJsonAtomically } from '../storage/atomicFile'
 import {
   readDurableJsonLines,
   repairDurableJsonLineTail,
@@ -368,10 +369,7 @@ async function readJson<T>(path: string, schema: z.ZodType<T>, isolate = false) 
 }
 
 async function writeJson(path: string, value: unknown) {
-  await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.${crypto.randomUUID()}.tmp`
-  await Bun.write(temporary, `${JSON.stringify(value, null, 2)}\n`)
-  await rename(temporary, path)
+  await writeJsonAtomically(path, value)
 }
 
 function assertLocalId(value: string) {

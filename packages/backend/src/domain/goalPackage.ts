@@ -100,10 +100,42 @@ export async function readAndValidateGoalPackage(
   }
 
   validateWorkGraph(paths.projectId, goalId, goal, works, evidence)
+  validateWorkContextReferences(paths, goalId, works, new Set(filePaths))
   validateAttentions(paths.projectId, goalId, works, attentions)
   validateEvidenceOwnership(paths.projectId, goalId, works, evidence)
 
   return { goal, works, attentions, evidence, inputs }
+}
+
+function validateWorkContextReferences(
+  paths: GoalPackagePaths,
+  goalId: string,
+  works: ReadonlyMap<string, WorkDocument>,
+  files: ReadonlySet<string>,
+) {
+  const goalPrefix = `${paths.goalRoot(goalId)}/`
+  for (const work of works.values()) {
+    for (const reference of work.attributes.contextRefs) {
+      if (!reference.path.startsWith(goalPrefix) || !files.has(reference.path)) {
+        throw invalid(
+          goalId,
+          `Work ${work.attributes.id} context reference is not a current Goal file: ${reference.path}`,
+        )
+      }
+    }
+    const revisionInput = isPlanningWork(work.attributes)
+      ? work.attributes.revisionInput
+      : undefined
+    if (
+      revisionInput &&
+      !work.attributes.contextRefs.some((reference) => reference.path === revisionInput)
+    ) {
+      throw invalid(
+        goalId,
+        `Planning Work ${work.attributes.id} revision Input is not selected as context: ${revisionInput}`,
+      )
+    }
+  }
 }
 
 export async function validateGoalPackageTransition(

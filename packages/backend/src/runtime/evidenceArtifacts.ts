@@ -5,9 +5,7 @@ import { parsePortableArtifactReference } from './runArtifacts'
 import { runStoragePath } from './runPaths'
 
 export interface EvidenceArtifactProject {
-  projectRoot: string
-  sourceRoot?: string
-  repos?: readonly {
+  repos: readonly {
     integrationRoot: string
     projectPath: string
   }[]
@@ -134,9 +132,9 @@ async function uniqueExistingProjectEntries(
   project: EvidenceArtifactProject,
   artifactPath: string,
 ) {
-  const roots = project.repos?.length
-    ? project.repos.map((repo) => resolveProjectPath(repo.integrationRoot, repo.projectPath))
-    : [project.sourceRoot ?? project.projectRoot]
+  const roots = project.repos.map((repo) =>
+    resolveProjectPath(repo.integrationRoot, repo.projectPath),
+  )
   const candidates = await Promise.all(
     roots.map((root) => containedExistingEntry(root, artifactPath)),
   )

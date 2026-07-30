@@ -233,28 +233,28 @@ describe('MVP server', () => {
       deriveAssistantFeedActivity({
         publicStatuses: [],
         internalSpeakingRunning: false,
-        reflectionRunning: true,
+        wakeRunning: true,
       }),
     ).toEqual({ phase: 'thinking' })
     expect(
       deriveAssistantFeedActivity({
         publicStatuses: ['queued'],
         internalSpeakingRunning: true,
-        reflectionRunning: false,
+        wakeRunning: false,
       }),
     ).toEqual({ phase: 'thinking' })
     expect(
       deriveAssistantFeedActivity({
         publicStatuses: ['running'],
         internalSpeakingRunning: true,
-        reflectionRunning: true,
+        wakeRunning: true,
       }),
     ).toEqual({ phase: 'working' })
     expect(
       deriveAssistantFeedActivity({
         publicStatuses: ['queued'],
         internalSpeakingRunning: false,
-        reflectionRunning: false,
+        wakeRunning: false,
       }),
     ).toEqual({ phase: 'waiting' })
   })
@@ -284,6 +284,8 @@ describe('MVP server', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: [],
+              contextRefs: [],
+              ownerMessages: [],
             },
             body: 'Review.\n',
           },
@@ -300,6 +302,8 @@ describe('MVP server', () => {
               dependsOn: ['W-review'],
               contractRevision: 1,
               evidenceRefs: [],
+              contextRefs: [],
+              ownerMessages: [],
             },
             body: 'Build.\n',
           },
@@ -364,6 +368,8 @@ describe('MVP server', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: [],
+              contextRefs: [],
+              ownerMessages: [],
             },
             body: 'Work.\n',
           },
@@ -980,7 +986,11 @@ describe('MVP server', () => {
 
     await request(base, '/api/projects', {
       method: 'POST',
-      body: { projectId: 'P-slow', repoPath: repoRoot },
+      body: {
+        projectId: 'P-slow',
+        primaryRepoId: 'primary',
+        repos: [{ repoId: 'primary', repoPath: repoRoot }],
+      },
     })
     const preview = await Promise.race([
       request(base, '/api/projects/P-slow/preview/start', { method: 'POST' }),
@@ -1036,7 +1046,11 @@ describe('MVP server', () => {
 
     await request(base, '/api/projects', {
       method: 'POST',
-      body: { projectId: 'P-credential', repoPath: repoRoot },
+      body: {
+        projectId: 'P-credential',
+        primaryRepoId: 'primary',
+        repos: [{ repoId: 'primary', repoPath: repoRoot }],
+      },
     })
     await request(base, '/api/projects/P-credential/preview/start', {
       method: 'POST',
@@ -1119,7 +1133,11 @@ describe('MVP server', () => {
 
     await request(base, '/api/projects', {
       method: 'POST',
-      body: { projectId: 'P-preview-bootstrap', repoPath: repoRoot },
+      body: {
+        projectId: 'P-preview-bootstrap',
+        primaryRepoId: 'primary',
+        repos: [{ repoId: 'primary', repoPath: repoRoot }],
+      },
     })
 
     await request(base, '/api/projects/P-preview-bootstrap/preview/start', {
@@ -1307,7 +1325,11 @@ describe('MVP server', () => {
 
     const linkedState = await request(base, '/api/projects', {
       method: 'POST',
-      body: { projectId: 'P-1', repoPath: repoRoot },
+      body: {
+        projectId: 'P-1',
+        primaryRepoId: 'primary',
+        repos: [{ repoId: 'primary', repoPath: repoRoot }],
+      },
     })
     expect(linkedState).toMatchObject({ projects: [{ projectId: 'P-1' }] })
     const assistantSessionPath = join(
@@ -1899,7 +1921,7 @@ describe('MVP server', () => {
 
     const state = await request(base, '/api/projects/P-1/rebind', {
       method: 'POST',
-      body: { repoPath: movedRepo },
+      body: { repos: [{ repoId: linked.primaryRepoId, repoPath: movedRepo }] },
     })
     const attentions = state.attentions as Array<{
       refs: string[]
@@ -1982,7 +2004,7 @@ describe('MVP server', () => {
 
     const state = await request(base, '/api/projects/P-1/rebind', {
       method: 'POST',
-      body: { repoPath: replacementRepo },
+      body: { repos: [{ repoId: linked.primaryRepoId, repoPath: replacementRepo }] },
     })
 
     expect(state).toMatchObject({
@@ -2077,7 +2099,11 @@ describe('MVP server', () => {
 
     await request(base, '/api/projects', {
       method: 'POST',
-      body: { projectId: 'P-1', repoId: 'web', repoPath: webRepo },
+      body: {
+        projectId: 'P-1',
+        primaryRepoId: 'web',
+        repos: [{ repoId: 'web', repoPath: webRepo }],
+      },
     })
     const linked = await request(base, '/api/projects/P-1/repos', {
       method: 'POST',
@@ -2215,6 +2241,8 @@ describe('MVP server', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: [],
+              contextRefs: [],
+              ownerMessages: [],
             },
             body: 'Write the report.\n',
           }),
@@ -2610,7 +2638,7 @@ describe('MVP server', () => {
     )
   })
 
-  test('shows hidden Reflection speaking work only as conversation Thinking activity', async () => {
+  test('shows hidden Wake speaking work only as conversation Thinking activity', async () => {
     const homeRoot = join(temporaryRoot, 'assistant-thinking-home')
     const publisher = new PublicationCoordinator()
     await createAssistantHomeStore(homeRoot, publisher).initialize()
@@ -2626,7 +2654,7 @@ describe('MVP server', () => {
     const base = `http://127.0.0.1:${server.port}`
     await request(base, '/api/state')
 
-    await workspace.receiveReflectionEvent({
+    await workspace.receiveSystemEvent({
       eventId: 'EV-internal-thinking',
       content: 'Reassess the latest state internally.',
     })
@@ -2674,9 +2702,9 @@ describe('MVP server', () => {
     const wakeRoot = join(homeRoot, '.hopi', 'runtime', 'assistant', 'wakes', 'runs', 'WK-debug')
     await mkdir(wakeRoot, { recursive: true })
     await Bun.write(
-      join(wakeRoot, 'reflection.json'),
+      join(wakeRoot, 'wake.json'),
       JSON.stringify({
-        reflectionId: 'WK-debug',
+        wakeId: 'WK-debug',
         stateDigest: 'd'.repeat(64),
         scope: { kind: 'home' },
         status: 'completed',
@@ -2721,14 +2749,14 @@ describe('MVP server', () => {
         },
       ],
     })
-    expect(await request(base, '/api/debug/reflections')).toMatchObject({
+    expect(await request(base, '/api/debug/wakes')).toMatchObject({
       items: [
         {
-          manifest: { reflectionId: 'WK-debug', handoffEventId: 'EV-public' },
+          manifest: { wakeId: 'WK-debug', handoffEventId: 'EV-public' },
         },
       ],
     })
-    expect(await request(base, '/api/debug/reflections/WK-debug/events')).toMatchObject({
+    expect(await request(base, '/api/debug/wakes/WK-debug/events')).toMatchObject({
       items: [{ summary: 'A decision is required.' }],
     })
   })
@@ -2766,17 +2794,7 @@ async function createEvidenceCompletedGoal(
             owner: `project:P-1/goal:${goalId}/work:plan-initial`,
             artifacts: [],
           },
-          body: [
-            '## Responsibility Result',
-            '',
-            '- Responsibility: planner',
-            '- Result: success',
-            '',
-            '## Summary',
-            '',
-            'The reviewed outcome satisfies every accepted criterion.',
-            '',
-          ].join('\n'),
+          body: 'The reviewed outcome satisfies every accepted criterion.\n',
         }),
       },
       {

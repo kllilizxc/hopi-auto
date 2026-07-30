@@ -42,7 +42,7 @@ const firstWorkSchema = z.discriminatedUnion('kind', [
     .strict(),
 ])
 
-export const publicAssistantToolNames = [
+const assistantToolNames = [
   'hopi_read_state',
   'hopi_read_conversation',
   'hopi_manage_project',
@@ -55,10 +55,6 @@ export const publicAssistantToolNames = [
   'hopi_manage_attention',
   'hopi_control_preview',
 ] as const
-
-export const internalAssistantToolNames = publicAssistantToolNames
-
-export const mainAssistantToolNames = publicAssistantToolNames
 
 const projectRepoSchema = z
   .object({
@@ -119,10 +115,7 @@ const workActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('cancel') }).strict(),
 ])
 
-export const assistantToolNames = mainAssistantToolNames
-
 export type AssistantToolName = (typeof assistantToolNames)[number]
-export type MainAssistantToolName = (typeof mainAssistantToolNames)[number]
 
 export const assistantToolSchemas = {
   hopi_read_state: z

@@ -24,12 +24,3 @@ export function managedRepoWorktreePaths(
     work: join(root, 'work'),
   }
 }
-
-export function managedTaskWorktreePath(
-  repoPath: string,
-  projectId: string,
-  goalId: string,
-  workId: string,
-) {
-  return join(managedRepoWorktreePaths(repoPath, projectId).work, goalId, workId)
-}

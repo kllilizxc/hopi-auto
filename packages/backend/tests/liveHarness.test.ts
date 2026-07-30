@@ -66,7 +66,7 @@ test('reads hidden runtime usage and pending canonical Inbox events', async () =
     )
 
     expect(await readPendingInboxEvents(homeRoot)).toEqual([
-      { eventId: 'EV-pending', source: 'reflection', visibility: 'internal' },
+      { eventId: 'EV-pending', source: 'system', visibility: 'internal' },
     ])
     expect(await readModelUsage(homeRoot)).toMatchObject({
       logicalRuns: { assistant: 2, planner: 1 },
@@ -102,16 +102,16 @@ test('logical Run safety stops a runaway once and cleans up through the Test Run
   }
   try {
     await writeTestRunReport(context, 'running')
-    for (const id of ['RF-1', 'RF-2']) {
-      const reflectionRoot = join(homeRoot, '.hopi', 'runtime', 'assistant', 'wakes', 'runs', id)
-      await mkdir(reflectionRoot, { recursive: true })
-      await Bun.write(join(reflectionRoot, 'reflection.json'), '{}\n')
+    for (const id of ['WK-1', 'WK-2']) {
+      const wakeRoot = join(homeRoot, '.hopi', 'runtime', 'assistant', 'wakes', 'runs', id)
+      await mkdir(wakeRoot, { recursive: true })
+      await Bun.write(join(wakeRoot, 'wake.json'), '{}\n')
     }
     const partialAttempt = join(homeRoot, '.hopi', 'runtime', 'runs', 'R-writing', 'attempt.json')
     await mkdir(dirname(partialAttempt), { recursive: true })
     await Bun.write(partialAttempt, '{"responsibility":')
     expect(await countLogicalRuns(homeRoot, { tolerateUnreadable: true })).toMatchObject({
-      reflection: 2,
+      wake: 2,
     })
     const guard = registerLogicalRunSafety(context, homeRoot, { limit: 1 })
     let reads = 0
@@ -207,7 +207,6 @@ test('Live Test Run stops its server before sealing terminal evidence', async ()
     repoRoot,
     baseUrl: 'http://127.0.0.1:0',
     codingDefaults: DEFAULT_PROJECT_CODING_DEFAULTS,
-    modelBoundaries: { reflection: 'real' },
     code: {
       head: 'a'.repeat(40),
       branch: 'main',
@@ -256,7 +255,7 @@ function inboxEvent(id: string, status: 'pending' | 'handled') {
       id,
       receivedAt: '2026-07-13T00:00:00.000Z',
       status,
-      source: 'reflection' as const,
+      source: 'system' as const,
       visibility: 'internal' as const,
       sourceDigest: 'a'.repeat(64),
       attachments: [],
@@ -266,6 +265,6 @@ function inboxEvent(id: string, status: 'pending' | 'handled') {
       disposition: status === 'handled' ? 'answered' : null,
       webhookDeliveredAt: null,
     },
-    body: 'Internal reflection brief.',
+    body: 'Internal wake brief.',
   }
 }

@@ -20,7 +20,7 @@ export interface PreserveRunArtifactsResult {
   ignoredProposalPaths: readonly string[]
 }
 
-export class RunArtifactError extends Error {}
+class RunArtifactError extends Error {}
 
 export async function preserveRunArtifacts(input: {
   runId: string

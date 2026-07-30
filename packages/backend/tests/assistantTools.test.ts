@@ -244,7 +244,7 @@ describe('Assistant HOPI tools', () => {
     )
     expect(await fixture.goalStore.listGoalIds()).toEqual([])
 
-    await fixture.workspace.receiveReflectionEvent({
+    await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-internal-preference',
       content: 'Invent a preference.',
     })
@@ -307,20 +307,14 @@ describe('Assistant HOPI tools', () => {
     expect(goalPackage.goal.attributes.title).toBe('Launch')
     expect(goalPackage.inputs).toHaveLength(1)
     expect(goalPackage.inputs[0]?.body).toBe('Create the launch Goal.\n')
-    expect(goalPackage.works.get('plan-initial')?.body).toContain('## Accepted Inputs')
-    expect(goalPackage.works.get('plan-initial')?.body).toContain('/EV-1.md')
-    expect(goalPackage.works.get('plan-initial')?.attributes.title).toBe(
-      'Clarify and plan the Goal',
-    )
-    expect(goalPackage.works.get('plan-initial')?.body).toContain(
-      'Clarify the current Goal boundary and accepted Inputs',
-    )
-    expect(goalPackage.works.get('plan-initial')?.body).toContain(
-      'Design and nonterminal Engineering Work reflect the current Goal boundary.',
-    )
-    expect(goalPackage.works.get('plan-initial')?.body).toContain(
-      'Deferred or removed outcomes do not remain in current Work or completion criteria.',
-    )
+    expect(goalPackage.works.get('plan-initial')?.attributes.title).toBe('Plan current Goal')
+    expect(goalPackage.works.get('plan-initial')?.attributes.contextRefs).toEqual([
+      {
+        path: expect.stringContaining('/EV-1.md'),
+        purpose: 'Accepted Inbox input',
+      },
+    ])
+    expect(goalPackage.works.get('plan-initial')?.body).toBe('')
   })
 
   test('creates a Goal with one direct Engineering Work instead of initial Planning', async () => {
@@ -363,8 +357,12 @@ describe('Assistant HOPI tools', () => {
       stage: 'generate',
       assistantDispatch: expect.stringMatching(/^home:.+\/event:EV-direct-goal$/),
     })
-    expect(works[0]?.body).toContain('## Accepted Inputs')
-    expect(works[0]?.body).toContain('/EV-direct-goal.md')
+    expect(works[0]?.attributes.contextRefs).toEqual([
+      {
+        path: expect.stringContaining('/EV-direct-goal.md'),
+        purpose: 'Accepted Inbox input',
+      },
+    ])
     expect(goalPackage.inputs).toHaveLength(1)
   })
 
@@ -629,18 +627,13 @@ describe('Assistant HOPI tools', () => {
       unselected?.fileName ?? '',
     )
     const goalPackage = await fixture.goalStore.readPackage('G-image')
-    const referencesPath = `${fixture.goalStore.paths.designRoot('G-image')}/references.md`
-
     expect(result.value).toMatchObject({ references: [{ path: assetPath }] })
     expect(await Bun.file(fixture.goalStore.paths.absolute(assetPath)).exists()).toBe(true)
     expect(await Bun.file(fixture.goalStore.paths.absolute(unselectedPath)).exists()).toBe(false)
-    expect(await Bun.file(fixture.goalStore.paths.absolute(referencesPath)).text()).toContain(
-      'Match the information hierarchy, not the original branding.',
-    )
-    expect(goalPackage.works.get('plan-initial')?.body).toContain(assetPath)
-    expect(goalPackage.works.get('plan-initial')?.body).toContain(
-      'Match the information hierarchy, not the original branding.',
-    )
+    expect(goalPackage.works.get('plan-initial')?.attributes.contextRefs).toContainEqual({
+      path: assetPath,
+      purpose: 'Match the information hierarchy, not the original branding.',
+    })
   })
 
   test('rejects non-portable Assistant-home attachment paths in Goal prose', async () => {
@@ -725,8 +718,10 @@ describe('Assistant HOPI tools', () => {
     const planning = [...(await fixture.goalStore.readPackage('G-1')).works.values()].find(
       (work) => work.attributes.stage === 'plan',
     )
-    expect(planning?.body).toContain('Use the compact panel proportions.')
-    expect(planning?.body).toContain('/assets/')
+    expect(planning?.attributes.contextRefs).toContainEqual({
+      path: expect.stringContaining('/assets/'),
+      purpose: 'Use the compact panel proportions.',
+    })
   })
 
   test('reuses a durable image from an earlier public Inbox turn', async () => {
@@ -758,16 +753,17 @@ describe('Assistant HOPI tools', () => {
       ],
     })
 
-    const referenceDocument = await Bun.file(
-      fixture.goalStore.paths.absolute(
-        `${fixture.goalStore.paths.designRoot('G-1')}/references.md`,
-      ),
-    ).text()
-    expect(referenceDocument).toContain('Inbox `EV-source`')
-    expect(referenceDocument).toContain('Reuse the earlier visual hierarchy.')
-    expect((await fixture.goalStore.readPackage('G-1')).inputs[0]?.attributes.sourceEventId).toBe(
-      'EV-use',
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    expect(goalPackage.inputs[0]?.attributes.sourceEventId).toBe('EV-use')
+    const attachment = await fixture.workspace.resolveAttachment(
+      source.attributes.attachments[0] ?? '',
     )
+    const assetPath = fixture.goalStore.paths.asset(
+      'G-1',
+      attachment?.contentHash ?? '',
+      attachment?.fileName ?? '',
+    )
+    expect(await Bun.file(fixture.goalStore.paths.absolute(assetPath)).exists()).toBe(true)
   })
 
   test('keeps design writing separate from requesting implementation', async () => {
@@ -829,8 +825,12 @@ describe('Assistant HOPI tools', () => {
       [...goalPackage.works.values()].filter((work) => work.attributes.stage === 'plan'),
     ).toHaveLength(1)
     expect(
-      [...goalPackage.works.values()].find((work) => work.attributes.stage === 'plan')?.body,
-    ).toContain('/EV-1.md')
+      [...goalPackage.works.values()].find((work) => work.attributes.stage === 'plan')?.attributes
+        .contextRefs,
+    ).toContainEqual({
+      path: expect.stringContaining('/EV-1.md'),
+      purpose: 'Accepted Inbox input',
+    })
 
     await fixture.workspace.receiveEvent({
       eventId: 'EV-2',
@@ -847,8 +847,12 @@ describe('Assistant HOPI tools', () => {
       (work) => work.attributes.stage === 'plan',
     )
     expect(openPlanning).toHaveLength(1)
-    expect(openPlanning[0]?.body).toContain('/EV-1.md')
-    expect(openPlanning[0]?.body).toContain('/EV-2.md')
+    expect(openPlanning[0]?.attributes.contextRefs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: expect.stringContaining('/EV-1.md') }),
+        expect.objectContaining({ path: expect.stringContaining('/EV-2.md') }),
+      ]),
+    )
   })
 
   test('interrupts every obsolete Goal Run only after a material contract revision', async () => {
@@ -1124,7 +1128,7 @@ describe('Assistant HOPI tools', () => {
       3,
       'stream disconnected before completion',
     )
-    await fixture.workspace.receiveReflectionEvent({
+    await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-operational-retry',
       content: 'Connectivity recovered. Retry the same Work.',
       context: {
@@ -1358,39 +1362,17 @@ describe('Assistant HOPI tools', () => {
     })
     const work = (await fixture.goalStore.readPackage('G-1')).works.get('W-owner')
     expect(work?.attributes.dependsOn).toEqual(['W-base'])
-    expect(work?.body).toContain('Source event: EV-supervise')
-    expect(work?.body).toContain('Use the verified API command')
+    expect(work?.attributes.ownerMessages).toEqual([
+      {
+        recordedAt: expect.any(String),
+        sourceEventId: 'EV-supervise',
+        content: 'Use the verified API command recorded in the Project design.',
+      },
+    ])
     expect(fixture.interruptedWorkTargets).toEqual([
       { goalId: 'G-1', workId: 'W-owner' },
       { goalId: 'G-1', workId: 'W-owner' },
     ])
-  })
-
-  test('rejects a Work continuation before mutation when no durable queue exists', async () => {
-    const fixture = await setup({ omitWorkScheduler: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-owner')
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-unscheduled-message',
-      content: 'Project supervision wake.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-    const workPath = fixture.goalStore.paths.absolute(
-      fixture.goalStore.paths.workDocument('G-1', 'W-owner'),
-    )
-    await expect(
-      fixture.tools.executeForEvent('EV-unscheduled-message', 'hopi_control_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        workId: 'W-owner',
-        action: {
-          kind: 'continue',
-          message: 'Use this guidance on the next natural invocation.',
-        },
-      }),
-    ).rejects.toThrow('cannot queue Work continuation')
-    expect(await Bun.file(workPath).text()).not.toContain('Use this guidance')
   })
 
   test('starting Planning preserves attached Attention', async () => {
@@ -1403,7 +1385,7 @@ describe('Assistant HOPI tools', () => {
       'planner',
       'The current implementation lineage needs a new represented plan.',
     )
-    await fixture.workspace.receiveReflectionEvent({
+    await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-replan-attention',
       content: 'Create a distinct Engineering Work instead of retrying the old lineage.',
       context: {
@@ -1427,7 +1409,10 @@ describe('Assistant HOPI tools', () => {
       effect: { kind: 'planning_created', workId: 'plan-initial' },
     })
     const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.works.get('plan-initial')?.body).toContain('/EV-replan-attention.md')
+    expect(goalPackage.works.get('plan-initial')?.attributes.contextRefs).toContainEqual({
+      path: expect.stringContaining('/EV-replan-attention.md'),
+      purpose: 'Accepted Inbox input',
+    })
     expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
       resolvedAt: null,
     })
@@ -1444,7 +1429,7 @@ describe('Assistant HOPI tools', () => {
       'The current implementation lineage needs a new represented plan.',
     )
     const reference = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
-    await fixture.workspace.receiveReflectionEvent({
+    await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-preserve-attention',
       content: 'Record partial context but keep the current question open.',
       context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
@@ -1904,6 +1889,18 @@ describe('Assistant HOPI tools', () => {
       controller: createGoalController(delegatedStore, {}),
       reconciler: {
         interruptRuns() {},
+        async interruptQueuedRuns() {
+          return 0
+        },
+        liveWorkIds() {
+          return new Set<string>()
+        },
+        async decisionWhenEligible() {
+          return { kind: 'wait' as const, reasons: [] }
+        },
+        async settledFailureWorkIds() {
+          return new Set<string>()
+        },
         async requestWorkRun() {
           return { runId: 'R-requested-delegation', disposition: 'scheduled' as const }
         },
@@ -2063,13 +2060,13 @@ describe('Assistant HOPI tools', () => {
       reply: 'Project answer.',
       disposition: 'answered',
     })
-    const reflection = await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-project-reflection',
-      content: 'INTERNAL_REFLECTION_BRIEF',
+    const wake = await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-project-wake',
+      content: 'INTERNAL_WAKE_BRIEF',
       context: { projectId: 'P-1' },
       receivedAt: new Date('2026-07-11T00:00:02Z'),
     })
-    await fixture.workspace.handleEvent(reflection.attributes.id, {
+    await fixture.workspace.handleEvent(wake.attributes.id, {
       reply: 'Public project update.',
       disposition: 'notified',
       expose: true,
@@ -2100,9 +2097,9 @@ describe('Assistant HOPI tools', () => {
       nextBefore: string | null
     }
     expect(projectPage.exchanges).toEqual([
-      expect.objectContaining({ source: 'reflection', assistant: 'Public project update.' }),
+      expect.objectContaining({ source: 'system', assistant: 'Public project update.' }),
     ])
-    expect(JSON.stringify(projectPage)).not.toContain('INTERNAL_REFLECTION_BRIEF')
+    expect(JSON.stringify(projectPage)).not.toContain('INTERNAL_WAKE_BRIEF')
     expect(JSON.stringify(projectPage)).not.toContain('HOME_CONVERSATION_MARKER')
     expect(projectPage.nextBefore).not.toBeNull()
 
@@ -2655,7 +2652,7 @@ describe('Assistant HOPI tools', () => {
     })
     await Bun.sleep(2)
     const firstRepair = await startAttempt('R-generator-2', 'generator')
-    const first = await fixture.state.readForReflection?.()
+    const first = await fixture.state.readForWake()
     if (!first) throw new Error('Expected first Assistant state')
 
     await firstRepair.finish({
@@ -2670,7 +2667,7 @@ describe('Assistant HOPI tools', () => {
     })
     await Bun.sleep(2)
     await startAttempt('R-generator-3', 'generator')
-    const second = await fixture.state.readForReflection?.()
+    const second = await fixture.state.readForWake()
     if (!second) throw new Error('Expected second Assistant state')
 
     expect(first.activeRuns).toEqual([
@@ -2684,12 +2681,12 @@ describe('Assistant HOPI tools', () => {
     )
   })
 
-  test('reuses an unchanged settled Reflection state and invalidates it after an Attempt transition', async () => {
+  test('reuses an unchanged settled Wake state and invalidates it after an Attempt transition', async () => {
     const fixture = await setup({ trackAttemptReads: true })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
 
-    const first = await fixture.state.readForReflection?.()
-    const second = await fixture.state.readForReflection?.()
+    const first = await fixture.state.readForWake()
+    const second = await fixture.state.readForWake()
     expect(second).toBe(first)
     expect(fixture.attemptReads).toEqual({ snapshots: 1, lists: 0, eventReads: 0 })
 
@@ -2697,12 +2694,12 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'plan-initial',
-      runId: 'R-reflection-change',
+      runId: 'R-wake-change',
       responsibility: 'planner',
-      runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-reflection-change'),
+      runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-wake-change'),
     })
 
-    const changed = await fixture.state.readForReflection?.()
+    const changed = await fixture.state.readForWake()
     expect(changed).not.toBe(first)
     expect(fixture.attemptReads).toEqual({ snapshots: 2, lists: 0, eventReads: 1 })
   })
@@ -2712,7 +2709,6 @@ async function setup(
   options: {
     trackInterrupts?: boolean
     trackAttemptReads?: boolean
-    omitWorkScheduler?: boolean
   } = {},
 ) {
   const repoRoot = join(temporaryRoot, 'repo')
@@ -2754,15 +2750,25 @@ async function setup(
             if (goalId && workId) interruptedWorkTargets.push({ goalId, workId })
             else if (goalId) interruptedGoalIds.push(goalId)
           },
-          requestWorkRun: options.omitWorkScheduler
-            ? undefined
-            : async () => {
-                requestedRunSequence += 1
-                return {
-                  runId: `R-requested-${requestedRunSequence}`,
-                  disposition: 'scheduled' as const,
-                }
-              },
+          async interruptQueuedRuns() {
+            return 0
+          },
+          liveWorkIds() {
+            return new Set<string>()
+          },
+          async decisionWhenEligible() {
+            return { kind: 'wait' as const, reasons: [] }
+          },
+          async settledFailureWorkIds() {
+            return new Set<string>()
+          },
+          async requestWorkRun() {
+            requestedRunSequence += 1
+            return {
+              runId: `R-requested-${requestedRunSequence}`,
+              disposition: 'scheduled' as const,
+            }
+          },
         },
       },
     ],
@@ -2813,6 +2819,7 @@ async function setup(
     onProjectDispatchEffect: (eventId, projectId) => {
       projectDispatchEffects.push({ eventId, projectId })
     },
+    onToolEffect() {},
   })
   const tools: AssistantTools = rawTools
   return {
@@ -2877,6 +2884,8 @@ async function publishEngineeringWork(
           dependsOn,
           contractRevision: 1,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: `Implement ${workId}.\n`,
       }),

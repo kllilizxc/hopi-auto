@@ -386,7 +386,7 @@ describe('ConfiguredRoleRunner', () => {
     expect(await Bun.file(fixture.context.resultFile).json()).toEqual(outcome)
   })
 
-  test('recovers a missing Plan Mode outcome once in the same Run and Session', async () => {
+  test('does not add a corrective model invocation when a Run omits its outcome', async () => {
     const fixture = await createFixture()
     const binary = await fakeClaude(
       fixture.root,
@@ -422,50 +422,13 @@ describe('ConfiguredRoleRunner', () => {
       },
     })
 
-    expect(result).toMatchObject({
-      result: 'success',
-      summary: 'completed without a new Attempt',
-    })
-    expect(invalidations).toBe(0)
-    expect(messages).toContain(
-      'The non-interactive responsibility entered vendor Plan Mode and could not obtain operator approval. Continuing the same Session once inside this Run to complete the responsibility outcome.',
-    )
-    const recoveryPrompt = await Bun.file(
-      join(fixture.runtimeScratchDir, 'recovery-prompt.txt'),
-    ).text()
-    expect(recoveryPrompt).toContain('No valid terminal outcome was captured')
-    expect(recoveryPrompt).toContain('assignment, and execution boundary are unchanged')
-    expect(recoveryPrompt).not.toContain('do not repeat Repo preparation')
-  })
-
-  test('invalidates a Session that omits its outcome again during same-Run recovery', async () => {
-    const fixture = await createFixture()
-    const binary = await fakeClaude(
-      fixture.root,
-      `console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-stuck"}))
-      console.log(JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"plan-1",name:"EnterPlanMode",input:{}}]}}))
-      console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-stuck",result:"Still waiting for approval."}))`,
-    )
-    let invalidations = 0
-    const runner = new ConfiguredRoleRunner({
-      resolveConfig: () => ({
-        transport: 'claude',
-        binary,
-        cwdMode: 'root',
-        permissionMode: 'dontAsk',
-      }),
-    })
-
-    const result = await runner.run(fixture.input('planner', fixture.proposalRoot), {
-      onSessionInvalid: () => {
-        invalidations += 1
-      },
-    })
-
     expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
-    expect(result.summary).toContain('entered vendor Plan Mode')
-    expect(result.summary).toContain('Same-Run outcome recovery also failed')
-    expect(invalidations).toBe(1)
+    expect(result.summary).toContain('invalid vendor final response')
+    expect(invalidations).toBe(0)
+    expect(messages).toEqual([])
+    expect(await Bun.file(join(fixture.runtimeScratchDir, 'recovery-prompt.txt')).exists()).toBe(
+      false,
+    )
   })
 
   test('keeps Claude task identity across resumed responsibility Attempts', async () => {
@@ -545,7 +508,7 @@ describe('ConfiguredRoleRunner', () => {
     ).not.toContain('# Prompt')
   })
 
-  test('rebuilds an explicitly invalid saved session once inside the same Attempt', async () => {
+  test('does not rebuild a failed saved session inside the same Attempt', async () => {
     const fixture = await createFixture()
     const binary = await fakeCodex(
       fixture.root,
@@ -587,12 +550,10 @@ describe('ConfiguredRoleRunner', () => {
       },
     )
 
-    expect(result).toMatchObject({ result: 'success', summary: 'rebuilt' })
-    expect(invalidations).toBe(1)
-    expect(sessions).toEqual(['thread-rebuilt'])
-    expect(messages).toContain(
-      'The saved responsibility Session could not continue; rebuilding it once from the current assignment.',
-    )
+    expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
+    expect(invalidations).toBe(0)
+    expect(sessions).toEqual([])
+    expect(messages).toEqual(['Resuming the existing planner Session for this Work.'])
     expect(await Bun.file(join(fixture.runRoot, 'transcript.log')).text()).toContain(
       'saved thread not found',
     )

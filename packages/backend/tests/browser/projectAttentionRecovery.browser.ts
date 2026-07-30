@@ -421,6 +421,8 @@ async function stageEngineeringWork(input: RoleRunInput) {
         dependsOn: [],
         contractRevision: planning.attributes.contractRevision,
         evidenceRefs: [],
+        contextRefs: [],
+        ownerMessages: [],
       },
       body: '## Acceptance Criteria\n\n- The Generator result reaches task checkpointing.\n',
     }),

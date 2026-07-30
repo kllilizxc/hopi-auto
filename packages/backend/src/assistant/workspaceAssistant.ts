@@ -6,10 +6,10 @@ import { createEnvironmentSecretRedactor } from '../agent/environmentSecretRedac
 import { type ExecutionEnvelope, unreportedExecutionEnvelope } from '../agent/executionEnvelope'
 import { createPersistentProcessTranscriptNormalizer } from '../agent/persistentTranscriptNormalizer'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
+import { vendorAdapterFor } from '../agent/vendorAdapter'
 import {
   type AssistantTransport,
   type VendorAssistantTerminalError,
-  isExplicitSessionFailure,
   parseVendorAssistantOutput,
 } from '../agent/vendorAssistantOutput'
 import { isNonFatalProcessDiagnostic } from '../agent/vendorTranscript'
@@ -47,7 +47,8 @@ import type { AssistantConversationStore, AssistantSession } from './assistantCo
 import type { AssistantActionReceipt } from './assistantConversationStore'
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import { assistantSupervisionProjection } from './assistantSupervisionContext'
-import { type AssistantTools, assistantStateProjection } from './assistantTools'
+import { assistantStateProjection } from './assistantToolPresentation'
+import type { AssistantTools } from './assistantTools'
 import { runCodexAssistantFork } from './codexAssistantFork'
 
 export interface AssistantModelInput {
@@ -367,9 +368,6 @@ export function createConfiguredAssistantModelRunner(options: {
       if (exitCode !== 0) {
         const detail = stderr.last() ?? 'no error detail'
         const message = `${transport} conversation exited with code ${exitCode}: ${detail}`
-        if (session && isExplicitSessionFailure(detail)) {
-          throw new AssistantSessionUnavailableError(message)
-        }
         throw new WorkspaceAssistantError(message)
       }
 
@@ -465,10 +463,10 @@ export function createWorkspaceAssistant(input: {
   workspace: AssistantWorkspaceStore
   conversation: AssistantConversationStore
   tools: AssistantTools
-  state?: AssistantStateReader
+  state: AssistantStateReader
   runner: AssistantModelRunner
   resolveToolUrl(): string
-  onTurnSettled?(eventId: string): Promise<void> | void
+  onTurnSettled(eventId: string): Promise<void> | void
   now?: () => Date
 }): WorkspaceAssistant {
   const now = input.now ?? (() => new Date())
@@ -536,12 +534,10 @@ export function createWorkspaceAssistant(input: {
         const projectId =
           conversationScope.kind === 'project' ? conversationScope.projectId : undefined
         const toolMode = isInternalInboxSource(event.attributes.source) ? 'internal' : 'main'
-        const stateSnapshot = input.state
-          ? await input.state.read({
-              ...(projectId ? { projectId } : {}),
-              ...(internal ? { attemptHistoryLimit: 12 } : {}),
-            })
-          : undefined
+        const stateSnapshot = await input.state.read({
+          ...(projectId ? { projectId } : {}),
+          ...(internal ? { attemptHistoryLimit: 12 } : {}),
+        })
         const preparation = {
           ...(projectId ? { projectId } : {}),
           cwd: conversationWorkspace,
@@ -660,7 +656,7 @@ export function createWorkspaceAssistant(input: {
           })
         }
         await input.workspace.handleEvent(eventId, {
-          reply: reply || (presentedAttention ? 'Your input is needed.' : 'No operator update.'),
+          reply: reply || (presentedAttention ? 'Your input is needed.' : null),
           disposition: internal
             ? reply
               ? 'notified'
@@ -686,7 +682,7 @@ export function createWorkspaceAssistant(input: {
         throw error
       } finally {
         input.tools.revoke(toolToken)
-        await input.onTurnSettled?.(eventId)
+        await input.onTurnSettled(eventId)
       }
     },
   }
@@ -703,7 +699,6 @@ async function prepareAssistantWorkspace(
     env: {
       HOPI_TOOL_URL: input.toolUrl,
       HOPI_TOOL_TOKEN: input.toolToken,
-      HOPI_TOOL_MODE: input.toolMode ?? 'main',
     },
   }
 
@@ -942,9 +937,7 @@ function assistantPrompt(config: RoleTransportConfig, input: AssistantModelInput
 }
 
 function assistantTranscriptFormat(transport: AssistantTransport) {
-  if (transport === 'claude') return 'claude_stream_json' as const
-  if (transport === 'opencode') return 'opencode_json' as const
-  return 'codex_jsonl' as const
+  return vendorAdapterFor(transport).transcriptFormat
 }
 
 function assistantCodexCommand(
@@ -1002,7 +995,6 @@ function assistantCodexBaseCommand(
     `mcp_servers.hopi.env=${tomlInlineTable({
       HOPI_TOOL_URL: input.toolUrl,
       HOPI_TOOL_TOKEN: input.toolToken,
-      HOPI_TOOL_MODE: input.toolMode ?? 'main',
     })}`,
   )
   if (config.model) command.push('-m', config.model)
@@ -1030,15 +1022,13 @@ const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
   'Role: HOPI Project owner. Assistant owns operator conversation, judgment, orchestration, incidental self-contained operations, and publication of accepted results.',
   'Durable linked-source implementation, tests, Evidence, review, and recovery belong to Engineering Work. Each Engineering Work receives every Repo binding of its Project; Generator delivers and Reviewer verifies or rejects.',
   'HOPI state, documents, and mutation tools are canonical product authority. Provider-native shell, browser, skills, and plans may inspect or support incidental operations, but they do not create or replace Goal or Engineering Work delivery.',
-  'A settled contract may enter Engineering Work directly. Planning shapes unsettled authority or decomposition. Unrestricted access changes capability, not ownership.',
+  'Unrestricted access changes capability, not ownership.',
 ] as const
 
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
   'Project Preview is one local managed runtime. The Project adapter announces all opaque named surfaces together; HOPI only presents them.',
-  'Reply with outcome and action in 1-2 sentences; omit internals unless asked or decision-relevant. Only HOPI operatorUrl is linkable.',
-  'hopi_manage_attention persists Project Attention, resolves exact Project or Goal Attention references, and presents referenced open Attention summaries and optional choices to the operator without changing Work scheduling.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
 ] as const

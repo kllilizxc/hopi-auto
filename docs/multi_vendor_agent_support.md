@@ -25,12 +25,12 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
 - writable Assistant-owned runtime and scratch, read-only linked and canonical roots, and network
   access under the same boundary for every provider
 - speaking Assistant skills remain execution aids under a provider-level HOPI ownership contract;
-  Reflection has no ambient skills, and provider apps/plugins/workflows never gain HOPI authority
+  deterministic Wake has no provider surface, and provider apps/plugins/workflows never gain HOPI authority
 - an optional vendor session ID for the speaking Assistant
 - a vendor-session identity derived from the transport, execution boundary, stable Assistant
   contract, and current preference digest; a nonmatching identity is not resumed
 - vendor-native automatic context compaction for every built-in Agent invocation, including the
-  speaking Assistant, Reflection, Planner, Generator, and Reviewer
+  speaking Assistant, its supervision forks, Planner, Generator, and Reviewer
 - no vendor-owned interactive approval channel: Codex always uses `never`, Claude bypasses its
   prompt layer, and OpenCode receives only deterministic `allow` or `deny` rules. HOPI's resolved
   sandbox and capability envelope remain the authorization boundary; a denied operation fails
@@ -42,8 +42,8 @@ Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
   when an envelope is malformed and cannot be separated without guessing
 
 Vendor commands, event shapes, session flags, permission flags, compaction, and configuration files
-stay inside the adapter. Canonical documents, Inbox ordering, Attention delivery, Reflection
-handoff, Work results, and UI state never branch by vendor.
+stay inside the adapter. Canonical documents, Inbox ordering, Attention delivery, Wake publication,
+Work results, and UI state never branch by vendor.
 
 ## Supported Transports
 
@@ -53,9 +53,9 @@ handoff, Work results, and UI state never branch by vendor.
 | Claude | native session resume | CLI auto compact | local image references in the turn | injected MCP config | optional model |
 | OpenCode | native session resume | `compaction.auto` | local file arguments | injected MCP and permission config | optional model and variant |
 
-Reflection uses the same configured transport and model but always starts a disposable session.
+Supervision uses a provider-native fork of the configured speaking Assistant session.
 Responsibility Runs may use any supported transport independently through Home-wide role settings.
-`process` remains a responsibility-only escape hatch and cannot run Assistant or Reflection because
+`process` remains a responsibility-only escape hatch and cannot run Assistant because
 it has no guaranteed conversation, MCP, or session contract.
 
 Compaction is invisible transport maintenance. The adapter keeps native automatic compaction
@@ -74,7 +74,7 @@ turn.
 
 ## Configuration Rules
 
-Home `assistant` configuration owns speaking Assistant and Reflection. Home `roles` owns Planner,
+Home `assistant` configuration owns the speaking Assistant and its supervision forks. Home `roles` owns Planner,
 Generator, and Reviewer overrides; missing entries use Home `defaults`. Projects own no model
 configuration.
 
@@ -92,4 +92,4 @@ Bounded versus unrestricted access is selected only by HOPI's resolved execution
 Each adapter needs a fake-CLI contract test covering a new turn, resume, tool activity, final reply,
 image input, cancellation, malformed output, and raw transcript preservation. Shared end-to-end tests
 must then prove that changing transport does not change Inbox handling, exact Attention
-acknowledgement, Reflection delivery, or canonical HOPI tool effects.
+acknowledgement, Wake delivery, or canonical HOPI tool effects.

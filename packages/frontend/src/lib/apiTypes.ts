@@ -139,7 +139,7 @@ export interface InboxEventView {
   id: string
   receivedAt: string
   status: 'pending' | 'handled'
-  source: 'user' | 'system' | 'reflection'
+  source: 'user' | 'system'
   visibility: 'public' | 'internal'
   body: string
   attachments: InboxImageAttachmentView[]
@@ -165,9 +165,9 @@ export interface InboxImageAttachmentView {
   url: string
 }
 
-export interface ReflectionRunDetail {
+export interface WakeRunDetail {
   manifest: {
-    reflectionId: string
+    wakeId: string
     stateDigest: string
     scope?: { kind: 'home' } | { kind: 'project'; projectId: string }
     status: 'running' | 'completed' | 'interrupted' | 'failed'
@@ -180,7 +180,7 @@ export interface ReflectionRunDetail {
   paths: { prompt: string; transcript: string; events: string }
 }
 
-export type ReflectionRunSummary = Omit<ReflectionRunDetail, 'events'>
+export type WakeRunSummary = Omit<WakeRunDetail, 'events'>
 
 export interface AssistantDecisionOption {
   id: string
@@ -226,17 +226,9 @@ interface GoalCompletionBaseView {
   completedAt: string
 }
 
-export type GoalCompletionView = GoalCompletionBaseView &
-  (
-    | {
-        body: string
-        summary?: string
-      }
-    | {
-        body?: string
-        summary: string
-      }
-  )
+export interface GoalCompletionView extends GoalCompletionBaseView {
+  body: string
+}
 
 export type AssistantFeedEntry =
   | {

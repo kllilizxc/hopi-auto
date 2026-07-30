@@ -16,7 +16,7 @@ const scrollSurfaceChecks = [
     patterns: [/className="composer-images"[\s\S]*?orientation="horizontal"/],
   },
   {
-    file: '../ReflectionDebugPanel.tsx',
+    file: '../WakeDebugPanel.tsx',
     patterns: [/Scroller: AppScrollShadow/],
   },
   {

@@ -45,6 +45,8 @@ describe('createGoalPackageStore', () => {
           dependsOn: [],
           contractRevision: 1,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: 'Incomplete package.\n',
       }),
@@ -131,7 +133,12 @@ describe('createGoalPackageStore', () => {
       stage: 'generate',
       assistantDispatch: 'home:H-1/event:EV-1',
     })
-    expect(goalPackage.works.get('W-direct')?.body).toContain('/H-1/EV-1.md')
+    expect(goalPackage.works.get('W-direct')?.attributes.contextRefs).toEqual([
+      {
+        path: store.paths.inputDocument('G-direct', 'H-1', 'EV-1'),
+        purpose: 'Accepted Inbox input',
+      },
+    ])
     expect(goalPackage.works.has('plan-initial')).toBe(false)
   })
 
@@ -207,6 +214,8 @@ describe('createGoalPackageStore', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: [],
+              contextRefs: [],
+              ownerMessages: [],
             },
             body: 'Plan again.\n',
           }),
@@ -403,6 +412,8 @@ function engineeringWork(id: string, dependsOn: string[]) {
       dependsOn,
       contractRevision: 1,
       evidenceRefs: [],
+      contextRefs: [],
+      ownerMessages: [],
     },
     body: `Implement ${id}.\n`,
   }

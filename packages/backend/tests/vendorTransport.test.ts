@@ -893,18 +893,13 @@ function codexOutcomeCaptureArgs() {
 }
 
 function claudeStructuredOutcomeArgs(role: 'planner' | 'generator' | 'reviewer') {
-  const results =
-    role === 'reviewer'
-      ? ['success', 'reject', 'attention', 'fail']
-      : ['success', 'attention', 'fail']
+  const results = role === 'reviewer' ? ['success', 'reject', 'fail'] : ['success', 'fail']
   const summary =
     role === 'planner'
       ? {
           type: 'string',
           minLength: 1,
           maxLength: 600,
-          description:
-            'Operator-facing outcome in one or two short sentences. On Goal completion, state what was delivered without internal responsibility, Work, Evidence, validation, or lifecycle mechanics.',
         }
       : { type: 'string', minLength: 1 }
   return [

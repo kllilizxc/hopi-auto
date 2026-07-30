@@ -11,7 +11,7 @@ import {
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import { validateGoalPackageTransition } from '../domain/goalPackage'
-import { DEFAULT_PRIMARY_REPO_ID, type ProjectDocument, projectReleaseRef } from '../domain/project'
+import { type ProjectDocument, projectReleaseRef } from '../domain/project'
 import {
   parseProjectDocument,
   renderProjectDocument,
@@ -85,8 +85,8 @@ export function createC1Integrator(
   homeRoot: string,
   store: GoalPackageStore,
   publisher: PublicationCoordinator,
-  now: () => Date = () => new Date(),
-  layout?: C1ProjectLayout,
+  now: () => Date,
+  layout: C1ProjectLayout,
 ): C1Integrator {
   const temporaryRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'integration')
   const projectLayout = normalizeProjectLayout(store, layout)
@@ -308,19 +308,8 @@ export function createC1Integrator(
   }
 }
 
-function normalizeProjectLayout(store: GoalPackageStore, layout?: C1ProjectLayout) {
-  const candidate: C1ProjectLayout = layout ?? {
-    projectId: store.paths.projectId,
-    primaryRepoId: DEFAULT_PRIMARY_REPO_ID,
-    repos: [
-      {
-        repoId: DEFAULT_PRIMARY_REPO_ID,
-        integrationRoot: store.paths.projectRoot,
-        projectPath: store.paths.projectPath,
-        primary: true,
-      },
-    ],
-  }
+function normalizeProjectLayout(store: GoalPackageStore, layout: C1ProjectLayout) {
+  const candidate = layout
   const normalized: C1ProjectLayout = {
     ...candidate,
     repos: candidate.repos.map((repo) => ({

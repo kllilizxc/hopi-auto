@@ -318,6 +318,8 @@ async function createFixture(changedRepoIds: string[]) {
             dependsOn: [],
             contractRevision: 1,
             evidenceRefs: [],
+            contextRefs: [],
+            ownerMessages: [],
           },
           body: '## Acceptance Criteria\n\n- every affected Repo value equals 2.\n',
         }),

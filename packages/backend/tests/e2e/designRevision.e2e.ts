@@ -336,6 +336,8 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: `## Acceptance Criteria\n\n- Feature exports revision ${planning.attributes.contractRevision}.\n`,
       }),

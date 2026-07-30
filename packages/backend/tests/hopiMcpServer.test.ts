@@ -33,7 +33,6 @@ describe('HOPI MCP server', () => {
         ...process.env,
         HOPI_TOOL_URL: `http://127.0.0.1:${api.port}/api/internal/assistant-tool`,
         HOPI_TOOL_TOKEN: 'turn-token',
-        HOPI_TOOL_MODE: 'main',
       },
       stderr: 'pipe',
     })
@@ -226,7 +225,6 @@ describe('HOPI MCP server', () => {
         ...process.env,
         HOPI_TOOL_URL: `http://127.0.0.1:${api.port}/api/internal/assistant-tool`,
         HOPI_TOOL_TOKEN: 'internal-token',
-        HOPI_TOOL_MODE: 'internal',
       },
       stderr: 'pipe',
     })

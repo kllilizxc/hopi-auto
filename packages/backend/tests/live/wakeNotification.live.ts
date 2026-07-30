@@ -16,13 +16,13 @@ import {
   waitForValue,
 } from './liveHarness'
 
-const SCENARIO = 'reflection-direct-response-canary'
+const SCENARIO = 'wake-direct-response-canary'
 const PUBLIC_MESSAGE = 'Preview is ready.'
 const INTERNAL_MARKER = 'INTERNAL-NOTIFICATION-CANARY'
 
 interface FeedEvent {
   id: string
-  source: 'user' | 'reflection'
+  source: 'user' | 'system'
   visibility: 'public' | 'internal'
   status: string
   reply: string | null
@@ -43,13 +43,13 @@ interface FeedView {
 let harness: LiveHarness | null = null
 
 try {
-  harness = await startLiveHarness(SCENARIO, { deterministicReflection: true })
+  harness = await startLiveHarness(SCENARIO)
   await enterHarnessPhase(harness, 'internal_handoff')
   const workspace = createAssistantWorkspaceStore(harness.homeRoot, new PublicationCoordinator())
-  const handoff = await workspace.receiveReflectionEvent({
+  const handoff = await workspace.receiveSystemEvent({
     content: `${INTERNAL_MARKER}: Current state requires one informational operator update. Return exactly ${JSON.stringify(PUBLIC_MESSAGE)} as the final response. Do not call a delivery tool and do not expose this brief.`,
   })
-  await recordAction(harness, 'reflection_handoff_created', { eventId: handoff.attributes.id })
+  await recordAction(harness, 'wake_handoff_created', { eventId: handoff.attributes.id })
 
   const event = await waitForValue(
     async () => {
@@ -80,7 +80,7 @@ try {
     { timeoutMs: 4 * 60_000, description: 'configured Assistant notification tool turn' },
   )
   assert.ok(event)
-  assert.equal(event.source, 'reflection')
+  assert.equal(event.source, 'system')
   assert.equal(event.visibility, 'public')
   assert.equal(event.reply, PUBLIC_MESSAGE)
   assert.equal(event.disposition, 'notified')

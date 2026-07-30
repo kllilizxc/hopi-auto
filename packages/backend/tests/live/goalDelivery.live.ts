@@ -131,7 +131,7 @@ try {
     (value) => value.current?.lifecycle === 'done' && value.activeForGoal.length === 0,
     { timeoutMs: 15 * 60_000, description: `Goal ${goalId} to converge` },
   )
-  await waitForReflectionQuiescence(harness, goalId)
+  await waitForWakeQuiescence(harness, goalId)
   await recorder.stop()
   await markHarnessCheckpoint(harness, 'goal_converged')
 
@@ -187,26 +187,26 @@ try {
   throw error
 }
 
-async function waitForReflectionQuiescence(harness: LiveHarness, goalId: string) {
+async function waitForWakeQuiescence(harness: LiveHarness, goalId: string) {
   let stableSince = 0
   let previous = ''
   await waitForValue(
     async () => {
-      const [state, reflections, pendingInbox] = await Promise.all([
+      const [state, wakes, pendingInbox] = await Promise.all([
         requestJson<LiveState>(harness.baseUrl, '/api/state'),
         requestJson<{
-          items: Array<{ manifest: { reflectionId: string; status: string } }>
-        }>(harness.baseUrl, '/api/debug/reflections?limit=100'),
+          items: Array<{ manifest: { wakeId: string; status: string } }>
+        }>(harness.baseUrl, '/api/debug/wakes?limit=100'),
         readPendingInboxEvents(harness.homeRoot),
       ])
       const goal = state.projects
         .find((project) => project.projectId === PROJECT_ID)
         ?.goals.find((candidate) => candidate.id === goalId)
-      const signature = JSON.stringify({ state, reflections: reflections.items, pendingInbox })
+      const signature = JSON.stringify({ state, wakes: wakes.items, pendingInbox })
       const quiet =
         goal?.lifecycle === 'done' &&
         state.activeRuns.length === 0 &&
-        reflections.items.every((item) => item.manifest.status !== 'running') &&
+        wakes.items.every((item) => item.manifest.status !== 'running') &&
         pendingInbox.length === 0
       if (!quiet || signature !== previous) {
         previous = signature
@@ -215,6 +215,6 @@ async function waitForReflectionQuiescence(harness: LiveHarness, goalId: string)
       return { quiet, stableFor: stableSince ? Date.now() - stableSince : 0 }
     },
     (value) => value.quiet && value.stableFor >= 6_000,
-    { timeoutMs: 5 * 60_000, description: `post-completion Reflection for ${goalId} to settle` },
+    { timeoutMs: 5 * 60_000, description: `post-completion Wake for ${goalId} to settle` },
   )
 }

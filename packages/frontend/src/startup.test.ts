@@ -41,8 +41,8 @@ test('product surfaces and compact Assistant load behind explicit boundaries', a
     'const shouldRenderAssistant = projectOnlyRoute || assistantDocked || assistantActivated',
   )
   expect(layout).toContain('setAssistantActivated(true)')
-  expect(assistant).toContain("const ReflectionDebugPanel = lazy(() =>")
-  expect(assistant).toContain("import('./ReflectionDebugPanel')")
+  expect(assistant).toContain("const WakeDebugPanel = lazy(() =>")
+  expect(assistant).toContain("import('./WakeDebugPanel')")
   expect(build).toContain('splitting: true')
 })
 

@@ -83,8 +83,8 @@ export interface PreviewManager {
     projectRoot: string
     releaseHeads: Readonly<Record<string, string>>
     requestedBy: PreviewStartRequester
-    primaryRepoId?: string
-    repoRoots?: readonly ProjectPreparationRepoRoot[]
+    primaryRepoId: string
+    repoRoots: readonly ProjectPreparationRepoRoot[]
     runtimeInputs?: Readonly<PreviewRuntimeInputs>
   }): Promise<PreviewStartResult>
   stop(projectId: string, reason?: PreviewStoppedReason): Promise<PreviewSession | null>

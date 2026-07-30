@@ -81,6 +81,7 @@ function decide(
     runtime: {
       projectEligible: true,
       liveRunWorkIds: new Set(),
+      settledFailureWorkIds: new Set(),
       passCapacity: { planner: true, generator: true, reviewer: true },
       ...overrides,
     },
@@ -120,6 +121,8 @@ function work(
     dependsOn,
     contractRevision: 1,
     evidenceRefs: stage === 'done' && kind === 'engineering' ? ['E-1'] : [],
+    contextRefs: [],
+    ownerMessages: [],
   }
   return kind === 'planning'
     ? { attributes: { ...common, kind, stage: stage as 'plan' | 'done' }, body: '' }

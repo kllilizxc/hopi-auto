@@ -1,13 +1,7 @@
 import { splitAssistantText } from './assistantText'
-import type { AgentTranscriptTransport } from './runtimeEvents'
+import type { AssistantTransport } from './vendorAdapter'
 
-export type AssistantTransport = Exclude<AgentTranscriptTransport, 'process'>
-
-export interface VendorSession {
-  transport: AssistantTransport
-  sessionId: string
-  executionKey?: string
-}
+export type { AssistantTransport, VendorSession } from './vendorAdapter'
 
 export interface VendorAssistantTerminalError {
   message: string
@@ -22,15 +16,8 @@ export interface VendorAssistantOutput {
   assistantText?: string
   finalText?: string
   structuredOutput?: unknown
-  interactiveTool?: string
   terminalError?: VendorAssistantTerminalError
 }
-
-const INTERACTIVE_RESPONSIBILITY_TOOLS = new Set([
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'AskUserQuestion',
-])
 
 export function parseVendorAssistantOutput(
   transport: AssistantTransport,
@@ -42,13 +29,14 @@ export function parseVendorAssistantOutput(
   if (transport === 'codex') {
     const eventType = stringValue(parsed.type)
     const failure = errorText(parsed.error) ?? stringValue(parsed.message)
+    const sessionId = stringValue(parsed.thread_id) ?? stringValue(parsed.threadId)
     return {
-      sessionId: stringValue(parsed.thread_id) ?? stringValue(parsed.threadId),
+      ...(sessionId ? { sessionId } : {}),
       ...(eventType === 'turn.failed' && failure
         ? {
             terminalError: {
               message: failure,
-              sessionInvalid: isExplicitSessionFailure(failure),
+              sessionInvalid: false,
             },
           }
         : {}),
@@ -72,7 +60,7 @@ export function parseVendorAssistantOutput(
             message: failure,
             status,
             terminalReason,
-            sessionInvalid: isExplicitSessionFailure(terminalReason, error, failure),
+            sessionInvalid: parsed.subtype === 'error_during_execution',
           },
         }
       }
@@ -87,24 +75,20 @@ export function parseVendorAssistantOutput(
           },
         }
       }
-      const interactiveTool = deniedInteractiveTool(parsed.permission_denials)
       return {
         sessionId,
         finalText: text.visibleText,
         ...(parsed.structured_output !== undefined
           ? { structuredOutput: parsed.structured_output }
           : {}),
-        ...(interactiveTool ? { interactiveTool } : {}),
       }
     }
     if (eventType !== 'assistant') return { sessionId }
 
-    const interactiveTool = contentInteractiveTool(message?.content)
     return {
       sessionId,
       messageId: stringValue(message?.id),
       assistantText: contentText(message?.content),
-      ...(interactiveTool ? { interactiveTool } : {}),
     }
   }
 
@@ -116,7 +100,7 @@ export function parseVendorAssistantOutput(
       sessionId,
       terminalError: {
         message: failure,
-        sessionInvalid: isExplicitSessionFailure(failure),
+        sessionInvalid: false,
       },
     }
   }
@@ -127,50 +111,6 @@ export function parseVendorAssistantOutput(
     messageId: stringValue(part?.messageID) ?? stringValue(part?.messageId),
     assistantText: stringValue(part?.text),
   }
-}
-
-function contentInteractiveTool(value: unknown) {
-  if (!Array.isArray(value)) return undefined
-  for (const entry of value) {
-    const block = objectValue(entry)
-    const name = stringValue(block?.name)
-    if (block?.type === 'tool_use' && name && INTERACTIVE_RESPONSIBILITY_TOOLS.has(name)) {
-      return name
-    }
-  }
-  return undefined
-}
-
-function deniedInteractiveTool(value: unknown) {
-  if (!Array.isArray(value)) return undefined
-  for (const entry of value) {
-    const name = stringValue(objectValue(entry)?.tool_name)
-    if (name && INTERACTIVE_RESPONSIBILITY_TOOLS.has(name)) return name
-  }
-  return undefined
-}
-
-export function isExplicitSessionFailure(...details: Array<string | undefined>) {
-  const normalized = details
-    .filter((detail): detail is string => Boolean(detail))
-    .join(' ')
-    .toLowerCase()
-    .replaceAll(/[._-]+/g, ' ')
-  if (!normalized) return false
-  return (
-    /\b(session|conversation|thread)\b.{0,80}\b(not found|missing|invalid|expired|incompatible)\b/.test(
-      normalized,
-    ) ||
-    /\b(no|unknown|missing|invalid|expired|incompatible)\b.{0,80}\b(session|conversation|thread)\b/.test(
-      normalized,
-    ) ||
-    /\b(maximum|max)\b.{0,40}\b(context length|context window)\b.{0,120}\b(exceed|requested|too (?:large|long))\b/.test(
-      normalized,
-    ) ||
-    /\b(context length|context window|prompt)\b.{0,80}\b(exceed|too (?:large|long)|maximum|max)\b/.test(
-      normalized,
-    )
-  )
 }
 
 function contentText(value: unknown) {

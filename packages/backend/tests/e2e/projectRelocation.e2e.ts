@@ -57,7 +57,12 @@ try {
     web: await gitOutput(sourceWeb, ['rev-parse', projectReleaseRef(PROJECT_ID)]),
     api: await gitOutput(sourceApi, ['rev-parse', projectReleaseRef(PROJECT_ID)]),
   }
-  const runtime = await createMvpRuntime({ homeRoot: sourceHome, start: false })
+  const runtime = await createMvpRuntime({
+    homeRoot: sourceHome,
+    assistantToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    onProjectTopologyChanged() {},
+    start: false,
+  })
   const request = await runtime.workspace.receiveEvent({
     eventId: 'EV-relocation-create',
     content: 'Create a portable relocation Goal from this reference image.',
@@ -234,13 +239,15 @@ try {
     ).text(),
     /Preserve identity/,
   )
-  assert.match(
-    await Bun.file(
-      relocatedGoalStore.paths.absolute(
-        `${relocatedGoalStore.paths.designRoot(GOAL_ID)}/references.md`,
-      ),
-    ).text(),
-    /Preserve this exact visual/,
+  const relocatedReference = [...relocatedPackage.works.values()]
+    .flatMap((work) => work.attributes.contextRefs)
+    .find((reference) => reference.purpose.includes('Preserve this exact visual'))
+  assert.ok(relocatedReference)
+  assert.deepEqual(
+    new Uint8Array(
+      await Bun.file(relocatedGoalStore.paths.absolute(relocatedReference.path)).arrayBuffer(),
+    ),
+    imageBytes,
   )
   assert.equal(relocatedRequest?.attributes.reply, 'Relocation Goal created.')
   assert.deepEqual(
@@ -252,7 +259,7 @@ try {
   assert.deepEqual(
     relocatedSession,
     { transport: 'codex', sessionId: 'relocation-session' },
-    'Disposable Reflection runs must not replace the persistent speaking Session',
+    'Disposable Wake runs must not replace the persistent speaking Session',
   )
   assert.ok(
     durable.attentions.some(

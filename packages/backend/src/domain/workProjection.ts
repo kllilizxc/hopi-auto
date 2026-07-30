@@ -1,4 +1,4 @@
-import { responsibilityFor } from '../runtime/softwareDeliveryProfile'
+import { responsibilityFor } from '../runtime/softwareDelivery'
 import { type WorkAttributes, isWorkTerminal } from './canonicalDocuments'
 import type { GoalPackage } from './goalPackage'
 
@@ -18,17 +18,16 @@ export type WorkReadinessReason =
   | 'stale_contract_revision'
   | 'dependency_incomplete'
   | 'not_before'
-  | 'attention'
   | 'failed_attempt'
   | 'live_run'
   | 'capacity'
-  | 'no_profile_pass'
+  | 'no_responsibility'
 
 export interface WorkRuntimeFacts {
   projectEligible: boolean
   liveRunWorkIds: ReadonlySet<string>
-  settledFailureWorkIds?: ReadonlySet<string>
-  passCapacity: Partial<Record<'planner' | 'generator' | 'reviewer', boolean>>
+  settledFailureWorkIds: ReadonlySet<string>
+  passCapacity: Record<'planner' | 'generator' | 'reviewer', boolean>
   now?: Date
 }
 
@@ -82,14 +81,14 @@ export function deriveWorkProjection(
   }
   const scheduled = work.notBefore !== null && Date.parse(work.notBefore) > now.getTime()
   if (scheduled) failedPredicates.push('not_before')
-  const failedAttempt = runtime.settledFailureWorkIds?.has(work.id) ?? false
+  const failedAttempt = runtime.settledFailureWorkIds.has(work.id)
   if (failedAttempt) failedPredicates.push('failed_attempt')
   const working = runtime.liveRunWorkIds.has(work.id)
   if (working) failedPredicates.push('live_run')
   if (responsibility && runtime.passCapacity[responsibility] === false) {
     failedPredicates.push('capacity')
   }
-  if (!terminal && !responsibility) failedPredicates.push('no_profile_pass')
+  if (!terminal && !responsibility) failedPredicates.push('no_responsibility')
 
   const ready = failedPredicates.length === 0
   return {

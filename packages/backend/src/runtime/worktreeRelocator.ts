@@ -1,5 +1,6 @@
 import { cp, lstat, mkdir, readdir, readlink, realpath, rename, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { writeTextAtomically } from '../storage/atomicFile'
 
 export interface RelocateRegisteredWorktreeInput {
   repoRoot: string
@@ -8,7 +9,7 @@ export interface RelocateRegisteredWorktreeInput {
   expectedBranch: string
 }
 
-export class WorktreeRelocationError extends Error {}
+class WorktreeRelocationError extends Error {}
 
 export async function relocateRegisteredWorktree(
   input: RelocateRegisteredWorktreeInput,
@@ -78,12 +79,14 @@ async function copyAcrossDevices(
       verbatimSymlinks: true,
     })
     await rename(temporary, to)
-    await writeAtomically(join(to, '.git'), `gitdir: ${before.adminRoot}\n`)
-    await writeAtomically(join(before.adminRoot, 'gitdir'), `${join(to, '.git')}\n`)
+    await writeTextAtomically(join(to, '.git'), `gitdir: ${before.adminRoot}\n`)
+    await writeTextAtomically(join(before.adminRoot, 'gitdir'), `${join(to, '.git')}\n`)
     await assertSameWorktree(before, repoRoot, to, expectedBranch)
     await rm(from, { recursive: true, force: true })
   } catch (error) {
-    await writeAtomically(join(before.adminRoot, 'gitdir'), previousAdminPointer).catch(() => {})
+    await writeTextAtomically(join(before.adminRoot, 'gitdir'), previousAdminPointer).catch(
+      () => {},
+    )
     await rm(temporary, { recursive: true, force: true })
     await rm(to, { recursive: true, force: true })
     throw new WorktreeRelocationError(
@@ -125,7 +128,7 @@ async function recoverCompletedRelocation(input: {
     return false
   }
   if (!input.sourceExists && resolve(adminGitdir || '.') === sourceGitFile) {
-    await writeAtomically(join(targetPointer, 'gitdir'), `${targetGitFile}\n`)
+    await writeTextAtomically(join(targetPointer, 'gitdir'), `${targetGitFile}\n`)
     await inspectWorktree(input.repoRoot, input.to, input.expectedBranch)
     return true
   }
@@ -206,12 +209,6 @@ async function directoryDigest(root: string) {
       await append(join(path, entry), relativePath ? `${relativePath}/${entry}` : entry)
     }
   }
-}
-
-async function writeAtomically(path: string, content: string) {
-  const temporary = `${path}.hopi-tmp-${crypto.randomUUID()}`
-  await Bun.write(temporary, content)
-  await rename(temporary, path)
 }
 
 async function git(cwd: string, args: string[]) {

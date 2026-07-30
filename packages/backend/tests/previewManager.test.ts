@@ -7,7 +7,7 @@ import {
   createPreviewManager,
   makePreviewAdapterExecutable,
 } from '../src/runtime/previewManager'
-import type { ProjectPreparer } from '../src/runtime/projectPreparation'
+import type { ProjectPreparationRepoRoot, ProjectPreparer } from '../src/runtime/projectPreparation'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'preview-manager')
 
@@ -192,6 +192,8 @@ describe('PreviewManager', () => {
         projectRoot: temporaryRoot,
         requestedBy: 'assistant',
         releaseHeads: { primary: 'release-head' },
+        primaryRepoId: 'primary',
+        repoRoots: [{ repoId: 'primary', path: temporaryRoot }],
         runtimeInputs: {
           first: '界'.repeat(4_000),
           second: '界'.repeat(4_000),
@@ -302,6 +304,8 @@ describe('PreviewManager', () => {
         projectRoot,
         requestedBy: 'assistant',
         releaseHeads,
+        primaryRepoId: 'primary',
+        repoRoots: [{ repoId: 'primary', path: projectRoot }],
       })
 
       expect(result).toMatchObject({
@@ -778,6 +782,8 @@ describe('PreviewManager', () => {
         projectRoot,
         requestedBy: 'assistant',
         releaseHeads,
+        primaryRepoId: 'primary',
+        repoRoots: [{ repoId: 'primary', path: projectRoot }],
       })
       await probeEntered
       expect(manager.inspect('P-1')).toMatchObject({ status: 'starting', surfaces: [] })
@@ -838,6 +844,8 @@ describe('PreviewManager', () => {
         projectRoot,
         requestedBy: 'assistant',
         releaseHeads,
+        primaryRepoId: 'primary',
+        repoRoots: [{ repoId: 'primary', path: projectRoot }],
       })
       expect(result).toMatchObject({ kind: 'failed', reason: 'startup_failed' })
       if (result.kind !== 'failed') throw new Error('Expected failed Preview')
@@ -999,10 +1007,12 @@ describe('PreviewManager', () => {
 
 type TestPreviewStartInput = Omit<
   Parameters<PreviewManager['start']>[0],
-  'releaseHeads' | 'requestedBy'
+  'releaseHeads' | 'requestedBy' | 'primaryRepoId' | 'repoRoots'
 > & {
   releaseHeads?: Readonly<Record<string, string>>
   requestedBy?: Parameters<PreviewManager['start']>[0]['requestedBy']
+  primaryRepoId?: string
+  repoRoots?: readonly ProjectPreparationRepoRoot[]
 }
 
 function createTestPreviewManager(options: PreviewManagerOptions = {}) {
@@ -1027,6 +1037,8 @@ function createTestPreviewManager(options: PreviewManagerOptions = {}) {
         ...input,
         requestedBy: input.requestedBy ?? 'assistant',
         releaseHeads,
+        primaryRepoId: input.primaryRepoId ?? 'primary',
+        repoRoots: repos,
       })
     },
   }

@@ -144,6 +144,8 @@ async function setup() {
     projectId: 'P-1',
     goalId: 'G-1',
     workId: 'W-1',
+    repoId: project.primaryRepoId,
+    primaryRepoId: project.primaryRepoId,
   })
   return {
     repoPath,

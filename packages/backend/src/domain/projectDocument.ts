@@ -1,10 +1,10 @@
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
-import type { ProjectDocument, ProjectRepoDocument } from './project'
+import type { ProjectDocument } from './project'
 import { isNormalizedProjectPath, normalizeProjectPath } from './projectPath'
 import { stableIdSchema } from './stableId'
 
-export const projectRepoDocumentSchema = z
+const projectRepoDocumentSchema = z
   .object({
     repoId: stableIdSchema,
     projectPath: z.string().refine(isNormalizedProjectPath).optional(),
@@ -23,7 +23,7 @@ export const projectDocumentSchema = z
   })
   .strict()
 
-export class ProjectDocumentError extends Error {}
+class ProjectDocumentError extends Error {}
 
 export function parseProjectDocument(source: string): ProjectDocument {
   let value: unknown
@@ -96,17 +96,6 @@ export function withRepoRelease(
 
 export function repoRelease(document: ProjectDocument, repoId: string) {
   return document.repos.find((repo) => repo.repoId === repoId)?.releaseCommit
-}
-
-export function sortProjectRepos(
-  primaryRepoId: string,
-  repos: readonly ProjectRepoDocument[],
-): ProjectRepoDocument[] {
-  return [...repos].sort((left, right) => {
-    if (left.repoId === primaryRepoId) return right.repoId === primaryRepoId ? 0 : -1
-    if (right.repoId === primaryRepoId) return 1
-    return left.repoId.localeCompare(right.repoId)
-  })
 }
 
 function errorMessage(error: unknown) {

@@ -20,7 +20,7 @@ const SCENARIO = 'long-conversation-session-recovery'
 const SESSION_PATH = ['.hopi', 'runtime', 'assistant', 'session.json']
 const OLD_MARKER = 'OLD-HISTORY-MARKER'
 const NEW_MARKER = 'NEW-HISTORY-MARKER'
-const INTERNAL_MARKER = 'INTERNAL-REFLECTION-MUST-NOT-APPEAR'
+const INTERNAL_MARKER = 'INTERNAL-WAKE-MUST-NOT-APPEAR'
 
 interface FeedEvent {
   id: string
@@ -50,11 +50,11 @@ try {
 
   await enterHarnessPhase(harness, 'vendor_session_removal')
   const workspace = createAssistantWorkspaceStore(harness.homeRoot, new PublicationCoordinator())
-  const internal = await workspace.receiveReflectionEvent({
-    content: `${INTERNAL_MARKER}: this private Reflection must not be used when rebuilding public history.`,
+  const internal = await workspace.receiveSystemEvent({
+    content: `${INTERNAL_MARKER}: this private Wake brief must not be used when rebuilding public history.`,
   })
   await workspace.handleEvent(internal.attributes.id, {
-    reply: 'Hidden Reflection outcome.',
+    reply: 'Hidden Wake outcome.',
     disposition: 'answered',
   })
   const sessionPath = join(harness.homeRoot, ...SESSION_PATH)
@@ -64,7 +64,7 @@ try {
 
   await enterHarnessPhase(harness, 'session_recovery')
   const recovery =
-    '会话缓存已丢失。继续当前对话：只回复上一条公开用户消息开头那个由全大写英文和连字符组成的标记，不要回复旧消息或任何私有 Reflection 内容，也不要修改任何资源。'
+    '会话缓存已丢失。继续当前对话：只回复上一条公开用户消息开头那个由全大写英文和连字符组成的标记，不要回复旧消息或任何私有 Wake 内容，也不要修改任何资源。'
   await sendAssistantMessage(harness, recovery, { evidencePrefix: 'recovery' })
   const finalEvent = await waitForHandledEvent(harness, recovery)
   assert.ok(finalEvent)
@@ -75,7 +75,7 @@ try {
   )
   assert.ok(
     !finalEvent.reply?.includes(OLD_MARKER) && !finalEvent.reply?.includes(INTERNAL_MARKER),
-    'Rebuilt public conversation must exclude older history and internal Reflection briefs',
+    'Rebuilt public conversation must exclude older history and internal Wake briefs',
   )
   const newSession = (await Bun.file(sessionPath).json()) as { sessionId: string }
   assert.notEqual(

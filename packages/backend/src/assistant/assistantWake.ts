@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, rename } from 'node:fs/promises'
+import { appendFile, mkdir, readdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { AgentRuntimeEvent } from '../agent/runtimeEvents'
@@ -6,10 +6,12 @@ import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import {
   type InboxEventDocument,
   type WorkspaceAttentionDocument,
+  isInternalInboxSource,
   workspaceAttentionProjectId,
 } from '../domain/assistantWorkspaceDocuments'
 import { workspaceAttentionReference } from '../domain/attentionReference'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
+import { writeJsonAtomically } from '../storage/atomicFile'
 import { readDurableJsonLines, reportInvalidRuntimeRecord } from '../storage/jsonLines'
 import {
   assistantConversationScopeForEvent,
@@ -18,9 +20,9 @@ import {
 import type { AssistantStateReader, AssistantStateSnapshot } from './assistantState'
 import { assistantMaterialWakeKeys } from './assistantSupervisionContext'
 
-export type ReflectionObserveResult = 'baseline' | 'deferred' | 'unchanged' | 'running' | 'started'
+export type WakeObserveResult = 'baseline' | 'deferred' | 'unchanged' | 'running' | 'started'
 
-export interface ReflectionObservation {
+export interface WakeObservation {
   settled: boolean
   busyScopeKeys?: readonly string[]
 }
@@ -45,9 +47,9 @@ const wakeCursorSchema = z
   })
   .strict()
 
-const reflectionManifestSchema = z
+const wakeManifestSchema = z
   .object({
-    reflectionId: z.string().min(1),
+    wakeId: z.string().min(1),
     stateDigest: z.string().regex(/^[a-f0-9]{64}$/),
     scope: wakeScopeSchema,
     status: z.enum(['running', 'completed', 'interrupted', 'failed']),
@@ -58,25 +60,25 @@ const reflectionManifestSchema = z
   })
   .strict()
 
-export type ReflectionManifest = z.infer<typeof reflectionManifestSchema>
-export type ReflectionRuntimeEvent = AgentRuntimeEvent & { eventId: string; createdAt: string }
+export type WakeManifest = z.infer<typeof wakeManifestSchema>
+export type WakeRuntimeEvent = AgentRuntimeEvent & { eventId: string; createdAt: string }
 
-export interface ReflectionRunSummary {
-  manifest: ReflectionManifest
+export interface WakeRunSummary {
+  manifest: WakeManifest
   paths: { prompt: string; transcript: string; events: string }
 }
 
-export interface ReflectionRunDetail extends ReflectionRunSummary {
-  events: ReflectionRuntimeEvent[]
+export interface WakeRunDetail extends WakeRunSummary {
+  events: WakeRuntimeEvent[]
 }
 
 export interface AssistantWake {
-  observe(input: ReflectionObservation): Promise<ReflectionObserveResult>
+  observe(input: WakeObservation): Promise<WakeObserveResult>
   acknowledgeProjects(projectIds: readonly string[]): Promise<void>
   isActive(): boolean
-  listRuns(limit?: number): Promise<ReflectionRunDetail[]>
-  listRunSummaries(): Promise<ReflectionRunSummary[]>
-  readRunEvents(reflectionId: string): Promise<ReflectionRuntimeEvent[] | null>
+  listRuns(limit?: number): Promise<WakeRunDetail[]>
+  listRunSummaries(): Promise<WakeRunSummary[]>
+  readRunEvents(wakeId: string): Promise<WakeRuntimeEvent[] | null>
   waitForIdle(): Promise<void>
   stop(): Promise<void>
 }
@@ -86,7 +88,7 @@ export function createAssistantWake(options: {
   workspace: AssistantWorkspaceStore
   state: AssistantStateReader
   now?: () => Date
-  onWake?(): void
+  onWake(): void
 }): AssistantWake {
   const now = options.now ?? (() => new Date())
   const root = join(resolve(options.homeRoot), '.hopi', 'runtime', 'assistant', 'wakes')
@@ -101,7 +103,7 @@ export function createAssistantWake(options: {
       if (stopped) return 'unchanged'
       if (active) return 'running'
 
-      const snapshot = await (options.state.readForReflection?.() ?? options.state.read())
+      const snapshot = await options.state.readForWake()
       const busyScopeKeys = new Set(input.busyScopeKeys ?? [])
       const scopes = wakeScopeSnapshots(snapshot).filter(
         (candidate) => !busyScopeKeys.has(candidate.scopeKey),
@@ -117,7 +119,7 @@ export function createAssistantWake(options: {
           .filter(
             (event) =>
               event.attributes.status === 'pending' &&
-              (event.attributes.source === 'system' || event.attributes.source === 'reflection'),
+              isInternalInboxSource(event.attributes.source),
           )
           .map((event) =>
             event.attributes.context?.projectId
@@ -155,10 +157,10 @@ export function createAssistantWake(options: {
           attentionRefs: selected.attentionRefs,
         }).finally(() => {
           active = null
-          options.onWake?.()
+          options.onWake()
         })
         active = operation
-        void operation
+        await operation
         return 'started'
       }
       const eligible: Array<{
@@ -208,11 +210,11 @@ export function createAssistantWake(options: {
       const operation = publishWake(selected.scope, selected.scopeKey, selected.snapshot).finally(
         () => {
           active = null
-          options.onWake?.()
+          options.onWake()
         },
       )
       active = operation
-      void operation
+      await operation
       return 'started'
     },
 
@@ -220,7 +222,7 @@ export function createAssistantWake(options: {
       if (stopped || projectIds.length === 0) return
       await active
       const [snapshot, workspace] = await Promise.all([
-        options.state.readForReflection?.() ?? options.state.read(),
+        options.state.readForWake(),
         options.workspace.readWorkspaceForControl(),
       ])
       const scopes = new Map(
@@ -263,8 +265,8 @@ export function createAssistantWake(options: {
       return readWakeRunSummaries(runsRoot)
     },
 
-    readRunEvents(reflectionId) {
-      return readWakeRunEvents(runsRoot, reflectionId)
+    readRunEvents(wakeId) {
+      return readWakeRunEvents(runsRoot, wakeId)
     },
 
     async waitForIdle() {
@@ -309,13 +311,13 @@ export function createAssistantWake(options: {
     }
     const wakeId = `WK-${crypto.randomUUID()}`
     const runRoot = join(runsRoot, wakeId)
-    const manifestPath = join(runRoot, 'reflection.json')
+    const manifestPath = join(runRoot, 'wake.json')
     const promptPath = join(runRoot, 'prompt.md')
     const transcriptPath = join(runRoot, 'transcript.log')
     const eventsPath = join(runRoot, 'events.jsonl')
     const startedAt = now()
-    const baseManifest: ReflectionManifest = {
-      reflectionId: wakeId,
+    const baseManifest: WakeManifest = {
+      wakeId,
       stateDigest: snapshot.stateDigest,
       scope,
       status: 'running',
@@ -394,20 +396,10 @@ export function createAssistantWake(options: {
 }
 
 function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
-  const projects = new Map<string, unknown>()
-  const homeProjects: unknown[] = []
-  for (const project of snapshot.projects) {
-    const projectId =
-      isRecord(project) && typeof project.projectId === 'string' ? project.projectId : null
-    if (projectId) projects.set(projectId, project)
-    else homeProjects.push(project)
-  }
+  const projects = new Map(snapshot.projects.map((project) => [project.projectId, project]))
   const projectIds = new Set(projects.keys())
-  const attentionProjectId = (attention: unknown) => {
-    if (!isRecord(attention)) return null
-    const projectId = typeof attention.projectId === 'string' ? attention.projectId : null
-    return projectId && projectIds.has(projectId) ? projectId : null
-  }
+  const attentionProjectId = (projectId: string | null) =>
+    projectId && projectIds.has(projectId) ? projectId : null
   const delegatedRuns = (projectId: string | null) =>
     snapshot.delegations
       .filter((delegation) => delegation.sourceProjectId === projectId)
@@ -431,9 +423,9 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
         activeRuns: scopedRuns(null),
         delegations: [],
         workspaceAttentions: snapshot.workspaceAttentions.filter(
-          (attention) => attentionProjectId(attention) === null,
+          (attention) => attentionProjectId(attention.projectId) === null,
         ),
-        projects: homeProjects,
+        projects: [],
       },
     },
     ...[...projects.entries()].map(([projectId, project]) => ({
@@ -447,7 +439,7 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
           (delegation) => delegation.sourceProjectId === projectId,
         ),
         workspaceAttentions: snapshot.workspaceAttentions.filter(
-          (attention) => attentionProjectId(attention) === projectId,
+          (attention) => attentionProjectId(attention.projectId) === projectId,
         ),
         projects: [project],
       },
@@ -586,75 +578,38 @@ function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
   if (snapshot.projects.some(projectHasStaleRun)) return true
   if (snapshot.projects.some(projectHasSettledFailure)) return true
   if (snapshot.activeRuns.length > 0) return false
-  if (snapshot.workspaceAttentions.some(isOpenAttention)) return true
+  if (snapshot.workspaceAttentions.some((attention) => attention.resolvedAt === null)) return true
   return snapshot.projects.some((project) => {
-    if (!isRecord(project)) return false
     if (project.available === false) return true
-    if (!Array.isArray(project.goals)) return false
-    return project.goals.some(
-      (goal) =>
-        isRecord(goal) && Array.isArray(goal.attentions) && goal.attentions.some(isOpenAttention),
+    return project.goals.some((goal) =>
+      goal.attentions.some((attention) => attention.attributes.resolvedAt === null),
     )
   })
 }
 
-function isOpenAttention(value: unknown) {
-  if (!isRecord(value)) return false
-  const attributes = isRecord(value.attributes) ? value.attributes : value
-  return attributes.resolvedAt === null
-}
-
-function projectHasSettledFailure(project: unknown) {
-  if (!isRecord(project) || !Array.isArray(project.goals)) return false
-  return project.goals.some(
-    (goal) =>
-      isRecord(goal) &&
-      Array.isArray(goal.works) &&
-      goal.works.some(
-        (work) =>
-          isRecord(work) &&
-          isRecord(work.projection) &&
-          Array.isArray(work.projection.failedPredicates) &&
-          work.projection.failedPredicates.includes('failed_attempt'),
-      ),
+function projectHasSettledFailure(project: AssistantStateSnapshot['projects'][number]) {
+  return project.goals.some((goal) =>
+    goal.works.some((work) => work.projection?.failedPredicates.includes('failed_attempt')),
   )
 }
 
-function projectHasPublishedReviewerReject(project: unknown) {
-  if (!isRecord(project) || !Array.isArray(project.goals)) return false
-  return project.goals.some(
-    (goal) =>
-      isRecord(goal) &&
-      Array.isArray(goal.works) &&
-      goal.works.some((work) => {
-        if (!isRecord(work) || !isRecord(work.runtime)) return false
-        const latestPublished = Array.isArray(work.runtime.recentAttempts)
-          ? work.runtime.recentAttempts.find(
-              (attempt) =>
-                isRecord(attempt) &&
-                attempt.status === 'finished' &&
-                attempt.application === 'published',
-            )
-          : undefined
-        return (
-          isRecord(latestPublished) &&
-          latestPublished.responsibility === 'reviewer' &&
-          latestPublished.result === 'reject'
-        )
-      }),
+function projectHasPublishedReviewerReject(project: AssistantStateSnapshot['projects'][number]) {
+  return project.goals.some((goal) =>
+    goal.works.some((work) => {
+      const latestPublished = work.runtime.recentAttempts.find(
+        (attempt) => attempt.status === 'finished' && attempt.application === 'published',
+      )
+      return (
+        latestPublished !== undefined &&
+        latestPublished.responsibility === 'reviewer' &&
+        latestPublished.result === 'reject'
+      )
+    }),
   )
 }
 
-function projectHasStaleRun(project: unknown) {
-  if (!isRecord(project) || !Array.isArray(project.goals)) return false
-  return project.goals.some(
-    (goal) =>
-      isRecord(goal) &&
-      Array.isArray(goal.works) &&
-      goal.works.some(
-        (work) => isRecord(work) && isRecord(work.runtime) && work.runtime.stale === true,
-      ),
-  )
+function projectHasStaleRun(project: AssistantStateSnapshot['projects'][number]) {
+  return project.goals.some((goal) => goal.works.some((work) => work.runtime.stale))
 }
 
 function selectWakeScope<T extends { scopeKey: string }>(
@@ -693,10 +648,7 @@ async function writeCursor(path: string, cursor: z.infer<typeof wakeCursorSchema
 }
 
 async function writeJson(path: string, value: unknown) {
-  await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.${crypto.randomUUID()}.tmp`
-  await Bun.write(temporary, `${JSON.stringify(value, null, 2)}\n`)
-  await rename(temporary, path)
+  await writeJsonAtomically(path, value)
 }
 
 async function appendWakeEvent(path: string, event: AgentRuntimeEvent) {
@@ -716,13 +668,13 @@ async function readWakeRunSummaries(root: string) {
   const runs = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory())
-      .map(async (entry): Promise<ReflectionRunSummary | null> => {
+      .map(async (entry): Promise<WakeRunSummary | null> => {
         const runRoot = join(root, entry.name)
-        const path = join(runRoot, 'reflection.json')
+        const path = join(runRoot, 'wake.json')
         try {
-          const manifest = reflectionManifestSchema.parse(await Bun.file(path).json())
-          if (manifest.reflectionId !== entry.name) {
-            throw new Error(`Reflection identity mismatch: ${entry.name}`)
+          const manifest = wakeManifestSchema.parse(await Bun.file(path).json())
+          if (manifest.wakeId !== entry.name) {
+            throw new Error(`Wake identity mismatch: ${entry.name}`)
           }
           return {
             manifest,
@@ -739,24 +691,24 @@ async function readWakeRunSummaries(root: string) {
       }),
   )
   return runs
-    .filter((run): run is ReflectionRunSummary => run !== null)
+    .filter((run): run is WakeRunSummary => run !== null)
     .sort(
       (left, right) =>
         right.manifest.startedAt.localeCompare(left.manifest.startedAt) ||
-        right.manifest.reflectionId.localeCompare(left.manifest.reflectionId),
+        right.manifest.wakeId.localeCompare(left.manifest.wakeId),
     )
 }
 
 async function readWakeRunEvents(root: string, wakeId: string) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(wakeId)) return null
   const runRoot = join(root, wakeId)
-  const manifestPath = join(runRoot, 'reflection.json')
+  const manifestPath = join(runRoot, 'wake.json')
   const file = Bun.file(manifestPath)
   if (!(await file.exists())) return null
   try {
-    const manifest = reflectionManifestSchema.parse(await file.json())
-    if (manifest.reflectionId !== wakeId) {
-      throw new Error(`Reflection identity mismatch: ${wakeId}`)
+    const manifest = wakeManifestSchema.parse(await file.json())
+    if (manifest.wakeId !== wakeId) {
+      throw new Error(`Wake identity mismatch: ${wakeId}`)
     }
   } catch (error) {
     reportInvalidRuntimeRecord(manifestPath, error)
@@ -774,7 +726,7 @@ async function readWakeEvents(path: string) {
     ) {
       throw new Error('eventId and createdAt are required')
     }
-    return value as ReflectionRuntimeEvent
+    return value as WakeRuntimeEvent
   })
 }
 

@@ -350,48 +350,37 @@ function createInitialPlanningWork(
   input: CreateCanonicalGoalInput,
   acceptedInputPath: string | null,
 ): WorkDocument {
-  const contract = input.firstPlanningWork ?? {
-    title: 'Clarify and plan the Goal',
-    objective:
-      'Clarify the current Goal boundary and accepted Inputs, then update design and only the Engineering Work needed to reach it.',
-    acceptanceCriteria: [
-      'Material ambiguity is resolved or raised through targeted Attention.',
-      'Design and nonterminal Engineering Work reflect the current Goal boundary.',
-      'Deferred or removed outcomes do not remain in current Work or completion criteria.',
-    ],
-  }
+  const contract = input.firstPlanningWork
   return {
     attributes: {
       id: 'plan-initial',
-      title: contract.title.trim(),
+      title: contract?.title.trim() ?? 'Plan current Goal',
       kind: 'planning',
       stage: 'plan',
       notBefore: null,
       dependsOn: [],
       contractRevision: 1,
       evidenceRefs: [],
+      contextRefs: [
+        ...(acceptedInputPath
+          ? [{ path: acceptedInputPath, purpose: 'Accepted Inbox input' }]
+          : []),
+        ...(input.planningReferences ?? []),
+      ],
+      ownerMessages: [],
     },
-    body: [
-      '## Objective',
-      '',
-      contract.objective.trim(),
-      '',
-      '## Acceptance Criteria',
-      '',
-      ...contract.acceptanceCriteria.map((criterion) => `- ${criterion.trim()}`),
-      '',
-      ...(acceptedInputPath ? ['## Accepted Inputs', '', `- ${acceptedInputPath}`, ''] : []),
-      ...(input.planningReferences?.length
-        ? [
-            '## Reference Images',
-            '',
-            ...input.planningReferences.map(
-              (reference) => `- \`${reference.path}\` - ${reference.purpose.trim()}`,
-            ),
-            '',
-          ]
-        : []),
-    ].join('\n'),
+    body: contract
+      ? [
+          '## Objective',
+          '',
+          contract.objective.trim(),
+          '',
+          '## Acceptance Criteria',
+          '',
+          ...contract.acceptanceCriteria.map((criterion) => `- ${criterion.trim()}`),
+          '',
+        ].join('\n')
+      : '',
   }
 }
 
@@ -404,8 +393,6 @@ function initialDesign(input: CreateCanonicalGoalInput) {
     input.objective.trim(),
     '',
     '## Current Design',
-    '',
-    'Planner will record established decisions here before exposing Engineering Work.',
     '',
   ].join('\n')
 }

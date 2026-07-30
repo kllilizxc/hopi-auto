@@ -2,7 +2,7 @@ import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import { isEngineeringWork, parseWorkDocument } from '../domain/canonicalDocuments'
-import { DEFAULT_PRIMARY_REPO_ID, projectReleaseRef } from '../domain/project'
+import { projectReleaseRef } from '../domain/project'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
@@ -18,8 +18,8 @@ import { recordProjectSystemEvent } from './projectSystemEvent'
 export interface CoordinatorBootstrapProject {
   projectId: string
   projectRoot: string
-  primaryRepoId?: string
-  repos?: readonly C1ProjectRepo[]
+  primaryRepoId: string
+  repos: readonly C1ProjectRepo[]
   store: GoalPackageStore
 }
 
@@ -81,16 +81,8 @@ export async function recoverCoordinatorProject(
   home: AssistantHomeStore,
   project: CoordinatorBootstrapProject,
 ) {
-  const linkedBeforeValidation = await home.readProject(project.projectId)
-  const primaryRepoId = project.primaryRepoId ?? linkedBeforeValidation.primaryRepoId
-  const repos =
-    project.repos ??
-    linkedBeforeValidation.repos.map((repo) => ({
-      repoId: repo.repoId,
-      integrationRoot: repo.integrationRoot,
-      projectPath: repo.projectPath,
-      primary: repo.primary,
-    }))
+  const primaryRepoId = project.primaryRepoId
+  const repos = project.repos
   for (const repo of repos) {
     await removeAbandonedTemporaryFiles(
       repo.integrationRoot,
@@ -123,7 +115,7 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
   }
   await reconcileManagedIntegrationSource(
     {
-      repoId: project.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID,
+      repoId: project.primaryRepoId,
       integrationRoot: project.projectRoot,
       primary: true,
     },
@@ -153,14 +145,11 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
   }
 
   const packages = new Map<string, Awaited<ReturnType<GoalPackageStore['readPackage']>>>()
-  const completionLayout = project.repos
-    ? {
-        projectId: project.projectId,
-        primaryRepoId:
-          project.primaryRepoId ?? project.repos.find((repo) => repo.primary)?.repoId ?? 'primary',
-        repos: project.repos,
-      }
-    : undefined
+  const completionLayout = {
+    projectId: project.projectId,
+    primaryRepoId: project.primaryRepoId,
+    repos: project.repos,
+  }
   for (const goalId of await project.store.listGoalIds()) {
     const goalPackage = await project.store.readPackage(goalId)
     packages.set(goalId, goalPackage)

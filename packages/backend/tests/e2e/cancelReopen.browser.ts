@@ -211,6 +211,8 @@ async function writeWork(root: string, id: string, revision: number, dependsOn: 
         dependsOn,
         contractRevision: revision,
         evidenceRefs: [],
+        contextRefs: [],
+        ownerMessages: [],
       },
       body: '## Acceptance Criteria\n\n- Feature equals 2.\n',
     }),

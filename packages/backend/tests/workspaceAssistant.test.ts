@@ -937,7 +937,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('use these exact references in HOPI tool calls')
   })
 
-  test('HOPI-E2E-010 contracts conversation and page context without Goal effects', async () => {
+  test('HOPI-E2E-010 supplies bounded page context without inventing Goal effects', async () => {
     const seen: Array<{ sessionId: string | null; prompt: string }> = []
     const fixture = await setup(() => ({
       async run(input, observer) {
@@ -978,21 +978,19 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
     expect(seen[0]?.prompt).not.toContain('[Current execution environment observation]')
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
-    expect(seen[0]?.prompt).not.toContain('[Current Project state and unresolved Attention')
-    expect(seen[0]?.prompt).not.toContain('"lifecycle": "active"')
+    expect(seen[0]?.prompt).toContain('[Current Project state and unresolved Attention')
+    expect(seen[0]?.prompt).toContain('"lifecycle": "active"')
     expect(seen[0]?.prompt).not.toContain('Role: HOPI Project owner')
     expect(seen[0]?.prompt).not.toContain('Each Engineering Work receives every Repo binding')
     expect(seen[0]?.prompt).toContain('rejection wakes supervision without blocking repair')
     expect(seen[0]?.prompt).toContain(
       'A Work requested in this turn can start only after the turn settles',
     )
-    expect(seen[0]?.prompt).toContain('hopi_manage_attention persists Project Attention')
-    expect(seen[0]?.prompt).toContain('resolves exact Project or Goal Attention references')
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
-    expect(seen[0]?.prompt).toContain('Reply with outcome and action in 1-2 sentences')
+    expect(seen[0]?.prompt).not.toContain('Reply with outcome and action in 1-2 sentences')
     expect(seen[0]?.prompt).toContain('Project Preview is one local managed runtime')
-    expect(seen[0]?.prompt).toContain('omit internals unless asked or decision-relevant')
-    expect(seen[0]?.prompt).toContain('Only HOPI operatorUrl is linkable')
+    expect(seen[0]?.prompt).not.toContain('omit internals unless asked or decision-relevant')
+    expect(seen[0]?.prompt).not.toContain('Only HOPI operatorUrl is linkable')
     expect(seen[0]?.prompt).toContain('task worktrees are disposable')
     expect(seen[0]?.prompt).toContain('$HOPI_CACHE_DIR persists')
     expect(seen[0]?.prompt).toContain('detached descendants have no HOPI lifecycle')
@@ -1000,11 +998,11 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('answer without polling')
     expect(seen[0]?.prompt).not.toContain('[Operator-facing reply contract]')
     expect(seen[0]?.prompt).not.toContain('Default to one or two short sentences')
-    expect(seen[0]?.prompt.length).toBeLessThan(1_500)
+    expect(seen[0]?.prompt.length).toBeLessThan(10_000)
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
   })
 
-  test('reads current Goal state only when the model requests it', async () => {
+  test('lets the model refresh current Goal state when it requests it', async () => {
     let prompt = ''
     let stateResult: unknown
     const fixture = await setup((tools) => ({
@@ -1026,7 +1024,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-observe')
 
-    expect(prompt).not.toContain('[Current scoped HOPI state observation]')
+    expect(prompt).toContain('[Current Project state and unresolved Attention')
     expect(JSON.stringify(stateResult)).toContain('"lifecycle":"active"')
     expect(JSON.stringify(stateResult)).toContain('"eventId":"EV-observe"')
   })
@@ -1339,7 +1337,7 @@ describe('WorkspaceAssistant conversation', () => {
     })
   })
 
-  test('rebuilds from bounded public history without internal Reflection briefs', async () => {
+  test('rebuilds from bounded public history without internal Wake briefs', async () => {
     let prompt = ''
     const fixture = await setup(() => ({
       async run(input, observer) {
@@ -1364,7 +1362,7 @@ describe('WorkspaceAssistant conversation', () => {
       reply: 'New reply.',
       disposition: 'answered',
     })
-    await fixture.workspace.receiveReflectionEvent({
+    await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-internal',
       content: 'INTERNAL-BRIEF-MUST-NOT-REBUILD',
     })
@@ -1556,6 +1554,9 @@ describe('WorkspaceAssistant conversation', () => {
             stateReads.push(input)
             return snapshot
           },
+          async readForWake() {
+            return snapshot
+          },
         },
       },
     )
@@ -1590,21 +1591,18 @@ describe('WorkspaceAssistant conversation', () => {
 
   test('accepts a transient continuation-only internal handoff without a second model call', async () => {
     let calls = 0
-    const fixture = await setup(
-      (tools) => ({
-        async run(input) {
-          calls += 1
-          await tools.execute(input.toolToken, 'hopi_control_work', {
-            projectId: 'P-1',
-            goalId: 'G-1',
-            workId: 'plan-initial',
-            action: { kind: 'continue' },
-          })
-          return { reply: '', session: codexSession('thread-atomic-retry') }
-        },
-      }),
-      { includeState: true },
-    )
+    const fixture = await setup((tools) => ({
+      async run(input) {
+        calls += 1
+        await tools.execute(input.toolToken, 'hopi_control_work', {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          workId: 'plan-initial',
+          action: { kind: 'continue' },
+        })
+        return { reply: '', session: codexSession('thread-atomic-retry') }
+      },
+    }))
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
       fixture.goalStore,
@@ -1824,7 +1822,7 @@ describe('WorkspaceAssistant conversation', () => {
 
 async function setup(
   buildRunner: (tools: ReturnType<typeof createAssistantTools>) => AssistantModelRunner,
-  options: { assistantState?: AssistantStateReader; includeState?: boolean } = {},
+  options: { assistantState?: AssistantStateReader } = {},
 ) {
   const repoRoot = join(temporaryRoot, 'repo')
   await mkdir(repoRoot, { recursive: true })
@@ -1853,10 +1851,25 @@ async function setup(
       {
         projectId: 'P-1',
         projectRoot: linked.integrationRoot,
+        sourceRoot: linked.integrationRoot,
+        primaryRepoId: linked.primaryRepoId,
+        repos: linked.repos,
         store: goalStore,
         controller,
         reconciler: {
           interruptRuns() {},
+          async interruptQueuedRuns() {
+            return 0
+          },
+          liveWorkIds() {
+            return new Set<string>()
+          },
+          async decisionWhenEligible() {
+            return { kind: 'wait' as const, reasons: [] }
+          },
+          async settledFailureWorkIds() {
+            return new Set<string>()
+          },
           async requestWorkRun(goalId: string, workId: string) {
             return attempts.reserve({
               projectId: 'P-1',
@@ -1885,17 +1898,23 @@ async function setup(
     preview,
     projects,
     state,
+    onProjectTopologyChanged() {},
+    async onProjectRecoveryRequested() {
+      return { eligible: true }
+    },
+    onGoalEffect() {},
+    onProjectDispatchEffect() {},
+    onToolEffect() {},
   })
   const assistant = createWorkspaceAssistant({
     homeRoot,
     workspace,
     conversation,
     tools,
-    ...(options.assistantState || options.includeState
-      ? { state: options.assistantState ?? state }
-      : {}),
+    state: options.assistantState ?? state,
     runner: buildRunner(tools),
     resolveToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    onTurnSettled() {},
     now: () => new Date('2026-07-11T00:00:00Z'),
   })
   return { homeRoot, workspace, conversation, goalStore, controller, tools, assistant }

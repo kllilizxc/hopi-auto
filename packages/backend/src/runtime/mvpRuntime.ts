@@ -13,9 +13,9 @@ import {
 import { ensureDefaultAgentAdapterConfig } from '../agent/defaultAdapterConfig'
 import { assistantConversationScopeForEvent } from '../assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../assistant/assistantConversationStore'
-import { createAssistantWake } from '../assistant/assistantReflection'
 import { createAssistantStateReader } from '../assistant/assistantState'
 import { createAssistantTools } from '../assistant/assistantTools'
+import { createAssistantWake } from '../assistant/assistantWake'
 import {
   type AssistantModelRunner,
   createConfiguredAssistantModelRunner,
@@ -40,7 +40,8 @@ import { createPreviewManager } from './previewManager'
 import { recordProjectSystemEvent } from './projectSystemEvent'
 import { createResponsibilitySessionStore } from './responsibilitySessionStore'
 import { type RunAttemptStore, createRunAttemptStore } from './runAttemptStore'
-import { readSoftwareDeliveryProfile } from './softwareDeliveryProfile'
+import { createRuntimeCoordination } from './runtimeCoordination'
+import { SOFTWARE_DELIVERY_CONCURRENCY } from './softwareDelivery'
 import { createWorkspaceAttentionController } from './workspaceAttentionController'
 
 export interface MvpProjectRuntime {
@@ -68,7 +69,7 @@ export interface MvpRuntime {
   assistantConversation: ReturnType<typeof createAssistantConversationStore>
   assistantTools: ReturnType<typeof createAssistantTools>
   assistantState: ReturnType<typeof createAssistantStateReader>
-  reflection: ReturnType<typeof createAssistantWake>
+  wake: ReturnType<typeof createAssistantWake>
   attentions: ReturnType<typeof createWorkspaceAttentionController>
   coordinator: ReturnType<typeof createCoordinatorReconciler>
   preview: ReturnType<typeof createPreviewManager>
@@ -94,15 +95,14 @@ export interface CreateMvpRuntimeOptions {
   attempts?: RunAttemptStore
   roleRunner?: RoleRunner
   assistantRunner?: AssistantModelRunner
-  assistantToolUrl?: () => string
+  assistantToolUrl: () => string
   attentionTransport?: AttentionTransport
-  onProjectTopologyChanged?: () => void
+  onProjectTopologyChanged(): void
   projectFullAccess?: (projectId: string) => boolean | Promise<boolean>
   start?: boolean
 }
 
 export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promise<MvpRuntime> {
-  const profile = await readSoftwareDeliveryProfile()
   const publisher = options.publisher ?? new PublicationCoordinator()
   const home = createAssistantHomeStore(options.homeRoot, publisher)
   await home.initialize()
@@ -115,15 +115,12 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   await assistantConversation.interruptRunning()
   const topologyChangedEvents = new Set<string>()
   const attentions = createWorkspaceAttentionController(workspace)
-  let runProjectMutation: <T>(projectId: string, operation: () => Promise<T>) => Promise<T> = (
-    _projectId,
-    operation,
-  ) => operation()
+  const coordination = createRuntimeCoordination()
   const commands = createProjectCommandRunner({
     home,
     publisher,
     workspace,
-    runProjectMutation: (projectId, operation) => runProjectMutation(projectId, operation),
+    runProjectMutation: coordination.runProjectMutation,
   })
   const adapterPath = agentAdapterConfigPath(options.homeRoot)
   const readAdapterConfig = () => readAgentAdapterConfig(adapterPath)
@@ -137,7 +134,6 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     })
   const linkedProjects = await home.listProjects()
   const projects = new Map<string, MvpProjectRuntime>()
-  let wakeCoordinator: () => void = () => undefined
   const preview = createPreviewManager(options.homeRoot, {
     onEvent: async (event) => {
       if (event.kind === 'start_failed') {
@@ -151,7 +147,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
             `Log: ${event.logPath}`,
           ],
         })
-        wakeCoordinator()
+        coordination.wake()
         return
       }
       await recordProjectSystemEvent(workspace, {
@@ -164,7 +160,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
           `Log: ${event.logPath}`,
         ],
       })
-      wakeCoordinator()
+      coordination.wake()
     },
   })
   await preview.recover()
@@ -191,7 +187,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       attempts,
       responsibilitySessions,
       goalController: controller,
-      apiOrigin: assistantToolUrl ? () => new URL(assistantToolUrl()).origin : undefined,
+      apiOrigin: () => new URL(assistantToolUrl()).origin,
       onReleaseUpdated: async ({ projectId }) => {
         await preview.stop(projectId, 'release_updated')
       },
@@ -237,8 +233,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       resolveConfig: async () => resolveAssistantTransportConfig(await readAdapterConfig()),
       fullAccess: (projectId) => options.projectFullAccess?.(projectId) ?? false,
       homeRoot: options.homeRoot,
-      resolveToolUrl:
-        options.assistantToolUrl ?? (() => 'http://127.0.0.1:3000/api/internal/assistant-tool'),
+      resolveToolUrl: options.assistantToolUrl,
     })
   const assistantState = createAssistantStateReader({
     homeRoot: options.homeRoot,
@@ -246,17 +241,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     projects,
     publisher,
     attempts,
-    concurrency: profile.concurrency,
   })
-  let restoreProjectEligibility: (
-    projectId: string,
-  ) => Promise<{ eligible: boolean; error?: string }> = async () => ({
-    eligible: false,
-    error: 'Project recovery is not initialized',
-  })
-  let protectAssistantGoal: (eventId: string, projectId: string, goalId: string) => void = () =>
-    undefined
-  let protectAssistantProject: (eventId: string, projectId: string) => void = () => undefined
   const assistantTools = createAssistantTools({
     home,
     commands,
@@ -269,9 +254,9 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       projects.set(linkedProject.projectId, createProjectRuntime(linkedProject))
       topologyChangedEvents.add(eventId)
     },
-    onProjectRecoveryRequested: (projectId) => restoreProjectEligibility(projectId),
-    onGoalEffect: (eventId, projectId, goalId) => protectAssistantGoal(eventId, projectId, goalId),
-    onProjectDispatchEffect: (eventId, projectId) => protectAssistantProject(eventId, projectId),
+    onProjectRecoveryRequested: coordination.restoreProjectEligibility,
+    onGoalEffect: coordination.protectAssistantGoal,
+    onProjectDispatchEffect: coordination.protectAssistantProject,
     onToolEffect: async (eventId, name, result) => {
       const event = await workspace.readEvent(eventId)
       if (!event || !isInternalInboxSource(event.attributes.source)) return
@@ -296,17 +281,16 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     tools: assistantTools,
     state: assistantState,
     runner: assistantRunner,
-    resolveToolUrl:
-      options.assistantToolUrl ?? (() => 'http://127.0.0.1:3000/api/internal/assistant-tool'),
+    resolveToolUrl: options.assistantToolUrl,
     onTurnSettled: async (eventId) => {
-      if (topologyChangedEvents.delete(eventId)) options.onProjectTopologyChanged?.()
+      if (topologyChangedEvents.delete(eventId)) options.onProjectTopologyChanged()
     },
   })
-  const reflection = createAssistantWake({
+  const wake = createAssistantWake({
     homeRoot: options.homeRoot,
     workspace,
     state: assistantState,
-    onWake: () => wakeCoordinator(),
+    onWake: coordination.wake,
   })
   const delivery = options.attentionTransport
     ? createAssistantReplyDeliveryWorker(workspace, options.attentionTransport)
@@ -314,22 +298,16 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   const coordinator = createCoordinatorReconciler({
     workspace,
     assistant,
-    reflection,
-    attentions,
+    wake,
     projects: [...projects.values()].map((project) => ({
       projectId: project.projectId,
       store: project.store,
       reconciler: project.reconciler,
     })),
-    concurrency: profile.concurrency,
+    concurrency: SOFTWARE_DELIVERY_CONCURRENCY,
     delivery,
   })
-  protectAssistantGoal = (eventId, projectId, goalId) =>
-    coordinator.protectAssistantGoal(eventId, projectId, goalId)
-  protectAssistantProject = (eventId, projectId) =>
-    coordinator.protectAssistantProject(eventId, projectId)
-  wakeCoordinator = () => coordinator.wake()
-  restoreProjectEligibility = async (projectId) => {
+  const restoreProjectEligibility = async (projectId: string) => {
     const project = requireProject(projects, projectId)
     try {
       await recoverCoordinatorProject(home, {
@@ -357,15 +335,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       return { eligible: false, error: message }
     }
   }
-  runProjectMutation = async (projectId, operation) => {
-    await coordinator.quiesceProject(projectId)
-    try {
-      return await operation()
-    } catch (error) {
-      await restoreProjectEligibility(projectId)
-      throw error
-    }
-  }
+  coordination.bind({ coordinator, restoreProjectEligibility })
   for (const projectId of boot.blockedProjectIds) coordinator.setProjectEligible(projectId, false)
   if (options.start !== false) coordinator.start()
 
@@ -419,7 +389,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
 
   return {
     homeRoot: options.homeRoot,
-    concurrency: profile.concurrency,
+    concurrency: SOFTWARE_DELIVERY_CONCURRENCY,
     publisher,
     home,
     workspace,
@@ -428,7 +398,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     assistantConversation,
     assistantTools,
     assistantState,
-    reflection,
+    wake,
     attentions,
     coordinator,
     preview,

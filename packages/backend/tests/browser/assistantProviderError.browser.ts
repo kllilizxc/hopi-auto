@@ -23,7 +23,7 @@ const PROVIDER_ERROR = 'API Error: Request rejected (429) · Daily provider allo
 const testRun = await startTestRun(SCENARIO, 'browser')
 const { artifactRoot, startedAt } = testRun
 const homeRoot = join(artifactRoot, 'home')
-const invocations = { main: 0, internal: 0, reflection: 0 }
+const invocations = { main: 0, internal: 0 }
 const runner: AssistantModelRunner = {
   async run(input, observer) {
     invocations[input.toolMode ?? 'main'] += 1

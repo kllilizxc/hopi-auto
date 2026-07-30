@@ -22,19 +22,16 @@ afterEach(async () => {
 })
 
 describe('GoalController', () => {
-  test('refreshes the reused Planning objective to the latest trigger', async () => {
+  test('keeps reused Planning prose model-owned', async () => {
     const { store, controller } = setup()
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
 
     await controller.ensurePlanning('G-1', 'Assess the first trigger.')
     const first = (await store.readPackage('G-1')).works.get('plan-initial')
-    expect(first?.body).toContain('Assess the first trigger.')
 
     await controller.ensurePlanning('G-1', 'Reconcile the latest accepted instruction.')
     const latest = (await store.readPackage('G-1')).works.get('plan-initial')
-    expect(latest?.body).toContain('Reconcile the latest accepted instruction.')
-    expect(latest?.body).not.toContain('Assess the first trigger.')
-    expect(latest?.body).toContain('## Acceptance Criteria')
+    expect(latest?.body).toBe(first?.body)
   })
 
   test('Pause and Resume retain lifecycle simplicity and ensure Planning before activation', async () => {
@@ -68,8 +65,8 @@ describe('GoalController', () => {
     })
 
     const revised = await controller.applyMaterialInstruction('G-1', {
-      eventId: 'EV-revise',
       contractChange: 'Add a measurable latency criterion before implementation continues.',
+      acceptedInput: acceptedInput(store, 'EV-revise'),
     })
     const goalPackage = await store.readPackage('G-1')
 
@@ -88,8 +85,8 @@ describe('GoalController', () => {
     )
 
     const repeated = await controller.applyMaterialInstruction('G-1', {
-      eventId: 'EV-revise',
       contractChange: 'Add a measurable latency criterion before implementation continues.',
+      acceptedInput: acceptedInput(store, 'EV-revise', false),
     })
     expect(repeated.attributes.contractRevision).toBe(2)
   })
@@ -117,7 +114,6 @@ describe('GoalController', () => {
     })
 
     const revised = await controller.applyMaterialInstruction('G-1', {
-      eventId: 'EV-revise',
       contractChange: 'Exercise all linked services in the local Project Preview.',
       acceptedInput: { path: inputPath, write: null },
     })
@@ -132,7 +128,6 @@ describe('GoalController', () => {
     expect(planning?.body).not.toContain('Reassess accepted Inbox event')
 
     const repeated = await controller.applyMaterialInstruction('G-1', {
-      eventId: 'EV-revise',
       contractChange: 'Exercise all linked services in the local Project Preview.',
       acceptedInput: { path: inputPath, write: null },
     })
@@ -156,8 +151,8 @@ describe('GoalController', () => {
     })
 
     const goal = await controller.applyMaterialInstruction('G-1', {
-      eventId: 'EV-recover',
       contractChange: 'Adopt the revised requirement.',
+      acceptedInput: acceptedInput(store, 'EV-recover'),
     })
 
     expect(goal.attributes.contractRevision).toBe(2)
@@ -275,10 +270,13 @@ describe('GoalController', () => {
       content: 'Check the current API response before changing the contract.',
     })
 
-    expect(updated.body).toContain('## HOPI Project Owner Messages')
-    expect(updated.body).toContain('### 2026-07-11T00:00:00.000Z')
-    expect(updated.body).toContain('Source event: EV-guidance')
-    expect(updated.body).toContain('Check the current API response before changing the contract.')
+    expect(updated.attributes.ownerMessages).toEqual([
+      {
+        recordedAt: '2026-07-11T00:00:00.000Z',
+        sourceEventId: 'EV-guidance',
+        content: 'Check the current API response before changing the contract.',
+      },
+    ])
   })
 
   test('repeats an already durable Work cancellation without creating Planning', async () => {
@@ -323,6 +321,32 @@ function setup() {
   return { store, controller }
 }
 
+function acceptedInput(
+  store: ReturnType<typeof createGoalPackageStore>,
+  eventId: string,
+  includeWrite = true,
+) {
+  const path = store.paths.inputDocument('G-1', 'H-1', eventId)
+  return {
+    path,
+    write: includeWrite
+      ? {
+          path,
+          expectedHash: null,
+          content: renderInputDocument({
+            attributes: {
+              sourceHomeId: 'H-1',
+              sourceEventId: eventId,
+              sourceDigest: 'a'.repeat(64),
+              attachments: [],
+            },
+            body: 'Apply the accepted contract change.\n',
+          }),
+        }
+      : null,
+  }
+}
+
 async function publishEngineering(
   store: ReturnType<typeof createGoalPackageStore>,
   goalId: string,
@@ -347,6 +371,8 @@ async function publishEngineering(
           dependsOn: input.dependsOn,
           contractRevision: 1,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: `Implement ${input.id}.\n`,
       }),

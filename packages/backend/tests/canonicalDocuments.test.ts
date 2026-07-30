@@ -35,6 +35,8 @@ describe('canonical Markdown documents', () => {
         dependsOn: [],
         contractRevision: 1,
         evidenceRefs: [],
+        contextRefs: [],
+        ownerMessages: [],
       },
       body: '## Objective\n\nClarify and plan.\n',
     })

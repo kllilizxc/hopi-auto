@@ -2,7 +2,10 @@ import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
-import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocuments'
+import {
+  type WorkspaceAttentionAttributes,
+  workspaceAttentionProjectId,
+} from '../domain/assistantWorkspaceDocuments'
 import {
   goalAttentionReference,
   normalizeInboxAttentionReferences,
@@ -10,6 +13,9 @@ import {
 } from '../domain/attentionReference'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
+  type AttentionAttributes,
+  type GoalAttributes,
+  type WorkAttributes,
   type WorkDocument,
   isEngineeringWork,
   isPlanningWork,
@@ -18,7 +24,7 @@ import {
 import type { GoalPackage } from '../domain/goalPackage'
 import { inboxEventReference } from '../domain/inboxEventReference'
 import { projectReleaseRef } from '../domain/project'
-import { deriveGoalWorkProjections } from '../domain/workProjection'
+import { type WorkProjection, deriveGoalWorkProjections } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
 import {
   EvidenceArtifactResolutionError,
@@ -33,33 +39,34 @@ import type {
 } from '../runtime/runAttemptStore'
 import { runStoragePath } from '../runtime/runPaths'
 import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
+import { SOFTWARE_DELIVERY_CONCURRENCY } from '../runtime/softwareDelivery'
 import { inspectSourceMerge } from '../runtime/sourceMergePreflight'
 import { createStableWorktreeManager } from '../runtime/stableWorktreeManager'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import { AssistantToolRequestError } from './assistantToolRequestError'
 
-export const DEFAULT_ATTEMPT_STALE_AFTER_MS = 10 * 60 * 1_000
+const DEFAULT_ATTEMPT_STALE_AFTER_MS = 10 * 60 * 1_000
 
 export interface AssistantStateProject {
   projectId: string
   label?: string
   projectRoot: string
-  sourceRoot?: string
-  primaryRepoId?: string
-  repos?: readonly {
-    repoId?: string
-    repoPath?: string
+  sourceRoot: string
+  primaryRepoId: string
+  repos: readonly {
+    repoId: string
+    repoPath: string
     integrationRoot: string
     projectPath: string
-    primary?: boolean
+    primary: boolean
   }[]
   store: GoalPackageStore
 }
 
 export interface AssistantStateReader {
   read(input?: AssistantStateReadInput): Promise<AssistantStateSnapshot>
-  readForReflection?(): Promise<AssistantStateSnapshot>
+  readForWake(): Promise<AssistantStateSnapshot>
 }
 
 export interface AssistantStateReadInput {
@@ -78,8 +85,8 @@ export interface AssistantStateSnapshot {
   }
   activeRuns: AssistantStateActiveRun[]
   delegations: AssistantStateDelegation[]
-  workspaceAttentions: unknown[]
-  projects: unknown[]
+  workspaceAttentions: AssistantStateWorkspaceAttention[]
+  projects: AssistantStateProjectSnapshot[]
 }
 
 export interface AssistantStateActiveRun {
@@ -103,59 +110,114 @@ export interface AssistantStateDelegation {
   targetGoalId: string
   targetWorkId: string
   work: {
-    attributes: unknown
+    attributes: AssistantStateWorkAttributes
     path: string
-    runtime: DigestRuntime
+    runtime: AssistantStateRuntime
   }
   activeRun: AssistantStateActiveRun | null
 }
 
-interface DigestWorkspaceAttention {
+export interface AssistantStateWorkspaceAttention extends WorkspaceAttentionAttributes {
   reference: string
   projectId: string | null
-  id: string
-  createdAt: string
-  updatedAt: string
-  resolvedAt: string | null
-  refs: string[]
   body: string
   inspectionPath: string
 }
 
-interface DigestRuntime {
-  latestAttempt: { status: string } | null
-  recentAttempts: Array<{
-    runId: string
-    responsibility: string
-    status: string
-    result: string | null
-    application: string | null
-  }>
+export interface AssistantStateRuntime {
+  activeResponsibility: Responsibility | null
+  latestAttempt: RunAttemptSummary | null
   attemptCount: number
+  recentAttempts: AssistantStateRecentAttempt[]
+  lastActivityAt: string | null
   stale: boolean
+  worktree: { path: string; exists: boolean }
+  paths: Partial<
+    Record<
+      'root' | 'attempt' | 'events' | 'transcript' | 'context' | 'prompt' | 'result' | 'artifacts',
+      string
+    >
+  >
 }
 
-interface DigestProject {
+export interface AssistantStateWorkAttributes {
+  id: string
+  title: string
+  kind: WorkAttributes['kind']
+  stage: WorkAttributes['stage']
+  notBefore: string | null
+  dependsOn: string[]
+  contractRevision: number
+  evidenceRefs?: string[]
+  contextRefs?: WorkAttributes['contextRefs']
+  ownerMessages?: WorkAttributes['ownerMessages']
+  revisionInput?: string
+  assistantDispatch?: string
+}
+
+export interface AssistantStateWorkSnapshot {
+  attributes: AssistantStateWorkAttributes
+  path: string
+  candidateIntegration?: AssistantStateCandidateIntegration
+  projection: WorkProjection | null
+  runtime: AssistantStateRuntime
+  evidence?: AssistantStateEvidence
+}
+
+export interface AssistantStatePlanningOutcome {
+  attributes: AssistantStateWorkAttributes
+  path: string
+  runtime: AssistantStateRuntime
+  evidence: AssistantStateEvidenceSummary
+}
+
+export interface AssistantStateGoalSnapshot {
+  goal: { attributes: GoalAttributes; body: string; path: string }
+  latestPlanningOutcome: AssistantStatePlanningOutcome | null
+  works: AssistantStateWorkSnapshot[]
+  attentions: Array<{
+    reference: string
+    attributes: AttentionAttributes
+    body: string
+    path: string
+  }>
+  design: Array<{
+    canonicalPath: string
+    path: string
+    hash: string | null
+    excerpt: string
+  }>
+}
+
+export interface AssistantStateProjectSnapshot {
   projectId: string
   label?: string
+  projectRoot: string
+  sourceRoot: string
+  primaryRepoId: string
+  repos: readonly {
+    repoId: string
+    repoPath: string
+    integrationRoot: string
+    projectPath: string
+    primary: boolean
+  }[]
   available: boolean
   releaseHead: string | null
   error?: string
-  goals: Array<{
-    goal: { attributes: unknown }
-    latestPlanningOutcome: {
-      attributes: unknown
-      runtime: DigestRuntime
-    } | null
-    works: Array<{
-      attributes: unknown
-      candidateIntegration?: unknown
-      runtime: DigestRuntime
-    }>
-    attentions: Array<{ attributes: unknown }>
-    design: Array<{ canonicalPath: string; hash: string | null }>
-  }>
+  inspectionPaths?: { projectRoot: string; publicationRoot: string }
+  goals: AssistantStateGoalSnapshot[]
 }
+
+export type AssistantStateRecentAttempt = ReturnType<typeof compactAttemptIndex> & {
+  artifactPreservation: Awaited<ReturnType<typeof readArtifactPreservation>>
+}
+export type AssistantStateCandidateIntegration = Awaited<
+  ReturnType<typeof readCandidateIntegration>
+>
+export type AssistantStateEvidenceSummary = ReturnType<typeof readWorkEvidenceSummary>
+export type AssistantStateEvidenceDetail = Awaited<ReturnType<typeof readWorkEvidence>>[number]
+export type AssistantStateEvidence = AssistantStateEvidenceSummary | AssistantStateEvidenceDetail[]
 
 export function createAssistantStateReader(options: {
   homeRoot: string
@@ -163,7 +225,6 @@ export function createAssistantStateReader(options: {
   projects: ReadonlyMap<string, AssistantStateProject>
   publisher: PublicationCoordinator
   attempts: RunAttemptStore
-  concurrency?: Readonly<Record<Responsibility, number>>
   now?: () => Date
   staleAfterMs?: number
 }): AssistantStateReader {
@@ -171,7 +232,7 @@ export function createAssistantStateReader(options: {
   const now = options.now ?? (() => new Date())
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_ATTEMPT_STALE_AFTER_MS
   const worktrees = createStableWorktreeManager()
-  let reflectionCache: { token: string; snapshot: AssistantStateSnapshot } | null = null
+  let wakeCache: { token: string; snapshot: AssistantStateSnapshot } | null = null
 
   const read = async (input: AssistantStateReadInput = {}) => {
     const observedAt = now()
@@ -204,7 +265,7 @@ export function createAssistantStateReader(options: {
           selectedProjectIds.has(attempt.projectId) &&
           (!input.goalId || attempt.goalId === input.goalId),
       )
-      .map((attempt) => presentActiveAttempt(attempt, activeCounts, options.concurrency))
+      .map((attempt) => presentActiveAttempt(attempt, activeCounts))
     const workspaceAttentions = [...workspace.attentions.values()]
       .filter((attention) => attention.attributes.resolvedAt === null)
       .sort((left, right) => left.attributes.id.localeCompare(right.attributes.id))
@@ -260,15 +321,9 @@ export function createAssistantStateReader(options: {
                   liveRunWorkIds: liveWorkIds,
                   settledFailureWorkIds: failedWorkIds,
                   passCapacity: {
-                    planner:
-                      activeCounts.planner <
-                      (options.concurrency?.planner ?? Number.POSITIVE_INFINITY),
-                    generator:
-                      activeCounts.generator <
-                      (options.concurrency?.generator ?? Number.POSITIVE_INFINITY),
-                    reviewer:
-                      activeCounts.reviewer <
-                      (options.concurrency?.reviewer ?? Number.POSITIVE_INFINITY),
+                    planner: activeCounts.planner < SOFTWARE_DELIVERY_CONCURRENCY.planner,
+                    generator: activeCounts.generator < SOFTWARE_DELIVERY_CONCURRENCY.generator,
+                    reviewer: activeCounts.reviewer < SOFTWARE_DELIVERY_CONCURRENCY.reviewer,
                   },
                   now: observedAt,
                 },
@@ -421,21 +476,20 @@ export function createAssistantStateReader(options: {
               }
             }),
           )
-          const repos = project.repos
-            ? project.repos.map((repo) => ({
-                ...(repo.repoId ? { repoId: repo.repoId } : {}),
-                ...(repo.repoPath ? { repoPath: repo.repoPath } : {}),
-                projectPath: repo.projectPath,
-                integrationRoot: repo.integrationRoot,
-                ...(repo.primary !== undefined ? { primary: repo.primary } : {}),
-              }))
-            : undefined
+          const repos = project.repos.map((repo) => ({
+            repoId: repo.repoId,
+            repoPath: repo.repoPath,
+            projectPath: repo.projectPath,
+            integrationRoot: repo.integrationRoot,
+            primary: repo.primary,
+          }))
           return {
             projectId: project.projectId,
             ...(project.label ? { label: project.label } : {}),
             projectRoot: project.projectRoot,
-            ...(project.primaryRepoId ? { primaryRepoId: project.primaryRepoId } : {}),
-            ...(repos ? { repos } : {}),
+            sourceRoot: project.sourceRoot,
+            primaryRepoId: project.primaryRepoId,
+            repos,
             available: true,
             releaseHead: await releaseHead(project.projectRoot, project.projectId),
             goals,
@@ -445,7 +499,9 @@ export function createAssistantStateReader(options: {
             projectId: project.projectId,
             ...(project.label ? { label: project.label } : {}),
             projectRoot: project.projectRoot,
-            ...(project.sourceRoot ? { sourceRoot: project.sourceRoot } : {}),
+            sourceRoot: project.sourceRoot,
+            primaryRepoId: project.primaryRepoId,
+            repos: project.repos,
             available: false,
             releaseHead: null,
             error: errorMessage(error),
@@ -467,7 +523,6 @@ export function createAssistantStateReader(options: {
       runningAttemptsByWork,
       activeAttemptsByWork,
       activeCounts,
-      concurrency: options.concurrency,
       attemptSnapshot,
       attemptStore: options.attempts,
       homeRoot,
@@ -476,7 +531,7 @@ export function createAssistantStateReader(options: {
       attemptHistoryLimit: input.attemptHistoryLimit ?? 3,
     })
     const projectIds = new Set(projects.map((project) => project.projectId))
-    const attentionProjectId = (attention: DigestWorkspaceAttention) =>
+    const attentionProjectId = (attention: AssistantStateWorkspaceAttention) =>
       attention.projectId && projectIds.has(attention.projectId) ? attention.projectId : null
     const [stateDigest, homeDigest, projectDigestEntries] = await Promise.all([
       semanticDigest(projects, workspaceAttentions, delegations),
@@ -523,7 +578,7 @@ export function createAssistantStateReader(options: {
     }
   }
 
-  const reflectionSourceToken = async () => {
+  const wakeSourceToken = async () => {
     const roots = [
       options.workspace.root,
       ...[...options.projects.values()]
@@ -536,19 +591,15 @@ export function createAssistantStateReader(options: {
 
   return {
     read,
-    async readForReflection() {
-      const before = await reflectionSourceToken()
-      if (
-        before &&
-        reflectionCache?.token === before &&
-        reflectionCache.snapshot.activeRuns.length === 0
-      ) {
-        return reflectionCache.snapshot
+    async readForWake() {
+      const before = await wakeSourceToken()
+      if (before && wakeCache?.token === before && wakeCache.snapshot.activeRuns.length === 0) {
+        return wakeCache.snapshot
       }
       const snapshot = await read({ attemptHistoryLimit: 12 })
-      const after = await reflectionSourceToken()
+      const after = await wakeSourceToken()
       if (before && after === before && snapshot.activeRuns.length === 0) {
-        reflectionCache = { token: before, snapshot }
+        wakeCache = { token: before, snapshot }
       }
       return snapshot
     },
@@ -803,22 +854,13 @@ async function readCandidateIntegration(input: {
   worktrees: ReturnType<typeof createStableWorktreeManager>
 }) {
   if (!isEngineeringWork(input.work.attributes)) return []
-  const primaryRepoId = input.project.primaryRepoId ?? 'primary'
-  const repos = input.project.repos?.length
-    ? input.project.repos
-    : [
-        {
-          repoId: primaryRepoId,
-          integrationRoot: input.project.projectRoot,
-          projectPath: '.',
-          primary: true,
-        },
-      ]
+  const primaryRepoId = input.project.primaryRepoId
+  const repos = input.project.repos
   const scratchRoot = await mkdtemp(join(tmpdir(), 'hopi-assistant-candidate-'))
   try {
     return await Promise.all(
       repos.map(async (repo, index) => {
-        const repoId = repo.repoId ?? primaryRepoId
+        const repoId = repo.repoId
         try {
           const task = await input.worktrees.inspect({
             projectRoot: repo.integrationRoot,
@@ -908,7 +950,6 @@ async function readCrossProjectDelegations(input: {
   runningAttemptsByWork: ReadonlyMap<string, RunAttemptSummary>
   activeAttemptsByWork: ReadonlyMap<string, RunAttemptSummary>
   activeCounts: Readonly<Record<Responsibility, number>>
-  concurrency?: Readonly<Record<Responsibility, number>>
   attemptSnapshot: RunAttemptSnapshot
   attemptStore: RunAttemptStore
   homeRoot: string
@@ -988,7 +1029,7 @@ async function readCrossProjectDelegations(input: {
                     runtime,
                   },
                   activeRun: activeAttempt
-                    ? presentActiveAttempt(activeAttempt, input.activeCounts, input.concurrency)
+                    ? presentActiveAttempt(activeAttempt, input.activeCounts)
                     : null,
                 })
               })(),
@@ -1009,8 +1050,8 @@ async function readCrossProjectDelegations(input: {
 }
 
 async function semanticDigest(
-  projects: DigestProject[],
-  workspaceAttentions: DigestWorkspaceAttention[],
+  projects: AssistantStateProjectSnapshot[],
+  workspaceAttentions: AssistantStateWorkspaceAttention[],
   delegations: AssistantStateDelegation[],
 ) {
   const semantic = {
@@ -1073,7 +1114,6 @@ function uniqueActiveRuns(runs: AssistantStateActiveRun[]) {
 function presentActiveAttempt(
   attempt: RunAttemptSummary,
   runningCounts: Readonly<Record<Responsibility, number>>,
-  concurrency?: Readonly<Record<Responsibility, number>>,
 ): AssistantStateActiveRun {
   return {
     projectId: attempt.projectId,
@@ -1086,14 +1126,13 @@ function presentActiveAttempt(
     startedAt: attempt.startedAt,
     waitReason:
       attempt.status === 'queued' &&
-      runningCounts[attempt.responsibility] >=
-        (concurrency?.[attempt.responsibility] ?? Number.POSITIVE_INFINITY)
+      runningCounts[attempt.responsibility] >= SOFTWARE_DELIVERY_CONCURRENCY[attempt.responsibility]
         ? 'capacity'
         : null,
   }
 }
 
-function latestTerminalAttempt(runtime: DigestRuntime) {
+function latestTerminalAttempt(runtime: AssistantStateRuntime) {
   if (runtime.latestAttempt?.status !== 'running') return runtime.latestAttempt
   const settled = runtime.recentAttempts.find((attempt) => attempt.status !== 'running')
   if (!settled) return null

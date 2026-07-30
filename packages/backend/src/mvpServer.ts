@@ -1,51 +1,69 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { z } from 'zod'
+import { ZodError } from 'zod'
 import type { RoleRunner } from './agent/RoleRunner'
-import { type ConfigurableAgentRole, WORKFLOW_ROLE_KEYS } from './agent/adapterConfig'
+import { isPresentableAgentRuntimeEvent } from './agent/runtimeEvents'
 import {
-  type AgentPlanEvent,
-  type AgentRuntimeEvent,
-  isPresentableAgentRuntimeEvent,
-} from './agent/runtimeEvents'
-import { readAssistantConversationEpoch } from './assistant/assistantConversationEpoch'
+  deriveAssistantFeedActivity,
+  goalCompletionProjection,
+  presentAssistantFeed,
+  presentAssistantFeedChanges,
+} from './api/assistantFeedPresenter'
 import {
-  type AssistantConversationScope,
-  assistantConversationScopeKey,
-  assistantEventBelongsToScope,
-} from './assistant/assistantConversationScope'
+  deriveGoalSummaries,
+  deriveWorkCompletedAt,
+  latestAgentPlan,
+  presentAttempt,
+  presentGoal,
+  presentGoalExecutionCost,
+} from './api/goalPresenter'
+import {
+  ApiError,
+  inlineContentDisposition,
+  json,
+  parseBody,
+  readAssistantChangeCursor,
+  readPageRequest,
+  requirePart,
+} from './api/http'
+import {
+  agentRoleSettingsSchema,
+  canonicalInboxContext,
+  configurableAgentRoleSchema,
+  goalSchema,
+  parseInboxRequest,
+  parsePreviewStartRequest,
+  projectAgentAccessSchema,
+  projectLabelUpdateSchema,
+  projectRepoSchema,
+  projectSchema,
+  rebindProjectSchema,
+  repoPathSchema,
+} from './api/requestSchemas'
+import {
+  isDesignDocumentPath,
+  matchEvidenceArtifactRoute,
+  matchGoalDocumentRoute,
+  matchGoalRoute,
+  matchPreviewRoute,
+  matchWorkAttemptRoute,
+  matchWorkDocumentRoute,
+  readGoalView,
+} from './api/routeMatchers'
+import { presentState } from './api/statePresenter'
+import type { AssistantConversationScope } from './assistant/assistantConversationScope'
 import { AssistantToolRequestError } from './assistant/assistantToolRequestError'
 import { assistantToolRequestSchema } from './assistant/assistantToolSchemas'
 import type { AssistantModelRunner } from './assistant/workspaceAssistant'
 import {
-  type InboxEventDocument,
-  type WorkspaceAttentionDocument,
-  isInternalInboxSource,
-  workspaceAttentionProjectId,
-} from './domain/assistantWorkspaceDocuments'
-import {
-  goalAttentionReference,
   normalizeInboxAttentionReferences,
   parseAttentionReference,
-  workspaceAttentionReference,
 } from './domain/attentionReference'
-import { workAttentionTarget } from './domain/attentionTarget'
-import {
-  type AttentionDocument,
-  type WorkDocument,
-  isPlanningWork,
-} from './domain/canonicalDocuments'
-import { type GoalPackage, GoalPackageNotFoundError } from './domain/goalPackage'
-import { inboxEventReferenceSchema } from './domain/inboxEventReference'
-import {
-  normalizeProjectCodingDefaults,
-  projectCodingDefaultsInputSchema,
-} from './domain/projectCodingDefaults'
-import { optionalProjectLabelSchema, projectLabelSchema } from './domain/projectLabel'
-import { isNormalizedProjectPath, resolveProjectPath } from './domain/projectPath'
+import { GoalPackageNotFoundError } from './domain/goalPackage'
+import { normalizeProjectCodingDefaults } from './domain/projectCodingDefaults'
+import { resolveProjectPath } from './domain/projectPath'
 import { deriveReadableId, stableIdSchema } from './domain/stableId'
-import { type WorkProjection, deriveGoalWorkProjections } from './domain/workProjection'
-import { CursorPageError, type CursorPageRequest, paginateItems } from './presentation/cursorPage'
+import { CursorPageError, paginateItems } from './presentation/cursorPage'
 import indexPage from './product.html'
 import { acquireCoordinatorInstanceLock } from './publication/instanceLock'
 import type { PublicationCoordinator } from './publication/publisher'
@@ -62,24 +80,17 @@ import {
 import { GoalControllerError } from './runtime/goalController'
 import { HostDirectoryPickerError, selectHostDirectory } from './runtime/hostDirectoryPicker'
 import { assertSupportedPlatform } from './runtime/hostPlatform'
-import {
-  type CreateMvpRuntimeOptions,
-  type MvpProjectRuntime,
-  type MvpRuntime,
-  createMvpRuntime,
-  requireProject,
-} from './runtime/mvpRuntime'
+import { type MvpRuntime, requireProject } from './runtime/mvpRuntime'
+import { createMvpRuntimeHost } from './runtime/mvpRuntimeHost'
 import { readProjectReleaseHeads } from './runtime/previewManager'
-import { previewRuntimeInputsSchema } from './runtime/previewRuntimeInputs'
 import {
   ProjectDirectoryError,
   classifyProjectDirectory,
   withPreparedProjectRepositories,
 } from './runtime/projectDirectory'
 import type { RunAttemptDiagnostics } from './runtime/runAttemptDiagnostics'
-import type { RunAttemptStore, RunAttemptSummary } from './runtime/runAttemptStore'
-import { type RunCostEntry, summarizeRunCosts } from './runtime/runCostProjection'
-import { settledFailureWorkIds } from './runtime/settledAttemptFailure'
+import type { RunAttemptStore } from './runtime/runAttemptStore'
+import { summarizeRunCosts } from './runtime/runCostProjection'
 import { AssistantHomeStoreError } from './storage/assistantHomeStore'
 import { AssistantImageAttachmentError } from './storage/assistantImageAttachments'
 import { createProjectAgentAccessStore } from './storage/projectAgentAccessStore'
@@ -101,108 +112,15 @@ export type MvpServer = Bun.Server<undefined> & {
   shutdown(): Promise<void>
 }
 
-const ASSISTANT_FEED_PROJECTION_VERSION = 2
+export {
+  deriveAssistantFeedActivity,
+  deriveGoalSummaries,
+  deriveWorkCompletedAt,
+  goalCompletionProjection,
+  latestAgentPlan,
+  presentAttempt,
+}
 
-const projectIdentitySchema = z.object({
-  projectId: stableIdSchema.optional(),
-  label: optionalProjectLabelSchema,
-})
-const projectLabelUpdateSchema = z
-  .object({
-    label: projectLabelSchema.nullable(),
-  })
-  .strict()
-const projectRepoSchema = z.object({
-  repoId: stableIdSchema,
-  repoPath: z.string().min(1),
-  projectPath: z.string().refine(isNormalizedProjectPath).optional(),
-})
-const repoPathSchema = z
-  .object({
-    repoPath: z.string().min(1),
-    projectPath: z.string().refine(isNormalizedProjectPath).optional(),
-  })
-  .strict()
-const previewStartSchema = z
-  .object({
-    runtimeInputs: previewRuntimeInputsSchema.optional(),
-  })
-  .strict()
-const projectSchema = z.union([
-  projectIdentitySchema
-    .extend({
-      primaryRepoId: stableIdSchema,
-      repos: z.array(projectRepoSchema).min(1),
-    })
-    .strict(),
-  projectIdentitySchema
-    .extend({
-      repoPath: z.string().min(1),
-      projectPath: z.string().refine(isNormalizedProjectPath).optional(),
-      repoId: stableIdSchema.optional(),
-    })
-    .strict()
-    .transform((input) => {
-      const repoId = input.repoId ?? 'primary'
-      return {
-        projectId: input.projectId,
-        label: input.label,
-        primaryRepoId: repoId,
-        repos: [{ repoId, repoPath: input.repoPath, projectPath: input.projectPath }],
-      }
-    }),
-])
-const rebindProjectSchema = z.union([
-  z.object({ repos: z.array(projectRepoSchema).min(1) }).strict(),
-  repoPathSchema,
-])
-const agentRoleSettingsSchema = z
-  .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
-  .strict()
-const projectAgentAccessSchema = z.object({ fullAccess: z.boolean() }).strict()
-const CONFIGURABLE_AGENT_ROLES = ['assistant', ...WORKFLOW_ROLE_KEYS] as const
-const configurableAgentRoleSchema = z.enum(CONFIGURABLE_AGENT_ROLES)
-const goalSchema = z.object({
-  goalId: stableIdSchema.optional(),
-  title: z.string().trim().min(1),
-  objective: z.string().trim().min(1),
-  priority: z.number().int().optional(),
-})
-const inboxSchema = z
-  .object({
-    content: z.string(),
-    context: z
-      .object({
-        projectId: z.string().min(1).optional(),
-        goalId: z.string().min(1).optional(),
-        attentionRefs: z
-          .array(z.string().refine((value) => Boolean(parseAttentionReference(value))))
-          .optional(),
-        replyTo: inboxEventReferenceSchema.optional(),
-      })
-      .superRefine((context, refinement) => {
-        if (context.goalId && !context.projectId) {
-          refinement.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'goalId requires projectId',
-          })
-        }
-        if (!context.projectId && !context.attentionRefs?.length) {
-          refinement.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'context requires a Project location or Attention reference',
-          })
-        }
-        if (context.replyTo && !context.attentionRefs?.length) {
-          refinement.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'replyTo requires exact Attention references',
-          })
-        }
-      })
-      .optional(),
-  })
-  .strict()
 export function createServer(options: ServerOptions = {}): MvpServer {
   assertSupportedPlatform(process.platform)
   const homeRoot = options.rootDir ?? process.cwd()
@@ -210,59 +128,31 @@ export function createServer(options: ServerOptions = {}): MvpServer {
   const serverRef: { current: Bun.Server<undefined> | null } = {
     current: null,
   }
-  let topologyReloadScheduled = false
   const projectAgentAccess = createProjectAgentAccessStore(homeRoot)
-  const runtimeOptions: CreateMvpRuntimeOptions = {
-    homeRoot,
-    publisher: options.publisher,
-    attempts: options.attempts,
-    roleRunner: options.roleRunner,
-    assistantRunner: options.assistantRunner,
-    attentionTransport:
-      options.attentionTransport ??
-      (process.env.HOPI_ATTENTION_WEBHOOK_URL
-        ? createWebhookAttentionTransport(process.env.HOPI_ATTENTION_WEBHOOK_URL)
-        : undefined),
-    assistantToolUrl: () => {
-      if (!serverRef.current) throw new Error('Assistant tool server is not ready')
-      return `http://127.0.0.1:${serverRef.current.port}/api/internal/assistant-tool`
+  const runtimeHost = createMvpRuntimeHost(
+    {
+      homeRoot,
+      publisher: options.publisher,
+      attempts: options.attempts,
+      roleRunner: options.roleRunner,
+      assistantRunner: options.assistantRunner,
+      attentionTransport:
+        options.attentionTransport ??
+        (process.env.HOPI_ATTENTION_WEBHOOK_URL
+          ? createWebhookAttentionTransport(process.env.HOPI_ATTENTION_WEBHOOK_URL)
+          : undefined),
+      assistantToolUrl: () => {
+        if (!serverRef.current) throw new Error('Assistant tool server is not ready')
+        return `http://127.0.0.1:${serverRef.current.port}/api/internal/assistant-tool`
+      },
+      projectFullAccess: async (projectId) => (await projectAgentAccess.read(projectId)).fullAccess,
     },
-    onProjectTopologyChanged: scheduleTopologyReload,
-    projectFullAccess: async (projectId) => (await projectAgentAccess.read(projectId)).fullAccess,
-    start: false,
-  }
-  let runtimePromise = createMvpRuntime(runtimeOptions)
-  let observedRuntime: MvpRuntime | null = null
-  let runtimeInitializationError: { at: string; message: string } | null = null
-  let runtimeGeneration = 0
-  observeRuntime(runtimePromise)
-  let reloadTail: Promise<void> = Promise.resolve()
+    { startCoordinator: options.startCoordinator !== false },
+  )
   const pickDirectory = createSingleFlight(options.directoryPicker ?? selectHostDirectory)
 
-  async function reloadRuntime(mutate: (runtime: MvpRuntime) => Promise<void>) {
-    const operation = reloadTail.then(async () => {
-      const previous = await runtimePromise
-      await previous.coordinator.stop()
-      await previous.preview.stopAll()
-      try {
-        await mutate(previous)
-      } catch (error) {
-        if (options.startCoordinator !== false) previous.coordinator.start()
-        throw error
-      }
-      runtimePromise = createMvpRuntime(runtimeOptions)
-      observeRuntime(runtimePromise)
-      const next = await runtimePromise
-      if (options.startCoordinator !== false) next.coordinator.start()
-    })
-    reloadTail = operation.catch(() => undefined)
-    await operation
-    return runtimePromise
-  }
-
   async function updateRuntimeProjectLabel(projectId: string, label: string | null) {
-    const operation = reloadTail.then(async () => {
-      const runtime = await runtimePromise
+    return runtimeHost.withStableRuntime(async (runtime) => {
       const project = runtime.projects.get(projectId)
       if (!project) throw new ApiError(404, `Project not found: ${projectId}`)
       const updated = await runtime.home.updateProjectLabel({ projectId, label })
@@ -270,42 +160,6 @@ export function createServer(options: ServerOptions = {}): MvpServer {
       else project.label = undefined
       return runtime
     })
-    reloadTail = operation.then(
-      () => undefined,
-      () => undefined,
-    )
-    return operation
-  }
-
-  function scheduleTopologyReload() {
-    if (topologyReloadScheduled) return
-    topologyReloadScheduled = true
-    setTimeout(() => {
-      void reloadRuntime(async () => undefined)
-        .catch((error) => console.error('[mvp runtime reload error]', error))
-        .finally(() => {
-          topologyReloadScheduled = false
-        })
-    }, 0)
-  }
-
-  function observeRuntime(promise: Promise<MvpRuntime>) {
-    const generation = ++runtimeGeneration
-    observedRuntime = null
-    runtimeInitializationError = null
-    void promise.then(
-      (runtime) => {
-        if (generation !== runtimeGeneration) return
-        observedRuntime = runtime
-      },
-      (error) => {
-        if (generation !== runtimeGeneration) return
-        runtimeInitializationError = {
-          at: new Date().toISOString(),
-          message: errorMessage(error),
-        }
-      },
-    )
   }
 
   const server = Bun.serve({
@@ -322,11 +176,12 @@ export function createServer(options: ServerOptions = {}): MvpServer {
       const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
       try {
         if (request.method === 'GET' && url.pathname === '/api/health') {
-          const coordinator = observedRuntime?.coordinator.health() ?? null
+          const runtimeHealth = runtimeHost.health()
+          const coordinator = runtimeHealth.runtime?.coordinator.health() ?? null
           return json({
-            status: runtimeInitializationError
+            status: runtimeHealth.initializationError
               ? 'degraded'
-              : observedRuntime
+              : runtimeHealth.runtime
                 ? coordinator?.status === 'degraded'
                   ? 'degraded'
                   : 'ok'
@@ -334,11 +189,11 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             pid: process.pid,
             instanceId: options.instanceId ?? null,
             startedAt: serverStartedAt,
-            runtimeError: runtimeInitializationError,
+            runtimeError: runtimeHealth.initializationError,
             coordinator,
           })
         }
-        const runtime = await runtimePromise
+        const runtime = await runtimeHost.current()
         if (request.method === 'POST' && url.pathname === '/api/internal/assistant-tool') {
           const body = await parseBody(request, assistantToolRequestSchema)
           return json(await runtime.assistantTools.execute(body.token, body.name, body.arguments))
@@ -425,16 +280,16 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             throw error
           }
         }
-        if (request.method === 'GET' && url.pathname === '/api/debug/reflections') {
-          const runs = (await runtime.reflection.listRunSummaries()).toSorted(
+        if (request.method === 'GET' && url.pathname === '/api/debug/wakes') {
+          const runs = (await runtime.wake.listRunSummaries()).toSorted(
             (left, right) =>
               left.manifest.startedAt.localeCompare(right.manifest.startedAt) ||
-              left.manifest.reflectionId.localeCompare(right.manifest.reflectionId),
+              left.manifest.wakeId.localeCompare(right.manifest.wakeId),
           )
           return json(
             paginateItems(runs, readPageRequest(url, 20, 100), {
-              scope: 'reflection-runs',
-              getId: (run) => run.manifest.reflectionId,
+              scope: 'wake-runs',
+              getId: (run) => run.manifest.wakeId,
             }),
           )
         }
@@ -443,27 +298,27 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           parts.length === 5 &&
           parts[0] === 'api' &&
           parts[1] === 'debug' &&
-          parts[2] === 'reflections' &&
+          parts[2] === 'wakes' &&
           parts[3] &&
           parts[4] === 'events'
         ) {
-          const reflectionId = parts[3]
-          const events = await runtime.reflection.readRunEvents(reflectionId)
-          if (!events) throw new ApiError(404, `Reflection Run not found: ${reflectionId}`)
+          const wakeId = parts[3]
+          const events = await runtime.wake.readRunEvents(wakeId)
+          if (!events) throw new ApiError(404, `Wake Run not found: ${wakeId}`)
           const indexedEvents = events.map((event, streamIndex) => ({
             ...event,
             streamIndex,
           }))
           return json(
             paginateItems(indexedEvents, readPageRequest(url, 80, 200), {
-              scope: `reflection-events:${reflectionId}`,
+              scope: `wake-events:${wakeId}`,
               getId: (event) => event.eventId,
             }),
           )
         }
         if (request.method === 'POST' && url.pathname === '/api/projects') {
           const body = await parseBody(request, projectSchema)
-          const nextRuntime = await reloadRuntime(async (current) => {
+          const nextRuntime = await runtimeHost.reload(async (current) => {
             await withPreparedProjectRepositories(body.repos, (repos) =>
               current.home.linkProject({
                 ...(body.projectId ? { projectId: body.projectId } : {}),
@@ -511,17 +366,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         ) {
           const projectId = requirePart(parts, 2)
           const body = await parseBody(request, rebindProjectSchema)
-          const repos =
-            'repos' in body
-              ? body.repos
-              : [
-                  {
-                    repoId: (await runtime.home.readProject(projectId)).primaryRepoId,
-                    repoPath: body.repoPath,
-                    projectPath: body.projectPath,
-                  },
-                ]
-          return json(await runtime.commands.planProjectRebind({ projectId, repos }))
+          return json(await runtime.commands.planProjectRebind({ projectId, repos: body.repos }))
         }
         if (
           request.method === 'POST' &&
@@ -532,10 +377,8 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         ) {
           const projectId = requirePart(parts, 2)
           const body = await parseBody(request, rebindProjectSchema)
-          const nextRuntime = await reloadRuntime(async (current) => {
-            if ('repos' in body) {
-              await current.commands.executeProjectRebind({ projectId, repos: body.repos })
-            } else await current.rebindProject(projectId, body.repoPath, body.projectPath)
+          const nextRuntime = await runtimeHost.reload(async (current) => {
+            await current.commands.executeProjectRebind({ projectId, repos: body.repos })
           })
           return json(await presentState(await nextRuntime))
         }
@@ -548,7 +391,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
         ) {
           const projectId = requirePart(parts, 2)
           const body = await parseBody(request, projectRepoSchema)
-          const nextRuntime = await reloadRuntime(async (current) => {
+          const nextRuntime = await runtimeHost.reload(async (current) => {
             await withPreparedProjectRepositories([body], ([repo]) => {
               if (!repo) throw new Error('Prepared Repo is missing')
               return current.home.linkRepo({ projectId, ...repo })
@@ -567,7 +410,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           const projectId = requirePart(parts, 2)
           const repoId = requirePart(parts, 4)
           const body = await parseBody(request, repoPathSchema)
-          const nextRuntime = await reloadRuntime(async (current) => {
+          const nextRuntime = await runtimeHost.reload(async (current) => {
             await current.rebindRepo(projectId, repoId, body.repoPath, body.projectPath)
           })
           return json(await presentState(await nextRuntime))
@@ -943,7 +786,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             error.code === 'repo_invalid' ? 400 : error.code === 'project_not_found' ? 404 : 409
           return json({ error: error.message }, status)
         }
-        if (error instanceof z.ZodError) {
+        if (error instanceof ZodError) {
           return json({ error: error.issues.map((issue) => issue.message).join(', ') }, 400)
         }
         console.error('[mvp api error]', error)
@@ -952,19 +795,12 @@ export function createServer(options: ServerOptions = {}): MvpServer {
     },
   })
   serverRef.current = server
-  if (options.startCoordinator !== false) {
-    void runtimePromise
-      .then((runtime) => runtime.coordinator.start())
-      .catch((error) => console.error('[mvp runtime startup error]', error))
-  }
+  runtimeHost.start()
   let shutdownPromise: Promise<void> | null = null
   return Object.assign(server, {
     shutdown() {
       shutdownPromise ??= (async () => {
-        await reloadTail
-        const runtime = await runtimePromise
-        await runtime.coordinator.stop()
-        await runtime.preview.stopAll()
+        await runtimeHost.stop()
         server.stop(true)
       })()
       return shutdownPromise
@@ -990,729 +826,6 @@ async function directoryArtifactIndex(root: string, limit = 1_000) {
   }
   entries.sort((left, right) => left.path.localeCompare(right.path))
   return { entries, omitted }
-}
-
-function attentionReferencesGoal(refs: readonly string[], goalId: string) {
-  return refs.some(
-    (reference) =>
-      reference === goalId ||
-      reference.split('/').includes(`goal:${goalId}`) ||
-      reference.includes(`/goals/${goalId}/`),
-  )
-}
-
-async function presentState(runtime: MvpRuntime, options: { includeAttentions?: boolean } = {}) {
-  const includeAttentions = options.includeAttentions ?? true
-  const [home, workspace, agentRoleSettingEntries, attemptSnapshot] = await Promise.all([
-    runtime.home.readHome(),
-    runtime.workspace.readWorkspaceForControl(),
-    Promise.all(
-      CONFIGURABLE_AGENT_ROLES.map(
-        async (role) => [role, await runtime.readAgentRoleCodingDefaults(role)] as const,
-      ),
-    ),
-    runtime.attempts.snapshot(),
-  ])
-  const runningAttempts = attemptSnapshot.running()
-  const queuedAttempts = attemptSnapshot.queued()
-  const agentRoleSettings = Object.fromEntries(agentRoleSettingEntries) as Record<
-    ConfigurableAgentRole,
-    Awaited<ReturnType<MvpRuntime['readAgentRoleCodingDefaults']>>
-  >
-  const projects = []
-  const goalAttentions = []
-  for (const project of runtime.projects.values()) {
-    const projectAttentions = [...workspace.attentions.values()].filter(
-      (attention) =>
-        workspaceAttentionProjectId(attention) === project.projectId &&
-        attention.attributes.resolvedAt === null,
-    )
-    const projectAssistantAttentions: ScopedAssistantAttention[] = projectAttentions.map(
-      (attention) => presentWorkspaceAttention(attention, project.projectId),
-    )
-    const goals = []
-    let goalOpenAttentionCount = 0
-    const readableGoalPackages: Array<{
-      goalId: string
-      goalPackage: GoalPackage
-    }> = []
-    try {
-      for (const [goalId, goalPackage] of await project.store.readReconciliationSnapshot()) {
-        readableGoalPackages.push({ goalId, goalPackage })
-      }
-    } catch {}
-    for (const { goalId, goalPackage } of readableGoalPackages) {
-      const relatedProjectAttentions = projectAttentions.filter((attention) =>
-        attentionReferencesGoal(attention.attributes.refs, goalId),
-      )
-      const liveWorkIds = new Set(
-        runningAttempts
-          .filter((attempt) => attempt.projectId === project.projectId && attempt.goalId === goalId)
-          .map((attempt) => attempt.workId),
-      )
-      const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
-        projectEligible: true,
-        liveRunWorkIds: liveWorkIds,
-        settledFailureWorkIds: await settledFailureWorkIds(
-          goalPackage,
-          attemptSnapshot.listGoal(project.projectId, goalId),
-          attemptWorkIds(queuedAttempts, project.projectId, goalId),
-        ),
-        passCapacity: { planner: true, generator: true, reviewer: true },
-      })
-      const summaries = deriveGoalSummaries(goalPackage, projections)
-      const goalAttentionCount = [...goalPackage.attentions.values()].filter(
-        (attention) => attention.attributes.resolvedAt === null,
-      ).length
-      const openAttentionCount = goalAttentionCount + relatedProjectAttentions.length
-      goalOpenAttentionCount += goalAttentionCount
-      const completion = goalCompletionProjection(project.projectId, goalId, goalPackage)
-      goals.push({
-        id: goalId,
-        title: goalPackage.goal.attributes.title,
-        createdAt: goalCreatedAt(goalPackage, workspace.events),
-        lifecycle: goalPackage.goal.attributes.lifecycle,
-        priority: goalPackage.goal.attributes.priority,
-        ...summaries,
-        openAttentionCount,
-        completion: completion
-          ? { id: completion.evidenceId, completedAt: completion.completedAt }
-          : null,
-      })
-      const presentedGoalAttentions = presentGoalAttentions(project.projectId, goalId, goalPackage)
-      if (includeAttentions) {
-        goalAttentions.push(...presentedGoalAttentions)
-      }
-    }
-    const needsYouCount = projectAssistantOpenRequests(
-      workspace.homeId,
-      workspace.events,
-      projectAssistantAttentions,
-    ).reduce((count, request) => count + request.attentions.length, 0)
-    projects.push({
-      projectId: project.projectId,
-      ...(project.label ? { label: project.label } : {}),
-      primaryRepoId: project.primaryRepoId,
-      repos: project.repos.map((repo) => ({
-        repoId: repo.repoId,
-        repoPath: repo.repoPath,
-        projectPath: repo.projectPath,
-        integrationRoot: repo.integrationRoot,
-        primary: repo.primary,
-      })),
-      repoPath: project.repoPath,
-      projectPath: project.projectPath,
-      guidance: await readProjectGuidance(project.sourceRoot),
-      preview: runtime.preview.inspect(project.projectId),
-      openAttentionCount: goalOpenAttentionCount + projectAttentions.length,
-      needsYouCount,
-      goals,
-    })
-  }
-  return {
-    home: {
-      ...home,
-      agentRoleCodingDefaults: agentRoleSettings,
-    },
-    projects,
-    attentions: includeAttentions
-      ? [
-          ...[...workspace.attentions.values()].map((attention) =>
-            presentWorkspaceAttention(attention),
-          ),
-          ...goalAttentions,
-        ]
-      : [],
-    activeRuns: [...runningAttempts, ...queuedAttempts].map((attempt) =>
-      presentActiveAttempt(attempt, runningAttempts, runtime.concurrency),
-    ),
-  }
-}
-
-function presentGoalAttentions(projectId: string, goalId: string, goalPackage: GoalPackage) {
-  return [...goalPackage.attentions.values()].map((attention) =>
-    presentGoalAttention(attention, projectId, goalId),
-  )
-}
-
-function goalCreatedAt(goalPackage: GoalPackage, events: ReadonlyMap<string, InboxEventDocument>) {
-  let earliest: { value: string; timestamp: number } | null = null
-  for (const input of goalPackage.inputs.values()) {
-    const receivedAt = events.get(input.attributes.sourceEventId)?.attributes.receivedAt
-    const inputTimestamp = receivedAt ? Date.parse(receivedAt) : Number.NaN
-    if (
-      receivedAt &&
-      Number.isFinite(inputTimestamp) &&
-      (!earliest || inputTimestamp < earliest.timestamp)
-    ) {
-      earliest = { value: receivedAt, timestamp: inputTimestamp }
-    }
-  }
-  return earliest?.value ?? null
-}
-
-function attemptWorkIds(attempts: readonly RunAttemptSummary[], projectId: string, goalId: string) {
-  return new Set(
-    attempts
-      .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
-      .map((attempt) => attempt.workId),
-  )
-}
-
-function presentActiveAttempt(
-  attempt: RunAttemptSummary,
-  runningAttempts: readonly RunAttemptSummary[],
-  concurrency: MvpRuntime['concurrency'],
-) {
-  const runningCount = runningAttempts.filter(
-    (running) => running.responsibility === attempt.responsibility,
-  ).length
-  return {
-    key: `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`,
-    runId: attempt.runId,
-    responsibility: attempt.responsibility,
-    status: attempt.status === 'queued' ? ('queued' as const) : ('running' as const),
-    requestedAt: attempt.requestedAt,
-    startedAt: attempt.startedAt,
-    waitReason:
-      attempt.status === 'queued' && runningCount >= concurrency[attempt.responsibility]
-        ? ('capacity' as const)
-        : null,
-  }
-}
-
-async function presentAssistantFeed(
-  runtime: MvpRuntime,
-  request: CursorPageRequest,
-  scope: AssistantConversationScope,
-) {
-  const projection = await readAssistantFeedProjection(runtime, scope)
-  const page = paginateItems(projection.entries, request, {
-    scope: `assistant-feed:${assistantConversationScopeKey(scope)}`,
-    getId: (entry) => entry.id,
-  })
-
-  return {
-    ...page,
-    items: await Promise.all(page.items.map((entry) => presentAssistantFeedEntry(runtime, entry))),
-    requests: projection.requests,
-    activity: projection.activity,
-    syncCursor: projection.syncCursor,
-    streamId: projection.streamId,
-  }
-}
-
-async function presentAssistantFeedChanges(
-  runtime: MvpRuntime,
-  cursor: string | null,
-  scope: AssistantConversationScope,
-  clientStreamId: string | null,
-) {
-  const projection = await readAssistantFeedProjection(runtime, scope)
-  const replayFrom =
-    cursor && (!clientStreamId || clientStreamId === projection.streamId)
-      ? Date.parse(cursor) - 1
-      : null
-  const changed =
-    replayFrom !== null
-      ? projection.entries.filter((entry) => Date.parse(entry.updatedAt) >= replayFrom)
-      : projection.entries
-  const removedIds = projection.removals
-    .filter((removal) => replayFrom === null || Date.parse(removal.updatedAt) >= replayFrom)
-    .map((removal) => removal.id)
-  return {
-    items: await Promise.all(changed.map((entry) => presentAssistantFeedEntry(runtime, entry))),
-    removedIds,
-    requests: projection.requests,
-    activity: projection.activity,
-    syncCursor: projection.syncCursor,
-    streamId: projection.streamId,
-  }
-}
-
-async function readAssistantFeedProjection(runtime: MvpRuntime, scope: AssistantConversationScope) {
-  const [workspace, conversationEpoch] = await Promise.all([
-    runtime.workspace.readWorkspace(),
-    readAssistantConversationEpoch(runtime.homeRoot, scope),
-  ])
-  const { attentions, goalCompletions } = await readScopedAssistantProjection(
-    runtime,
-    scope,
-    workspace,
-  )
-  const requests = projectAssistantOpenRequests(workspace.homeId, workspace.events, attentions)
-  const workspaceEvents = [...workspace.events.values()]
-  const requestEventIds = new Set(requests.map((request) => request.eventId))
-  const publicEvents = workspaceEvents.filter(
-    (event) =>
-      event.attributes.visibility === 'public' &&
-      (assistantEventBelongsToScope(event, scope) || requestEventIds.has(event.attributes.id)),
-  )
-  const internalSpeakingEvents = workspaceEvents.filter(
-    (event) =>
-      isInternalInboxSource(event.attributes.source) &&
-      event.attributes.visibility === 'internal' &&
-      event.attributes.status === 'pending' &&
-      assistantEventBelongsToScope(event, scope),
-  )
-  const [eventStates, internalSpeakingTurns] = await Promise.all([
-    Promise.all(
-      publicEvents.map(async (event) => {
-        if (event.attributes.status === 'handled') {
-          return {
-            event,
-            turn: null,
-            runtimeStatus: 'completed' as const,
-            updatedAt: maxTimestamp(event.attributes.receivedAt, event.attributes.handledAt),
-          }
-        }
-        const turn = await runtime.assistantConversation.readTurn(event.attributes.id)
-        return {
-          event,
-          turn,
-          runtimeStatus: turn?.manifest.status ?? ('queued' as const),
-          updatedAt: maxTimestamp(
-            event.attributes.receivedAt,
-            turn?.manifest.updatedAt,
-            turn?.events.at(-1)?.createdAt,
-          ),
-        }
-      }),
-    ),
-    Promise.all(
-      internalSpeakingEvents.map((event) =>
-        runtime.assistantConversation.readTurn(event.attributes.id),
-      ),
-    ),
-  ])
-  const eventEntries = eventStates.map((state) => ({
-    kind: 'event' as const,
-    id: `event:${state.event.attributes.id}`,
-    occurredAt: state.event.attributes.receivedAt,
-    updatedAt: state.updatedAt,
-    event: state.event,
-    turn: state.turn,
-    runtimeStatus: state.runtimeStatus,
-  }))
-  const removals = [
-    ...(conversationEpoch.resetAt
-      ? conversationEpoch.removedFeedEntryIds.map((id) => ({
-          id,
-          updatedAt: conversationEpoch.resetAt as string,
-        }))
-      : []),
-  ]
-  const allEntries = [
-    ...eventEntries,
-    ...goalCompletions.map((completion) => ({
-      kind: 'goal_completion' as const,
-      id: `goal-completion:project:${completion.projectId}/goal:${completion.goalId}/evidence:${completion.evidenceId}`,
-      occurredAt: completion.completedAt,
-      updatedAt: completion.completedAt,
-      completion,
-    })),
-  ].sort(
-    (left, right) =>
-      left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id),
-  )
-  const statuses = eventStates.map((state) => state.runtimeStatus)
-  return {
-    entries: allEntries,
-    removals,
-    requests,
-    activity: deriveAssistantFeedActivity({
-      publicStatuses: statuses,
-      internalSpeakingRunning: internalSpeakingTurns.some(
-        (turn) => turn?.manifest.status === 'running',
-      ),
-      reflectionRunning: scope.kind === 'home' && runtime.reflection.isActive(),
-    }),
-    syncCursor: [
-      ...allEntries.map(({ updatedAt }) => updatedAt),
-      ...(conversationEpoch.resetAt ? [conversationEpoch.resetAt] : []),
-    ].reduce<string | null>(
-      (latest, timestamp) =>
-        !latest || Date.parse(timestamp) > Date.parse(latest) ? timestamp : latest,
-      null,
-    ),
-    streamId: `${conversationEpoch.streamId}:projection:${ASSISTANT_FEED_PROJECTION_VERSION}`,
-  }
-}
-
-interface ScopedAssistantAttentionBase {
-  id: string
-  createdAt: string
-  resolvedAt: string | null
-  summary: string
-  decisionPrompt: WorkspaceAttentionDocument['attributes']['decisionPrompt']
-  body: string
-}
-
-type ScopedAssistantAttention =
-  | (ScopedAssistantAttentionBase & {
-      scope: 'workspace'
-      projectId?: string
-      updatedAt: string
-      refs: string[]
-    })
-  | (ScopedAssistantAttentionBase & {
-      scope: 'goal'
-      projectId: string
-      goalId: string
-      target: string
-    })
-
-function presentWorkspaceAttention(
-  attention: WorkspaceAttentionDocument,
-  projectId = workspaceAttentionProjectId(attention) ?? undefined,
-): ScopedAssistantAttention {
-  return {
-    scope: 'workspace',
-    ...(projectId ? { projectId } : {}),
-    ...attention.attributes,
-    summary: attention.attributes.summary,
-    decisionPrompt: attention.attributes.decisionPrompt ?? null,
-    body: attention.body,
-  }
-}
-
-function presentGoalAttention(
-  attention: AttentionDocument,
-  projectId: string,
-  goalId: string,
-): ScopedAssistantAttention {
-  return {
-    scope: 'goal',
-    projectId,
-    goalId,
-    id: attention.attributes.id,
-    target: attention.attributes.target,
-    createdAt: attention.attributes.createdAt,
-    resolvedAt: attention.attributes.resolvedAt,
-    summary: attention.attributes.summary,
-    decisionPrompt: attention.attributes.decisionPrompt ?? null,
-    body: attention.body,
-  }
-}
-
-interface ScopedGoalCompletion {
-  projectId: string
-  goalId: string
-  evidenceId: string
-  completedAt: string
-  body: string
-}
-
-export function goalCompletionProjection(
-  projectId: string,
-  goalId: string,
-  goalPackage: GoalPackage,
-): ScopedGoalCompletion | null {
-  const goal = goalPackage.goal.attributes
-  if (goal.lifecycle !== 'done') return null
-
-  const evidence = [...goalPackage.works.values()]
-    .filter(
-      (work) =>
-        isPlanningWork(work.attributes) &&
-        work.attributes.stage === 'done' &&
-        work.attributes.contractRevision === goal.contractRevision,
-    )
-    .flatMap((work) =>
-      work.attributes.evidenceRefs.flatMap((evidenceId) => {
-        const candidate = goalPackage.evidence.get(evidenceId)
-        return candidate && /^- Result: success$/m.test(candidate.body) ? [candidate] : []
-      }),
-    )
-    .toSorted(
-      (left, right) =>
-        left.attributes.createdAt.localeCompare(right.attributes.createdAt) ||
-        left.attributes.id.localeCompare(right.attributes.id),
-    )
-    .at(-1)
-  if (!evidence) return null
-
-  const summary = evidence.body.match(/^## Summary\s*\n+([\s\S]+)$/m)?.[1]?.trim()
-  if (!summary) return null
-  return {
-    projectId,
-    goalId,
-    evidenceId: evidence.attributes.id,
-    completedAt: evidence.attributes.createdAt,
-    body: `## ${goal.title}\n\n${summary}`,
-  }
-}
-
-async function readScopedAssistantProjection(
-  runtime: MvpRuntime,
-  scope: AssistantConversationScope,
-  workspace: Awaited<ReturnType<MvpRuntime['workspace']['readWorkspace']>>,
-): Promise<{
-  attentions: ScopedAssistantAttention[]
-  goalCompletions: ScopedGoalCompletion[]
-}> {
-  if (scope.kind === 'home') {
-    return {
-      attentions: [...workspace.attentions.values()]
-        .filter((attention) => workspaceAttentionProjectId(attention) === null)
-        .map((attention) => presentWorkspaceAttention(attention)),
-      goalCompletions: [],
-    }
-  }
-
-  const project = requireProject(runtime.projects, scope.projectId)
-  const attentions: ScopedAssistantAttention[] = [...workspace.attentions.values()]
-    .filter((attention) => workspaceAttentionProjectId(attention) === scope.projectId)
-    .map((attention) => presentWorkspaceAttention(attention, scope.projectId))
-  const goalCompletions: ScopedGoalCompletion[] = []
-  for (const goalId of await project.store.listGoalIds()) {
-    try {
-      const goalPackage = await project.store.readPackage(goalId)
-      attentions.push(...presentGoalAttentions(project.projectId, goalId, goalPackage))
-      const completion = goalCompletionProjection(project.projectId, goalId, goalPackage)
-      if (completion) goalCompletions.push(completion)
-    } catch {}
-  }
-  return { attentions, goalCompletions }
-}
-
-function projectAssistantOpenRequests(
-  homeId: string,
-  events: ReadonlyMap<string, InboxEventDocument>,
-  attentions: Awaited<ReturnType<typeof readScopedAssistantProjection>>['attentions'],
-) {
-  type OpenAttention = (typeof attentions)[number]
-  const openByReference = new Map<string, OpenAttention>()
-  for (const attention of attentions) {
-    if (attention.resolvedAt !== null) continue
-    const reference =
-      attention.scope === 'goal'
-        ? goalAttentionReference(attention.projectId, attention.goalId, attention.id)
-        : workspaceAttentionReference(homeId, attention.id)
-    openByReference.set(reference, attention)
-  }
-  const latestByAttention = new Map<
-    string,
-    { eventId: string; occurredAt: string; attention: OpenAttention }
-  >()
-  for (const event of [...events.values()].toSorted((left, right) =>
-    left.attributes.receivedAt.localeCompare(right.attributes.receivedAt),
-  )) {
-    if (
-      event.attributes.status !== 'handled' ||
-      event.attributes.visibility !== 'public' ||
-      !event.attributes.reply
-    ) {
-      continue
-    }
-    const references = event.attributes.attentionRequest?.attentionRefs ?? []
-    for (const reference of references) {
-      const attention = openByReference.get(reference)
-      if (!attention) continue
-      latestByAttention.set(reference, {
-        eventId: event.attributes.id,
-        occurredAt: event.attributes.receivedAt,
-        attention,
-      })
-    }
-  }
-
-  const grouped = new Map<
-    string,
-    {
-      eventId: string
-      occurredAt: string
-      attentions: OpenAttention[]
-    }
-  >()
-  for (const entry of latestByAttention.values()) {
-    const existing = grouped.get(entry.eventId)
-    if (existing) {
-      existing.attentions.push(entry.attention)
-    } else {
-      grouped.set(entry.eventId, {
-        eventId: entry.eventId,
-        occurredAt: entry.occurredAt,
-        attentions: [entry.attention],
-      })
-    }
-  }
-
-  return [...grouped.values()]
-    .sort(
-      (left, right) =>
-        left.occurredAt.localeCompare(right.occurredAt) ||
-        left.eventId.localeCompare(right.eventId),
-    )
-    .map(({ eventId, attentions: groupedAttentions }) => ({
-      eventId,
-      attentions: groupedAttentions,
-    }))
-}
-
-type AssistantFeedRuntimeStatus = 'queued' | 'running' | 'interrupted' | 'completed' | 'failed'
-
-export function deriveAssistantFeedActivity(input: {
-  publicStatuses: readonly AssistantFeedRuntimeStatus[]
-  internalSpeakingRunning: boolean
-  reflectionRunning: boolean
-}) {
-  if (input.publicStatuses.includes('running')) return { phase: 'working' as const }
-  if (input.internalSpeakingRunning || input.reflectionRunning) {
-    return { phase: 'thinking' as const }
-  }
-  if (input.publicStatuses.some((status) => status === 'queued' || status === 'interrupted')) {
-    return { phase: 'waiting' as const }
-  }
-  return null
-}
-
-type AssistantFeedProjectionEntry = Awaited<
-  ReturnType<typeof readAssistantFeedProjection>
->['entries'][number]
-
-async function presentAssistantFeedEntry(runtime: MvpRuntime, entry: AssistantFeedProjectionEntry) {
-  if (entry.kind === 'goal_completion') {
-    return {
-      kind: entry.kind,
-      id: entry.id,
-      occurredAt: entry.occurredAt,
-      completion: entry.completion,
-    }
-  }
-  const turn =
-    entry.turn ?? (await runtime.assistantConversation.readTurn(entry.event.attributes.id))
-  return {
-    kind: entry.kind,
-    id: entry.id,
-    occurredAt: entry.occurredAt,
-    event: {
-      ...entry.event.attributes,
-      attachments: await presentInboxAttachments(runtime, entry.event.attributes.attachments),
-      context: entry.event.attributes.context ?? null,
-      body: entry.event.body,
-      runtimeStatus: entry.runtimeStatus,
-      runtimeEvents: (turn?.events ?? []).filter(isPresentableAgentRuntimeEvent),
-      runtimeError: turn?.manifest.error ?? null,
-    },
-  }
-}
-
-function maxTimestamp(...values: Array<string | null | undefined>) {
-  const present = values.filter((value): value is string => Boolean(value))
-  if (present.length === 0) throw new Error('Assistant feed entry has no timestamp')
-  return present.reduce((latest, value) =>
-    Date.parse(value) > Date.parse(latest) ? value : latest,
-  )
-}
-
-export function deriveGoalSummaries(
-  goalPackage: Awaited<ReturnType<MvpProjectRuntime['store']['readPackage']>>,
-  projections: ReturnType<typeof deriveGoalWorkProjections>,
-) {
-  const lifecycle = goalPackage.goal.attributes.lifecycle
-  if (lifecycle === 'done') return { currentSummary: 'Outcome delivered', nextSummary: 'Complete' }
-  if (lifecycle === 'cancelled')
-    return { currentSummary: 'Preserved history', nextSummary: 'Cancelled' }
-  const ordered = projections
-    .filter((projection) => {
-      const work = goalPackage.works.get(projection.workId)
-      return work && work.attributes.stage !== 'done' && work.attributes.stage !== 'cancelled'
-    })
-    .toSorted((left, right) => {
-      const columns = ['Plan', 'Build', 'Review', 'Done']
-      return columns.indexOf(left.column ?? 'Done') - columns.indexOf(right.column ?? 'Done')
-    })
-  const focus =
-    ordered.find((projection) => projection.primaryBadge === 'Needs you') ??
-    ordered.find((projection) => projection.primaryBadge === 'Waiting for Assistant') ??
-    ordered.find((projection) => projection.primaryBadge === 'working') ??
-    ordered[0]
-  if (lifecycle === 'paused') {
-    return {
-      currentSummary: focus
-        ? `Paused at ${goalPackage.works.get(focus.workId)?.attributes.title ?? focus.workId}`
-        : 'Paused',
-      nextSummary: 'Resume to continue',
-    }
-  }
-  if (!focus) return { currentSummary: 'Final assessment', nextSummary: 'Planner' }
-  const work = goalPackage.works.get(focus.workId)
-  return {
-    currentSummary: `${focus.column ?? 'Waiting'}: ${work?.attributes.title ?? focus.workId}`,
-    nextSummary: focus.primaryBadge
-      ? `${focus.primaryBadge}${focus.responsibility ? ` · ${focus.responsibility}` : ''}`
-      : (focus.responsibility ?? 'Waiting for prerequisites'),
-  }
-}
-
-async function readProjectGuidance(projectRoot: string) {
-  const file = Bun.file(join(projectRoot, 'AGENTS.md'))
-  return (await file.exists()) ? await file.text() : null
-}
-
-export function presentAttempt<
-  T extends {
-    runId: string
-    workId: string
-    result: string | null
-    summary: string | null
-    application: string | null
-  },
->(
-  attempt: T,
-  goalPackage: Awaited<ReturnType<MvpProjectRuntime['store']['readPackage']>>,
-  projectId: string,
-  goalId: string,
-) {
-  const producerRun = `${workAttentionTarget(projectId, goalId, attempt.workId)}/run:${attempt.runId}`
-  const evidence = [...goalPackage.evidence.values()].find(
-    (document) => document.attributes.producerRun === producerRun,
-  )
-  if (!evidence) return attempt
-  const publishedResult = evidence.body.match(
-    /^- Result: (success|reject|attention|replan|fail)$/m,
-  )?.[1]
-  const consumed = [...goalPackage.works.values()].some((work) =>
-    work.attributes.evidenceRefs.includes(evidence.attributes.id),
-  )
-  return {
-    ...attempt,
-    result: attempt.result ?? publishedResult ?? null,
-    summary: attempt.summary ?? evidence.body.match(/## Summary\s+([\s\S]+)$/)?.[1]?.trim() ?? null,
-    application: attempt.application ?? (consumed ? 'published' : 'evidence_preserved'),
-  }
-}
-
-export function deriveWorkCompletedAt(
-  work: Pick<WorkDocument['attributes'], 'kind' | 'stage'>,
-  attempts: readonly Pick<
-    RunAttemptSummary,
-    'responsibility' | 'status' | 'result' | 'endedAt' | 'application'
-  >[],
-): string | null {
-  if (work.stage !== 'done') return null
-
-  const terminalResponsibility = work.kind === 'planning' ? 'planner' : 'reviewer'
-  const terminalApplications =
-    work.kind === 'planning'
-      ? new Set(['published'])
-      : new Set(['integrated', 'already_integrated'])
-  const successfulTerminalAttempts = attempts.filter(
-    (attempt) =>
-      attempt.responsibility === terminalResponsibility &&
-      attempt.status === 'finished' &&
-      attempt.result === 'success' &&
-      attempt.endedAt !== null,
-  )
-  const appliedAttempts = successfulTerminalAttempts.filter((attempt) =>
-    terminalApplications.has(attempt.application ?? ''),
-  )
-  return appliedAttempts.reduce<string | null>(
-    (latest, attempt) =>
-      attempt.endedAt && (!latest || attempt.endedAt > latest) ? attempt.endedAt : latest,
-    null,
-  )
 }
 
 async function receiveUserEvent(
@@ -1755,518 +868,12 @@ async function executeDirectUserCommand(
   })
 }
 
-async function presentGoal(
-  runtime: MvpRuntime,
-  projectId: string,
-  goalId: string,
-  view: 'full' | 'board' | 'docs' = 'full',
-) {
-  const project = requireProject(runtime.projects, projectId)
-  const goalPackage = (await project.store.readReconciliationSnapshot()).get(goalId)
-  if (!goalPackage) throw new ApiError(404, `Goal not found: ${goalId}`)
-  if (view === 'docs') {
-    const designSnapshot = await runtime.publisher.snapshotTree(
-      project.store.paths.publicationRoot,
-      project.store.paths.designRoot(goalId),
-    )
-    return {
-      projectId,
-      goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
-      design: designSnapshot.files.map((file) => ({
-        path: file.path,
-        excerpt: presentExcerpt(file.content ? new TextDecoder().decode(file.content) : '', 60),
-      })),
-      evidence: [...goalPackage.evidence.values()].map((evidence) => ({
-        id: evidence.attributes.id,
-        createdAt: evidence.attributes.createdAt,
-        producerRun: evidence.attributes.producerRun,
-        owner: evidence.attributes.owner,
-        excerpt: presentExcerpt(evidence.body, 150),
-      })),
-    }
-  }
-  const [workspace, designSnapshot, attemptSnapshot] = await Promise.all([
-    runtime.workspace.readWorkspace(),
-    view === 'full'
-      ? runtime.publisher.snapshotTree(
-          project.store.paths.publicationRoot,
-          project.store.paths.designRoot(goalId),
-        )
-      : null,
-    runtime.attempts.snapshot(),
-  ])
-  const attemptsByWork = attemptSnapshot.listGoal(projectId, goalId)
-  const runningAttempts = attemptSnapshot.running()
-  const activeAttemptByWork = new Map(
-    [...runningAttempts, ...attemptSnapshot.queued()]
-      .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
-      .map((attempt) => [attempt.workId, attempt] as const),
-  )
-  const liveWorkIds = new Set(
-    [...attemptsByWork.entries()].flatMap(([workId, attempts]) =>
-      attempts.some((attempt) => attempt.status === 'running') ? [workId] : [],
-    ),
-  )
-  const projectAttention = [...workspace.attentions.values()].find(
-    (attention) =>
-      workspaceAttentionProjectId(attention) === projectId &&
-      attention.attributes.resolvedAt === null,
-  )
-  const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
-    projectEligible: true,
-    liveRunWorkIds: liveWorkIds,
-    settledFailureWorkIds: await settledFailureWorkIds(
-      goalPackage,
-      attemptsByWork,
-      attemptWorkIds(attemptSnapshot.queued(), projectId, goalId),
-    ),
-    passCapacity: { planner: true, generator: true, reviewer: true },
-  })
-  const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
-  const agentPlanByWork = await readLiveAgentPlans(
-    runtime,
-    projectId,
-    goalId,
-    liveWorkIds,
-    attemptsByWork,
-  )
-  const projection = {
-    projectId,
-    goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
-    works: [...goalPackage.works.values()].map((work) => {
-      const workAttempts = attemptsByWork.get(work.attributes.id) ?? []
-      const activeAttempt = activeAttemptByWork.get(work.attributes.id) ?? null
-      return {
-        ...work.attributes,
-        ...(view === 'full' ? { body: work.body } : {}),
-        projection: projectionByWork.get(work.attributes.id),
-        blockedBy: presentWorkBlocker(work, projectionByWork, goalPackage),
-        activeAttempt: activeAttempt
-          ? presentActiveAttempt(activeAttempt, runningAttempts, runtime.concurrency)
-          : null,
-        agentPlan: agentPlanByWork.get(work.attributes.id) ?? null,
-        runAttemptCount: workAttempts.length,
-        completedAt: deriveWorkCompletedAt(work.attributes, workAttempts),
-      }
-    }),
-    attentions: [...goalPackage.attentions.values()]
-      .filter((attention) => view === 'full' || attention.attributes.resolvedAt === null)
-      .map((attention) => {
-        const presented = presentGoalAttention(attention, projectId, goalId)
-        if (view === 'full') return presented
-        const { body: _body, ...summary } = presented
-        return summary
-      }),
-    projectAttention: projectAttention
-      ? presentWorkspaceAttention(projectAttention, projectId)
-      : null,
-  }
-  if (view === 'board') return projection
-  return {
-    ...projection,
-    design: (designSnapshot?.files ?? []).map((file) => ({
-      path: file.path,
-      content: file.content ? new TextDecoder().decode(file.content) : '',
-    })),
-    evidence: [...goalPackage.evidence.values()].map((evidence) => ({
-      ...evidence.attributes,
-      body: evidence.body,
-    })),
-  }
-}
-
-async function presentGoalExecutionCost(runtime: MvpRuntime, projectId: string, goalId: string) {
-  const project = requireProject(runtime.projects, projectId)
-  if (!(await project.store.readReconciliationSnapshot()).has(goalId)) {
-    throw new ApiError(404, `Goal not found: ${goalId}`)
-  }
-  const attemptsByWork = await runtime.attempts.listGoal(projectId, goalId)
-  const entries: RunCostEntry[] = []
-  for (const [workId, attempts] of attemptsByWork) {
-    for (const attempt of attempts) {
-      const diagnostics = await runtime.attempts.readDiagnostics(
-        projectId,
-        goalId,
-        workId,
-        attempt.runId,
-      )
-      if (diagnostics) entries.push({ ...attempt, diagnostics })
-    }
-  }
-  const byWork = [...attemptsByWork.keys()].map((workId) => {
-    const scoped = entries.filter((entry) => entry.workId === workId)
-    return { workId, summary: summarizeRunCosts(scoped) }
-  })
-  const byResponsibility = (['planner', 'generator', 'reviewer'] as const).map(
-    (responsibility) => ({
-      responsibility,
-      summary: summarizeRunCosts(
-        entries.filter((entry) => entry.responsibility === responsibility),
-      ),
-    }),
-  )
-  return {
-    projectId,
-    goalId,
-    summary: summarizeRunCosts(entries),
-    byWork,
-    byResponsibility,
-    runs: entries,
-  }
-}
-
-function presentWorkBlocker(
-  work: WorkDocument,
-  projections: ReadonlyMap<string, WorkProjection>,
-  goalPackage: GoalPackage,
-) {
-  const projection = projections.get(work.attributes.id)
-  if (
-    !projection ||
-    work.attributes.stage === 'done' ||
-    work.attributes.stage === 'cancelled' ||
-    projection.ready ||
-    projection.primaryBadge === 'working'
-  ) {
-    return null
-  }
-
-  const reasons = new Set(projection.failedPredicates)
-  if (reasons.has('attention')) {
-    if (projection.primaryBadge === 'Needs you') return 'you'
-    if (projection.primaryBadge === 'Waiting for Assistant') return 'Assistant'
-    return 'Attention'
-  }
-  if (reasons.has('project_ineligible')) return 'Project'
-  if (reasons.has('goal_not_active')) return 'Goal'
-  if (reasons.has('stale_contract_revision')) return 'Planner'
-  if (reasons.has('dependency_incomplete')) {
-    const dependencies = work.attributes.dependsOn
-      .map((dependencyId) => goalPackage.works.get(dependencyId))
-      .filter((dependency): dependency is WorkDocument =>
-        Boolean(dependency && dependency.attributes.stage !== 'done'),
-      )
-    if (dependencies.length === 1) return dependencies[0]?.attributes.title ?? 'dependency'
-    return dependencies.length > 1 ? `${dependencies.length} dependencies` : 'dependency'
-  }
-  if (reasons.has('not_before')) return 'schedule'
-  if (reasons.has('capacity')) {
-    return projection.responsibility
-      ? `${capitalize(projection.responsibility)} capacity`
-      : 'Agent capacity'
-  }
-  if (reasons.has('no_profile_pass')) return 'runner profile'
-  return null
-}
-
-function capitalize(value: string) {
-  return `${value[0]?.toUpperCase() ?? ''}${value.slice(1)}`
-}
-
-async function readLiveAgentPlans(
-  runtime: MvpRuntime,
-  projectId: string,
-  goalId: string,
-  liveWorkIds: ReadonlySet<string>,
-  attemptsByWork: ReadonlyMap<string, readonly RunAttemptSummary[]>,
-) {
-  const plans = await Promise.all(
-    [...liveWorkIds].map(async (workId) => {
-      const attempt = attemptsByWork
-        .get(workId)
-        ?.find((candidate) => candidate.status === 'running')
-      if (!attempt) return null
-      const events = await runtime.attempts.readEvents(projectId, goalId, workId, attempt.runId)
-      const plan = latestAgentPlan(events ?? [])
-      return plan
-        ? ([
-            workId,
-            {
-              runId: attempt.runId,
-              transport: plan.transport,
-              planId: plan.planId,
-              status: plan.status,
-              items: plan.items,
-              vendorEventType: plan.vendorEventType,
-            },
-          ] as const)
-        : null
-    }),
-  )
-  return new Map(plans.filter((entry): entry is NonNullable<typeof entry> => entry !== null))
-}
-
-export function latestAgentPlan(events: readonly AgentRuntimeEvent[]): AgentPlanEvent | null {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    if (event?.kind === 'plan') return event
-  }
-  return null
-}
-
-function matchGoalRoute(parts: string[]) {
-  if (
-    parts[0] !== 'api' ||
-    parts[1] !== 'projects' ||
-    parts[3] !== 'goals' ||
-    !parts[2] ||
-    !parts[4] ||
-    parts.length > 6
-  ) {
-    return null
-  }
-  const action = parts[5] ?? null
-  if (
-    action !== null &&
-    action !== 'pause' &&
-    action !== 'resume' &&
-    action !== 'cancel' &&
-    action !== 'reopen' &&
-    action !== 'execution-cost'
-  ) {
-    return null
-  }
-  return { projectId: parts[2], goalId: parts[4], action }
-}
-
-function matchWorkDocumentRoute(parts: string[]) {
-  if (
-    parts.length !== 7 ||
-    parts[0] !== 'api' ||
-    parts[1] !== 'projects' ||
-    parts[3] !== 'goals' ||
-    parts[5] !== 'works' ||
-    !parts[2] ||
-    !parts[4] ||
-    !parts[6]
-  ) {
-    return null
-  }
-  return { projectId: parts[2], goalId: parts[4], workId: parts[6] }
-}
-
-function matchGoalDocumentRoute(parts: string[]) {
-  if (
-    parts.length !== 6 ||
-    parts[0] !== 'api' ||
-    parts[1] !== 'projects' ||
-    parts[3] !== 'goals' ||
-    parts[5] !== 'documents' ||
-    !parts[2] ||
-    !parts[4]
-  ) {
-    return null
-  }
-  return { projectId: parts[2], goalId: parts[4] }
-}
-
-function isDesignDocumentPath(designRoot: string, path: string) {
-  const prefix = `${designRoot}/`
-  if (!path.startsWith(prefix) || !path.endsWith('.md')) return false
-  const relative = path.slice(prefix.length)
-  return (
-    relative.length > 0 &&
-    relative.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
-  )
-}
-
-function readGoalView(view: string | null): 'full' | 'board' | 'docs' {
-  if (view === 'board' || view === 'docs') return view
-  return 'full'
-}
-
-function presentExcerpt(value: string, maxLength: number) {
-  const plain = value
-    .replace(/^#+\s+.*$/gm, '')
-    .replace(/^[-*]\s+/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return plain.length > maxLength ? `${plain.slice(0, maxLength - 1)}…` : plain
-}
-
-function matchPreviewRoute(parts: string[]) {
-  if (
-    parts[0] !== 'api' ||
-    parts[1] !== 'projects' ||
-    parts[3] !== 'preview' ||
-    !parts[2] ||
-    parts.length > 5
-  ) {
-    return null
-  }
-  const action = parts[4] ?? null
-  if (action !== null && action !== 'start' && action !== 'stop') return null
-  return { projectId: parts[2], action }
-}
-
-function matchWorkAttemptRoute(parts: string[]) {
-  if (
-    parts.length < 8 ||
-    parts.length > 10 ||
-    parts[0] !== 'api' ||
-    parts[1] !== 'projects' ||
-    parts[3] !== 'goals' ||
-    parts[5] !== 'works' ||
-    parts[7] !== 'attempts' ||
-    !parts[2] ||
-    !parts[4] ||
-    !parts[6]
-  ) {
-    return null
-  }
-  if (parts.length === 10 && parts[9] !== 'events') return null
-  if (parts.length === 10 && !parts[8]) return null
-  return {
-    projectId: parts[2],
-    goalId: parts[4],
-    workId: parts[6],
-    runId: parts[8] ?? null,
-    events: parts[9] === 'events',
-  }
-}
-
-function matchEvidenceArtifactRoute(parts: string[]) {
-  if (
-    parts.length !== 9 ||
-    parts[0] !== 'api' ||
-    parts[1] !== 'projects' ||
-    parts[3] !== 'goals' ||
-    parts[5] !== 'evidence' ||
-    parts[7] !== 'artifacts' ||
-    !parts[2] ||
-    !parts[4] ||
-    !parts[6] ||
-    !parts[8] ||
-    !/^\d+$/.test(parts[8])
-  ) {
-    return null
-  }
-  return {
-    projectId: parts[2],
-    goalId: parts[4],
-    evidenceId: parts[6],
-    artifactIndex: Number.parseInt(parts[8], 10),
-  }
-}
-
 function readAssistantConversationScope(runtime: MvpRuntime, url: URL): AssistantConversationScope {
   const rawProjectId = url.searchParams.get('projectId')?.trim()
   if (!rawProjectId) return { kind: 'home' }
   const projectId = stableIdSchema.parse(rawProjectId)
   if (!runtime.projects.has(projectId)) throw new ApiError(404, `Project not found: ${projectId}`)
   return { kind: 'project', projectId }
-}
-
-function readPageRequest(url: URL, defaultLimit: number, maxLimit: number): CursorPageRequest {
-  const before = url.searchParams.get('before') ?? undefined
-  const after = url.searchParams.get('after') ?? undefined
-  if (before && after) throw new ApiError(400, 'before and after are mutually exclusive')
-  const rawLimit = url.searchParams.get('limit')
-  if (rawLimit !== null && !/^\d+$/.test(rawLimit)) {
-    throw new ApiError(400, 'limit must be a positive integer')
-  }
-  const requestedLimit = rawLimit === null ? defaultLimit : Number.parseInt(rawLimit, 10)
-  if (requestedLimit < 1) throw new ApiError(400, 'limit must be a positive integer')
-  return {
-    before,
-    after,
-    limit: Math.min(requestedLimit, maxLimit),
-  }
-}
-
-function readAssistantChangeCursor(url: URL) {
-  const cursor = url.searchParams.get('cursor')
-  if (cursor === null) return null
-  if (!z.string().datetime({ offset: true }).safeParse(cursor).success) {
-    throw new ApiError(400, 'Assistant change cursor must be an ISO timestamp')
-  }
-  return cursor
-}
-
-async function parseBody<T extends z.ZodTypeAny>(
-  request: Request,
-  schema: T,
-): Promise<z.output<T>> {
-  return schema.parse(await request.json())
-}
-
-async function parsePreviewStartRequest(request: Request) {
-  const body = await request.text()
-  if (!body.trim()) return {}
-  let value: unknown
-  try {
-    value = JSON.parse(body)
-  } catch {
-    throw new ApiError(400, 'Invalid Preview start request')
-  }
-  const parsed = previewStartSchema.safeParse(value)
-  if (!parsed.success) throw new ApiError(400, 'Invalid Preview start request')
-  return parsed.data
-}
-
-async function parseInboxRequest(request: Request) {
-  if (!request.headers.get('content-type')?.startsWith('multipart/form-data')) {
-    const parsed = inboxSchema.parse(await request.json())
-    if (!parsed.content.trim()) throw new ApiError(400, 'Inbox message is empty')
-    return { ...parsed, images: [] as File[] }
-  }
-  const form = await request.formData()
-  const rawContext = form.get('context')
-  let context: unknown
-  if (typeof rawContext === 'string' && rawContext.trim()) {
-    try {
-      context = JSON.parse(rawContext)
-    } catch {
-      throw new ApiError(400, 'Invalid Inbox context')
-    }
-  }
-  const parsed = inboxSchema.parse({ content: form.get('content'), context })
-  const images = form.getAll('images').filter((value): value is File => value instanceof File)
-  if (!parsed.content.trim() && images.length === 0) {
-    throw new ApiError(400, 'Inbox message is empty')
-  }
-  return { ...parsed, images }
-}
-
-function canonicalInboxContext(context: z.infer<typeof inboxSchema>['context']) {
-  if (!context) return undefined
-  const attentionRefs = normalizeInboxAttentionReferences(context)
-  return {
-    ...(context.projectId ? { projectId: context.projectId } : {}),
-    ...(context.goalId ? { goalId: context.goalId } : {}),
-    ...(attentionRefs.length ? { attentionRefs } : {}),
-    ...(context.replyTo ? { replyTo: context.replyTo } : {}),
-  }
-}
-
-async function presentInboxAttachments(runtime: MvpRuntime, references: readonly string[]) {
-  const attachments = []
-  for (const reference of references) {
-    const attachment = await runtime.workspace.resolveAttachment(reference)
-    if (!attachment) continue
-    attachments.push({
-      reference,
-      fileName: attachment.fileName,
-      mediaType: attachment.mediaType,
-      sizeBytes: attachment.sizeBytes,
-      url: `/api/assistant/attachments/${encodeURIComponent(attachment.contentHash)}/${encodeURIComponent(attachment.fileName)}`,
-    })
-  }
-  return attachments
-}
-
-function requirePart(parts: string[], index: number) {
-  const value = parts[index]
-  if (!value) throw new ApiError(404, 'Route parameter is missing')
-  return value
-}
-
-function json(value: unknown, status = 200) {
-  return Response.json(value, { status })
-}
-
-function inlineContentDisposition(fileName: string) {
-  return `inline; filename*=UTF-8''${encodeURIComponent(fileName).replaceAll("'", '%27')}`
 }
 
 function createSingleFlight<T>(operation: () => Promise<T>) {
@@ -2282,15 +889,6 @@ function createSingleFlight<T>(operation: () => Promise<T>) {
     } finally {
       if (activeOperation === nextOperation) activeOperation = null
     }
-  }
-}
-
-class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message)
   }
 }
 

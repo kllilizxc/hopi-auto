@@ -1,7 +1,7 @@
-import { mkdir, rename } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import { assertStableId } from '../domain/stableId'
+import { writeJsonAtomically } from '../storage/atomicFile'
 import {
   type AssistantConversationScope,
   assistantConversationScopeKey,
@@ -61,10 +61,7 @@ export async function resetProjectAssistantConversationEpoch(input: {
     projectId: input.projectId,
   })
   if (!path) throw new Error('Project Assistant conversation epoch path is missing')
-  await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.${crypto.randomUUID()}.tmp`
-  await Bun.write(temporary, `${JSON.stringify(epoch, null, 2)}\n`)
-  await rename(temporary, path)
+  await writeJsonAtomically(path, epoch)
   return epoch
 }
 

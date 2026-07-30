@@ -6,7 +6,7 @@
 - [`mvp_document_model.md`](./mvp_document_model.md): canonical home, Project, Goal, Work, Input,
   Attention, and Evidence documents.
 - [`mvp_assistant.md`](./mvp_assistant.md): Home-configured Assistant conversation, HOPI tools,
-  session recovery, Reflection, and Assistant UI behavior.
+  session recovery, Wake, and Assistant UI behavior.
 - [`mvp_project_owner.md`](./mvp_project_owner.md): authoritative Project Assistant, wake-up,
   Attention, Needs You, and intervention model.
 - [`mvp_execution.md`](./mvp_execution.md): fixed responsibilities,

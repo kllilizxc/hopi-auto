@@ -265,6 +265,8 @@ async function createFixture() {
             dependsOn: [],
             contractRevision: 1,
             evidenceRefs: [],
+            contextRefs: [],
+            ownerMessages: [],
           },
           body: '## Acceptance Criteria\n\n- feature equals 2.\n',
         }),
@@ -283,6 +285,8 @@ async function createFixture() {
     projectId: 'project-1',
     goalId: 'goal-1',
     workId: 'W-1',
+    repoId: linked.primaryRepoId,
+    primaryRepoId: linked.primaryRepoId,
   })
   await Bun.write(join(stable.path, 'src', 'feature.ts'), 'export const feature = 2\n')
   await checkpointTaskWorktree({
@@ -324,6 +328,8 @@ async function createFixture() {
     async prepareReviewer(runId: string) {
       const context = await stager.prepare({
         projectRoot: linked.integrationRoot,
+        primaryRepoId: 'primary',
+        repoRoots: [{ repoId: 'primary', path: linked.integrationRoot, primary: true }],
         projectId: 'project-1',
         goalId: 'goal-1',
         workId: 'W-1',

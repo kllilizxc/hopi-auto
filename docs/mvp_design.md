@@ -37,8 +37,8 @@ Together they interrupt the operator only when:
 Every deviation is detected, recorded, and owned. HOPI repairs safe deviations without
 interruption. A deviation that changes the Goal contract or requires authority HOPI does not have
 becomes Attention and a reliable notification. Runtime failure remains visible as a settled Attempt:
-the unchanged Work is not automatically redispatched, while Reflection and Assistant decide whether
-to retry, change the plan, or ask the operator.
+the unchanged Work is not automatically redispatched, while a deterministic Wake gives the Assistant
+the current facts needed to retry, change the plan, or ask the operator.
 
 The MVP proves this loop for software delivery before generalizing responsibilities or workflows.
 
@@ -77,7 +77,7 @@ Provider progress messages, tool calls, and recoverable tool errors remain in th
 become one collapsed Activity row after the next non-tool boundary; only the turn's final durable
 reply is rendered as Assistant speech. While tools are still the conversation tail, their stream is
 shown directly. A single rebuildable conversation-level activity projection renders public work as
-`Working` and otherwise renders hidden active Reflection or internal speaking work as `Thinking`.
+`Working` and otherwise renders hidden Wake publication or internal speaking work as `Thinking`.
 It appears only at the tail and never becomes historical conversation state.
 
 Internally:
@@ -90,8 +90,7 @@ User -> durable conversation turn -> configured Assistant session -> ordinary re
                                                           -> fixed responsibility pass
                                                           -> semantic guard -> Evidence / Attention
 
-semantic state change -> disposable read-only Reflection -> optional internal Inbox brief
-                                                        -> configured Assistant session
+semantic state change -> deterministic Wake -> internal Inbox turn -> configured Assistant session
 ```
 
 ## Design Principles
@@ -151,22 +150,22 @@ or contend for the same exclusive external resource. Parallelism is a consequenc
 independence, not a reason to split one cohesive outcome. The MVP has no second resource-lock or
 file-overlap graph.
 
-### 4. The MVP has one fixed delivery profile
+### 4. The MVP has one fixed delivery workflow
 
 ```text
 Planning Work:    Planner -> done
 Engineering Work: Generator -> Reviewer -> Coordinator integration -> done
 ```
 
-This profile has no intermediate success. Reviewer `success` closes the complete Work and releases
+This workflow has no intermediate success. Reviewer `success` closes the complete Work and releases
 its dependents. A verified checkpoint followed by a still-required user decision, Assistant action,
 durable external run, or later proof uses the existing targeted Attention while the Work remains in
 `review`. Planner normally splits independently schedulable outcomes into separate Work; when one
 lineage must span the external action, Attention is the pause and no additional phase state is
 introduced.
 
-The Reconciler reads one built-in profile. Planner, Generator, and Reviewer are fixed
-responsibility passes executed by one generic `RoleRunner`; they are not durable actor types.
+The Reconciler uses one code-owned kind/stage-to-responsibility mapping. Planner, Generator, and
+Reviewer are fixed responsibility passes executed by one generic `RoleRunner`; they are not durable actor types.
 Coordinator integration is deterministic kernel behavior, not another responsibility pass or Work
 stage. Project overrides, arbitrary passes, capability matching, workflow expressions, and a
 workflow editor are deferred.
@@ -202,8 +201,8 @@ mirror rather than an execution-time source of truth. When enabled, newly starte
 Assistant turns in that Project and its Planner, Generator, and Reviewer Runs use the ordinary HOPI
 OS user's permissions. When disabled or unavailable, adapters retain their bounded workspace and
 declared-root policy. The runtime reads this setting when each invocation starts, so backend restart,
-route changes, and an absent browser cannot silently change the effective mode. Background Reflection
-remains read-only in either mode.
+route changes, and an absent browser cannot silently change the effective mode. Wake itself performs
+no provider execution; the resulting supervision fork uses the configured Assistant capability.
 
 Responsibility passes own semantic judgment and their authorized content surfaces. Coordinator
 alone owns canonical publication, managed task-worktree Git metadata and checkpoints, integration
@@ -252,8 +251,8 @@ The kernel exposes three ideas to product architecture:
 
 - `publish(bundle)`: validated, idempotent document publication with at most one control gate
 - semantic guard: stale or no-longer-authorized results cannot advance state
-- settled Work recovery: an unchanged failed Attempt pauses automatic redispatch; Reflection and
-  Assistant choose the next action without a retry threshold, synthetic Attention, Run-count fuse,
+- settled Work recovery: an unchanged failed Attempt pauses automatic redispatch; Wake presents the
+  facts and Assistant chooses the next action without a retry threshold, synthetic Attention, Run-count fuse,
   or failure-kind workflow
 
 Publication mechanics live only in [the publish protocol ADR](./mvp_publish_protocol.md).
@@ -360,9 +359,10 @@ The complete protocol belongs to [the multi-Repo design](./mvp_multi_repo.md).
 
 ### 8. Structured control, unstructured semantics
 
-The kernel validates small structured control envelopes: identity, lifecycle, stage, references,
-timing, retry count, and provenance. Intent, reasoning, findings, acceptance meaning, and evidence
-explanations remain free Markdown interpreted by models.
+The kernel validates small structured control envelopes: identity, lifecycle, stage, explicit
+context references, timing, retry count, and provenance. Intent, reasoning, findings, acceptance
+meaning, and evidence explanations remain free Markdown interpreted by models. Free Markdown is
+never searched, split by headings, or compared by substring to recover a control fact.
 
 HOPI does not introduce a criteria-mapping DSL, model-produced Assistant Action result, or
 structured domain ontology for the MVP. The configured model uses ordinary tool calls whose small schemas are
@@ -372,13 +372,12 @@ their durable effects are documents and fixed result values.
 
 ### 9. Proactive reasoning keeps one action authority
 
-The Assistant may assess meaningful state changes in one disposable background Reflection so a
-failure does not depend on the operator noticing a card. Reflection is read-only and has no product
-lifecycle. It either ends silently or submits one internal brief to the persistent Assistant
-conversation. That speaking thread rereads current truth and remains the only model authority that
-may use mutating HOPI tools or notify the operator. User input has speaking priority; an independent
-Reflection may finish but its handoff is discarded when its immutable digest is stale. This adds
-proactive diagnosis without another agent role, workflow, action format, or operator-visible thread.
+Coordinator coalesces meaningful state changes into a deterministic Wake so a failure does not
+depend on the operator noticing a card. Wake has no model, product lifecycle, or semantic decision:
+it publishes one internal turn to the persistent Assistant conversation. That speaking thread rereads
+current truth and owns every action or notification. User input has speaking priority, while newer
+Wake facts coalesce behind the active turn. This adds proactive diagnosis without another agent role,
+workflow, action format, or operator-visible thread.
 
 ### 10. Agents receive an environment, not a playbook
 
@@ -418,9 +417,9 @@ The authority is split by concern rather than repeated in one large document:
 
 - [Document model](./mvp_document_model.md): file layout, schemas, field ownership, references,
   dependencies, revision, recovery counters, Attention, and Evidence.
-- [Assistant](./mvp_assistant.md): persistent vendor-qualified conversation, read-only Reflection, HOPI tools,
+- [Assistant](./mvp_assistant.md): persistent vendor-qualified conversation, deterministic Wake, HOPI tools,
   turn recovery, and live conversation behavior.
-- [Execution](./mvp_execution.md): Planner responsibilities, fixed profile, semantic
+- [Execution](./mvp_execution.md): Planner responsibilities, fixed workflow, semantic
   guards, worktrees, scheduling, completion, notification, and Preview.
 - [Multi-Repo](./mvp_multi_repo.md): Project Repo membership, multi-root Work execution, primary
   C1 release manifests, and projection recovery.
@@ -442,10 +441,10 @@ The authority is split by concern rather than repeated in one large document:
   pickers, navigation, and dialogs remain presentation rather than new workflow concepts.
 - Images are immutable Inbox attachments first. Assistant may explicitly adopt a relevant image as
   a portable Goal asset whose path and purpose live in editable design Markdown.
-- Reflection proactively assesses meaningful state changes but can only hand a brief to that same
-  Assistant; it never mutates state or appears as another product thread. Its compact observation
+- Wake proactively routes meaningful state changes to that same Assistant; it never judges, mutates
+  state, or appears as another product thread. Its compact observation
   includes bounded receipts for recent public Assistant updates so it knows what the operator already
-  received without inheriting full conversation or private Reflection history.
+  received without inheriting full conversation or private Wake history.
 - Project owns stable context, one primary Repo binding, and one or more Project-qualified managed
   release worktrees; a Git Repo may participate in several Projects.
 - Goal owns the outcome contract and lifecycle.
@@ -467,10 +466,10 @@ The authority is split by concern rather than repeated in one large document:
 The MVP UI contains:
 
 1. Global Assistant conversation with live model messages and tool activity, queued turns,
-   Assistant-mediated clarification messages and ordinary completion updates. Internal Reflection
+   Assistant-mediated clarification messages and ordinary completion updates. Internal Wake
    turns remain hidden unless the speaking thread explicitly promotes its reply. A hidden corner
-   debug entry may inspect disposable Reflection runtime streams on demand without adding product
-   state or persistent Assistant/Reflection list headers.
+   debug entry may inspect disposable Wake runtime streams on demand without adding product
+   state or persistent Wake list headers.
    The composer supports bounded image selection and paste, and the conversation preserves image
    thumbnails with their source turns.
 2. Project switcher and overview with one Home agent-settings panel for Assistant, Planner,
@@ -616,13 +615,21 @@ The production path is the MVP path:
 - Bun serves the API and imports the React product UI through one colocated HTML route whose module
   entry remains `packages/frontend/src/main.tsx`. The same server must serve every JS, CSS, and asset
   URL emitted into that HTML; an HTML shell without loadable assets is not a working UI.
+- The backend entrypoint owns HTTP transport composition only. Request parsing and route matching,
+  Assistant Feed, Goal, and Workspace-state presentation, and runtime reload/health lifecycle are
+  separate modules; presenters read canonical/runtime state but do not mutate it.
+- Assistant tools have one capability-checking facade, one application executor, and pure
+  presentation/support modules. Assistant Home persistence owns canonical link transactions while
+  managed Git/worktree materialization is an infrastructure dependency beneath it.
+- Vendor-independent adapter facts live in one registry. Role context staging consumes those
+  contracts and delegates prompt/manifest rendering to a pure rendering boundary.
 - `RoleRunner` is the only responsibility runner; vendor transports are adapters beneath it.
 - Assistant keeps one Home conversation and one conversation per Project through its Home-configured
   vendor adapter, while one Home-wide queue serializes speech. It reaches canonical state only through
   HOPI tools and has no staged-diff or model-produced Action protocol.
 - canonical Assistant-home and Project documents, one `PublicationCoordinator`, stable Work
   worktrees, and deterministic C1 own control and integration.
-- one built-in profile fixes Planner, Generator, Reviewer, retry, and concurrency behavior.
+- one code-owned workflow fixes Planner, Generator, Reviewer, retry, and concurrency behavior.
 - the read-only four-column Kanban, Attention feed, Preview adapter, and webhook delivery project
   directly from canonical state.
 
@@ -637,7 +644,7 @@ and reads only MVP projections. Deleted authorities have no production readers o
    Repo-adjacent stable integration worktrees without mutating selected checkouts.
 2. Implement the single Coordinator instance lock, global publication mutex, single-gate
    `publish(bundle)` contract, and startup validation against that managed root.
-3. Add the fixed three-pass profile, canonical context bundles, root `AGENTS.md` bootstrap,
+3. Add the fixed three-pass workflow, canonical context bundles, root `AGENTS.md` bootstrap,
    deterministic Coordinator integration, and the single recovery counter.
 4. Make task branches stable and derive branch and checkpoint facts from qualified Work identity
    and task branch HEAD.

@@ -4,7 +4,7 @@ import type {
   AgentTranscriptEntryKind,
   AgentTranscriptTransport,
 } from './runtimeEvents'
-import { isExecutionToolName } from './runtimeEvents'
+import { transportForTranscriptFormat } from './vendorAdapter'
 
 export type ProcessTranscriptFormat =
   | 'plain'
@@ -26,8 +26,6 @@ export interface ProcessTranscriptNormalizer {
   normalize(options: NormalizeProcessOutputLineOptions): AgentRuntimeEvent[]
   state(): ProcessTranscriptNormalizerState | null
   stateRevision(): number
-  unresolvedInfrastructureFailure(): string | null
-  completedExecution(): boolean
 }
 
 export interface NormalizeProcessOutputLineOptions {
@@ -57,18 +55,13 @@ export function createProcessTranscriptNormalizer(
 ): ProcessTranscriptNormalizer {
   const claudeTasks = new ClaudeTaskPlanTracker(initialState)
   const codexCommandStderr = new CodexCommandStderrMirrorTracker()
-  const toolHealth = new ToolExecutionHealthTracker()
   return {
     normalize: (options) => {
       if (codexCommandStderr.suppress(options)) return []
-      const events = normalizeProcessOutputLineWithState(options, claudeTasks)
-      toolHealth.observe(events)
-      return events
+      return normalizeProcessOutputLineWithState(options, claudeTasks)
     },
     state: () => claudeTasks.state(),
     stateRevision: () => claudeTasks.stateRevision(),
-    unresolvedInfrastructureFailure: () => toolHealth.unresolvedFailure(),
-    completedExecution: () => toolHealth.completedExecution(),
   }
 }
 
@@ -141,12 +134,12 @@ function normalizeProcessOutputLineWithState(
   }
 
   if (options.stream === 'stderr') {
-    return [transcriptEvent(transportForFormat(options.format), 'error', options.line)]
+    return [transcriptEvent(transportForTranscriptFormat(options.format), 'error', options.line)]
   }
 
   const parsed = parseJson(options.line)
   if (!parsed) {
-    return [transcriptEvent(transportForFormat(options.format), 'status', options.line)]
+    return [transcriptEvent(transportForTranscriptFormat(options.format), 'status', options.line)]
   }
 
   switch (options.format) {
@@ -934,57 +927,6 @@ function normalizeContentBlocks(
   return events
 }
 
-class ToolExecutionHealthTracker {
-  private readonly toolsByInvocation = new Map<string, string>()
-  private readonly unresolvedByTool = new Map<string, string>()
-  private executionCompleted = false
-
-  observe(events: readonly AgentRuntimeEvent[]) {
-    for (const event of events) {
-      if (event.kind !== 'transcript') continue
-      if (event.entryKind === 'tool_call') {
-        if (event.toolInvocationKey && event.toolName) {
-          this.toolsByInvocation.set(event.toolInvocationKey, event.toolName)
-        }
-        continue
-      }
-      if (event.entryKind !== 'tool_result' && event.entryKind !== 'error') continue
-      const toolName =
-        event.toolName ??
-        (event.toolInvocationKey ? this.toolsByInvocation.get(event.toolInvocationKey) : undefined)
-      if (!toolName) continue
-      if (event.toolInvocationKey) this.toolsByInvocation.delete(event.toolInvocationKey)
-      if (event.entryKind === 'tool_result' && isExecutionToolName(toolName)) {
-        this.executionCompleted = true
-      }
-      if (event.entryKind === 'error' && isExecutionInfrastructureFailure(event.summary)) {
-        this.unresolvedByTool.set(toolName, `${toolName}: ${compactSummary(event.summary)}`)
-      } else {
-        this.unresolvedByTool.delete(toolName)
-      }
-    }
-  }
-
-  unresolvedFailure() {
-    return this.unresolvedByTool.values().next().value ?? null
-  }
-
-  completedExecution() {
-    return this.executionCompleted
-  }
-}
-
-function isExecutionInfrastructureFailure(summary: string) {
-  return (
-    /sandbox is required but failed to initialize/i.test(summary) ||
-    /failed to create bridge sockets/i.test(summary) ||
-    /requested permissions?.{0,160}(?:haven't|have not|hasn't|has not) been granted/i.test(
-      summary,
-    ) ||
-    /permission (?:to use|for).{0,160}(?:not granted|denied by (?:policy|settings))/i.test(summary)
-  )
-}
-
 function transcriptEvent(
   transport: AgentTranscriptTransport,
   entryKind: AgentTranscriptEntryKind,
@@ -1012,19 +954,6 @@ function messageEvent(role: string, level: 'info' | 'error', content: string): A
     level,
     role,
     content,
-  }
-}
-
-function transportForFormat(
-  format: Exclude<ProcessTranscriptFormat, 'plain'>,
-): AgentTranscriptTransport {
-  switch (format) {
-    case 'codex_jsonl':
-      return 'codex'
-    case 'claude_stream_json':
-      return 'claude'
-    case 'opencode_json':
-      return 'opencode'
   }
 }
 

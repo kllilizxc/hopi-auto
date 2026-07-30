@@ -20,12 +20,41 @@ import {
   resolveBrowserHarnessBackendCommand,
   resolveManagedBrowserCommand,
 } from '../src/runtime/browserEnvironment'
-import { createRoleContextStager } from '../src/runtime/roleContextStager'
+import { createRoleContextStager as createProductionRoleContextStager } from '../src/runtime/roleContextStager'
 import { runStoragePath } from '../src/runtime/runPaths'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoots: string[] = []
+
+type ProductionRoleContextStager = ReturnType<typeof createProductionRoleContextStager>
+type TestPrepareRoleContextInput = Omit<
+  Parameters<ProductionRoleContextStager['prepare']>[0],
+  'primaryRepoId' | 'repoRoots'
+> &
+  Partial<
+    Pick<Parameters<ProductionRoleContextStager['prepare']>[0], 'primaryRepoId' | 'repoRoots'>
+  >
+type TestRoleContextStager = Omit<ProductionRoleContextStager, 'prepare'> & {
+  prepare(input: TestPrepareRoleContextInput): ReturnType<ProductionRoleContextStager['prepare']>
+}
+
+function createRoleContextStager(
+  ...args: Parameters<typeof createProductionRoleContextStager>
+): TestRoleContextStager {
+  const stager = createProductionRoleContextStager(...args)
+  return {
+    prepare(input: TestPrepareRoleContextInput) {
+      return stager.prepare({
+        ...input,
+        primaryRepoId: input.primaryRepoId ?? 'primary',
+        repoRoots: input.repoRoots ?? [
+          { repoId: 'primary', path: input.projectRoot, primary: true },
+        ],
+      })
+    },
+  }
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -75,10 +104,6 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain(
       'only the Engineering Work required to reach the current Goal boundary',
     )
-    expect(prompt).toContain(
-      'Current Goal authority may shrink or replace earlier nonterminal plans',
-    )
-    expect(prompt).toContain('Deferred or future outcomes are outside current completion')
     expect(prompt).not.toContain('plan separate Work for independent outcomes')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
@@ -94,7 +119,7 @@ describe('RoleContextStager', () => {
       proposalCapabilities.writable.map((capability: { type: string }) => capability.type),
     ).toEqual(expect.arrayContaining(['engineering-work', 'targeted-attention']))
     expect(await Bun.file(bundle.resultSchemaFile).json()).toMatchObject({
-      properties: { result: { enum: ['success', 'attention', 'fail'] } },
+      properties: { result: { enum: ['success', 'fail'] } },
     })
     const repoManifest = await Bun.file(bundle.reposFile).json()
     expect(repoManifest).toEqual({
@@ -128,7 +153,24 @@ describe('RoleContextStager', () => {
       expect.objectContaining({
         type: 'targeted-attention',
         pathPattern: expect.stringMatching(/\/attention\/\{id\}\.md$/),
-        fields: expect.objectContaining({ id: '{id}' }),
+        fields: expect.objectContaining({
+          id: '{id}',
+          decisionPrompt: {
+            questions: [
+              expect.objectContaining({
+                id: 'scope',
+                question: 'Which scope should the implementation use?',
+                options: expect.arrayContaining([
+                  expect.objectContaining({ recommended: true }),
+                  expect.objectContaining({ id: 'alternative' }),
+                ]),
+              }),
+            ],
+          },
+        }),
+        fieldConstraints: {
+          decisionPrompt: 'optional or null; 1-8 questions; 2-3 options per question',
+        },
         target: 'project:project-1/goal:goal-1/work:plan-initial',
       }),
     )
@@ -140,15 +182,12 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Coordinator Evidence owns that commit identity')
     expect(prompt).toContain('owns the current nonterminal dependsOn graph')
     expect(prompt).toContain('may atomically add, remove, or redirect edges')
-    expect(prompt).toContain('The terminal result summary is operator-facing')
-    expect(prompt).toContain("state what was delivered in the operator's language")
     expect(await Bun.file(bundle.resultSchemaFile).json()).toMatchObject({
       properties: {
         summary: {
           type: 'string',
           minLength: 1,
           maxLength: 600,
-          description: expect.stringContaining('Operator-facing outcome'),
         },
       },
     })
@@ -315,7 +354,9 @@ describe('RoleContextStager', () => {
     const planning = parseWorkDocument(planningSource)
     const currentInput = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-current')
     const oldInput = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-old')
-    planning.body = `${planning.body.trimEnd()}\n\n## Accepted Inputs\n\n- ${currentInput}\n`
+    planning.attributes.contextRefs = [
+      { path: currentInput, purpose: 'Current accepted requirement' },
+    ]
     const historical = parseWorkDocument(planningSource)
     historical.attributes.id = 'plan-old'
     historical.attributes.stage = 'done'
@@ -391,17 +432,18 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('<accepted-input>')
     expect(prompt).toContain('Implement the current accepted requirement.')
     expect(prompt).not.toContain('Superseded historical requirement.')
-    expect(occurrences(prompt, currentInput)).toBe(1)
+    expect(occurrences(prompt, currentInput)).toBe(2)
   })
 
-  test('does not repeat an accepted Input already represented in the Goal contract', async () => {
+  test('stages explicit Input even when its prose overlaps the Work contract', async () => {
     const fixture = await createFixture(true)
     const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
     const planningSource = await Bun.file(fixture.store.paths.absolute(planningPath)).text()
     const planning = parseWorkDocument(planningSource)
     const inputPath = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-current')
     planning.attributes.contractRevision = 2
-    planning.body = `${planning.body.trimEnd()}\n\n## Accepted Inputs\n\n- ${inputPath}\n\n## Contract change\n\nUse the local Codex CLI.\n`
+    planning.attributes.contextRefs = [{ path: inputPath, purpose: 'Current accepted requirement' }]
+    planning.body = 'Use the local Codex CLI.\n'
 
     const goalPath = fixture.store.paths.goalDocument('goal-1')
     const goalSource = await Bun.file(fixture.store.paths.absolute(goalPath)).text()
@@ -446,8 +488,8 @@ describe('RoleContextStager', () => {
     })
     const prompt = await Bun.file(bundle.promptFile).text()
 
-    expect(occurrences(prompt, 'Use the local Codex CLI.')).toBe(1)
-    expect(prompt).not.toContain('<accepted-input>')
+    expect(occurrences(prompt, 'Use the local Codex CLI.')).toBe(2)
+    expect(prompt).toContain('<accepted-input>')
     expect(
       await Bun.file(join(bundle.contextRoot, 'authority', ...inputPath.split('/'))).exists(),
     ).toBe(true)
@@ -541,19 +583,6 @@ describe('RoleContextStager', () => {
   test('states the Git, Attention, and Run-scoped runtime boundaries for Engineering passes', async () => {
     const fixture = await createFixture(true)
     const acceptedInputPath = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-engineering')
-    await publishEngineeringWork(
-      fixture,
-      [
-        '## Acceptance Criteria',
-        '',
-        '- The implementation is verified.',
-        '',
-        '## Accepted Inputs',
-        '',
-        `- ${acceptedInputPath}`,
-        '',
-      ].join('\n'),
-    )
     const unrelatedInputPath = fixture.store.paths.inputDocument('goal-1', 'H-1', 'EV-old')
     await fixture.store.publishGoal('goal-1', {
       supportingWrites: [
@@ -585,6 +614,12 @@ describe('RoleContextStager', () => {
         },
       ],
     })
+    await publishEngineeringWork(
+      fixture,
+      'The implementation is verified.\n',
+      [],
+      [{ path: acceptedInputPath, purpose: 'Accepted implementation instruction' }],
+    )
     const stager = createRoleContextStager(fixture.homeRoot, fixture.publisher)
     const generator = await stager.prepare({
       projectRoot: fixture.projectRoot,
@@ -639,7 +674,7 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('### Latest Owning Work Evidence')
     expect(generatorPrompt).toContain('Repair this first.')
     expect(await Bun.file(generator.resultSchemaFile).json()).toMatchObject({
-      properties: { result: { enum: ['success', 'attention', 'fail'] } },
+      properties: { result: { enum: ['success', 'fail'] } },
     })
     expect(await Bun.file(generator.contextFile).text()).toContain(
       fixture.store.paths.evidenceDocument('goal-1', 'E-latest'),
@@ -654,7 +689,8 @@ describe('RoleContextStager', () => {
       expect(prompt).toContain('ends on completion, failure, termination, or its selected timeout')
       expect(prompt.length).toBeLessThan(5_000)
     }
-    expect(await Bun.file(generator.proposalCapabilitiesFile).json()).toMatchObject({
+    const generatorCapabilities = await Bun.file(generator.proposalCapabilitiesFile).json()
+    expect(generatorCapabilities).toMatchObject({
       writable: [
         {
           type: 'targeted-attention',
@@ -664,32 +700,8 @@ describe('RoleContextStager', () => {
         },
       ],
     })
+    expect(generatorCapabilities.writable[0].guidance).toBeUndefined()
     expect(generatorPrompt).toContain('implement the complete Engineering Work')
-    expect(generatorPrompt).toContain(
-      'every contract-required source change and durable deliverable',
-    )
-    expect(generatorPrompt).toContain(
-      'reconcile the candidate and observed evidence against every accepted criterion',
-    )
-    expect(generatorPrompt).toContain('a prior rejection and its findings do not narrow the Work')
-    expect(generatorPrompt).toContain('a sample or checkpoint is not the complete accepted outcome')
-    expect(generatorPrompt).toContain(
-      'Public Preview, when present, observes the integrated release',
-    )
-    expect(reviewerPrompt).toContain('whether the received candidate satisfies the current')
-    expect(generatorPrompt).toContain('does not require prior Reviewer acceptance')
-    expect(reviewerPrompt).toContain('Success is terminal for that current Work')
-    expect(reviewerPrompt).toContain(
-      'does not create a missing contract-required deliverable or become its sole producer',
-    )
-    expect(reviewerPrompt).toContain('Finding one reject-worthy defect does not end the review')
-    expect(reviewerPrompt).toContain('report together all material defects found in this pass')
-    expect(reviewerPrompt).toContain(
-      'A missing or defective accepted deliverable within Generator authority returns reject',
-    )
-    expect(reviewerPrompt).toContain(
-      'Attention is for authority or action required by the current Work',
-    )
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('Source, Project documents, canonical .hopi state')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)
@@ -1018,6 +1030,8 @@ describe('RoleContextStager', () => {
               dependsOn: [],
               contractRevision: 1,
               evidenceRefs: ['E-explicit', 'E-obsolete', 'E-candidate', 'E-base'],
+              contextRefs: [],
+              ownerMessages: [],
             },
             body: 'Provide the base behavior and retain the specifically cited `E-explicit` proof.\n',
           }),
@@ -1035,6 +1049,8 @@ describe('RoleContextStager', () => {
               dependsOn: ['W-base'],
               contractRevision: 1,
               evidenceRefs: ['E-middle'],
+              contextRefs: [],
+              ownerMessages: [],
             },
             body: 'Build on the base behavior.\n',
           }),
@@ -1052,6 +1068,8 @@ describe('RoleContextStager', () => {
               dependsOn: ['W-middle'],
               contractRevision: 1,
               evidenceRefs: [],
+              contextRefs: [],
+              ownerMessages: [],
             },
             body: 'Use the accepted predecessor result.\n',
           }),
@@ -1080,13 +1098,11 @@ describe('RoleContextStager', () => {
       fixture.store.paths.evidenceDocument('goal-1', 'E-candidate'),
       fixture.store.paths.evidenceDocument('goal-1', 'E-base'),
       fixture.store.paths.evidenceDocument('goal-1', 'E-middle'),
+      fixture.store.paths.evidenceDocument('goal-1', 'E-obsolete'),
     ]) {
       expect(await Bun.file(join(authorityRoot, ...path.split('/'))).exists()).toBe(true)
       expect(bundle.guardFiles[path]).toBeTruthy()
     }
-    const obsoletePath = fixture.store.paths.evidenceDocument('goal-1', 'E-obsolete')
-    expect(await Bun.file(join(authorityRoot, ...obsoletePath.split('/'))).exists()).toBe(false)
-    expect(bundle.guardFiles[obsoletePath]).toBeUndefined()
     expect(bundle.artifactManifestFile).toBeDefined()
     const projectedArtifactPath = join(
       bundle.contextRoot,
@@ -1127,7 +1143,7 @@ describe('RoleContextStager', () => {
     const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
     const planningSource = await Bun.file(fixture.store.paths.absolute(planningPath)).text()
     const planning = parseWorkDocument(planningSource)
-    planning.body = `${planning.body.trimEnd()}\n\n## Reference Images\n\n- \`${selectedPath}\` - Match the compact layout.\n`
+    planning.attributes.contextRefs = [{ path: selectedPath, purpose: 'Match the compact layout' }]
     await fixture.store.publishGoal('goal-1', {
       supportingWrites: [
         { path: selectedPath, expectedHash: null, content: selectedBytes },
@@ -1161,7 +1177,9 @@ describe('RoleContextStager', () => {
 
     await publishEngineeringWork(
       fixture,
-      `## Acceptance Criteria\n\n- Recreate the panel hierarchy.\n\n## Reference Images\n\n- \`${selectedPath}\` - Match the compact layout.\n`,
+      'Recreate the panel hierarchy.\n',
+      [],
+      [{ path: selectedPath, purpose: 'Match the compact layout' }],
     )
     const generator = await stager.prepare({
       projectRoot: fixture.projectRoot,
@@ -1190,41 +1208,6 @@ describe('RoleContextStager', () => {
     expect(await Bun.file(reviewer.promptFile).text()).toContain(
       'Attached images are Goal assets with their authority-defined purpose',
     )
-  })
-
-  test('reports a missing referenced Goal image without blocking the Agent', async () => {
-    const fixture = await createFixture(true)
-    const missingPath = fixture.store.paths.asset('goal-1', 'd'.repeat(64), 'missing-layout.png')
-    await publishEngineeringWork(
-      fixture,
-      `## Acceptance Criteria\n\n- Recreate the panel hierarchy.\n\n## Reference Images\n\n- \`${missingPath}\` - Match the compact layout.\n`,
-    )
-
-    const bundle = await createRoleContextStager(fixture.homeRoot, fixture.publisher).prepare({
-      projectRoot: fixture.projectRoot,
-      projectId: 'project-1',
-      goalId: 'goal-1',
-      workId: 'W-1',
-      runId: 'run-missing-image',
-      responsibility: 'generator',
-    })
-    const prompt = await Bun.file(bundle.promptFile).text()
-
-    expect(bundle.imageFiles).toEqual([])
-    expect(bundle.guardFiles[missingPath]).toBeNull()
-    expect(prompt).toContain('### Unavailable Referenced Material')
-    expect(prompt).toContain(missingPath)
-    expect(prompt).toContain('The referenced Goal asset is unavailable in current authority.')
-    expect(await Bun.file(bundle.artifactManifestFile ?? '').json()).toEqual({
-      artifacts: [],
-      unavailable: [
-        {
-          reference: missingPath,
-          evidence: [fixture.store.paths.workDocument('goal-1', 'W-1')],
-          reason: 'The referenced Goal asset is unavailable in current authority.',
-        },
-      ],
-    })
   })
 })
 
@@ -1269,6 +1252,7 @@ async function publishEngineeringWork(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   body = '## Acceptance Criteria\n\n- The implementation is verified.\n',
   artifacts: string[] = [],
+  contextRefs: Array<{ path: string; purpose: string }> = [],
 ) {
   const planningPath = fixture.store.paths.workDocument('goal-1', 'plan-initial')
   const source = await Bun.file(fixture.store.paths.absolute(planningPath)).text()
@@ -1304,6 +1288,8 @@ async function publishEngineeringWork(
             dependsOn: [],
             contractRevision: 1,
             evidenceRefs: ['E-latest'],
+            contextRefs,
+            ownerMessages: [],
           },
           body,
         }),

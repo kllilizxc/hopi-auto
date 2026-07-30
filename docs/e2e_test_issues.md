@@ -116,7 +116,7 @@ tests / 1,170 assertions**, frontend **45 passing tests / 154 assertions**, with
 checks, and frontend build all passing. `bun run e2e:contract` passed **164 tests / 816 assertions**.
 
 Latest remaining-scenario run: `bun test tests/projectReconciler.test.ts tests/multiRepoC1.test.ts
-tests/mvpServer.test.ts tests/assistantReflection.test.ts tests/coordinatorReconciler.test.ts
+tests/mvpServer.test.ts tests/assistantWake.test.ts tests/coordinatorReconciler.test.ts
 tests/previewManager.test.ts tests/assistantTools.test.ts tests/roleContextStager.test.ts` passed with
 **79 tests / 478 assertions / 0 failures**. This is direct execution evidence for the existing
 contract/runtime coverage of `017`, `018`, `019`, `021`, `022`, and `027`; it does not replace their
@@ -297,7 +297,7 @@ production orchestration/race fixture but not the catalog's real-vendor concurre
 The following local command completed successfully after the active-delivery revision scenario was
 added:
 
-`cd packages/backend && bun test tests/coordinatorReconciler.test.ts tests/multiRepoC1.test.ts tests/assistantReflection.test.ts tests/previewManager.test.ts tests/assistantTools.test.ts tests/roleContextStager.test.ts`
+`cd packages/backend && bun test tests/coordinatorReconciler.test.ts tests/multiRepoC1.test.ts tests/assistantWake.test.ts tests/previewManager.test.ts tests/assistantTools.test.ts tests/roleContextStager.test.ts`
 
 Result: **59 passing tests, 346 assertions, 0 failures**. This is current execution evidence for the
 contract portions of `011`, `017`, `018`, `019`, `021`, `022`, and `027`. It includes real Git

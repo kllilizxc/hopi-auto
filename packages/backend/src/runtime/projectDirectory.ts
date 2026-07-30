@@ -26,7 +26,7 @@ export interface GitProjectDirectoryInspection {
   commonDir: string
 }
 
-export interface PreparedProjectRepository {
+interface PreparedProjectRepository {
   repoPath: string
   projectPath: string
   initialized: boolean
@@ -128,7 +128,7 @@ export async function initializeEmptyGitRepository(
   }
 }
 
-export async function prepareProjectRepository(
+async function prepareProjectRepository(
   repoPath: string,
   projectPath?: string,
 ): Promise<PreparedProjectRepository> {

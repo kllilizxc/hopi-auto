@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { readClaudeProviderEnvironment } from './claudeSettingsEnvironment'
 import { type ExecutionEnvelope, injectExecutionEnvelope } from './executionEnvelope'
 import { codingReasoningEffortSchema, providerQualifiedModelSchema } from './projectCodingDefaults'
+import { vendorAdapterFor } from './vendorAdapter'
 import type { AssistantTransport, VendorSession } from './vendorAssistantOutput'
 import type { ProcessTranscriptFormat } from './vendorTranscript'
 
@@ -121,13 +122,8 @@ export function withNativeCompactionEnabled(
   transport: AssistantTransport | undefined,
   environment: Record<string, string | undefined>,
 ) {
-  const disabledKeys =
-    transport === 'claude'
-      ? new Set(['DISABLE_AUTO_COMPACT', 'DISABLE_COMPACT'])
-      : transport === 'opencode'
-        ? new Set(['OPENCODE_DISABLE_AUTOCOMPACT'])
-        : null
-  if (!disabledKeys) return { ...environment }
+  if (!transport) return { ...environment }
+  const disabledKeys = new Set(vendorAdapterFor(transport).autoCompactionDisableKeys)
   return Object.fromEntries(Object.entries(environment).filter(([name]) => !disabledKeys.has(name)))
 }
 
@@ -274,7 +270,7 @@ export async function resolveConfiguredTransportCommand(options: {
       canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
       env,
       stdin: prompt,
-      transcriptFormat: 'codex_jsonl',
+      transcriptFormat: vendorAdapterFor('codex').transcriptFormat,
       sessionTransport: 'codex',
       structuredOutcomeFile,
       assignmentSnapshotFile,
@@ -342,7 +338,7 @@ export async function resolveConfiguredTransportCommand(options: {
       canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
       env,
       stdin: prompt,
-      transcriptFormat: 'claude_stream_json',
+      transcriptFormat: vendorAdapterFor('claude').transcriptFormat,
       sessionTransport: 'claude',
       assignmentSnapshotFile,
       assignmentSnapshot: assignment,
@@ -395,7 +391,7 @@ export async function resolveConfiguredTransportCommand(options: {
     canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
     env: { ...env, OPENCODE_CONFIG: opencodeConfigPath },
     stdin: prompt,
-    transcriptFormat: 'opencode_json',
+    transcriptFormat: vendorAdapterFor('opencode').transcriptFormat,
     sessionTransport: 'opencode',
     assignmentSnapshotFile,
     assignmentSnapshot: assignment,
@@ -578,17 +574,13 @@ function assignmentSections(source: string) {
 
 function roleOutcomeJsonSchema(role: string | undefined) {
   const results =
-    role === 'planner' || role === 'generator'
-      ? ['success', 'attention', 'fail']
-      : ['success', 'reject', 'attention', 'fail']
+    role === 'planner' || role === 'generator' ? ['success', 'fail'] : ['success', 'reject', 'fail']
   const summary =
     role === 'planner'
       ? {
           type: 'string',
           minLength: 1,
           maxLength: 600,
-          description:
-            'Operator-facing outcome in one or two short sentences. On Goal completion, state what was delivered without internal responsibility, Work, Evidence, validation, or lifecycle mechanics.',
         }
       : { type: 'string', minLength: 1 }
   return {

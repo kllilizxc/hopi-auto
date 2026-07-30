@@ -2,10 +2,10 @@ import { Activity } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import {
-  type ReflectionRunSummary,
+  type WakeRunSummary,
   type RunAttemptEvent,
-  readReflectionRunEvents,
-  readReflectionRuns,
+  readWakeRunEvents,
+  readWakeRuns,
 } from '../lib/api'
 import { runEventsToMessageFeed } from '../lib/messageFeed'
 import { ACTIVE_STREAM_POLL_INTERVAL_MS } from '../lib/queryPerformance'
@@ -14,13 +14,13 @@ import { cn, formatTime } from '../lib/utils'
 import { UnifiedMessageFeed } from './UnifiedMessageFeed'
 import { AppDisclosure, AppScrollShadow, AppSpinner, WorkingIndicator } from './ui'
 
-export function ReflectionDebugPanel({ enabled }: { enabled: boolean }) {
+export function WakeDebugPanel({ enabled }: { enabled: boolean }) {
   const stream = useInfiniteMessageStream({
-    streamKey: 'reflection-runs',
-    queryKey: ['reflection-runs'],
-    readPage: readReflectionRuns,
-    getItemId: reflectionRunId,
-    compareItems: compareReflectionRuns,
+    streamKey: 'wake-runs',
+    queryKey: ['wake-runs'],
+    readPage: readWakeRuns,
+    getItemId: wakeRunId,
+    compareItems: compareWakeRuns,
     enabled,
     refetchInterval: enabled ? ACTIVE_STREAM_POLL_INTERVAL_MS : false,
     reportRefreshing: true,
@@ -35,42 +35,42 @@ export function ReflectionDebugPanel({ enabled }: { enabled: boolean }) {
     const previous = previousRunsRef.current
     if (previous.length > 0 && runs.length > previous.length && previous.firstId) {
       const previousFirstIndex = runs.findIndex(
-        (run) => run.manifest.reflectionId === previous.firstId,
+        (run) => run.manifest.wakeId === previous.firstId,
       )
       if (previousFirstIndex > 0) {
         setFirstItemIndex((current) => current - previousFirstIndex)
       }
     }
     previousRunsRef.current = {
-      firstId: runs[0]?.manifest.reflectionId,
+      firstId: runs[0]?.manifest.wakeId,
       length: runs.length,
     }
   }, [runs])
 
   return (
-    <section className="reflection-debug-panel" aria-label="Reflection debug stream">
+    <section className="wake-debug-panel" aria-label="Wake debug stream">
       {stream.isLoading ? (
-        <div className="reflection-debug-empty">
+        <div className="wake-debug-empty">
           <AppSpinner size="sm" /> Loading runtime stream
         </div>
       ) : stream.error ? (
-        <div className="reflection-debug-empty error">{stream.error.message}</div>
+        <div className="wake-debug-empty error">{stream.error.message}</div>
       ) : runs.length === 0 ? (
-        <div className="reflection-debug-empty">
+        <div className="wake-debug-empty">
           <Activity />
-          <strong>No Reflection Runs yet</strong>
+          <strong>No Wake Runs yet</strong>
           <p>
             The startup snapshot is only a baseline. A semantic state change creates the first Run.
           </p>
         </div>
       ) : (
-        <div className="reflection-run-list">
+        <div className="wake-run-list">
           <Virtuoso
-            className="reflection-run-virtuoso"
+            className="wake-run-virtuoso"
             data={runs}
             firstItemIndex={firstItemIndex}
             initialTopMostItemIndex={Math.max(runs.length - 1, 0)}
-            computeItemKey={(_, run) => run.manifest.reflectionId}
+            computeItemKey={(_, run) => run.manifest.wakeId}
             followOutput="auto"
             atTopThreshold={48}
             startReached={() => {
@@ -81,7 +81,7 @@ export function ReflectionDebugPanel({ enabled }: { enabled: boolean }) {
               Scroller: AppScrollShadow,
               Header: () =>
                 stream.hasMoreBefore || stream.isLoadingOlder ? (
-                  <div className="reflection-history-status">
+                  <div className="wake-history-status">
                     {stream.isLoadingOlder ? (
                       <>
                         <AppSpinner size="sm" /> Loading older Runs…
@@ -93,10 +93,10 @@ export function ReflectionDebugPanel({ enabled }: { enabled: boolean }) {
                 ) : null,
             }}
             itemContent={(_, run) => (
-              <div className="reflection-run-row">
-                <ReflectionRun
+              <div className="wake-run-row">
+                <WakeRun
                   run={run}
-                  latest={run.manifest.reflectionId === runs.at(-1)?.manifest.reflectionId}
+                  latest={run.manifest.wakeId === runs.at(-1)?.manifest.wakeId}
                 />
               </div>
             )}
@@ -107,19 +107,17 @@ export function ReflectionDebugPanel({ enabled }: { enabled: boolean }) {
   )
 }
 
-function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boolean }) {
+function WakeRun({ run, latest }: { run: WakeRunSummary; latest: boolean }) {
   const { manifest } = run
   const [open, setOpen] = useState(latest)
   const outcome =
     manifest.status === 'completed'
-      ? manifest.handoffEventId
-        ? { className: 'sent', label: 'Sent' }
-        : { className: 'no-action', label: 'No handoff' }
+      ? { className: 'sent', label: 'Sent' }
       : { className: manifest.status, label: manifest.status }
   const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
-    streamKey: `reflection:${manifest.reflectionId}`,
-    queryKey: ['reflection-events', manifest.reflectionId],
-    readPage: (input) => readReflectionRunEvents(manifest.reflectionId, input),
+    streamKey: `wake:${manifest.wakeId}`,
+    queryKey: ['wake-events', manifest.wakeId],
+    readPage: (input) => readWakeRunEvents(manifest.wakeId, input),
     getItemId: runEventId,
     compareItems: compareRunEvents,
     enabled: open,
@@ -129,23 +127,23 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
   const messages = useMemo(
     () =>
       runEventsToMessageFeed(eventStream.items, {
-        namespace: `reflection:${manifest.reflectionId}`,
-        groupId: manifest.reflectionId,
+        namespace: `wake:${manifest.wakeId}`,
+        groupId: manifest.wakeId,
         active: manifest.status === 'running',
       }),
-    [eventStream.items, manifest.reflectionId, manifest.status],
+    [eventStream.items, manifest.wakeId, manifest.status],
   )
   return (
     <AppDisclosure
-      className={cn('reflection-run', outcome.className)}
+      className={cn('wake-run', outcome.className)}
       isExpanded={open}
       onExpandedChange={setOpen}
-      bodyClassName="reflection-run-body"
+      bodyClassName="wake-run-body"
       summary={
         <>
-          <span className="reflection-status-dot" />
+          <span className="wake-status-dot" />
           <span>
-            <strong>{manifest.reflectionId}</strong>
+            <strong>{manifest.wakeId}</strong>
             <small>{outcome.label}</small>
           </span>
           <time>{formatTime(manifest.startedAt)}</time>
@@ -169,20 +167,20 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
           <dd>{manifest.handoffEventId ?? 'none'}</dd>
         </div>
       </dl>
-      {manifest.error && <p className="reflection-run-error">{manifest.error}</p>}
+      {manifest.error && <p className="wake-run-error">{manifest.error}</p>}
       <UnifiedMessageFeed
-        feedKey={`reflection:${manifest.reflectionId}`}
+        feedKey={`wake:${manifest.wakeId}`}
         items={messages}
         density="compact"
-        className="reflection-message-feed"
-        ariaLabel={`Reflection ${manifest.reflectionId} event stream`}
+        className="wake-message-feed"
+        ariaLabel={`Wake ${manifest.wakeId} event stream`}
         isLoading={eventStream.isLoading}
         hasMoreBefore={eventStream.hasMoreBefore}
         isLoadingOlder={eventStream.isLoadingOlder}
         onLoadOlder={eventStream.loadOlder}
-        emptyState={<span className="reflection-event-empty">No normalized events recorded.</span>}
+        emptyState={<span className="wake-event-empty">No normalized events recorded.</span>}
       />
-      <AppDisclosure className="reflection-paths" summary="Local diagnostics">
+      <AppDisclosure className="wake-paths" summary="Local diagnostics">
         <code>{run.paths.transcript}</code>
         <code>{run.paths.prompt}</code>
         <code>{run.paths.events}</code>
@@ -191,14 +189,14 @@ function ReflectionRun({ run, latest }: { run: ReflectionRunSummary; latest: boo
   )
 }
 
-function reflectionRunId(run: ReflectionRunSummary) {
-  return run.manifest.reflectionId
+function wakeRunId(run: WakeRunSummary) {
+  return run.manifest.wakeId
 }
 
-function compareReflectionRuns(left: ReflectionRunSummary, right: ReflectionRunSummary) {
+function compareWakeRuns(left: WakeRunSummary, right: WakeRunSummary) {
   return (
     left.manifest.startedAt.localeCompare(right.manifest.startedAt) ||
-    left.manifest.reflectionId.localeCompare(right.manifest.reflectionId)
+    left.manifest.wakeId.localeCompare(right.manifest.wakeId)
   )
 }
 

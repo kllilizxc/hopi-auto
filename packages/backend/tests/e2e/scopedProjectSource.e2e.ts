@@ -244,11 +244,7 @@ try {
       auditLabel: 'retain the paused Kanban projection after scoped C1 rejection',
     },
   )
-  assert.ok(
-    modelInvocations.every(
-      (mode) => mode === 'reflection' || mode === 'internal' || mode === 'main',
-    ),
-  )
+  assert.ok(modelInvocations.every((mode) => mode === 'internal' || mode === 'main'))
   const runtimeUsage = await readModelUsage(homeRoot)
   assert.equal(runtimeUsage.providerUsageEvents, 0)
   assert.deepEqual(runtimeUsage.tokens, {
@@ -455,6 +451,8 @@ async function planScopedWork(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body:
           input.goalId === DELIVERY_GOAL

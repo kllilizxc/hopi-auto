@@ -1,7 +1,7 @@
 import { isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import type { RunAttemptSummary } from './runAttemptStore'
-import { responsibilityFor } from './softwareDeliveryProfile'
+import { responsibilityFor } from './softwareDelivery'
 import { workAssignmentHash } from './workAssignment'
 
 export async function settledFailureWorkIds(
@@ -35,8 +35,5 @@ function isSettledFailure(attempt: RunAttemptSummary) {
     return true
   }
   if (attempt.application === 'attention') return true
-  return (
-    attempt.application === 'published' &&
-    (attempt.result === 'fail' || attempt.result === 'attention')
-  )
+  return attempt.application === 'published' && attempt.result === 'fail'
 }

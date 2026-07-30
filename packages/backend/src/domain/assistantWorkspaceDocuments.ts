@@ -10,7 +10,7 @@ import {
 import { STABLE_ID_SOURCE, stableIdSchema } from './stableId'
 
 export const INBOX_STATUSES = ['pending', 'handled'] as const
-export const INBOX_SOURCES = ['user', 'system', 'reflection'] as const
+export const INBOX_SOURCES = ['user', 'system'] as const
 export const INBOX_VISIBILITIES = ['public', 'internal'] as const
 
 const attentionReferenceSchema = z
@@ -119,15 +119,24 @@ export const inboxEventAttributesSchema = z
         message: 'User Inbox events must remain public',
       })
     }
-    const handlingFacts = [event.handledAt, event.reply, event.disposition]
+    const handlingFacts = [event.handledAt, event.disposition]
     const handledFacts = handlingFacts.every((value) => value !== null)
     if ((event.status === 'handled') !== handledFacts) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'handledAt, reply, and disposition must be present exactly when status is handled',
+        message: 'handledAt and disposition must be present exactly when status is handled',
       })
     }
-    if (event.status === 'pending' && handlingFacts.some((value) => value !== null)) {
+    if (event.status === 'handled' && event.visibility === 'public' && !event.reply?.trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'handled public Inbox event requires a reply',
+      })
+    }
+    if (
+      event.status === 'pending' &&
+      [...handlingFacts, event.reply].some((value) => value !== null)
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'pending Inbox event cannot contain partial handling facts',
@@ -161,7 +170,7 @@ export type InboxEventDocument = MarkdownDocument<InboxEventAttributes>
 export type WorkspaceAttentionDocument = MarkdownDocument<WorkspaceAttentionAttributes>
 
 export function isInternalInboxSource(source: InboxEventAttributes['source']) {
-  return source === 'system' || source === 'reflection'
+  return source === 'system'
 }
 
 export function parseInboxEventDocument(source: string) {

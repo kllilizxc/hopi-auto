@@ -2,9 +2,29 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { createProjectPreparer } from '../src/runtime/projectPreparation'
+import { createProjectPreparer as createProductionProjectPreparer } from '../src/runtime/projectPreparation'
 
 const roots: string[] = []
+
+type ProductionProjectPreparer = ReturnType<typeof createProductionProjectPreparer>
+type TestProjectPreparationInput = Omit<
+  Parameters<ProductionProjectPreparer['prepare']>[0],
+  'primaryRepoId' | 'repoRoots'
+> &
+  Partial<Pick<Parameters<ProductionProjectPreparer['prepare']>[0], 'primaryRepoId' | 'repoRoots'>>
+
+function createProjectPreparer() {
+  const preparer = createProductionProjectPreparer()
+  return {
+    prepare(input: TestProjectPreparationInput) {
+      return preparer.prepare({
+        ...input,
+        primaryRepoId: input.primaryRepoId ?? 'primary',
+        repoRoots: input.repoRoots ?? [{ repoId: 'primary', path: input.projectRoot }],
+      })
+    },
+  }
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))

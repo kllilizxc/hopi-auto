@@ -63,7 +63,7 @@ let harness: LiveHarness | null = null
 let recorder: StateRecorder | null = null
 
 try {
-  harness = await startLiveHarness(SCENARIO, { deterministicReflection: true })
+  harness = await startLiveHarness(SCENARIO)
   await enterHarnessPhase(harness, 'fixture_setup')
   const repoA = join(harness.artifactRoot, 'repo-a')
   const repoB = join(harness.artifactRoot, 'repo-b')

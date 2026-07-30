@@ -171,7 +171,7 @@ A reset removes:
 - every canonical Goal package in the Project
 - every Assistant Inbox turn whose conversation scope is that Project
 - Project-scoped workspace Attention
-- the Project Assistant vendor session, scratch workspace, turn records, Reflection records, Runs,
+- the Project Assistant vendor session, scratch workspace, turn records, Wake records, Runs,
   responsibility sessions, Preview records, task worktrees, and Work refs
 
 It preserves the Assistant Home, Project link, Repo bindings, preferences, Project release source,

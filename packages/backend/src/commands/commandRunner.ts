@@ -1,8 +1,9 @@
-import { mkdir, rename } from 'node:fs/promises'
+import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { LinkedProject } from '../domain/project'
 import { inspectGitProjectDirectory } from '../runtime/projectDirectory'
 import type { AssistantHomeStore, RebindProjectReposInput } from '../storage/assistantHomeStore'
+import { writeJsonAtomically } from '../storage/atomicFile'
 
 export interface CommandPlan {
   command: 'project.rebind'
@@ -118,12 +119,12 @@ export function createCommandRunner(
       const operationId = `OP-${crypto.randomUUID()}`
       const operationRoot = join(home.paths.operationsRoot, operationId)
       await mkdir(operationRoot, { recursive: true })
-      await writeJson(join(operationRoot, 'request.json'), {
+      await writeJsonAtomically(join(operationRoot, 'request.json'), {
         operationId,
         command: plan.command,
         input,
       })
-      await writeJson(join(operationRoot, 'plan.json'), { operationId, ...plan })
+      await writeJsonAtomically(join(operationRoot, 'plan.json'), { operationId, ...plan })
       await appendEvent(operationRoot, { phase: 'prepared', status: 'completed' })
       let project: LinkedProject
       try {
@@ -146,7 +147,7 @@ export function createCommandRunner(
           status: 'failed',
           message: failure.message,
         })
-        await writeJson(join(operationRoot, 'result.json'), failure)
+        await writeJsonAtomically(join(operationRoot, 'result.json'), failure)
         throw error
       }
 
@@ -188,7 +189,7 @@ export function createCommandRunner(
         followUpWarnings,
       }
       await recordFollowUp(
-        () => writeJson(join(operationRoot, 'result.json'), result),
+        () => writeJsonAtomically(join(operationRoot, 'result.json'), result),
         'Rebind completed, but its structured result could not be written to the operation journal',
         followUpWarnings,
       )
@@ -219,18 +220,8 @@ async function recordFollowUp(
 }
 
 async function appendEvent(root: string, event: Record<string, unknown>) {
-  const path = join(root, 'events.jsonl')
-  const previous = await Bun.file(path)
-    .text()
-    .catch(() => '')
-  await Bun.write(
-    path,
-    `${previous}${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`,
+  await appendFile(
+    join(root, 'events.jsonl'),
+    `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`,
   )
-}
-
-async function writeJson(path: string, value: unknown) {
-  const temporary = `${path}.tmp-${crypto.randomUUID()}`
-  await Bun.write(temporary, `${JSON.stringify(value, null, 2)}\n`)
-  await rename(temporary, path)
 }

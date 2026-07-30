@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { AssistantWake } from '../src/assistant/assistantReflection'
+import type { AssistantWake } from '../src/assistant/assistantWake'
 import type { WorkDocument } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
 import { PublicationCoordinator } from '../src/publication/publisher'
@@ -16,13 +16,71 @@ import type { GoalPackageStore } from '../src/storage/goalPackageStore'
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'coordinator-reconciler')
 const testConcurrency = { planner: 3, generator: 3, reviewer: 3 } as const
 type CoordinatorOptions = Parameters<typeof createCoordinatorReconcilerWithOptions>[0]
+type TestProjectReconciler = Partial<ProjectReconciler>
+type TestCoordinatorOptions = Omit<CoordinatorOptions, 'concurrency' | 'projects' | 'wake'> & {
+  concurrency?: CoordinatorOptions['concurrency']
+  wake?: AssistantWake
+  projects: readonly (Omit<CoordinatorOptions['projects'][number], 'reconciler'> & {
+    reconciler: TestProjectReconciler
+  })[]
+}
 
-function createCoordinatorReconciler(
-  options: Omit<CoordinatorOptions, 'concurrency'> & {
-    concurrency?: CoordinatorOptions['concurrency']
+function createCoordinatorReconciler(options: TestCoordinatorOptions) {
+  return createCoordinatorReconcilerWithOptions({
+    concurrency: testConcurrency,
+    wake: inactiveWake,
+    ...options,
+    projects: options.projects.map((project) => ({
+      ...project,
+      reconciler: completeProjectReconciler(project.reconciler),
+    })),
+  })
+}
+
+const inactiveWake: AssistantWake = {
+  async observe() {
+    return 'unchanged'
   },
-) {
-  return createCoordinatorReconcilerWithOptions({ concurrency: testConcurrency, ...options })
+  async acknowledgeProjects() {},
+  isActive() {
+    return false
+  },
+  async listRuns() {
+    return []
+  },
+  async listRunSummaries() {
+    return []
+  },
+  async readRunEvents() {
+    return null
+  },
+  async waitForIdle() {},
+  async stop() {},
+}
+
+function completeProjectReconciler(reconciler: TestProjectReconciler): ProjectReconciler {
+  return {
+    async reconcileGoal() {
+      return { kind: 'wait', decision: { kind: 'wait', reasons: [] } }
+    },
+    interruptRuns() {},
+    liveWorkIds() {
+      return new Set()
+    },
+    async decisionWhenEligible() {
+      return { kind: 'wait', reasons: [] }
+    },
+    async settledFailureWorkIds() {
+      return new Set()
+    },
+    async requestWorkRun() {
+      throw new Error('Unexpected Work continuation in Coordinator test')
+    },
+    async interruptQueuedRuns() {
+      return 0
+    },
+    ...reconciler,
+  }
 }
 
 function projectLinks(projects: ReadonlyArray<readonly [projectId: string, repoPath: string]>) {
@@ -70,7 +128,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [],
       reconcileRetryBaseMs: 100,
       reconcileRetryMaxMs: 100,
@@ -116,7 +173,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant,
-      attentions: fixture.attentions,
       projects: [],
     })
 
@@ -155,7 +211,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant,
-      attentions: fixture.attentions,
       projects: [],
     })
 
@@ -199,7 +254,6 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
-      attentions: fixture.attentions,
       projects: [],
     })
 
@@ -225,7 +279,6 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
-      attentions: fixture.attentions,
       projects: [],
     })
 
@@ -254,7 +307,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -326,7 +378,6 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -352,7 +403,7 @@ describe('CoordinatorReconciler', () => {
                 application: 'published' as const,
               }
             },
-          } as ProjectReconciler,
+          } as TestProjectReconciler,
         },
       ],
     })
@@ -403,7 +454,6 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -471,12 +521,11 @@ describe('CoordinatorReconciler', () => {
           dispatched.push(goalId)
           return { kind: 'wait' as const, decision: { kind: 'wait' as const, reasons: [] } }
         },
-      } as ProjectReconciler,
+      } as TestProjectReconciler,
     })
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [project('P-1', 'G-1'), project('P-2', 'G-2', true)],
     })
 
@@ -503,7 +552,6 @@ describe('CoordinatorReconciler', () => {
           throw new Error('conversation process failed')
         },
       },
-      attentions: fixture.attentions,
       projects: [],
     })
 
@@ -523,8 +571,8 @@ describe('CoordinatorReconciler', () => {
 
   test('records one failed internal Assistant wake without a retry loop', async () => {
     const fixture = await workspaceFixture()
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-reflection-failed',
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-wake-failed',
       content: 'Surface one current-state assessment.',
     })
     let calls = 0
@@ -536,7 +584,6 @@ describe('CoordinatorReconciler', () => {
           throw new Error('speaking transport failed')
         },
       },
-      attentions: fixture.attentions,
       projects: [],
     })
 
@@ -544,11 +591,11 @@ describe('CoordinatorReconciler', () => {
     await coordinator.waitForIdle()
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
     const workspace = await fixture.workspace.readWorkspace()
-    const event = workspace.events.get('EV-reflection-failed')
+    const event = workspace.events.get('EV-wake-failed')
 
     expect(calls).toBe(1)
     expect(event?.attributes).toMatchObject({
-      source: 'reflection',
+      source: 'system',
       visibility: 'public',
       status: 'handled',
       disposition: 'operational-failed',
@@ -562,7 +609,7 @@ describe('CoordinatorReconciler', () => {
     await fixture.workspace.receiveEvent({ eventId: 'EV-blocked', content: 'Blocked turn.' })
     await fixture.attentions.ensureEventAttention('EV-blocked', 'Assistant transport failed.')
     const observations: boolean[] = []
-    const reflection = {
+    const wake = {
       async observe(input) {
         observations.push(input.settled)
         return 'running' as const
@@ -586,8 +633,7 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
-      reflection,
-      attentions: fixture.attentions,
+      wake,
       projects: [],
     })
 
@@ -599,13 +645,13 @@ describe('CoordinatorReconciler', () => {
 
   test('does not let an Attention suppress an internal turn or the following wake observation', async () => {
     const fixture = await workspaceFixture()
-    await fixture.workspace.receiveReflectionEvent({
+    await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-internal',
       content: 'Revalidate one Attention.',
     })
     await fixture.attentions.ensureEventAttention('EV-internal', 'Assistant transport failed.')
     const observations: boolean[] = []
-    const reflection = {
+    const wake = {
       async observe(input) {
         observations.push(input.settled)
         return 'running' as const
@@ -630,8 +676,7 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
-      reflection,
-      attentions: fixture.attentions,
+      wake,
       projects: [],
     })
 
@@ -641,10 +686,10 @@ describe('CoordinatorReconciler', () => {
     expect(observations).toEqual([false, true])
   })
 
-  test('prioritizes public user turns over older internal Reflection handoffs', async () => {
+  test('prioritizes public user turns over older internal Wake handoffs', async () => {
     const fixture = await workspaceFixture()
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-reflection',
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-wake',
       content: 'Older internal assessment.',
       receivedAt: new Date('2026-07-11T00:00:00Z'),
     })
@@ -666,7 +711,6 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
-      attentions: fixture.attentions,
       projects: [],
     })
 
@@ -675,28 +719,28 @@ describe('CoordinatorReconciler', () => {
     await coordinator.reconcileOnce()
     await coordinator.waitForIdle()
 
-    expect(processed).toEqual(['EV-user', 'EV-reflection'])
+    expect(processed).toEqual(['EV-user', 'EV-wake'])
   })
 
   test('queues public user input behind a running Project supervision turn', async () => {
     const fixture = await workspaceFixture()
-    await fixture.workspace.receiveReflectionEvent({
-      eventId: 'EV-reflection',
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-wake',
       content: 'Internal repair assessment.',
     })
     const started: string[] = []
-    let releaseReflection: () => void = () => undefined
-    const reflectionSettled = new Promise<void>((resolve) => {
-      releaseReflection = resolve
+    let releaseWake: () => void = () => undefined
+    const wakeSettled = new Promise<void>((resolve) => {
+      releaseWake = resolve
     })
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: {
         async process(eventId, signal) {
           started.push(eventId)
-          if (eventId === 'EV-reflection') {
+          if (eventId === 'EV-wake') {
             if (!signal) throw new Error('Expected an Assistant turn signal')
-            await reflectionSettled
+            await wakeSettled
             expect(signal.aborted).toBeFalse()
           }
           await fixture.workspace.handleEvent(eventId, {
@@ -706,7 +750,6 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
-      attentions: fixture.attentions,
       projects: [],
     })
 
@@ -715,17 +758,17 @@ describe('CoordinatorReconciler', () => {
     await fixture.workspace.receiveEvent({ eventId: 'EV-user', content: 'Operator input.' })
     coordinator.wake()
     await Bun.sleep(10)
-    expect(started).toEqual(['EV-reflection'])
+    expect(started).toEqual(['EV-wake'])
     expect((await fixture.workspace.readEvent('EV-user'))?.attributes.status).toBe('pending')
 
-    releaseReflection()
+    releaseWake()
     await Bun.sleep(20)
     await coordinator.reconcileOnce()
     await coordinator.waitForIdle()
 
-    expect(started).toEqual(['EV-reflection', 'EV-user'])
+    expect(started).toEqual(['EV-wake', 'EV-user'])
     expect((await fixture.workspace.readEvent('EV-user'))?.attributes.status).toBe('handled')
-    expect((await fixture.workspace.readEvent('EV-reflection'))?.attributes.status).toBe('handled')
+    expect((await fixture.workspace.readEvent('EV-wake'))?.attributes.status).toBe('handled')
     expect((await fixture.workspace.readWorkspace()).attentions.size).toBe(0)
   })
 
@@ -739,6 +782,7 @@ describe('CoordinatorReconciler', () => {
         ]),
       )
       const pending = new Map<string, () => void>()
+      const capacityReservations: unknown[] = []
       const storeFor = (goalIds: string[]) =>
         ({
           listGoalIds: async () => goalIds,
@@ -747,7 +791,8 @@ describe('CoordinatorReconciler', () => {
       const reconciler = {
         interruptRuns: () => undefined,
         liveWorkIds: () => new Set<string>(),
-        reconcileGoal(goalId: string) {
+        reconcileGoal(goalId: string, runtime) {
+          capacityReservations.push(runtime?.passCapacity)
           return new Promise((resolve) => {
             pending.set(goalId, () => {
               const goalPackage = requirePackage(packages, goalId)
@@ -765,11 +810,10 @@ describe('CoordinatorReconciler', () => {
             })
           })
         },
-      } as ProjectReconciler
+      } as TestProjectReconciler
       const coordinator = createCoordinatorReconciler({
         workspace: fixture.workspace,
         assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
-        attentions: fixture.attentions,
         projects: [
           { projectId: 'P-1', store: storeFor(['G-1', 'G-2']), reconciler },
           { projectId: 'P-2', store: storeFor(['G-3', 'G-4']), reconciler },
@@ -778,6 +822,13 @@ describe('CoordinatorReconciler', () => {
 
       expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 3 })
       expect([...pending.keys()]).toEqual(['G-1', 'G-2', 'G-3'])
+      expect(capacityReservations).toEqual(
+        Array.from({ length: 3 }, () => ({
+          planner: responsibility === 'planner',
+          generator: responsibility === 'generator',
+          reviewer: responsibility === 'reviewer',
+        })),
+      )
       expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
 
       pending.get('G-1')?.()
@@ -836,11 +887,10 @@ describe('CoordinatorReconciler', () => {
           })
         })
       },
-    } as ProjectReconciler
+    } as TestProjectReconciler
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -865,7 +915,7 @@ describe('CoordinatorReconciler', () => {
     await stopping
   })
 
-  test('reports settled Reflection eligibility only after responsibility progress drains', async () => {
+  test('reports settled Wake eligibility only after responsibility progress drains', async () => {
     const fixture = await workspaceFixture()
     const goalPackage = engineeringPackage('G-1')
     let finish: (() => void) | undefined
@@ -882,7 +932,7 @@ describe('CoordinatorReconciler', () => {
       releaseOverlappingScan = resolve
     })
     const observations: boolean[] = []
-    const reflection = {
+    const wake = {
       async observe(input) {
         observations.push(input.settled)
         return 'baseline' as const
@@ -898,8 +948,7 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      reflection,
-      attentions: fixture.attentions,
+      wake,
       projects: [
         {
           projectId: 'P-1',
@@ -977,11 +1026,10 @@ describe('CoordinatorReconciler', () => {
           )
         })
       },
-    } as ProjectReconciler
+    } as TestProjectReconciler
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
-      attentions: fixture.attentions,
       projects: [{ projectId: 'P-1', store, reconciler }],
     })
 
@@ -1050,11 +1098,10 @@ describe('CoordinatorReconciler', () => {
           application: 'published',
         }
       },
-    } as ProjectReconciler
+    } as TestProjectReconciler
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [{ projectId: 'P-1', store, reconciler }],
     })
 
@@ -1070,6 +1117,8 @@ describe('CoordinatorReconciler', () => {
         dependsOn: [],
         contractRevision: 1,
         evidenceRefs: [],
+        contextRefs: [],
+        ownerMessages: [],
       },
       body: 'Plan the concurrent instruction.\n',
     })
@@ -1109,7 +1158,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -1157,7 +1205,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -1203,10 +1250,10 @@ describe('CoordinatorReconciler', () => {
       listGoalIds: async () => ['G-1'],
       readPackage: async () => goalPackage,
     } as unknown as GoalPackageStore
+    let admittedCapacity: unknown
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -1214,7 +1261,8 @@ describe('CoordinatorReconciler', () => {
           reconciler: {
             interruptRuns: () => undefined,
             liveWorkIds: () => new Set<string>(),
-            async reconcileGoal() {
+            async reconcileGoal(_goalId, runtime) {
+              admittedCapacity = runtime?.passCapacity
               throw new Error('invalid completion structure')
             },
           },
@@ -1223,6 +1271,7 @@ describe('CoordinatorReconciler', () => {
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'deterministic_action', count: 1 })
+    expect(admittedCapacity).toEqual({ planner: false, generator: false, reviewer: false })
     const workspace = await fixture.workspace.readWorkspace()
     expect(workspace.attentions.size).toBe(0)
     expect(
@@ -1243,7 +1292,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -1255,7 +1303,7 @@ describe('CoordinatorReconciler', () => {
           } as unknown as GoalPackageStore,
           reconciler: {
             liveWorkIds: () => new Set<string>(),
-          } as unknown as ProjectReconciler,
+          } as TestProjectReconciler,
         },
       ],
     })
@@ -1286,7 +1334,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -1344,7 +1391,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -1354,7 +1400,7 @@ describe('CoordinatorReconciler', () => {
           reconciler: {
             interruptRuns: () => undefined,
             liveWorkIds: () => new Set<string>(),
-          } as unknown as ProjectReconciler,
+          } as TestProjectReconciler,
         },
       ],
     })
@@ -1379,7 +1425,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -1392,7 +1437,7 @@ describe('CoordinatorReconciler', () => {
           reconciler: {
             interruptRuns: () => undefined,
             liveWorkIds: () => new Set<string>(),
-          } as unknown as ProjectReconciler,
+          } as TestProjectReconciler,
         },
       ],
     })
@@ -1419,7 +1464,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       projects: [
         {
           projectId: 'P-1',
@@ -1463,7 +1507,6 @@ describe('CoordinatorReconciler', () => {
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: { process: async (eventId) => ({ kind: 'answered' as const, eventId }) },
-      attentions: fixture.attentions,
       delivery: {
         async deliverOnce() {
           deliveryCalls += 1
@@ -1489,7 +1532,7 @@ describe('CoordinatorReconciler', () => {
           reconciler: {
             interruptRuns: () => undefined,
             liveWorkIds: () => new Set<string>(),
-          } as unknown as ProjectReconciler,
+          } as TestProjectReconciler,
         },
       ],
     })
@@ -1552,6 +1595,8 @@ function engineeringPackage(goalId: string): GoalPackage {
             dependsOn: [],
             contractRevision: 1,
             evidenceRefs: [],
+            contextRefs: [],
+            ownerMessages: [],
           },
           body: 'Build.\n',
         },
@@ -1578,6 +1623,8 @@ function planningPackage(goalId: string): GoalPackage {
           dependsOn: [],
           contractRevision: 1,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: 'Plan.\n',
       },

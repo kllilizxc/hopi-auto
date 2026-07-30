@@ -3,11 +3,7 @@ import { join } from 'node:path'
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
 import { isEngineeringWork, isWorkTerminal } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
-import {
-  DEFAULT_PRIMARY_REPO_ID,
-  type LinkedProjectRepo,
-  requireProjectRepo,
-} from '../domain/project'
+import { type LinkedProjectRepo, requireProjectRepo } from '../domain/project'
 import { resolveProjectPath } from '../domain/projectPath'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
@@ -45,7 +41,7 @@ import {
 } from '../runtime/runAttemptStore'
 import { runStoragePath } from '../runtime/runPaths'
 import { settledFailureWorkIds as deriveSettledFailureWorkIds } from '../runtime/settledAttemptFailure'
-import { responsibilityFor } from '../runtime/softwareDeliveryProfile'
+import { responsibilityFor } from '../runtime/softwareDelivery'
 import {
   type StableWorktreeManager,
   StableWorktreeSyncError,
@@ -60,8 +56,8 @@ export interface ProjectReconcilerOptions {
   homeRoot: string
   projectId: string
   projectRoot: string
-  primaryRepoId?: string
-  projectRepos?: readonly LinkedProjectRepo[]
+  primaryRepoId: string
+  projectRepos: readonly LinkedProjectRepo[]
   store: GoalPackageStore
   publisher: PublicationCoordinator
   roleRunner: RoleRunner
@@ -102,17 +98,18 @@ export type ProjectReconcileResult =
 export interface ProjectReconciler {
   reconcileGoal(
     goalId: string,
-    runtime?: Partial<WorkRuntimeFacts>,
+    runtime: Pick<WorkRuntimeFacts, 'projectEligible' | 'passCapacity'> &
+      Partial<Omit<WorkRuntimeFacts, 'projectEligible' | 'passCapacity'>>,
   ): Promise<ProjectReconcileResult>
-  decisionWhenEligible?(goalId: string, goalPackage?: GoalPackage): Promise<ReconcileDecision>
+  decisionWhenEligible(goalId: string, goalPackage?: GoalPackage): Promise<ReconcileDecision>
   liveWorkIds(): ReadonlySet<string>
-  settledFailureWorkIds?(goalId: string, goalPackage?: GoalPackage): Promise<ReadonlySet<string>>
-  requestWorkRun?(
+  settledFailureWorkIds(goalId: string, goalPackage?: GoalPackage): Promise<ReadonlySet<string>>
+  requestWorkRun(
     goalId: string,
     workId: string,
     options?: { allowSuccessor?: boolean },
   ): Promise<WorkRunRequest>
-  interruptQueuedRuns?(goalId?: string, workId?: string): Promise<number>
+  interruptQueuedRuns(goalId?: string, workId?: string): Promise<number>
   interruptRuns(goalId?: string, workId?: string): void
 }
 
@@ -138,16 +135,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const preparer = options.preparer ?? createProjectPreparer()
   const responsibilitySessions =
     options.responsibilitySessions ?? createResponsibilitySessionStore(options.homeRoot)
-  const primaryRepoId = options.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID
-  const projectRepos: readonly LinkedProjectRepo[] = options.projectRepos ?? [
-    {
-      repoId: primaryRepoId,
-      repoPath: options.projectRoot,
-      projectPath: '.',
-      integrationRoot: options.projectRoot,
-      primary: true,
-    },
-  ]
+  const primaryRepoId = options.primaryRepoId
+  const projectRepos = options.projectRepos
   const primaryProjectRepo = requireProjectRepo({ repos: projectRepos }, primaryRepoId)
   const c1Layout = {
     projectId: options.projectId,
@@ -272,7 +261,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         allowSuccessor: requestOptions?.allowSuccessor,
       })
     },
-    async reconcileGoal(goalId, runtime = {}) {
+    async reconcileGoal(goalId, runtime) {
       const interruptionGeneration = {
         project: projectInterruptionGeneration,
         goal: goalInterruptionGenerations.get(goalId) ?? 0,
@@ -316,7 +305,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         .filter(([key]) => key.startsWith(livePrefix))
         .map(([key]) => key.slice(livePrefix.length))
       const facts: WorkRuntimeFacts = {
-        projectEligible: runtime.projectEligible ?? true,
+        projectEligible: runtime.projectEligible,
         liveRunWorkIds: new Set([...localLiveWorkIds, ...(runtime.liveRunWorkIds ?? [])]),
         settledFailureWorkIds:
           runtime.settledFailureWorkIds ??
@@ -326,9 +315,9 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             requested,
           )),
         passCapacity: {
-          planner: runtime.passCapacity?.planner ?? true,
-          generator: runtime.passCapacity?.generator ?? true,
-          reviewer: runtime.passCapacity?.reviewer ?? true,
+          planner: runtime.passCapacity.planner,
+          generator: runtime.passCapacity.generator,
+          reviewer: runtime.passCapacity.reviewer,
         },
         now: runtime.now ?? now(),
       }
@@ -386,7 +375,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         ) {
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
-        attempt = await attempts.start({
+        const recorder = await attempts.start({
           projectId: options.projectId,
           goalId,
           workId,
@@ -395,6 +384,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           runRoot: runStoragePath(options.homeRoot, runId),
           workHash: assignmentHash,
         })
+        attempt = recorder
         const runRepos =
           responsibility === 'planner' || isEngineeringWork(owningWork.attributes)
             ? projectRepos
@@ -509,7 +499,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           responsibility === 'planner'
             ? null
             : await (async () => {
-                await attempt?.record({
+                await recorder.record({
                   kind: 'message',
                   level: 'info',
                   role: 'coordinator',
@@ -523,7 +513,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                 })
               })()
         if (preparation) {
-          await attempt?.record({
+          await recorder.record({
             kind: 'message',
             level: preparation.kind === 'ready' || preparation.kind === 'absent' ? 'info' : 'error',
             role: 'coordinator',
@@ -531,8 +521,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           })
         }
         if (runController.signal.aborted) {
-          await attempt?.interrupt(new Error(`${responsibility} Run was interrupted`))
+          await recorder.interrupt(new Error(`${responsibility} Run was interrupted`))
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
+        }
+        let runCwd = responsibilitySession.workspaceDir
+        if (responsibility === 'generator') {
+          const primaryWorktree = scopedWorktrees.find(({ repo }) => repo.repoId === primaryRepoId)
+          if (!primaryWorktree) {
+            throw new Error(`Primary Repo task worktree is missing: ${primaryRepoId}`)
+          }
+          runCwd = primaryWorktree.projectRoot
         }
         let outcome = await options.roleRunner.run(
           {
@@ -541,20 +539,15 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             workId,
             runId,
             responsibility,
-            cwd:
-              responsibility === 'generator'
-                ? (scopedWorktrees.find(({ repo }) => repo.primary)?.projectRoot ??
-                  scopedWorktrees[0]?.projectRoot ??
-                  responsibilitySession.workspaceDir)
-                : responsibilitySession.workspaceDir,
+            cwd: runCwd,
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context: { ...context, runViewRoot },
             session: responsibilitySession.session,
             signal: runController.signal,
           },
           {
-            onEvent: (event) => attempt?.record(event),
-            onExecution: (execution) => attempt?.setExecution(execution).catch(() => undefined),
+            onEvent: (event) => recorder.record(event),
+            onExecution: (execution) => recorder.setExecution(execution),
             onSession: (nextSession) =>
               responsibilitySessions.write(sessionKey, sessionScope, nextSession),
             onSessionInvalid: () =>
@@ -577,7 +570,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                   }),
                 ),
               )
-              await attempt?.record({
+              await recorder.record({
                 kind: 'message',
                 level: 'info',
                 role: 'coordinator',
@@ -585,7 +578,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               })
             } catch (error) {
               checkpointFailure = error
-              await attempt?.record({
+              await recorder.record({
                 kind: 'message',
                 level: 'error',
                 role: 'coordinator',
@@ -593,7 +586,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               })
             }
           }
-          await attempt?.interrupt(
+          await recorder.interrupt(
             new Error(
               checkpointFailure
                 ? `${responsibility} Run was interrupted; partial source checkpoint failed: ${errorMessage(checkpointFailure)}`
@@ -620,7 +613,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             const summary = `Task checkpoint failed: ${errorMessage(error)}`
             if (error instanceof TaskCheckpointError && error.code !== 'infrastructure') {
               const invalid: PassOutcomeApplication = { kind: 'invalid', reason: summary }
-              await finishAttempt(attempt, options.store, goalId, outcome, invalid)
+              await finishAttempt(recorder, options.store, goalId, outcome, invalid)
               return {
                 kind: 'pass_finished',
                 workId,
@@ -661,7 +654,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             kind: 'invalid',
             reason: `Run artifact validation failed: ${errorMessage(error)}`,
           }
-          await finishAttempt(attempt, options.store, goalId, outcome, invalid)
+          await finishAttempt(recorder, options.store, goalId, outcome, invalid)
           return {
             kind: 'pass_finished',
             workId,
@@ -672,7 +665,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         }
 
         if (outcome.failureKind === 'operational') {
-          await attempt?.finish({
+          await recorder.finish({
             outcome,
             application: 'operational_failure',
           })
@@ -706,7 +699,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           }
         }
         if (application.kind !== 'integration_required') {
-          await finishAttempt(attempt, options.store, goalId, outcome, application)
+          await finishAttempt(recorder, options.store, goalId, outcome, application)
           return {
             kind: 'pass_finished',
             workId,
@@ -730,7 +723,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           completedWork: application.work,
         })
         if (integration.kind === 'integrated' || integration.kind === 'already_integrated') {
-          await attempt?.finish({
+          await recorder.finish({
             outcome,
             application: integration.kind,
           })
@@ -761,7 +754,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             ...pass,
             outcome: rejectedOutcome,
           })
-          await finishAttempt(attempt, options.store, goalId, rejectedOutcome, rejected)
+          await finishAttempt(recorder, options.store, goalId, rejectedOutcome, rejected)
           return {
             kind: 'pass_finished',
             workId,
@@ -776,7 +769,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             projectId: options.projectId,
             reason: integration.reason,
           })
-          await attempt?.finish({
+          await recorder.finish({
             outcome: {
               result: 'fail',
               summary: integration.reason,
@@ -803,7 +796,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           reason: integration.reason,
           commit: integration.commit,
         })
-        await attempt?.finish({
+        await recorder.finish({
           outcome: {
             result: 'fail',
             summary: integration.reason,
@@ -989,19 +982,18 @@ function queuedWorkIds(attempts: readonly RunAttemptSummary[], projectId: string
 }
 
 async function finishAttempt(
-  recorder: RunAttemptRecorder | null,
+  recorder: RunAttemptRecorder,
   store: GoalPackageStore,
   goalId: string,
   outcome: RoleRunResult,
   application: PassOutcomeApplication,
 ) {
-  if (!recorder) return
   const evidenceId = 'evidenceId' in application ? application.evidenceId : null
-  let appliedResult = application.kind === 'published' ? application.result : outcome.result
+  const appliedResult = application.kind === 'published' ? application.result : outcome.result
   let appliedSummary = outcome.summary
   if (evidenceId) {
     const evidence = (await store.readPackage(goalId)).evidence.get(evidenceId)
-    appliedSummary = evidence ? evidenceSummary(evidence.body) : appliedSummary
+    appliedSummary = evidence ? evidence.body.trim() : appliedSummary
   }
   if (application.kind === 'stale') {
     appliedSummary = `${appliedSummary} Stale result: ${application.reason}`
@@ -1009,7 +1001,6 @@ async function finishAttempt(
   if (application.kind === 'invalid') {
     appliedSummary = `${appliedSummary} Application rejected: ${application.reason}`
   }
-  if (application.kind === 'attention') appliedResult = outcome.result
   await recorder.finish({
     outcome: {
       result: appliedResult,
@@ -1018,10 +1009,6 @@ async function finishAttempt(
     },
     application: application.kind,
   })
-}
-
-function evidenceSummary(body: string) {
-  return body.match(/## Summary\s+([\s\S]+)$/)?.[1]?.trim() ?? body.trim()
 }
 
 function errorMessage(error: unknown) {

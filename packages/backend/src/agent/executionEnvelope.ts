@@ -18,7 +18,7 @@ export interface ExecutionEnvelope {
   hostEnvironmentMutation: boolean | null
   linkedSourceAccess: 'none' | 'read-only' | 'read-write' | 'provider-managed'
   canonicalMutation: 'hopi-tools-only' | 'coordinator-publication-only'
-  hopiToolMode?: 'main' | 'internal' | 'reflection'
+  hopiToolMode?: 'main' | 'internal'
   runScratch?: string
   cacheDirectory?: string
 }

@@ -4,11 +4,47 @@ import { join } from 'node:path'
 import { projectReleaseBranch } from '../src/domain/project'
 import {
   StableWorktreeSyncError,
-  createStableWorktreeManager,
+  createStableWorktreeManager as createProductionStableWorktreeManager,
 } from '../src/runtime/stableWorktreeManager'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'stable-worktree-manager')
+
+type ProductionStableWorktreeManager = ReturnType<typeof createProductionStableWorktreeManager>
+type TestStableWorktreeInput = Omit<
+  Parameters<ProductionStableWorktreeManager['prepare']>[0],
+  'repoId' | 'primaryRepoId'
+> &
+  Partial<
+    Pick<Parameters<ProductionStableWorktreeManager['prepare']>[0], 'repoId' | 'primaryRepoId'>
+  >
+
+function createStableWorktreeManager() {
+  const manager = createProductionStableWorktreeManager()
+  return {
+    prepare(input: TestStableWorktreeInput) {
+      return manager.prepare({
+        ...input,
+        repoId: input.repoId ?? 'primary',
+        primaryRepoId: input.primaryRepoId ?? 'primary',
+      })
+    },
+    prepareClean(input: TestStableWorktreeInput) {
+      return manager.prepareClean({
+        ...input,
+        repoId: input.repoId ?? 'primary',
+        primaryRepoId: input.primaryRepoId ?? 'primary',
+      })
+    },
+    inspect(input: TestStableWorktreeInput) {
+      return manager.inspect({
+        ...input,
+        repoId: input.repoId ?? 'primary',
+        primaryRepoId: input.primaryRepoId ?? 'primary',
+      })
+    },
+  }
+}
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })

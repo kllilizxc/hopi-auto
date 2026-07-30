@@ -104,8 +104,8 @@ describe('Project Assistant wake and Attention E2E', () => {
       await runtime.assistant.process('EV-user')
       await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
 
-      expect(await runtime.reflection.observe({ settled: false })).toBe('started')
-      await runtime.reflection.waitForIdle()
+      expect(await runtime.wake.observe({ settled: false })).toBe('started')
+      await runtime.wake.waitForIdle()
       const wakeEvent = [...(await runtime.workspace.readWorkspace()).events.values()].find(
         (event) => event.attributes.source === 'system',
       )
@@ -246,6 +246,8 @@ async function setupRuntime(assistantRunner: AssistantModelRunner): Promise<MvpR
   return createMvpRuntime({
     homeRoot,
     assistantRunner,
+    assistantToolUrl: () => 'http://127.0.0.1:3000/api/internal/assistant-tool',
+    onProjectTopologyChanged() {},
     start: false,
   })
 }

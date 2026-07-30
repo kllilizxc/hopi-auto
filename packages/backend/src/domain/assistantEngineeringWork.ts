@@ -1,4 +1,4 @@
-import type { WorkDocument } from './canonicalDocuments'
+import type { WorkContextRef, WorkDocument } from './canonicalDocuments'
 import type { InboxEventReference } from './inboxEventReference'
 
 export interface AssistantEngineeringWorkInput {
@@ -10,7 +10,7 @@ export interface AssistantEngineeringWorkInput {
   contractRevision: number
   assistantDispatch: InboxEventReference
   acceptedInputPath: string
-  references?: readonly { path: string; purpose: string }[]
+  references?: readonly WorkContextRef[]
 }
 
 export function createAssistantEngineeringWork(input: AssistantEngineeringWorkInput): WorkDocument {
@@ -24,6 +24,11 @@ export function createAssistantEngineeringWork(input: AssistantEngineeringWorkIn
       dependsOn: [...(input.dependsOn ?? [])],
       contractRevision: input.contractRevision,
       evidenceRefs: [],
+      contextRefs: mergeContextRefs([
+        { path: input.acceptedInputPath, purpose: 'Accepted Inbox input' },
+        ...(input.references ?? []),
+      ]),
+      ownerMessages: [],
       assistantDispatch: input.assistantDispatch,
     },
     body: [
@@ -35,20 +40,10 @@ export function createAssistantEngineeringWork(input: AssistantEngineeringWorkIn
       '',
       ...input.acceptanceCriteria.map((criterion) => `- ${criterion.trim()}`),
       '',
-      '## Accepted Inputs',
-      '',
-      `- ${input.acceptedInputPath}`,
-      '',
-      ...(input.references?.length
-        ? [
-            '## Reference Images',
-            '',
-            ...input.references.map(
-              (reference) => `- \`${reference.path}\` - ${reference.purpose.trim()}`,
-            ),
-            '',
-          ]
-        : []),
     ].join('\n'),
   }
+}
+
+function mergeContextRefs(references: readonly WorkContextRef[]) {
+  return [...new Map(references.map((reference) => [reference.path, reference])).values()]
 }

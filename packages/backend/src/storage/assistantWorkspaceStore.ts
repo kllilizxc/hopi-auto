@@ -58,7 +58,6 @@ export interface AssistantWorkspaceStore {
   resolveAttachment(reference: string): Promise<AssistantImageAttachment | null>
   receiveEvent(input: ReceiveInboxEventInput): Promise<InboxEventDocument>
   receiveSystemEvent(input: ReceiveInternalEventInput): Promise<InboxEventDocument>
-  receiveReflectionEvent(input: ReceiveInternalEventInput): Promise<InboxEventDocument>
   exposeEvent(eventId: string): Promise<InboxEventDocument>
   stageAttentionRequest(
     eventId: string,
@@ -66,7 +65,7 @@ export interface AssistantWorkspaceStore {
   ): Promise<InboxEventDocument>
   handleEvent(
     eventId: string,
-    input: { reply: string; disposition: string; handledAt?: Date; expose?: boolean },
+    input: { reply: string | null; disposition: string; handledAt?: Date; expose?: boolean },
   ): Promise<InboxEventDocument>
   markEventWebhookDelivered(eventId: string, deliveredAt?: Date): Promise<InboxEventDocument>
   createAttention(attention: WorkspaceAttentionDocument): Promise<WorkspaceAttentionDocument>
@@ -175,9 +174,6 @@ export function createAssistantWorkspaceStore(
         prepared.writes,
       )
     },
-    async receiveReflectionEvent(input) {
-      return receiveEvent(root, paths, publisher, input, 'reflection', 'internal', [], [])
-    },
     async receiveSystemEvent(input) {
       return receiveEvent(root, paths, publisher, input, 'system', 'internal', [], [])
     },
@@ -230,7 +226,7 @@ export function createAssistantWorkspaceStore(
       }
       event.attributes.status = 'handled'
       event.attributes.handledAt = (input.handledAt ?? new Date()).toISOString()
-      event.attributes.reply = input.reply.trim()
+      event.attributes.reply = input.reply?.trim() || null
       if (event.attributes.attentionRequest && event.attributes.visibility !== 'public') {
         throw new AssistantWorkspaceStoreError('Attention transfer requires a public Inbox event')
       }
@@ -278,11 +274,10 @@ export function createAssistantWorkspaceStore(
     },
     async resolveAttention(attentionId, resolution, resolvedAt = new Date()) {
       return mutateAttention(this, publisher, homeRoot, attentionId, (attention) => {
-        attention.attributes.resolvedAt ??= resolvedAt.toISOString()
+        if (attention.attributes.resolvedAt !== null) return
+        attention.attributes.resolvedAt = resolvedAt.toISOString()
         attention.attributes.updatedAt = resolvedAt.toISOString()
-        if (!attention.body.includes('\n## Resolution\n')) {
-          attention.body += `\n## Resolution\n\n${resolution.trim()}\n`
-        }
+        attention.body += `\n## Resolution\n\n${resolution.trim()}\n`
       })
     },
   }
@@ -293,7 +288,7 @@ async function receiveEvent(
   paths: AssistantWorkspacePaths,
   publisher: PublicationCoordinator,
   input: ReceiveInboxEventInput | ReceiveInternalEventInput,
-  source: 'user' | 'system' | 'reflection',
+  source: 'user' | 'system',
   visibility: 'public' | 'internal',
   attachments: string[],
   supportingWrites: PublicationWrite[],

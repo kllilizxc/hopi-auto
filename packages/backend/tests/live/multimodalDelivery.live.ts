@@ -76,7 +76,7 @@ let referenceCleanup: TestRunCleanupRegistration | null = null
 let implementationCleanup: TestRunCleanupRegistration | null = null
 
 try {
-  harness = await startLiveHarness(SCENARIO, { deterministicReflection: true })
+  harness = await startLiveHarness(SCENARIO)
   await enterHarnessPhase(harness, 'fixture_setup')
   await initializeFrontendRepo(harness.repoRoot)
   const checkoutBefore = await checkoutSnapshot(harness.repoRoot)
@@ -185,9 +185,6 @@ try {
   assert.ok(assetFile)
   assert.deepEqual(new Uint8Array(await Bun.file(assetFile).arrayBuffer()), referenceBytes)
   const assetPath = assetFile.slice(integrationRoot.length + 1).replaceAll('\\', '/')
-  const references = await Bun.file(join(goalRoot, 'design', 'references.md')).text()
-  assert.ok(references.includes(assetPath))
-  assert.ok(references.includes(`Inbox \`${event.id}\``))
 
   const editableGoalMarkdown = [
     { path: join(goalRoot, 'goal.md'), content: await Bun.file(join(goalRoot, 'goal.md')).text() },

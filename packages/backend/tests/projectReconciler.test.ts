@@ -380,32 +380,6 @@ describe('ProjectReconciler', () => {
     expect(fixture.runner.responsibilities).toEqual(['planner'])
   })
 
-  test('settles an unmaterialized attention label without inventing Attention or redispatching', async () => {
-    const fixture = await createFixture({ generatorResult: 'attention' })
-
-    await fixture.reconciler.reconcileGoal('goal-1')
-    const result = await fixture.reconciler.reconcileGoal('goal-1')
-    const goalPackage = await fixture.store.readPackage('goal-1')
-    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
-
-    expect(result).toMatchObject({
-      kind: 'pass_finished',
-      result: 'attention',
-      application: 'published',
-    })
-    expect(goalPackage.attentions.size).toBe(0)
-    expect(attempts[0]).toMatchObject({
-      status: 'finished',
-      result: 'attention',
-      application: 'published',
-    })
-    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
-      kind: 'wait',
-      decision: { reasons: expect.arrayContaining(['failed_attempt']) },
-    })
-    expect(fixture.runner.responsibilities).toEqual(['planner', 'generator'])
-  })
-
   test('keeps a Git subdirectory Project inside its selected source scope', async () => {
     const projectPath = 'apps/new-product'
     const fixture = await createFixture({ projectPath })
@@ -692,6 +666,8 @@ describe('ProjectReconciler', () => {
     expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
       evidenceRefs: [],
+      contextRefs: [],
+      ownerMessages: [],
     })
   })
 
@@ -719,6 +695,8 @@ describe('ProjectReconciler', () => {
     expect(work?.attributes).toMatchObject({
       stage: 'generate',
       evidenceRefs: [],
+      contextRefs: [],
+      ownerMessages: [],
     })
     expect(attempts.at(-1)).toMatchObject({
       status: 'finished',
@@ -844,13 +822,15 @@ describe('ProjectReconciler', () => {
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
       evidenceRefs: [],
+      contextRefs: [],
+      ownerMessages: [],
     })
 
     expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
       kind: 'wait',
       decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+    expect(await fixture.reconciler.requestWorkRun('goal-1', 'W-1')).toEqual({
       runId: 'run-3',
       disposition: 'scheduled',
     })
@@ -877,11 +857,11 @@ describe('ProjectReconciler', () => {
       decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
 
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+    expect(await fixture.reconciler.requestWorkRun('goal-1', 'W-1')).toEqual({
       runId: 'run-2',
       disposition: 'scheduled',
     })
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+    expect(await fixture.reconciler.requestWorkRun('goal-1', 'W-1')).toEqual({
       runId: 'run-2',
       disposition: 'already_scheduled',
     })
@@ -901,7 +881,7 @@ describe('ProjectReconciler', () => {
 
   test('runs the same queued Attempt after the Coordinator is recreated', async () => {
     const fixture = await createFixture({ directInitialWork: true })
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+    expect(await fixture.reconciler.requestWorkRun('goal-1', 'W-1')).toEqual({
       runId: 'run-1',
       disposition: 'scheduled',
     })
@@ -922,7 +902,7 @@ describe('ProjectReconciler', () => {
     const fixture = await createFixture({ directInitialWork: true })
     const controller = createGoalController(fixture.store, {})
     await controller.setWorkNotBefore('goal-1', 'W-1', '2026-07-12T00:00:00.000Z')
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toMatchObject({
+    expect(await fixture.reconciler.requestWorkRun('goal-1', 'W-1')).toMatchObject({
       runId: 'run-1',
       disposition: 'scheduled',
     })
@@ -975,11 +955,11 @@ describe('ProjectReconciler', () => {
 
     const generator = fixture.reconciler.reconcileGoal('goal-1')
     await preparationStarted
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+    expect(await fixture.reconciler.requestWorkRun('goal-1', 'W-1')).toEqual({
       runId: 'run-1',
       disposition: 'already_active',
     })
-    expect(await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')).toEqual({
+    expect(await fixture.reconciler.requestWorkRun('goal-1', 'W-1')).toEqual({
       runId: 'run-1',
       disposition: 'already_active',
     })
@@ -1014,7 +994,7 @@ describe('ProjectReconciler', () => {
       sourceEventId: 'EV-guidance',
       content: 'Use the verified API command from the current design.',
     })
-    await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')
+    await fixture.reconciler.requestWorkRun('goal-1', 'W-1')
     const second = await fixture.reconciler.reconcileGoal('goal-1')
 
     expect(first).toMatchObject({ kind: 'pass_finished', application: 'operational_failure' })
@@ -1060,6 +1040,8 @@ describe('ProjectReconciler', () => {
     expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
       stage: 'generate',
       evidenceRefs: [],
+      contextRefs: [],
+      ownerMessages: [],
     })
     expect(attempts[0]).toMatchObject({
       application: 'operational_failure',
@@ -1122,7 +1104,7 @@ describe('ProjectReconciler', () => {
       kind: 'wait',
       decision: { reasons: expect.arrayContaining(['failed_attempt']) },
     })
-    await fixture.reconciler.requestWorkRun?.('goal-1', 'W-1')
+    await fixture.reconciler.requestWorkRun('goal-1', 'W-1')
     await fixture.reconciler.reconcileGoal('goal-1')
     const work = (await fixture.store.readPackage('goal-1')).works.get('W-1')
     const worktree = join(
@@ -1171,7 +1153,7 @@ class DeliveryScriptRunner implements RoleRunner {
 
   constructor(
     private readonly options: {
-      generatorResult: 'success' | 'attention' | 'fail'
+      generatorResult: 'success' | 'fail'
       generatorChangesOnRetry: boolean
       generatorOperationalFailure: boolean
       reviewerOperationalWriteOnce: boolean
@@ -1358,6 +1340,8 @@ class DeliveryScriptRunner implements RoleRunner {
             dependsOn: [],
             contractRevision: planning.attributes.contractRevision,
             evidenceRefs: [],
+            contextRefs: [],
+            ownerMessages: [],
           },
           body: '## Acceptance Criteria\n\n- feature equals 2.\n',
         }),
@@ -1369,7 +1353,7 @@ class DeliveryScriptRunner implements RoleRunner {
 
 async function createFixture(
   options: {
-    generatorResult?: 'success' | 'attention' | 'fail'
+    generatorResult?: 'success' | 'fail'
     generatorChangesOnRetry?: boolean
     changedRepoIds?: readonly string[]
     generatorOperationalFailure?: boolean
@@ -1479,8 +1463,8 @@ async function createFixture(
   let runSequence = 0
   const now = () => new Date('2026-07-11T00:00:00Z')
   const attempts = createRunAttemptStore(homeRoot, { now })
-  const createReconciler = () =>
-    createProjectReconciler({
+  const createReconciler = () => {
+    const reconciler = createProjectReconciler({
       homeRoot,
       projectId: 'project-1',
       projectRoot: linked.integrationRoot,
@@ -1498,6 +1482,20 @@ async function createFixture(
       now,
       createRunId: () => `run-${++runSequence}`,
     })
+    return {
+      ...reconciler,
+      reconcileGoal(
+        goalId: string,
+        runtime: Partial<Parameters<typeof reconciler.reconcileGoal>[1]> = {},
+      ) {
+        return reconciler.reconcileGoal(goalId, {
+          projectEligible: true,
+          passCapacity: { planner: true, generator: true, reviewer: true },
+          ...runtime,
+        })
+      },
+    }
+  }
   const reconciler = createReconciler()
   return {
     homeRoot,

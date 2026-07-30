@@ -129,9 +129,10 @@ Inbox turns have one durable transition:
 pending -> handled
 ```
 
-A handled turn atomically owns `handledAt`, final `reply`, and `disposition`. Tool calls publish
-their own domain effects; reply prose is never interpreted as control state. One Home conversation
-and one conversation per Project share a single speaking queue.
+A handled turn atomically owns `handledAt` and `disposition`. A public turn additionally owns its
+non-empty final `reply`; an intentionally silent internal turn keeps `reply: null`. Tool calls
+publish their own domain effects; reply prose is never interpreted as control state. One Home
+conversation and one conversation per Project share a single speaking queue.
 
 ## Completion
 

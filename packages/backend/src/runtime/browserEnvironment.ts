@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir, rm, stat } from 'node:fs/promises'
-import { homedir, platform, tmpdir } from 'node:os'
+import { platform, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -333,8 +333,4 @@ function hasErrorCode(error: unknown, code: string) {
     'code' in error &&
     (error as { code?: unknown }).code === code
   )
-}
-
-export function defaultBrowserTestHome() {
-  return join(homedir(), '.hopi', 'browser-test-host')
 }

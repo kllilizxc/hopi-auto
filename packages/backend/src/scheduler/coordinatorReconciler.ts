@@ -1,4 +1,4 @@
-import type { AssistantWake } from '../assistant/assistantReflection'
+import type { AssistantWake } from '../assistant/assistantWake'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import type { InboxEventAttributes } from '../domain/assistantWorkspaceDocuments'
@@ -6,7 +6,6 @@ import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
 import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
 import type { Responsibility } from '../runtime/roleContextStager'
-import type { WorkspaceAttentionController } from '../runtime/workspaceAttentionController'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { ProjectReconciler } from './projectReconciler'
@@ -21,8 +20,7 @@ export interface CoordinatorProjectRuntime {
 export interface CoordinatorReconcilerOptions {
   workspace: AssistantWorkspaceStore
   assistant: WorkspaceAssistant
-  reflection?: AssistantWake
-  attentions: WorkspaceAttentionController
+  wake: AssistantWake
   projects: readonly CoordinatorProjectRuntime[]
   concurrency: Readonly<Record<Responsibility, number>>
   delivery?: AttentionDeliveryWorker
@@ -145,7 +143,7 @@ export function createCoordinatorReconciler(
       retryAt = null
       for (const project of options.projects) project.reconciler.interruptRuns()
       for (const entry of assistantActive.values()) entry.controller.abort()
-      await options.reflection?.stop()
+      await options.wake.stop()
       await this.waitForIdle()
     },
     wake() {
@@ -170,14 +168,14 @@ export function createCoordinatorReconciler(
           if (work.length > 0) await Promise.allSettled(work)
           else await Bun.sleep(0)
         }
-        await options.reflection?.waitForIdle()
+        await options.wake.waitForIdle()
         if (
           !reconciling &&
           reservations.size === 0 &&
           assistantActive.size === 0 &&
           !wakePending &&
           !wakeTimer &&
-          !options.reflection?.isActive()
+          !options.wake.isActive()
         ) {
           return
         }
@@ -235,7 +233,7 @@ export function createCoordinatorReconciler(
           !projectHasLiveActivity(projectId),
       )
       try {
-        await options.reflection?.acknowledgeProjects(acknowledgeable)
+        await options.wake.acknowledgeProjects(acknowledgeable)
       } catch {
         // A missed acknowledgement can only cause a redundant wake; it must not fail the turn.
       } finally {
@@ -250,10 +248,10 @@ export function createCoordinatorReconciler(
       const run = reconcileTick(epoch)
         .then(async (result) => {
           if (result.kind !== 'assistant_started') armDeadline(result.nextWakeAt ?? null)
-          if (epoch === reconcileEpoch && options.reflection) {
+          if (epoch === reconcileEpoch) {
             const workspace = await options.workspace.readWorkspaceForControl()
             if (eligiblePendingEvents(workspace, assistantActive).length === 0) {
-              await options.reflection.observe({
+              await options.wake.observe({
                 settled:
                   result.kind === 'idle' && !startedWithReservation && reservations.size === 0,
                 busyScopeKeys: [...assistantActive.values()].map((entry) => entry.scopeKey),
@@ -396,8 +394,10 @@ export function createCoordinatorReconciler(
           const runtime: WorkRuntimeFacts = {
             projectEligible: true,
             liveRunWorkIds: liveWorkIds,
-            settledFailureWorkIds:
-              (await project.reconciler.settledFailureWorkIds?.(goalId, goalPackage)) ?? new Set(),
+            settledFailureWorkIds: await project.reconciler.settledFailureWorkIds(
+              goalId,
+              goalPackage,
+            ),
             passCapacity: {
               planner: passCounts.planner < options.concurrency.planner,
               generator: passCounts.generator < options.concurrency.generator,
@@ -445,6 +445,11 @@ export function createCoordinatorReconciler(
       try {
         const result = await deterministic.project.reconciler.reconcileGoal(deterministic.goalId, {
           projectEligible: true,
+          passCapacity: {
+            planner: false,
+            generator: false,
+            reviewer: false,
+          },
         })
         if (result.kind === 'project_blocked') {
           eligibleProjects.delete(deterministic.project.projectId)
@@ -482,7 +487,11 @@ export function createCoordinatorReconciler(
       const promise = candidate.project.reconciler
         .reconcileGoal(candidate.goalId, {
           projectEligible: true,
-          passCapacity: { [responsibility]: true },
+          passCapacity: {
+            planner: responsibility === 'planner',
+            generator: responsibility === 'generator',
+            reviewer: responsibility === 'reviewer',
+          },
         })
         .then(async (result) => {
           if (result.kind === 'project_blocked') {

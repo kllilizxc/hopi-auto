@@ -46,17 +46,17 @@ glow, never animating the whole card surface. Completed progress segments and ex
 use the containing Lane's phase color—Plan yellow, Build purple, Review blue, and Done green—instead
 of sharing one global success green.
 
-Assistant, Attempt, and Reflection message streams share one initial loading skeleton shaped like
+Assistant, Attempt, and Wake message streams share one initial loading skeleton shaped like
 their eventual conversation rows. Loading older history remains a small incremental status and does
 not replace already visible messages. Each stream also keeps one browser-session snapshot of its
 last successfully displayed history and its Attempt index, isolated by stable stream identity and
 bounded by a shared LRU budget. Refreshing or re-entering the same stream restores that snapshot
 synchronously, then applies cursor-based changes in the background. The snapshot is an observational
 UI cache, never workflow or message authority, and is not reused across Goals, Works, Attempts, or
-Reflections.
+Wakes.
 
 Assistant conversation activity is one tail-only breathing status. Public speaking work is
-`Working`; while no public turn is running, active Reflection or its hidden internal speaking handoff
+`Working`; while no public turn is running, active Wake or its hidden internal speaking handoff
 is `Thinking`; a queued public turn with no active model work is `Waiting to start`. The internal
 prompt, diagnostics, and tool stream remain hidden, and terminal activity leaves no historical row.
 
@@ -67,15 +67,15 @@ decision prompt on that same immutable reply renders mutually exclusive options,
 inputs, option-specific required details, and one submit action through the existing referenced
 Inbox reply path; malformed or absent prompt data falls back to ordinary Markdown and Reply.
 Resolution restores the ordinary message without adding a status row. Assistant has no title
-header; the global open count remains as a quiet floating badge only when non-zero. Its Reflection
-entry is hidden in a masked top-right hover/focus region, and the Reflection list adds no title or
+header; the global open count remains as a quiet floating badge only when non-zero. Its Wake
+entry is hidden in a masked top-right hover/focus region, and the Wake list adds no title or
 refresh toolbar. Goal and Kanban surfaces retain their derived Work state without a duplicate banner.
 Completed presentation follows the same human-summary boundary without becoming Attention: the
 final Planner Evidence stays the technical completion record, while its short operator-facing result
-summary is the text shown in the deterministic Completed update.
-The Assistant feed retains the established `body` wire field for rolling-deploy compatibility. Its
-reader also accepts the transitional `summary` spelling and safely degrades malformed browser-cache
-entries instead of allowing one stale record to break the entire Assistant surface.
+summary is the Markdown shown verbatim in the deterministic Completed update. Headings, lists, and
+links are not rewritten by the Feed adapter; the shared Markdown renderer alone decides which link
+targets are safe to activate.
+The Assistant feed carries completion Markdown in one required `body` field.
 The shared Project switcher projects the same unresolved NeedsYou Attention count onto each direct
 shortcut and overflow option; it does not reuse the broader open-Attention count. It also shows one
 success marker when that browser observes a new Goal completion after establishing its initial

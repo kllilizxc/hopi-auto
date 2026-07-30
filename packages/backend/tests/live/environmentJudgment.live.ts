@@ -47,7 +47,7 @@ interface FeedView {
 let harness: LiveHarness | null = null
 
 try {
-  harness = await startLiveHarness(SCENARIO, { deterministicReflection: true })
+  harness = await startLiveHarness(SCENARIO)
   await enterHarnessPhase(harness, 'fixture_setup')
   await seedSpritesheet(harness.repoRoot)
   const linked = await requestJson<{

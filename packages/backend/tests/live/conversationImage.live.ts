@@ -56,7 +56,7 @@ let referenceServer: ReturnType<typeof Bun.serve> | null = null
 let referenceCleanup: TestRunCleanupRegistration | null = null
 
 try {
-  harness = await startLiveHarness(SCENARIO, { deterministicReflection: true })
+  harness = await startLiveHarness(SCENARIO)
   await enterHarnessPhase(harness, 'fixture_setup')
   await initializeConversationRepo(harness.repoRoot)
   const checkoutBefore = await checkoutSnapshot(harness.repoRoot)
@@ -134,7 +134,7 @@ try {
 
   const logicalRuns = await countLogicalRuns(harness.homeRoot)
   assert.equal(logicalRuns.assistant, 1)
-  assert.equal(logicalRuns.reflection, 0)
+  assert.equal(logicalRuns.wake, 0)
   assert.equal(logicalRuns.planner, 0)
   assert.equal(logicalRuns.generator, 0)
   assert.equal(logicalRuns.reviewer, 0)

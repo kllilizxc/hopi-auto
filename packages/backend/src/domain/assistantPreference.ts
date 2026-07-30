@@ -1,13 +1,13 @@
 export const ASSISTANT_PREFERENCE_PATH = '.hopi/preference.md'
 export const DEFAULT_ASSISTANT_PREFERENCE = '# Preferences\n'
-export const MAX_ASSISTANT_PREFERENCE_BYTES = 16_000
+const MAX_ASSISTANT_PREFERENCE_BYTES = 16_000
 
 export interface AssistantPreferenceDocument {
   content: string
   digest: string
 }
 
-export class AssistantPreferenceValidationError extends Error {}
+class AssistantPreferenceValidationError extends Error {}
 
 export function normalizeAssistantPreference(source: string) {
   const content = source.replaceAll('\r\n', '\n').replaceAll('\r', '\n')

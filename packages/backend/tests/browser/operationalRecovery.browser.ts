@@ -432,6 +432,8 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: '## Acceptance Criteria\n\n- Recovered source is delivered through C1.\n',
       }),

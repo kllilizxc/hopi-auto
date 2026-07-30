@@ -100,9 +100,6 @@ try {
   assert.ok(assetFile)
   assert.deepEqual(new Uint8Array(await Bun.file(assetFile).arrayBuffer()), referenceBytes)
   const assetPath = assetFile.slice(integrationRoot.length + 1).replaceAll('\\', '/')
-  const references = await Bun.file(join(goalRoot, 'design', 'references.md')).text()
-  assert.ok(references.includes(assetPath))
-  assert.ok(references.includes(`Inbox \`${sourceEvent.id}\``))
 
   const editableDocuments = [
     { path: join(goalRoot, 'goal.md'), content: await Bun.file(join(goalRoot, 'goal.md')).text() },

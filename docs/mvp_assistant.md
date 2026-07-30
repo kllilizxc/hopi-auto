@@ -3,10 +3,8 @@
 Status: forward Assistant authority
 Last updated: 2026-07-28
 
-> [Project Owner And Attention](./mvp_project_owner.md) supersedes this document wherever it
-> describes a separate Reflection Agent, Attention targets/owners/waiting states, operator-request
-> fields, or notification policy. The remaining sections document conversation transport, context,
-> attachments, tools, and UI details.
+> [Project Owner And Attention](./mvp_project_owner.md) owns wake-up, Attention, and notification
+> policy. This document owns conversation transport, context, attachments, tools, and UI details.
 
 This document owns the workspace Assistant conversation, its configured vendor session, HOPI tool
 boundary, turn recovery, and UI behavior. Canonical schemas belong to
@@ -45,7 +43,9 @@ publication of already accepted results. Engineering Work owns managed implement
 delivers it and Reviewer verifies it with durable Evidence and recovery history. A settled contract
 may enter that lifecycle directly as the Goal's first Engineering Work; Planning exists to shape or
 revise a contract whose engineering work is not yet settled. These are available responsibility
-surfaces, not a deterministic intent classifier or a mandatory workflow decision tree.
+surfaces, not a deterministic intent classifier or a mandatory workflow decision tree. Assistant
+bootstrap states only the ownership and capability boundary; the matching tool descriptions expose
+these surfaces without restating a settled/unsettled decision heuristic.
 
 The MVP has one operator-facing Assistant identity with one Home conversation and one conversation
 per linked Project. Goal surfaces in the same Project share its conversation. The page selects the
@@ -54,14 +54,13 @@ serializes its own Assistant invocations while different Projects may run concur
 user messages become durable and visible immediately, wait behind an already active Project
 invocation, and run before queued wake work.
 
-The current Reflection implementation is only the deterministic wake recorder defined by
-[Project Owner And Attention](./mvp_project_owner.md). At an idle boundary it coalesces material
-Project facts and starts the same Assistant. A compatible speaking session uses a provider-native
-fork; a missing or invalidated session uses the same internal event to bootstrap a replacement
-speaking session from durable scoped history. Session-cache availability is therefore not wake
-eligibility. Reflection also continues each unresolved Attention revision at most once after a
-settled turn unless another turn already covers the conversation or an active Work Attempt will
-provide the next settlement edge.
+The deterministic Wake defined by [Project Owner And Attention](./mvp_project_owner.md) coalesces
+material Project facts at an idle boundary and enqueues the same Assistant. A compatible speaking
+session uses a provider-native fork; a missing or invalidated session uses the same internal event to
+bootstrap a replacement speaking session from durable scoped history. Session-cache availability is
+therefore not wake eligibility. Wake also continues each unresolved Attention revision at most once
+after a settled turn unless another turn already covers the conversation or an active Work Attempt
+will provide the next settlement edge.
 
 `present_attention_to_user` links a public turn to one or more unresolved Attention records.
 Needs You renders their current operator summaries and optional shared choice UI; complete rationale
@@ -75,22 +74,9 @@ snapshots remain disposable read caches and reconcile only against the same conv
 ## Operator-Facing Communication
 
 The speaking thread reports only the useful state delta and the operator's next action. The
-operator should be able to scan a reply and answer two questions: what happened, and do I need to
-do anything?
-
-- Lead with the plain-language outcome or current condition. Prefer direct openings such as
-  `Started`, `Completed`, `Could not continue`, or `Need your decision` in the operator's language.
-- Default to one or two short sentences. Add detail only when it changes the operator's
-  understanding or decision, or when the operator asks for it.
-- When operator action is required, state one concrete question or instruction. When no action is
-  required, do not invent a next step or narrate what the workflow will do next.
-- The final Planner `summary` follows the same operator-facing rule as an Attention summary. When
-  that result completes a Goal, it becomes the deterministic `Completed` summary: name the delivered
-  outcome in one or two short sentences, without responsibility, Work, Evidence, validation, or
-  lifecycle mechanics.
-- Do not repeat the request or expose Goal, Work, Attention, Run, or event IDs; responsibility names;
-  tool calls; document paths; internal stages; or verification process unless the operator asks or
-  the detail is necessary to disambiguate a choice.
+The final model response is the operator-facing reply. Its content and level of detail are model
+judgment under the current conversation and authority; HOPI imposes no sentence count, fixed
+headings, or hidden response-style validator.
 - An accepted effect must remain locatable from the operator's current view. When Assistant creates
   or changes a Goal other than the preferred page Goal, its final reply names that Goal and includes
   the exact Goal ID. This is a discoverability exception to hiding internal identifiers, not a new
@@ -203,8 +189,9 @@ Receipt and adoption are deliberately separate:
 - Goal adoption is a model decision. When an image matters to one Goal, Assistant includes that
   attachment and a free-form purpose in the same existing HOPI tool call that creates the Goal,
   writes design, or requests Planning.
-- The tool copies the immutable bytes to Goal-local `assets/`, records path, provenance, and purpose
-  in editable `design/references.md`, and publishes the Goal Input in the same Goal publication.
+- The tool copies the immutable bytes to Goal-local `assets/` and publishes the Goal Input in the
+  same Goal publication. Work that uses the image names the Goal-local path and purpose in
+  `contextRefs`.
 - The same Home attachment may be independently adopted by more than one Goal. Each Goal keeps its
   own portable copy; HOPI does not create cross-root links.
 
@@ -243,7 +230,7 @@ The free-form disposition is diagnostic only: speaking turns use `answered` when
 observed and `tools-used` when one was. It never claims that a side effect was applied; durable
 documents and the recorded tool result remain the only evidence of an effect.
 
-`source: user | system | reflection` preserves provenance. `visibility: public | internal` controls
+`source: user | system` preserves provenance. `visibility: public | internal` controls
 only the conversation projection.
 User turns are always public. Wake turns begin internal; a non-empty final response publishes them
 while an empty response leaves them hidden. These fields do not grant mutation authority.
@@ -275,7 +262,7 @@ speaking session from the durable Home instructions, a fixed character budget of
 user-visible exchanges in that same Home or Project scope, pending action receipts, and that turn.
 A wake does not emulate a missing fork. Without a matching speaking session, the first internal
 turn runs once as a speaking bootstrap from the durable scoped context and persists the returned
-session. It remains a system or reflection event rather than fabricated user input. Later internal
+session. It remains a system event rather than fabricated user input. Later internal
 turns use provider-native forks of that session.
 Long-lived decisions belong in Project, Goal, design, Input, Work, Evidence, or preference documents
 rather than an unbounded vendor thread transcript.
@@ -781,19 +768,19 @@ The composer may show the current Project/Goal context and let the operator clea
 `Context`, never `Route to`. There is no generic loading state without elapsed activity or a durable
 failure path.
 
-Assistant has no persistent title header. One explicitly debug-only Reflection entry floats in its
+Assistant has no persistent title header. One explicitly debug-only Wake entry floats in its
 top-right corner, hidden until the pointer enters that corner or keyboard focus reaches the control;
 the active back control and an overlay close control remain reachable. A soft masked shadow separates
-these controls from conversation content without reserving a toolbar row. Opening Reflection lazily
+these controls from conversation content without reserving a toolbar row. Opening Wake diagnostics lazily
 polls runtime manifests and normalized `events.jsonl`, showing digest, status, handoff, errors, and
-model/tool activity. Closing it stops polling. The Reflection list likewise has no page title or
+model/tool activity. Closing it stops polling. The Wake list likewise has no page title or
 refresh toolbar; automatic polling is its single refresh rule, while each Run retains the minimum
 expandable identity needed to distinguish history. This view has no mutation controls, does not enter
-ordinary conversation history, and does not make Reflection a product concept or canonical state.
+ordinary conversation history, and does not make Wake a product state.
 The debug list keeps `completed` as the runtime status but projects its outcome as `Sent` when
 `handoffEventId` is present and `No handoff` otherwise. The latter truthfully covers both a silent
 assessment and a prepared brief discarded after its snapshot became stale, without adding another
-Reflection state.
+Wake state.
 
 When Assistant is docked beside a Project surface, it is a structural pane whose background ends at
 the workspace boundary, not a floating layer casting another shadow over it. The overlay drawer keeps
@@ -809,7 +796,7 @@ The MVP does not include:
 - direct Assistant source edits or direct Kanban column mutation
 - parallel turns inside one speaking conversation
 - operator-created or Goal-scoped Assistant threads, or transparent session resume across vendors
-- a durable Reflection queue, Reflection workflow state, or Reflection-authored canonical mutation
+- a durable Wake queue, Wake workflow state, or Wake-authored canonical mutation
 - a general workflow/tool DSL or user-editable tool schemas
 - treating selected Goal context as permission or proof of a requested side effect
-- a polished durable Reflection administration or analytics surface
+- a polished durable Wake administration or analytics surface

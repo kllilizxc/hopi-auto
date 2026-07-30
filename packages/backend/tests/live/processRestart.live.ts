@@ -328,7 +328,6 @@ try {
   const usage = await readModelUsage(homeRoot)
   await finishTestRun(testRun, 'passed', {
     paths: { home: homeRoot, repo: repoRoot, integration: integrationRoot },
-    modelBoundaries: { reflection: 'deterministic' },
     checkpoint,
     assistantCheckpoint,
     assistantTurn,
@@ -348,7 +347,6 @@ try {
   const usage = await readModelUsage(homeRoot).catch(() => undefined)
   await finishTestRun(testRun, 'failed', {
     paths: { home: homeRoot, repo: repoRoot },
-    modelBoundaries: { reflection: 'deterministic' },
     error: errorMessage(error),
     usage,
     logicalRunSafety: { limit: logicalRunSafety.limit },

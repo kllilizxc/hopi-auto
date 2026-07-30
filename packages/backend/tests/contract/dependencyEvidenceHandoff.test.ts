@@ -52,7 +52,11 @@ test('hands accepted dependency Evidence and immutable Run artifacts to downstre
 
     const linked = await requestJson<StateView>(baseUrl, '/api/projects', {
       method: 'POST',
-      body: { projectId: PROJECT_ID, repoId: 'primary', repoPath: repoRoot },
+      body: {
+        projectId: PROJECT_ID,
+        primaryRepoId: 'primary',
+        repos: [{ repoId: 'primary', repoPath: repoRoot }],
+      },
     })
     const integrationRoot = linked.projects
       .find((project) => project.projectId === PROJECT_ID)
@@ -292,6 +296,8 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: '## Acceptance Criteria\n\n- Produce source value 41 and one reusable proof artifact.\n',
       }),
@@ -308,6 +314,8 @@ async function plan(input: RoleRunInput): Promise<RoleRunResult> {
           dependsOn: [PRODUCE_WORK],
           contractRevision: planning.attributes.contractRevision,
           evidenceRefs: [],
+          contextRefs: [],
+          ownerMessages: [],
         },
         body: '## Acceptance Criteria\n\n- Consume the accepted predecessor artifact and export value 42.\n',
       }),

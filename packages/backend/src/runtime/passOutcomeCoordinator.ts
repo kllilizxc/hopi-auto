@@ -364,7 +364,7 @@ function buildAttentionApplication(
   current: GoalPackage,
 ): PassPublication {
   const gateAttention = attentions.at(-1)
-  if (!gateAttention) throw new PassProposalError('Attention result has no targeted Attention')
+  if (!gateAttention) throw new PassProposalError('Attention proposal has no targeted Attention')
   const supportingWrites = proposal.changedWrites.filter(
     (write) => write.path !== gateAttention.path,
   )
@@ -409,7 +409,7 @@ function buildPlannerApplication(
     throw new PassProposalError('Planner result does not own current Planning Work')
   }
 
-  if (input.outcome.result === 'fail' || input.outcome.result === 'attention') {
+  if (input.outcome.result === 'fail') {
     const failed = appendEvidence(currentWork, evidence.attributes.id)
     const evidenceSupport = evidenceWrite(store, input.goalId, evidence)
     return {
@@ -518,7 +518,7 @@ function buildEngineeringApplication(
     next.attributes.stage = 'review'
   } else if (input.responsibility === 'reviewer' && input.outcome.result === 'reject') {
     next.attributes.stage = 'generate'
-  } else if (input.outcome.result === 'fail' || input.outcome.result === 'attention') {
+  } else if (input.outcome.result === 'fail') {
     // The settled Attempt pauses this unchanged Work until Assistant chooses the next action.
   } else {
     throw new PassProposalError(
@@ -723,9 +723,18 @@ function validatePlannerTransition(
       if (work.attributes.assistantDispatch !== undefined) {
         throw new PassProposalError('Planner may not create Assistant-dispatched Engineering Work')
       }
+      if (work.attributes.ownerMessages.length > 0) {
+        throw new PassProposalError('Planner may not create Project Owner messages')
+      }
       continue
     }
     if (workId === input.workId) continue
+    if (
+      JSON.stringify(previous.attributes.ownerMessages) !==
+      JSON.stringify(work.attributes.ownerMessages)
+    ) {
+      throw new PassProposalError(`Planner may not rewrite Project Owner messages on ${workId}`)
+    }
     if (isWorkTerminal(previous.attributes)) {
       if (JSON.stringify(previous) !== JSON.stringify(work)) {
         throw new PassProposalError(`Planner may not rewrite terminal Work ${workId}`)
@@ -775,7 +784,7 @@ function assertOnlyAllowedAttentionTransition(
   const currentWork = requireWork(before, input.workId)
   const nextWork = requireWork(after, input.workId)
   if (currentWork.attributes.stage !== nextWork.attributes.stage) {
-    throw new PassProposalError('Attention-producing result may not advance Work')
+    throw new PassProposalError('Attention proposal may not advance Work')
   }
   if (input.responsibility !== 'planner') {
     assertDocumentsEqualExcept(before, after, {
@@ -946,18 +955,7 @@ function createRunEvidence(
 }
 
 function renderEvidenceBody(input: ApplyPassOutcomeInput) {
-  return [
-    '## Responsibility Result',
-    '',
-    `- Responsibility: ${input.responsibility}`,
-    `- Result: ${input.outcome.result}`,
-    `- Primary authority release snapshot: ${input.context.releaseHead}`,
-    '',
-    '## Summary',
-    '',
-    input.outcome.summary.trim(),
-    '',
-  ].join('\n')
+  return input.outcome.summary.trim()
 }
 
 function evidenceWrite(store: GoalPackageStore, goalId: string, evidence: EvidenceDocument) {
@@ -1026,10 +1024,10 @@ function appendUnique(values: readonly string[], value: string) {
 function assertInputRole(input: ApplyPassOutcomeInput) {
   const allowed =
     input.responsibility === 'planner'
-      ? new Set<PassResultKind>(['success', 'attention', 'fail'])
+      ? new Set<PassResultKind>(['success', 'fail'])
       : input.responsibility === 'generator'
-        ? new Set<PassResultKind>(['success', 'attention', 'fail'])
-        : new Set<PassResultKind>(['success', 'reject', 'attention', 'fail'])
+        ? new Set<PassResultKind>(['success', 'fail'])
+        : new Set<PassResultKind>(['success', 'reject', 'fail'])
   if (!allowed.has(input.outcome.result)) {
     throw new PassProposalError(`${input.responsibility} cannot return ${input.outcome.result}`)
   }

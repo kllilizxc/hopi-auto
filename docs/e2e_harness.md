@@ -45,16 +45,15 @@ the retained runtime streams; a hard-coded zero in `run.json` is not evidence.
 ## Reality Boundary
 
 The full Live E2E starts the production server without injected `AssistantModelRunner` or
-`RoleRunner` implementations. The configured Assistant, Reflection, Planner, Generator, and
-Reviewer use their normal vendor transports, prompts, tools, worktrees, Attempt stores, publication,
-and C1 delivery.
+`RoleRunner` implementations. The configured Assistant, Planner, Generator, and Reviewer use their
+normal vendor transports, prompts, tools, worktrees, Attempt stores, publication, and C1 delivery.
+Wake remains the production deterministic observer and publishes system events into that same
+Assistant; it is not another model seam.
 
-A focused Live canary may replace an unrelated background model role with a deterministic no-action
-runner while preserving that role's production trigger, scheduler, and document path. For example,
-a multi-Project delivery may use real Assistant and responsibility Agents but deterministic
-Reflection when Reflection judgment is covered elsewhere. The Test Run records this boundary and
-may claim only the roles that used real transports. This avoids paying for unrelated model reasoning
-without mocking the boundary under test.
+A focused Live canary may replace an unrelated configured model seam with a deterministic runner
+while preserving its production trigger, scheduler, and document path. The Test Run records this
+boundary and may claim only the roles that used real transports. Wake is never replaced with a
+model or no-action runner.
 
 The Harness may create an isolated Home and a small real Git repository, link it through a public
 API, send an ordinary Inbox message, read public state, and inspect existing durable diagnostics.
@@ -189,11 +188,11 @@ a named checkpoint is useful diagnostic evidence, while periodic noise is not.
 
 Live execution also has one generous logical-Run safety ceiling. The default is 50, above the
 current ordinary maximum of 16, and may be raised explicitly for a known experiment. The Harness
-counts durable Assistant, Reflection, Planner, Generator, and Reviewer Run manifests while waiting
-for semantic outcomes. Crossing the ceiling appends one action and fails through the ordinary
-scenario cleanup path before a recursive failure can consume the full wall-clock timeout. This is a
-cost and runaway guard, not a required responsibility count, token assertion, retry policy, or
-product limit.
+counts durable Assistant, Wake, Planner, Generator, and Reviewer runtime records while waiting for
+semantic outcomes. Wake records use the `wake.json` diagnostic manifest. Crossing the ceiling
+appends one action and fails through the ordinary scenario cleanup path before a recursive failure
+can consume the full wall-clock timeout. This is a cost and runaway guard, not a required
+responsibility count, token assertion, retry policy, or product limit.
 
 `evidence.html` is a generated view over referenced screenshots. It is not authority and may be
 recreated from retained files. A visual conclusion belongs to a separate Inspection Test Run that
@@ -239,16 +238,16 @@ The final assertions require:
 - the completed speaking turn does not leave a misleading failure activity in the Assistant UI.
 
 Quiescence includes canonical Assistant Inbox events. A done Goal, no active responsibility Run,
-and an idle Reflection are insufficient while a Reflection handoff is still pending or its speaking
+and an idle Wake are insufficient while a Wake handoff is still pending or its speaking
 turn is running.
 
 Blocked settlement also has a liveness boundary. Open Attention is not presented to the operator
 until a handled public turn carries its exact reference. Until then it must still be owned by a
-running Reflection or an eligible pending/running speaking turn. Harness waits and failure
+pending Wake publication or an eligible pending/running Assistant turn. Harness waits and failure
 diagnostics use this derived fact; HOPI adds no product watchdog, timer state, or notification queue.
 
-Exact responsibility counts and ordering are diagnostic facts, not assertions. Reflection remains
-enabled so the run measures its real cost and exposes unnecessary wakeups.
+Exact responsibility counts and ordering are diagnostic facts, not assertions. Production Wake
+remains enabled so the run exposes unnecessary publications without inventing model cost.
 
 ## Evidence And Cost
 
@@ -259,7 +258,7 @@ report with one terminal report. Runtime cleanup that changes retained evidence,
 the Live server, must finish before that terminal write; repeated cleanup is a no-op. Cleanup
 failures and timeouts are retained in the terminal report rather than hidden by a successful domain
 assertion. After the terminal boundary, retained evidence is immutable. Existing Assistant,
-Reflection, Attempt, prompt, raw transcript, proposal, and Git records remain in their normal
+Wake, Attempt, prompt, raw transcript, proposal, and Git records remain in their normal
 locations under that root rather than being copied into a second fact model. The report records
 current code provenance plus the last successful scenario checkpoint. A caught failure also records
 the phase in which it occurred, so a presentation assertion cannot masquerade as failed product
@@ -303,26 +302,27 @@ The first experiment retains successful and failed roots. Its report counts each
 Run and sums provider token usage when the raw transport reports it. A failure prints the retained
 root before exiting so another Agent can diagnose the exact state without reconstructing it.
 
-The first blank-to-completion baseline reached `done` with two Planner Runs, one Generator, one
-Reviewer, one Reflection, and the speaking Assistant path. It consumed 727,032 input tokens, of
+The first historical blank-to-completion baseline reached `done` with two Planner Runs, one
+Generator, one Reviewer, one then-model-backed Reflection, and the speaking Assistant path. It consumed 727,032 input tokens, of
 which 461,952 were cached, plus 14,329 output tokens. The run found two Harness defects rather than
 a product-delivery failure: hidden `.hopi` paths were omitted from usage collection, and shutdown
-could occur while a Reflection handoff remained pending in the canonical Inbox. Both are now covered
+could occur while that Reflection handoff remained pending in the canonical Inbox. Both are now covered
 by deterministic regression tests and the stricter quiescence rule above.
 
 The next blank-to-completion run combined Browser Harness ingress and terminal evidence with the
 full production Agent path. It reached `done` through one Assistant, two Planner Runs, one Generator,
-one Reviewer, and two Reflection attempts. It consumed 552,160 input tokens, of which 405,248 were
+one Reviewer, and two then-model-backed Reflection attempts. It consumed 552,160 input tokens, of which 405,248 were
 cached, plus 13,524 output tokens. C1 passed the fixture test while the original checkout stayed
 unchanged.
 
 That run exposed four Harness or presentation gaps without invalidating product delivery: dynamic
 browser text needed byte-safe UTF-8 transport; targetless Goal completion was incorrectly expected
 to create a second speaking reply; a recovered provider diagnostic appeared as a public turn error;
-and an empty successful Reflection no-op was retried as a failure. The Harness now uses Base64 at
-the WSL/browser boundary, asserts the canonical completion update, rejects misleading terminal UI
-errors, and treats empty output as `No action` only in Reflection mode. Deterministic regressions
-cover each rule so another full model run is required only when it can add semantic coverage.
+and an empty successful Reflection no-op was retried as a failure. That historical Harness treated
+empty Reflection output as `No action`; current Wake has no model output or no-action mode. The
+Harness uses Base64 at the WSL/browser boundary, asserts the canonical completion update, and rejects
+misleading terminal UI errors. Deterministic regressions cover each rule so another full model run is
+required only when it can add semantic coverage.
 
 No checkpoint optimization is added until a real run establishes the expensive prefixes. A later
 scenario may begin from a verified reachable snapshot when it tests only a downstream transition,

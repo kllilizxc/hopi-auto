@@ -59,27 +59,6 @@ describe('parseVendorAssistantOutput', () => {
     })
   })
 
-  test('identifies interactive Claude tools that cannot complete in a responsibility Run', () => {
-    expect(
-      parseVendorAssistantOutput(
-        'claude',
-        JSON.stringify({
-          type: 'assistant',
-          session_id: 'session-1',
-          message: {
-            id: 'message-1',
-            content: [{ type: 'tool_use', name: 'EnterPlanMode', input: {} }],
-          },
-        }),
-      ),
-    ).toEqual({
-      sessionId: 'session-1',
-      messageId: 'message-1',
-      assistantText: undefined,
-      interactiveTool: 'EnterPlanMode',
-    })
-  })
-
   test('removes a complete Claude thought envelope from the final reply', () => {
     expect(
       parseVendorAssistantOutput(

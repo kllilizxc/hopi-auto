@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { createAssistantWake } from '../src/assistant/assistantReflection'
-import type { AssistantStateSnapshot } from '../src/assistant/assistantState'
+import type {
+  AssistantStateRecentAttempt,
+  AssistantStateRuntime,
+  AssistantStateSnapshot,
+} from '../src/assistant/assistantState'
+import { createAssistantWake } from '../src/assistant/assistantWake'
 import type { WorkspaceAttentionDocument } from '../src/domain/assistantWorkspaceDocuments'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -49,6 +53,17 @@ describe('Assistant wake trigger', () => {
         },
       },
     ])
+  })
+
+  test('reports Wake publication failure instead of returning a false started handoff', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    const runsRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'assistant', 'wakes', 'runs')
+    await Bun.write(runsRoot, 'not a directory')
+    fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '2'.repeat(64) } }))
+
+    await expect(fixture.wake.observe({ settled: true })).rejects.toThrow()
+    expect(fixture.wake.isActive()).toBe(false)
   })
 
   test('routes simultaneous changes independently by Project', async () => {
@@ -305,7 +320,7 @@ describe('Assistant wake trigger', () => {
       'wakes',
       'runs',
       'WK-corrupt',
-      'reflection.json',
+      'wake.json',
     )
     await mkdir(join(corruptPath, '..'), { recursive: true })
     await Bun.write(corruptPath, '{not-json')
@@ -328,9 +343,9 @@ async function setup(projectIds: string[]) {
   let current = snapshot(projectIds)
   const state = {
     read: async () => current,
-    readForReflection: async () => current,
+    readForWake: async () => current,
   }
-  const wake = createAssistantWake({ homeRoot, workspace, state })
+  const wake = createAssistantWake({ homeRoot, workspace, state, onWake() {} })
   return {
     homeRoot,
     wake,
@@ -339,7 +354,7 @@ async function setup(projectIds: string[]) {
       current = next
     },
     recreateWake() {
-      return createAssistantWake({ homeRoot, workspace, state })
+      return createAssistantWake({ homeRoot, workspace, state, onWake() {} })
     },
   }
 }
@@ -348,7 +363,7 @@ function snapshot(
   projectIds: string[],
   overrides: {
     projectDigests?: Record<string, string>
-    workspaceAttentions?: unknown[]
+    workspaceAttentions?: AssistantStateSnapshot['workspaceAttentions']
   } = {},
 ): AssistantStateSnapshot {
   const projectDigests = Object.fromEntries(
@@ -369,6 +384,18 @@ function snapshot(
     workspaceAttentions: overrides.workspaceAttentions ?? [],
     projects: projectIds.map((projectId) => ({
       projectId,
+      projectRoot: `/tmp/${projectId}/project`,
+      sourceRoot: `/tmp/${projectId}/source`,
+      primaryRepoId: 'primary',
+      repos: [
+        {
+          repoId: 'primary',
+          repoPath: `/tmp/${projectId}/repo`,
+          integrationRoot: `/tmp/${projectId}/integration`,
+          projectPath: '.',
+          primary: true,
+        },
+      ],
       available: true,
       releaseHead: 'release',
       goals: [],
@@ -400,6 +427,7 @@ function snapshotAttention(id: string, projectId: string) {
     updatedAt: '2026-07-25T00:00:00.000Z',
     resolvedAt: null,
     refs: [`project:${projectId}`],
+    summary: 'Inspect the repeated failure.',
     body: 'Inspect the repeated failure.',
     inspectionPath: `/tmp/${id}.md`,
   }
@@ -431,43 +459,93 @@ function reviewerRejectSnapshot(
     projects: [
       {
         projectId: 'P-1',
+        projectRoot: '/tmp/P-1/project',
+        sourceRoot: '/tmp/P-1/source',
+        primaryRepoId: 'primary',
+        repos: [
+          {
+            repoId: 'primary',
+            repoPath: '/tmp/P-1/repo',
+            integrationRoot: '/tmp/P-1/integration',
+            projectPath: '.',
+            primary: true,
+          },
+        ],
         available: true,
         releaseHead: 'release',
         goals: [
           {
+            goal: {
+              attributes: {
+                id: 'G-1',
+                title: 'Goal',
+                lifecycle: 'active',
+                priority: 1,
+                contractRevision: 1,
+              },
+              body: 'Goal',
+              path: '/tmp/G-1/goal.md',
+            },
+            design: [],
+            attentions: [],
+            latestPlanningOutcome: null,
             works: [
               {
-                runtime: {
-                  recentAttempts: [
-                    {
-                      runId: generatorRunId,
-                      responsibility: 'generator',
-                      status: 'running',
-                      result: null,
-                      application: null,
-                    },
-                    {
-                      runId: `${generatorRunId}-interrupted`,
-                      responsibility: 'generator',
-                      status: 'interrupted',
-                      result: null,
-                      application: null,
-                    },
-                    {
-                      runId: reviewerRunId,
-                      responsibility: 'reviewer',
-                      status: 'finished',
-                      result: 'reject',
-                      application: 'published',
-                    },
-                  ],
+                attributes: {
+                  id: 'W-1',
+                  title: 'Work',
+                  kind: 'engineering',
+                  stage: 'generate',
+                  notBefore: null,
+                  dependsOn: [],
+                  contractRevision: 1,
                 },
+                path: '/tmp/G-1/works/W-1.md',
+                projection: null,
+                runtime: runtime([
+                  attempt(generatorRunId, 'generator', 'running', null, null),
+                  attempt(`${generatorRunId}-interrupted`, 'generator', 'interrupted', null, null),
+                  attempt(reviewerRunId, 'reviewer', 'finished', 'reject', 'published'),
+                ]),
               },
             ],
           },
         ],
       },
     ],
+  }
+}
+
+function attempt(
+  runId: string,
+  responsibility: AssistantStateRecentAttempt['responsibility'],
+  status: AssistantStateRecentAttempt['status'],
+  result: AssistantStateRecentAttempt['result'],
+  application: string | null,
+): AssistantStateRecentAttempt {
+  return {
+    runId,
+    responsibility,
+    status,
+    result,
+    application,
+    startedAt: '2026-07-25T00:00:00.000Z',
+    endedAt: status === 'running' ? null : '2026-07-25T00:01:00.000Z',
+    summary: null,
+    artifactPreservation: null,
+  }
+}
+
+function runtime(recentAttempts: AssistantStateRecentAttempt[]): AssistantStateRuntime {
+  return {
+    activeResponsibility: null,
+    latestAttempt: null,
+    attemptCount: recentAttempts.length,
+    recentAttempts,
+    lastActivityAt: '2026-07-25T00:01:00.000Z',
+    stale: false,
+    worktree: { path: '/tmp/worktree', exists: true },
+    paths: {},
   }
 }
 

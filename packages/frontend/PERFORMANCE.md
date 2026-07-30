@@ -65,12 +65,12 @@ running animations and a 0.01 ms tab-indicator transition.
 - Routine Goal, Work, and Attempt switching never replaces an already usable surface with a cold
   loading screen. Cached data renders immediately while refreshing; an uncached target is warmed
   behind the current surface, and only the latest requested target may commit navigation.
-- Assistant, Attempt, and Reflection streams persist their latest successfully rendered page—and
+- Assistant, Attempt, and Wake streams persist their latest successfully rendered page—and
   the Work's small Attempt index—in a bounded browser-session LRU keyed by exact stream identity.
   Re-entry and same-tab reload render that snapshot before issuing incremental synchronization;
   cache data never crosses streams and never becomes canonical product state.
-- Reflection diagnostics are a nested lazy surface. Opening the ordinary Assistant does not load
-  Reflection list/detail code or start its queries; that boundary is crossed only when the operator
+- Wake diagnostics are a nested lazy surface. Opening the ordinary Assistant does not load
+  Wake list/detail code or start its queries; that boundary is crossed only when the operator
   explicitly opens the debug stream.
 - Full GFM rendering is a shared message-content enhancement rather than shell or route startup
   work. A feed first paints the exact current text snapshot, then loads the Markdown engine once and

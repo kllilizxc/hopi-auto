@@ -2,16 +2,11 @@ import { basename, extname, join } from 'node:path'
 import { hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 
-export const ASSISTANT_IMAGE_MEDIA_TYPES = [
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-] as const
-export const MAX_ASSISTANT_IMAGES = 4
-export const MAX_ASSISTANT_IMAGE_BYTES = 10 * 1024 * 1024
+const ASSISTANT_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+const MAX_ASSISTANT_IMAGES = 4
+const MAX_ASSISTANT_IMAGE_BYTES = 10 * 1024 * 1024
 
-export type AssistantImageMediaType = (typeof ASSISTANT_IMAGE_MEDIA_TYPES)[number]
+type AssistantImageMediaType = (typeof ASSISTANT_IMAGE_MEDIA_TYPES)[number]
 
 export interface AssistantImageAttachment {
   reference: string
@@ -114,7 +109,7 @@ export async function resolveAssistantImage(
   }
 }
 
-export function parseAssistantImageReference(attachmentRoot: string, reference: string) {
+function parseAssistantImageReference(attachmentRoot: string, reference: string) {
   const prefix = `${attachmentRoot}/`
   if (!reference.startsWith(prefix)) return null
   const parts = reference.slice(prefix.length).split('/')

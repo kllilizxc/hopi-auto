@@ -41,7 +41,7 @@ export interface ProjectResetPlan {
   }
   runtime: {
     runRoots: string[]
-    reflectionRunRoots: string[]
+    wakeRunRoots: string[]
     paths: string[]
   }
   repos: ProjectResetRepoPlan[]
@@ -215,7 +215,7 @@ export async function applyProjectReset(input: {
       ...plan.assistant.turnRoots.map((path) => rm(path, { recursive: true, force: true })),
       ...plan.assistant.orphanAttachments.map((path) => rm(path, { force: true })),
       ...plan.runtime.runRoots.map((path) => rm(path, { recursive: true, force: true })),
-      ...plan.runtime.reflectionRunRoots.map((path) => rm(path, { recursive: true, force: true })),
+      ...plan.runtime.wakeRunRoots.map((path) => rm(path, { recursive: true, force: true })),
       ...plan.runtime.paths.map((path) => rm(path, { recursive: true, force: true })),
     ])
 
@@ -354,9 +354,9 @@ async function inspectRuntimeState(
     'attempt.json',
     (manifest) => manifest.projectId === projectId,
   )
-  const reflectionRunRoots = await matchingManifestRoots(
+  const wakeRunRoots = await matchingManifestRoots(
     join(assistantRoot, 'wakes', 'runs'),
-    'reflection.json',
+    'wake.json',
     (manifest) =>
       (isRecord(manifest.scope) &&
         manifest.scope.kind === 'project' &&
@@ -374,7 +374,7 @@ async function inspectRuntimeState(
   ]
   return {
     runRoots: runRoots.toSorted(),
-    reflectionRunRoots: reflectionRunRoots.toSorted(),
+    wakeRunRoots: wakeRunRoots.toSorted(),
     paths: (await existingPaths(paths)).toSorted(),
   }
 }

@@ -256,7 +256,12 @@ function validateEventTransition(previous: InboxEventDocument, next: InboxEventD
       throw invalid(`Handled Inbox event is immutable: ${before.id}`)
     }
   }
-  if (before.status === 'pending' && after.status === 'handled' && !after.reply?.trim()) {
+  if (
+    before.status === 'pending' &&
+    after.status === 'handled' &&
+    after.visibility === 'public' &&
+    !after.reply?.trim()
+  ) {
     throw invalid(`Handled Inbox event requires a reply: ${before.id}`)
   }
 }

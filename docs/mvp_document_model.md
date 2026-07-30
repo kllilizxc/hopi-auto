@@ -48,7 +48,7 @@ to [the execution design](./mvp_execution.md), lifecycle visualization to
         cursors/
         runs/
           <wakeId>/
-            reflection.json
+            wake.json
             prompt.md
             events.jsonl
             transcript.log
@@ -68,7 +68,7 @@ the complete normalized document under an expected content digest, so normal pub
 optimistic concurrency without adding preference IDs or a preference database. The model decides
 whether feedback expresses a reusable default; one-off direction and Project-specific rules stay in
 conversation or the existing Project/Goal documents. Updating this document alone has no Goal,
-Planning, Reflection, or notification effect.
+Planning, Wake, or notification effect.
 
 Managed Git checkouts are deliberately outside Assistant home and outside the selected checkout:
 
@@ -102,9 +102,9 @@ reply: null
 disposition: null
 ```
 
-`source` is `user | system | reflection`; `visibility` is `public | internal`. New operator turns are exactly
-`source: user, visibility: public`. A useful read-only Reflection creates exactly
-`source: reflection, visibility: internal`. Every field shown by the current schema is required;
+`source` is `user | system`; `visibility` is `public | internal`. New operator turns are exactly
+`source: user, visibility: public`. Wake creates exactly
+`source: system, visibility: internal`. Every field shown by the current schema is required;
 documents from another schema are rejected rather than defaulted or migrated.
 
 `context` is optional. `projectId` and `goalId` appear together when the turn has a UI location.
@@ -118,18 +118,20 @@ control. It identifies the exact handled public Assistant request event and requ
 `attentionRefs`. An ordinary message sent from the same Project or Goal may carry location context,
 but never guesses this pointer from currently open Attention.
 
-A Reflection handoff may contain only `attentionRefs`; a normal Goal-page turn may contain only the
+A Wake turn may contain only `attentionRefs`; a normal Goal-page turn may contain only the
 Project/Goal pair; and one turn may contain both. Writes use only complete canonical Attention
 references. Context is conversational and delivery correlation only; it grants no mutation
 authority.
-`handledAt`, `reply`, and the free non-control `disposition` string are all null while pending and
-all present while handled. The Markdown body is the lossless received content or internal Reflection
-brief. Identity, `source`, `receivedAt`, digest, attachments, context, and body are immutable. The
+`handledAt` and the free non-control `disposition` string are null while pending and present while
+handled. A public handled turn also has a non-empty `reply`; an internal handled turn may keep
+`reply: null` when the Assistant intentionally has no operator update. The Markdown body is the
+lossless received content or internal wake brief. Identity, `source`, `receivedAt`, digest,
+attachments, context, and body are immutable. The
 source digest covers the deterministically newline-normalized body and ordered attachment references.
 For speaking turns, `answered` means no tool event was observed and `tools-used` means at least one
 was observed. Neither value is proof of a side effect; canonical documents and tool results own that
 truth.
-Visibility is also immutable except for one transition: when a Reflection-sourced speaking turn
+Visibility is also immutable except for one transition: when an internal system turn
 finishes, Coordinator publishes `internal -> public` atomically with any non-empty final reply.
 `present_attention_to_user` stages exact Attention references on the pending turn; no staged request
 remains internal. The UI renders current summaries and choices from those Attention documents rather
@@ -148,8 +150,8 @@ internal.
 - Processing failure that cannot be repaired creates targeted Attention for the event.
 - Ordinary and Needs-you replies live in the speaking conversation. External webhook delivery may
   mirror that exact public reply; raw Attention never uses an out-of-band user path.
-- Internal Reflection turns are absent from the conversation projection. If promoted, the projection
-  shows only the speaking thread's reply and does not invent a user message for the Reflection brief.
+- Internal Wake turns are absent from the conversation projection. If promoted, the projection
+  shows only the speaking thread's reply and does not invent a user message for the Wake brief.
 
 A public-turn image is first stored as an immutable, content-addressed Assistant-home file under
 `docs/assistant/attachments/`. Its Inbox `attachments` entry is the canonical Home-relative file
@@ -199,11 +201,11 @@ is reported with its path and omitted without hiding healthy sibling records. Ca
 under `docs/` and managed Project release trees remain strict authority and fail validation rather
 than being skipped.
 
-Each `runtime/assistant/wakes/runs/<wakeId>/reflection.json` records a disposable assessment's
+Each `runtime/assistant/wakes/runs/<wakeId>/wake.json` records a disposable Wake publication's
 state digest, timing, and terminal runtime outcome. Its prompt, normalized events, and raw transcript
-exist only for diagnostics. Reflection directories are not canonical conversation history and may be
+exist only for diagnostics. Wake directories are not canonical conversation history and may be
 removed. Only a submitted internal Inbox brief survives runtime cleanup. There is no durable
-Reflection queue or Reflection lifecycle document.
+Wake queue or Wake lifecycle document.
 
 Workspace Attention lives under Assistant home. Its location replaces a stored `scope` field.
 It is used for inbox, project, or invalid-package problems without a safe Goal-local writer.
@@ -250,8 +252,8 @@ projects:
 
 `project.yml`, Goal documents, and runtime indexes do not duplicate model settings.
 
-`runtime/agent-adapters.json.assistant` separately owns the Home-wide speaking Assistant and
-Reflection adapter. It uses the same Codex, Claude, or OpenCode transport shapes but always runs from
+`runtime/agent-adapters.json.assistant` owns the Home-wide speaking Assistant. It uses the Codex,
+Claude, or OpenCode transport shapes and runs from
 the Assistant runtime root. It never inherits a Project link. UI updates preserve fields supported
 by the selected transport so advanced binary/profile/permission settings are not silently lost;
 switching transport installs that transport's current defaults. `process` is
@@ -379,7 +381,7 @@ reattaches its child. Runtime Attempt records are the only invocation and recove
 Semantic and operational recovery use these existing Attempt records without making them canonical
 Work semantics. A failed Attempt records the settled Work assignment fingerprint: the canonical Work
 content excluding append-only `evidenceRefs`. While that fingerprint still matches the current Work
-assignment, Reconciler pauses automatic redispatch and Reflection may ask Assistant to judge the next
+assignment, Reconciler pauses automatic redispatch and Wake asks Assistant to judge the next
 action. Adding execution history alone therefore cannot make the same assignment runnable again.
 Coordinator does not derive Attention, an operational episode, or a retry counter from failure
 history.
@@ -461,12 +463,11 @@ different root creates a new Attention.
 rationale and implementation design. Design documents never own Goal lifecycle, Work stage,
 Attention resolution, or runtime state.
 
-When Assistant adopts an Inbox image for a Goal, `design/references.md` records its Goal-relative
-asset path, source Inbox event, and free-form purpose or usage boundary. It is an ordinary editable
-design document, not an Asset schema, registry, approval surface, or control ledger. A user may
-revise it through the same design tool as any other design document. If a machine-local image is
-useful, Assistant must first adopt its durable Inbox attachment rather than write the absolute path
-into Goal authority.
+When Assistant adopts an Inbox image for a Goal, it copies the immutable bytes to Goal-local
+`assets/`. Work selects the asset explicitly through `contextRefs`, whose caller-authored purpose
+travels with that Work; there is no parallel image registry or machine-maintained Markdown section.
+If a machine-local image is useful, Assistant must first adopt its durable Inbox attachment rather
+than write the absolute path into Goal authority.
 
 Goal-local design is the HOPI design surface shown in the UI and a living planning input, not an
 approval workflow. A user may instruct Assistant to revise any of these documents. Assistant and
@@ -569,6 +570,10 @@ Planning Work omits engineering Git fields. For engineering Work:
   neither a contract rewrite nor retry resets the old branch
 - `evidenceRefs` is an append-only ordered list of consumed Run and supporting Evidence; it
   does not map criteria through a schema or replace model judgment
+- `contextRefs` is the explicit ordered set of canonical Input, asset, or supporting-document paths
+  selected for this Work; each entry carries only its path and caller-authored purpose
+- `ownerMessages` is the ordered set of timestamped, source-traced Project Owner messages; these are
+  structured assignment context rather than machine-maintained sections in the Work body
 
 The qualified Work identity derives each task branch and the one primary C1. Primary history must
 contain exactly one reachable commit whose qualified Work trailer equals that identity exactly, and
@@ -579,19 +584,21 @@ every linked Repo. Branch HEAD remains checkpoint authority but never owns Work 
 
 #### Planning Work invariant
 
-Each Goal has at most one nonterminal Planning Work. A planning trigger reuses it if present,
-replaces its concise Objective with the latest trigger, and preserves plus appends accepted Input and
-reference paths; otherwise it creates a stable ID from the triggering event or planning cause. The
-Objective describes the current reason to plan, not an append-only trigger history.
+Each Goal has at most one nonterminal Planning Work. A planning trigger reuses it if present and
+merges explicit `contextRefs`; otherwise it creates a stable ID from the triggering event or planning
+cause. `revisionInput`, when present, records the canonical Input that caused the current material
+contract revision and must also appear in `contextRefs`; it is provenance for idempotency, not a
+semantic classification. A material contract revision may replace the whole free-form Planning
+assignment supplied by that operation, but the kernel never searches for or rewrites Markdown
+sections.
 
-When selected, the initial Planning Work is a concise, caller-authored assignment: its title,
-objective, and acceptance criteria state why Planning is needed and which planning result is
-expected. Its body also points Planner at the current Goal and accepted Input paths; it does not copy
-the Goal objective. Generic Planner responsibility belongs to the role prompt and result validator,
-not repeated fixed prose in every Work. Goal creation omits empty optional constraints, non-goals,
-and success-criteria sections instead of storing placeholder text. The Goal contract and verbatim
-Input remain separate first-class documents because normalization and source provenance are
-different facts.
+The initial Planning Work is a minimal ownership envelope. Current Goal authority already states the
+outcome, and `contextRefs` names accepted Input and image authority without copying either into a
+machine-maintained body section. Generic Planner responsibility belongs to the role capability
+envelope, not repeated acceptance boilerplate in every Work. Goal creation omits empty optional
+constraints, non-goals, and success-criteria sections instead of storing placeholder text. The Goal
+contract and verbatim Input remain separate first-class documents because normalization and source
+provenance are different facts.
 
 Triggers include Goal creation with a Planning first Work, material contract change, resume,
 reopen, an explicit speaking-Assistant planning request after Attention, and an active Goal with no
@@ -797,6 +804,8 @@ referenced artifacts.
 
 The Evidence body is free Markdown containing facts needed to defend an outcome, such as diffs,
 commits, tests, runtime verification, Reviewer findings, integration results, or limitations.
+For responsibility Runs it is the exact validated result summary. Result kind remains structured
+Attempt/transition data; projections never parse a `Result` line or `Summary` heading from the body.
 Evidence existence alone does not consume a Run result. A result becomes consumed only when Work
 canonically appends its Evidence to `evidenceRefs`; the qualified `producerRun` on referenced
 Evidence then prevents that Run from affecting Work again. Evidence left unreferenced by a process

@@ -4,14 +4,14 @@ Status: forward execution authority
 Last updated: 2026-07-26
 
 > [Project Owner And Attention](./mvp_project_owner.md) supersedes semantic
-> Coordinator/Reflection and targeted-Attention recovery rules.
+> Coordinator/Wake and targeted-Attention recovery rules.
 > [Project Runtime Capabilities](./mvp_project_runtime.md) supersedes per-Repo Prepare, formal
 > Planner Preview, canned Preview repair, and Attention-gated Preview rules.
 >
-> Any separate Reflection Agent, Attention ownership/transfer, structured decision prompt, or
+> Any separate background assessment Agent, Attention ownership/transfer, structured decision prompt, or
 > prescriptive recovery flow below is historical context and does not define active behavior.
 
-This document owns semantic guards, the fixed responsibility profile, scheduling, worktrees,
+This document owns semantic guards, the fixed responsibility workflow, scheduling, worktrees,
 recovery, completion assessment, and notification for
 [the HOPI MVP design](./mvp_design.md). Document schemas belong to
 [the document model](./mvp_document_model.md), Assistant conversation and tools to
@@ -117,7 +117,7 @@ steals from an existing owner. A lightweight health endpoint reports process ide
 readiness, and the latest Coordinator tick without reading Project state.
 
 One rejected background operation must not terminate the HTTP process. Every detached Coordinator,
-Assistant, Reflection, delivery, and responsibility continuation ends at an explicit runtime error
+Assistant, Wake, delivery, and responsibility continuation ends at an explicit runtime error
 boundary. The boundary records the failure, leaves canonical state unchanged, and retries the
 Coordinator with bounded backoff. Existing Project validation paths may still make only the affected
 Project ineligible. Integrity failures remain visible; they are isolated rather than converted into
@@ -155,12 +155,11 @@ the Run Attempt. A result that is already stale at publication writes neither ca
 nor Planning. Canonical Evidence can remain unconsumed only when its supporting write became
 durable before a process stop prevented the Work gate.
 A Work reference to Evidence with the same qualified `producerRun` is the durable
-consumed-result marker. Ordinary outcomes reference it from the owning Work gate; an `attention`
-result preserves it beside the Attention without claiming Work progress. Unreferenced Evidence is provenance only and does not suppress a
-rerun. The append-only referenced Evidence list is ordered oldest to newest, so a retry reads its
-final reference first and expands backward only as needed. This existing order is the repair
-context. The Run manifest may render that same order and label its final item for model salience;
-this is a disposable projection, not a separate replay ledger or latest-failure pointer.
+consumed-result marker. A proposal containing targeted Attention preserves Evidence beside those
+Attention documents without claiming Work progress. Unreferenced Evidence is provenance only and
+does not suppress a rerun. The append-only referenced Evidence list is ordered oldest to newest and
+is explicit current Work context; the staged authority may expose that bounded file index without
+interpreting Evidence prose.
 
 ### Cross-root operations
 
@@ -215,17 +214,16 @@ Assistant uses the answer as evidence, then resolves the exact Attention only af
 verified clear. Clearing that guard makes the original pending turn eligible again with the answer
 visible in durable conversation history; no answer parser or hidden continuation object is required.
 
-An internal Reflection event is a wake-up, not fresh evidence. Attention gives Assistant durable
+An internal Wake event is not fresh evidence. Attention gives Assistant durable
 context but does not create another scheduling state. The unchanged settled Attempt, Work, Goal, and
 Project facts determine whether another Run is admitted. Assistant receives these consequences as
 environment and tool semantics rather than a prescribed call sequence.
 
-A pass that publishes targeted Attention settles the unchanged owning Work exactly like any other
-failed or attention outcome: Coordinator must not immediately create another Attempt for that Work.
-The durable Attempt records the targeted `attention` application and preserves the same scheduling
-consequence until Assistant explicitly continues the Work or changes its contract. Attention
-presentation itself remains outside Work
-readiness, so there is still only one recovery gate: the settled Attempt.
+A pass that publishes targeted Attention settles the unchanged owning Work like any other failed
+outcome: Coordinator must not immediately create another Attempt for that Work. The durable Attempt
+records the targeted `attention` application and preserves the same scheduling consequence until
+Assistant explicitly continues the Work or changes its contract. Attention presentation itself
+remains outside Work readiness, so there is still only one recovery gate: the settled Attempt.
 
 Only the explicit Reply action copies `replyTo` and exact Attention references into a user Inbox
 turn. Ordinary page context carries Project and Goal identity only; it does not attach every open
@@ -277,46 +275,34 @@ opened, Workspace state still returns its linked Project, Repo bindings, setting
 no fabricated Goal rows. Other Projects remain readable. A successful repair reloads runtime from the
 validated canonical package before Goal rows return.
 
-## Fixed Workflow Profile
+## Fixed Delivery Workflow
 
-The MVP ships one code-owned profile at
-`packages/backend/profiles/software-delivery.yml`. Projects cannot override it.
+The MVP owns one workflow directly in Coordinator code. Projects cannot override it:
 
-```yaml
-dispatch:
-  - when: { kind: planning, stage: plan }
-    pass: planner
-    on: { success: done }
-
-  - when: { kind: engineering, stage: generate }
-    pass: generator
-    on: { success: review }
-
-  - when: { kind: engineering, stage: review }
-    pass: reviewer
-    on: { success: done, reject: generate }
-
-concurrency:
-  planner: 3
-  generator: 5
-  reviewer: 3
+```text
+planning / plan        -> Planner   -> done
+engineering / generate -> Generator -> review
+engineering / review   -> Reviewer  -> done | generate
 ```
 
-The profile supports only exact kind-stage matching, one responsibility pass per dispatch rule,
-explicit success/reject transitions, Assistant-managed Attention handoff, and per-pass concurrency.
+The workflow uses exact kind-stage matching, one responsibility per runnable stage,
+explicit success/reject transitions, Assistant-managed Attention handoff, and per-responsibility
+concurrency.
 Reviewer `success -> done` is publishable only after the built-in deterministic
-integration postcondition succeeds; integration behavior is Coordinator code, not profile syntax.
-Concurrency remains three independent profile fields because the responsibilities may need different
-resource limits later. Each limit is global to one Coordinator Home across every linked Project and
-Goal; it is not multiplied per Goal or Project, and one responsibility does not consume another's
-reserved capacity. The current `3 / 5 / 3` values permit bounded multi-Goal progress without adding
-dynamic resource scheduling.
-The profile has no hooks, expression language, inheritance, project variables, arbitrary actions,
-or workflow editor.
+integration postcondition succeeds. The `planner: 3`, `generator: 5`, and `reviewer: 3` capacities
+are code-owned constants because no supported deployment or Project can configure them. Each limit
+is global to one Coordinator Home across every linked Project and Goal; it is not multiplied per Goal
+or Project, and one responsibility does not consume another's reserved capacity. The unequal values
+permit bounded multi-Goal progress without adding dynamic resource scheduling.
+
+There is no second YAML declaration, workflow expression language, inheritance, Project variable,
+arbitrary action, or workflow editor. Adding a supported configuration surface must begin with a
+real deployment-level need; a file that can only repeat the code-owned workflow is not an extension
+point.
 
 ### Home agent model settings
 
-The fixed profile decides which responsibility runs; Home agent settings decide which configured
+The fixed workflow decides which responsibility runs; Home agent settings decide which configured
 transport and model execute each role. Projects do not own or inherit model settings. Assistant,
 Planner, Generator, and Reviewer each resolve from one Home-wide role entry, falling back only to
 Assistant-home `defaults` when that role has no explicit entry.
@@ -333,36 +319,33 @@ from the current Coordinator environment when an invocation starts. An explicit 
 exact advanced override and must be executable. Custom executable names are never guessed or
 rewritten.
 
-The workspace Assistant and disposable Reflection use the same explicit Home `assistant`
-configuration. It may select Codex, Claude, or OpenCode; when absent, it inherits Home
-defaults. The speaking Assistant's resumable session belongs to Home rather than any Project;
-Reflection remains a fresh snapshot assessment. Responsibility sessions instead belong to one
-`Work + responsibility` pair. Saving Assistant settings affects the next speaking or Reflection
-invocation and invalidates a nonmatching speaking session.
+The workspace Assistant uses the explicit Home `assistant` configuration. It may select Codex,
+Claude, or OpenCode; when absent, it inherits Home defaults. The speaking Assistant's resumable
+session belongs to Home rather than any Project; Wake only publishes an internal turn into that
+conversation. Responsibility sessions instead belong to one `Work + responsibility` pair. Saving
+Assistant settings affects the next speaking or supervision invocation and invalidates a nonmatching
+speaking session.
 Saving a workflow role affects only responsibility Runs dispatched afterward; an already-started Run
-keeps its resolved immutable command. Agent settings do not change the workflow profile, capacities,
+keeps its resolved immutable command. Agent settings do not change the workflow, capacities,
 retry policy, Work stage, or Goal revision.
 
 Pass result values are:
 
-- `success`: this responsibility's own output and proof are complete; apply the profile transition
+- `success`: this responsibility's own output and proof are complete; apply the workflow transition
   after validation and any built-in postcondition. It does not mean a later responsibility has
   already accepted the Work.
 - `reject`: Reviewer returns engineering Work to `generate` with findings
-- `attention`: incomplete outcome; targeted Attention documents, when
-  present, publish the actual Assistant-management requests, while the label alone settles like
-  `fail`
 - `fail`: the current responsibility cannot complete this Work contract; preserve its Evidence and
   current stage, and settle the Attempt against the exact Work hash
+
+Attention is an actual staged document effect, not a second result label. When a valid proposal
+contains targeted Attention, Coordinator publishes that set atomically and leaves the owning Work
+unchanged regardless of the accompanying unsuccessful result.
 
 `blocked` is not a Work field. An unchanged settled unsuccessful Attempt is a derived readiness
 blocker.
 Reviewer `reject` returns the Work to Generator with the observed findings. There is no
 Coordinator-owned semantic retry budget; immutable Attempt history records every repair pass.
-Generator success remains a claim about the whole accepted Work after every repair; the latest
-rejection does not narrow the contract. Reviewer continues the reasonably available audit after
-finding a reject-worthy defect and reports the material defects found across that pass together; the
-first blocker alone is not a reason to stop reviewing.
 Design ambiguity, missing information, or external authority is represented by staged targeted
 Attention documents. Coordinator validates those documents rather than parsing pass prose or
 requiring a second matching control label.
@@ -376,7 +359,7 @@ Role judgment, application, and execution are separate facts:
 Coordinator never rewrites `invalid` or `RuntimeFailure` into a semantic `fail`. Invalid proposals
 publish no Evidence or control state and expose the exact validator result to the same responsibility
 session. Runtime failure publishes no semantic Evidence or Attention. Its settled Attempt pauses
-automatic dispatch against the unchanged Work so Reflection and speaking Assistant can inspect
+automatic dispatch against the unchanged Work so Wake can route the facts and speaking Assistant can inspect
 current state and choose whether to retry, change the environment, revise the plan, cancel, or
 request operator authority. Coordinator does not choose among those paths.
 
@@ -423,7 +406,7 @@ Valid results by responsibility pass:
 
 ## Fixed Responsibility Passes
 
-`RoleRunner` is one generic execution adapter. The profile supplies a responsibility prompt,
+`RoleRunner` is one generic execution adapter. The workflow supplies a responsibility prompt,
 allowed tools, writable surfaces, and evidence expectations for each pass. Planner, Generator,
 and Reviewer are replaceable responsibility passes, not separate durable agent classes.
 
@@ -473,7 +456,9 @@ Coordinator appends those events to the owning Run directory and exposes them th
 Work's Attempt history. The UI polls only while the modal is open, follows the live tail by default,
 and lets the operator inspect older Attempts. Before normalization, RoleRunner also appends every
 stdout/stderr line to the Run's `transcript.log`; normalized summaries may be bounded for display but
-the diagnostic source is not discarded. The one exception is deterministic secret redaction: exact
+the diagnostic source is not discarded. Event and execution-identity writes are part of the Attempt
+boundary: persistence failure fails the pass instead of silently presenting an incomplete trace. The
+one exception is deterministic secret redaction: exact
 values inherited through secret-like environment names are replaced before transcript, normalized
 event, error-summary, or public-reply persistence. This boundary applies to every built-in role and
 does not otherwise classify or rewrite process output. These streams are diagnostics: a transcript
@@ -649,17 +634,17 @@ remains available, but unrelated personal MCP servers, plugins, defaults, and tr
 cannot delay or fail delivery. The speaking Assistant may load provider skills, while HOPI injects
 the same compact semantic-ownership and durable-delivery contract at each provider's system or
 developer-instruction boundary before it chooses any skill or tool. That contract defines ownership
-and environment consequences rather than message keywords or a tool-selection procedure. Reflection
-suppresses automatic skills and host execution features. Responsibility Agents keep the execution
+and environment consequences rather than message keywords or a tool-selection procedure. Wake has no
+model execution surface. Responsibility Agents keep the execution
 capabilities available inside their accepted Work; Project source instructions and capabilities
 explicitly assigned by HOPI remain available. Other vendors provide the equivalent authority
 ordering at their adapter boundary.
 
 Goal reference images are passed only through a transport with an explicit image-input contract.
 If a selected responsibility transport cannot accept them, RoleRunner fails visibly before the
-model call instead of silently dropping accepted multimodal input. Speaking Assistant and
-Reflection use the same Home-configured adapter, while Reflection never consumes the speaking or a
-responsibility session. HOPI never infers cross-vendor resume from a synthetic session ID.
+model call instead of silently dropping accepted multimodal input. A supervision fork uses the same
+Home-configured adapter and scoped speaking session. HOPI never infers cross-vendor resume from a
+synthetic session ID.
 
 Attempt presentation preserves every recorded result, application, and summary, including a stale
 reason. Evidence consumption never overwrites the recorded Attempt application; provenance and Run
@@ -739,9 +724,9 @@ Information belongs at its narrowest owner:
   red lines;
 - strategy, sequencing, proof selection, and semantic judgment remain unconstrained.
 
-Continuation supplies only changed current assignment sections. Recovery states only that no valid
-terminal result was captured and repeats the terminal protocol. Neither surface adds failure-specific
-reasoning advice.
+Continuation supplies only changed current assignment sections. A missing or invalid terminal
+result settles the current Attempt as an operational failure; HOPI does not start a second model
+invocation with corrective advice.
 
 The contract is minimal as well as complete. Every owned path, acceptance criterion, and proof
 obligation must protect the requested outcome, an accepted contract promise, a material safety
@@ -759,7 +744,7 @@ separate on disk for exact reads; the prompt does not degrade into an unranked m
 the model rediscover its task.
 
 Planner reads the Goal contract, current design, current Planning Work, Engineering Work, Inputs
-accepted by that Planning Work, latest relevant Evidence, project docs, open Attention, and one
+named by explicit Work `contextRefs`, referenced Evidence, project docs, open Attention, and one
 immutable snapshot of the current Assistant-home preference document. The preference is a default,
 not Goal authority: current instructions and Project/Goal documents override it. Planner materializes
 only relevant defaults into design or Engineering Work so Generator and Reviewer receive an explicit
@@ -780,48 +765,26 @@ Evidence are not staged merely because they exist. Guard coverage and model cont
 separate concerns.
 
 The staged authority is a compact responsibility view, not a claim that omitted canonical history
-does not exist. An active owning Engineering Work receives its latest Evidence. Each transitive
-terminal Engineering dependency receives its latest Generator/Reviewer pair, while another terminal
-dependency kind receives its latest Evidence. An older Evidence explicitly cited by that Work body
-is also retained. Other older `evidenceRefs` entries are not dangling and Planner never repairs them.
-The complete history remains canonical; only the disposable Run projection and its semantic guard
-omit superseded history. Terminal Engineering Work is immutable and remains absent from the sparse
-proposal even when Planner uses its latest Evidence for completion assessment.
+does not exist. It selects canonical paths from Work `contextRefs`, dependency edges, and
+`evidenceRefs`; it never searches Work or Evidence prose to discover hidden references. Terminal
+Engineering Work is immutable and remains absent from the sparse proposal even when Planner uses its
+Evidence for completion assessment.
 
-Each accepted Goal instruction is published atomically with its Input and the Planning Work that owns
-it. The Planning Work body contains an `Accepted Inputs` section with canonical Input paths. Reusing
-an existing nonterminal Planning Work appends the new path instead of creating a second planning
-surface. Updating that Work invalidates any already-running Planner snapshot, so the fresh Run sees
-the exact instruction without searching Input history.
-
-An Engineering Work receives each canonical Input that its own `Accepted Inputs` section references.
-The Work remains the executable contract, while the immutable Input preserves the operator's exact
-wording and provenance at the file path already named by that contract. Generator and Reviewer can
-therefore inspect the original request when a concise Work description may have lost material
-meaning; unrelated and historical Inputs remain outside their staged authority.
-
-Initial Planning Work is a short control envelope that tells Planner to clarify the current Goal and
-accepted Inputs; it never copies the Goal objective into a second canonical document. Reusing a
-nonterminal Planning Work replaces its concise Objective with the latest planning trigger and appends
-new accepted Input paths, so the current assignment does not retain a stale trigger. Empty optional
-Goal sections are omitted rather than filled with placeholder prose. Verbatim Input remains distinct
-from the normalized Goal contract: the former preserves operator provenance, while the latter is
-accepted authority. A new-contract Planning operation therefore supplies an explicit normalized
-`contractChange`; HOPI links the verbatim Input to Planning and appends only that semantic change
-under `Accepted Goal Change <event>`. It never promotes the raw Inbox body implicitly. A latest
-resolved Attention
-and its resolution Input remain staged for exact
-provenance, but that resolution Input is not promoted into the expanded Planning Inputs unless the
-Planning Work itself accepted it. Even then, its description is evidence of the condition before
-settlement, not a current blocker: Planner rereads the current Attention and Work state and never
-recreates a resolved Assistant-owned Attention solely because its accepted Input requested retention.
+Each accepted Goal instruction is published atomically with its Input and the Work that owns it.
+That Work records the Input path in `contextRefs`. Reusing an existing nonterminal Planning Work
+merges the new explicit references instead of creating a second planning surface. Generator and
+Reviewer receive the same selected Input without a Markdown heading convention. Empty optional Goal
+sections are omitted rather than filled with placeholder prose. A new-contract Planning operation
+supplies an explicit normalized `contractChange`; replacing the whole current Planning assignment is
+the declared tool effect, not a heading rewrite. A latest resolved Attention and its resolution Input
+remain staged for exact provenance only when named by current structured authority.
 When settlement requested a final reassessment and every substantive Work is terminal with no
 current targeted Attention, Planner assesses the Goal directly instead of handing the historical
 control problem back to Assistant.
 
 If Assistant adopted reference images with that instruction, the same publication installs the
-Goal-local immutable assets and records their exact paths and purposes in both
-`design/references.md` and the owning Planning Work. Planner therefore sees the images before it can
+Goal-local immutable assets and records their exact paths and purposes in the owning Work
+`contextRefs`. Planner therefore sees the images before it can
 run; adoption cannot race Planning dispatch. Accepted reference-image input may enter Goal authority
 only through these Goal-local asset paths. Assistant-home attachment paths and machine-local
 absolute image paths are invalid in Goal, design, or Work prose; a useful reference must be adopted
@@ -893,7 +856,7 @@ because they exist.
 Every newly proposed Engineering Work starts at `stage: generate`; only Generator, Reviewer, and C1
 advance it. Planning Work remains `plan` while clarification is required. After a complete Planner
 proposal validates, Coordinator derives the Planning Work `done` gate from the current canonical
-document. These are fixed profile facts, not details Planner must rediscover from history.
+document. These are fixed workflow facts, not details Planner must rediscover from history.
 
 The Run's proposal-capabilities file contains the compact frontmatter field shape and path identity
 relationship for every new Engineering Work and Attention document Planner may create. A document
@@ -911,6 +874,11 @@ The accepted `goal.md` is immutable input to Planner. Planner records clarified 
 decisions in `design/**` and Work acceptance criteria, never edits the Goal contract, and always
 uses exactly its current `contractRevision`. Only an operator instruction accepted through an
 Assistant HOPI tool may propose a Goal contract change and its revision guard.
+
+Planner resolves ambiguity from current authority with its own judgment. When the accepted outcome
+truly requires operator authority, it may stage a targeted Attention; `decisionPrompt` defines only
+the validated presentation shape, not a mandatory questioning workflow. Clarification strategy,
+question grouping, assumptions, and what belongs in `design/**` remain model judgment.
 
 Planner never creates or rewrites Planning Work. Success means the entire semantic proposal was
 published before Coordinator changes the owning Planning Work to `done`. A clarification question
@@ -1003,7 +971,7 @@ already the complete valid plan, that proposal may be empty: Coordinator records
 and finishes the owning Planning Work without rewriting the DAG. Attention means one exact
 Assistant-management request is staged. Fail means the Run could not produce a valid proposal
 without such a request. Coordinator publishes its Evidence and settles the failed Attempt against the
-unchanged Work, so Reflection and speaking Assistant can diagnose, retry, revise, or ask the operator
+unchanged Work, so Wake can route the facts and speaking Assistant can diagnose, retry, revise, or ask the operator
 rather than blindly launching the same Planner. A successful
 proposal either leaves nonterminal Engineering Work to execute or, during final Planning, completes
 the Goal. `success` with no nonterminal Engineering Work is itself Planner's semantic completion
@@ -1015,16 +983,11 @@ it cannot serve as Evidence or make an empty current proposal complete the Goal.
 
 ### Generator
 
-Generator edits only the stable task worktree. Its current assignment inlines the owning Work
-objective and acceptance criteria, plus the latest referenced Evidence as the reason for a retry when
-present. It reads the Work contract, design, current target state, and findings from the staged
-canonical context bundle; changes source and normal project docs; runs proportionate checks; and produces
-Evidence. It returns `success`, `attention`, or `fail`: attention means Assistant management is
-required, while fail means this Run did not complete valid implementation proof. A published fail
-keeps the Engineering Work, does not consume a Reviewer-repair attempt, and pauses unchanged
-redispatch through its settled Attempt. Speaking Assistant decides whether the exact recovery is
-retry, Planning, cancellation, an informational question, or an operator action already represented
-by Agent-authored Attention.
+Generator edits only the stable task worktree. It reads the Work contract and staged canonical
+context, uses the available environment, and returns `success` or `fail`. A valid targeted Attention
+proposal is the separate durable request for Assistant management. A published fail keeps the
+Engineering Work and pauses unchanged redispatch through its settled Attempt. Speaking Assistant
+decides the next action from current facts.
 Generator success is deliberately local to implementation and Generator-owned proof. It advances
 the Work to the independent Reviewer; Reviewer acceptance is therefore never a prerequisite for a
 Generator `success`, even when the Work acceptance criteria require independent review. That local
@@ -1175,7 +1138,7 @@ do not name a target use `managed`; `--target operator` selects the current oper
 does not copy, mutate, or concurrently open the operator's profile directory. The adapter owns only
 the managed browser process and profile; Browser Harness continues to own its connection daemons.
 The speaking Assistant receives the same adapter when its native execution envelope permits
-subprocess effects; read-only Reflection does not.
+subprocess effects; Wake performs no model invocation.
 The Harness command's absence is an environment fact rather than a fictitious tool path;
 project-native browser tooling, package installation, network access, local ports, and Run scratch
 remain available under the ordinary execution envelope.
@@ -1370,7 +1333,7 @@ responsibility Evidence, and do not mutate Work.
 
 An observed operational failure remains an Attempt fact. Reconciler reconstructs from its settled
 Work hash whether unchanged authority should remain paused after restart; it creates no Attention,
-retry threshold, backoff policy, counter, or Work field. Reflection and Assistant decide whether
+retry threshold, backoff policy, counter, or Work field. Wake routes the fact and Assistant decides whether
 another invocation is useful.
 
 Planner reads every linked Repo's current managed source and existing Repo-local `AGENTS.md`, while
@@ -1421,7 +1384,7 @@ additions, edits, and deletions remain complete.
 Generator violations such as tracked canonical `.hopi` changes normalize to pass failure. Failure
 of Coordinator-owned Git metadata, branch, or commit mechanics is a Project/runtime fault: it does
 not consume a Work attempt or become a Goal-local Attention proposed by the responsibility. Existing
-Project validation, diagnostics, and Background Reflection own repair or escalation. Data-rescue
+Project validation, diagnostics, and Assistant supervision own repair or escalation. Data-rescue
 patches and Git crash mechanics are implementation details, not workflow stages.
 
 Safe deterministic repair is attempted at the failing boundary before the failure settles. The
@@ -1444,15 +1407,17 @@ consume semantic recovery.
 
 Concurrency rules:
 
-- Planner, Generator, and Reviewer each use their own profile-defined global capacity across all
+- Planner, Generator, and Reviewer each use their own code-owned global capacity across all
   Projects and Goals in the Coordinator Home
+- each dispatch admission carries the complete three-responsibility capacity mask captured by
+  Coordinator; Project reconciliation has no permissive default for a missing mask
 - queued and running Attempts are both projected with their stable Run identity and lifecycle
   timestamps; a queued Attempt reports `capacity` only when the corresponding global pass capacity
   is observably full
 - one writing pass at a time per task worktree
 - read-only work may run in parallel
 - independent writers require separate Work and worktrees
-- independent same-Goal Generator Runs may execute in parallel within profile capacity; Coordinator
+- independent same-Goal Generator Runs may execute in parallel within Generator capacity; Coordinator
   admits one Work per Goal in a tick, then immediately reconciles again to fill remaining capacity
 - same-revision Planning and Engineering use independent Work leases and may run concurrently;
   changed selected authority makes the losing result stale
@@ -1498,11 +1463,14 @@ one new Engineering Work through that adapter. The Work may depend on existing E
 and span several linked Repos. Planner still owns delivery decomposition, material Goal revisions,
 durable design decisions, existing-Work rewrites, and every multi-Work publication.
 
+The runtime receives the active server's exact Assistant-tool URL and a topology-change callback at
+construction; it never guesses a localhost port or silently leaves Coordinator on an old Project map.
+
 The direct-Work tool has a singular schema and records immutable `assistantDispatch` provenance.
 One Inbox Input has one such allowance across the Home; a matching repeat returns the existing Work,
 while a different or second direct admission fails before publication. Goal-scoped speaking barriers
 keep Generator admission behind the final Assistant reply. Direct Work follows the ordinary
-Generator, Reviewer, and C1 profile and does not change final Planner assessment.
+Generator, Reviewer, and C1 workflow and does not change final Planner assessment.
 
 A Work run requested by the speaking Assistant is therefore only admitted after that turn settles.
 The returned scheduled reservation and the resulting queued Work are the durable handoff facts
@@ -1538,7 +1506,7 @@ publication guard remains the correctness boundary if a result races that interr
 completing an interrupted Generator Attempt, Coordinator makes one safe task-branch checkpoint of
 partial source; it publishes no Evidence and advances no Work.
 
-### State read and Reflection
+### State read and Wake
 
 The bounded HOPI state read is a current-state index, not a dump of the durable archive. It returns
 Projects, Goals, scoped design, every Engineering Work, nonterminal Planning Work, open Attention,
@@ -1567,19 +1535,19 @@ to the full local diagnostic record without creating a second log database.
 For the speaking thread only, the state result ends with the current durable Inbox event as an
 attention anchor. The kernel does not classify that prose or compare it with an expected action;
 repeating the event after the larger snapshot simply prevents an older turn from becoming the most
-recent apparent instruction. The Reflection read path has no such operator anchor.
+recent apparent instruction. The Wake read path has no such operator anchor.
 
 Coordinator derives one stable semantic digest from control-relevant state. A changed digest records
-one pending assessment after the current snapshot is published, but does not alone start Reflection.
+one pending Wake after the current snapshot is published, but does not alone enqueue an internal turn.
 The digest includes Goal
 lifecycle/revision/completion, Work stage/attempt/dependency/timing facts, Attention changes, runtime
 Attempt terminal/interrupted facts, project availability, and C1 integration. It excludes raw event
 growth. A running Attempt whose last activity exceeds the code-owned stale threshold contributes a
 time-derived digest change so a silent hang is still assessed. The MVP threshold is ten minutes:
-long enough for one high-reasoning edit or build without producing a false Reflection, while still
+long enough for one high-reasoning edit or build without producing a false Wake, while still
 surfacing a genuinely silent responsibility without waiting for an operator report.
 
-Reflection starts immediately for an Assistant-owned Attention, unavailable Project, or stale running
+Wake starts immediately for an Assistant-owned Attention, unavailable Project, or stale running
 Attempt. All other changed snapshots wait for an idle reconciliation tick that both begins and ends
 with no active responsibility Run. An old scan that overlaps a Run completion is therefore not a
 settled boundary; the next tick must reconcile the newly published result first. This is one progress
@@ -1588,31 +1556,33 @@ not inspect that intermediate state. A deferred digest is not marked assessed, s
 may be assessed later if automatic progress reaches a settled boundary without another canonical
 change.
 
-Reflection runs outside the global publication mutex and responsibility capacities. There is at most
-one active Reflection per Home; later changes coalesce to the latest eligible digest. The first startup
+Wake runs outside the global publication mutex and responsibility capacities. There is at most one
+active Wake publication per Home; later changes coalesce to the latest eligible digest. The first startup
 snapshot establishes a baseline instead of producing a notification storm unless it already contains
 an immediate signal; an Assistant-owned Attention, unavailable Project, or stale running Attempt must
-survive process restart and is assessed without waiting for a later digest. Reflection receives only
+survive process restart and is assessed without waiting for a later digest. Wake projects only
 the code-derived trigger and a compact semantic delta. It does not receive a second full current-state
 projection or public conversation history: both duplicate facts owned by canonical state or the
 speaking thread. Work deltas contain control fields and one bounded latest-Run outcome, never archive
-paths, full Evidence lists, or unrelated Goal state. Reflection may call scoped `hopi_read_state` and
-follow an exact diagnostic path only after identifying a concrete candidate.
+paths, full Evidence lists, or unrelated Goal state. The resulting Assistant turn may call scoped
+`hopi_read_state` and follow an exact diagnostic path after identifying a concrete candidate.
 
-Reflection is a deterministic state observer, not a second model. When a scope becomes eligible it
+Wake is a deterministic state observer, not a second model. When a scope becomes eligible it
 publishes one internal Inbox event in that same Assistant conversation. The event carries the current
 scope digest and the exact open, Assistant-owned Attention references that have no already-durable
 successor or future revisit. A scheduled revisit carries its exact Attention reference. The speaking
 thread receives the current state separately, revalidates it, and owns every judgment and optional
-operator notification.
+operator notification. Wake reports `started` only after its runtime record and Inbox handoff are
+durable; publication failure remains a Coordinator failure and retries through the ordinary wake
+edge.
 
 The state event describes consequences rather than prescribing an action. Coordinator does not
 parse prose, infer intent, or select among Attention and Work capabilities.
 
 One pending wake turn suppresses another wake for the same assessed state. Later state changes
 coalesce into the next digest. A failed turn remains pending and retries with bounded backoff; restart
-loses only the delay. Public user speech can interrupt an internal speaking turn without interrupting
-independent responsibility Runs.
+loses only the delay. Public user speech is selected before pending internal turns but does not
+interrupt one already running or any independent responsibility Run.
 
 ## Reconciler and Scheduling
 
@@ -1626,7 +1596,7 @@ missing original intent.
 
 Each cycle:
 
-1. validates the built-in profile and canonical packages
+1. validates the code-owned workflow and canonical packages
 2. marks stale runtime Attempts interrupted and clears leases without reattaching children; later
    Attempts may resume their Work responsibility sessions
 3. advances the oldest eligible Assistant conversation turn
@@ -1634,17 +1604,16 @@ Each cycle:
 5. evaluates `ready(work)` and dispatches responsibility passes within capacity
 6. after Reviewer success, performs deterministic integration while Work remains at `review`
 7. publishes validated outcomes and wakes dependents after upstream `done`
-8. evaluates completion and routes Assistant-owned Attention through Reflection
-9. observes the latest semantic digest and starts or coalesces non-blocking Reflection
+8. evaluates completion
+9. observes the latest semantic digest and starts or coalesces a non-blocking Wake
 
 `ready(work)` is one conjunction:
 
 - Goal lifecycle is `active`
-- Work kind and stage match one profile rule
+- Work kind and stage match one workflow rule
 - Work `contractRevision` is current
 - every `dependsOn` Work is `done`
 - `notBefore` is null or elapsed
-- no open targeted Attention covers its project, Goal, or Work
 - no active Run already owns it and pass/worktree capacity is available
 
 The UI may show every failed predicate, but readiness is not another state machine.
@@ -1677,11 +1646,12 @@ canonical references in a public turn. That handled turn then projects as **Need
 referenced Attention remains open. Its default wording and optional choices come from the current
 Attention documents; their full bodies remain Agent detail. This adds no ownership field to
 Attention and does not change Work readiness. Goal completion appears from the Goal transition and
-final Planning Evidence as a deterministic **Completed** conversation update. Its visible summary is
-the final Planner result summary, written for the operator in one or two short sentences and stating
-the delivered outcome rather than Planner, Work, Evidence, validation, or lifecycle mechanics. The
-Evidence remains the canonical technical record; completion is its human-facing projection, not
-another notification document or required Assistant phrase.
+final Planning Evidence as a deterministic **Completed** conversation update. Its visible body is
+the exact final Planner summary; the kernel does not extract sections or rewrite it. Useful
+deliverable links stay ordinary Markdown links throughout Evidence, Feed, and rendering; completion
+has no parallel structured link field. The Evidence remains
+the canonical technical record; completion is its human-facing projection, not another notification
+document or required Assistant phrase.
 
 Completion delivery is an Assistant judgment over current Goal authority, Attention, Evidence, and
 conversation. A Goal-scoped Evidence read exposes resolved artifacts and their browser-facing
@@ -1696,7 +1666,7 @@ focuses the turn for an ordinary contextual reply. This is a read projection ove
 another field on Attention or a duplicated notification record.
 
 The optional provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL` has one job: mirror
-handled public Reflection replies. It scans those Inbox events, uses the canonical Home/event
+handled public internal-system replies. It scans those Inbox events, uses the canonical Home/event
 identity as its idempotency key, and records `webhookDeliveredAt` after acknowledgement. Persistent
 transport failure retries with bounded in-memory backoff. It never scans or delivers raw Attention
 and cannot create recursive Attention about delivery.
@@ -1733,7 +1703,7 @@ Coordinator then verifies only structural conditions:
 The final Planning Evidence is the completion record. Its result summary is operator-facing because
 the same text is projected as the deterministic `Completed` summary; diagnostic proof remains in the
 Evidence, artifacts, and Attempt history. Completion creates no Attention, approval field, dedicated
-role, or second lifecycle gate. Reflection observes the ordinary Goal transition and its final
+role, or second lifecycle gate. Wake observes the ordinary Goal transition and its final
 Planning Evidence. Reopen increments revision when required and creates Planning Work; historical
 Evidence remains immutable.
 

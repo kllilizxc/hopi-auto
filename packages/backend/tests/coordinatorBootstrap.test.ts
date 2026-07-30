@@ -168,6 +168,13 @@ async function setup(twoCommits = false, projectPath?: string) {
           {
             projectId: 'P-1',
             projectRoot: linked.integrationRoot,
+            primaryRepoId: linked.primaryRepoId,
+            repos: linked.repos.map((repo) => ({
+              repoId: repo.repoId,
+              integrationRoot: repo.integrationRoot,
+              projectPath: repo.projectPath,
+              primary: repo.repoId === linked.primaryRepoId,
+            })),
             store,
           },
         ],

@@ -16,6 +16,8 @@ notBefore: null
 dependsOn: []
 contractRevision: 1
 evidenceRefs: []
+contextRefs: []
+ownerMessages: []
 ---
 Plan the smallest complete delivery.
 `)
@@ -41,7 +43,7 @@ Deliver the Goal.
       runId: 'R-1',
       responsibility: 'planner',
       status: 'finished',
-      result: 'attention',
+      result: 'fail',
       application: 'attention',
       workHash: await workAssignmentHash(work),
     } as RunAttemptSummary

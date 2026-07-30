@@ -38,8 +38,8 @@ export interface ProjectPreparer {
     runtimeDir: string
     cacheDir: string
     timeoutMs?: number
-    primaryRepoId?: string
-    repoRoots?: readonly ProjectPreparationRepoRoot[]
+    primaryRepoId: string
+    repoRoots: readonly ProjectPreparationRepoRoot[]
     releaseHeads?: Readonly<Record<string, string>>
     projection?: ProjectPreparationProjection
   }): Promise<ProjectPreparationResult>
@@ -57,11 +57,7 @@ export function createProjectPreparer(): ProjectPreparer {
         mkdir(runtimeDir, { recursive: true }),
         mkdir(cacheDir, { recursive: true }),
       ])
-      const repoRoots = normalizeRepoRoots(
-        input.repoRoots ?? [
-          { repoId: input.primaryRepoId ?? 'primary', path: resolve(input.projectRoot) },
-        ],
-      )
+      const repoRoots = normalizeRepoRoots(input.repoRoots)
       const releaseHeads = input.releaseHeads
         ? Object.fromEntries(
             repoRoots.map((repo) => {
@@ -78,7 +74,7 @@ export function createProjectPreparer(): ProjectPreparer {
         `${JSON.stringify(
           {
             projection: input.projection ?? 'release',
-            primaryRepoId: input.primaryRepoId ?? repoRoots[0]?.repoId ?? 'primary',
+            primaryRepoId: input.primaryRepoId,
             repoOrder: repoRoots.map((repo) => repo.repoId),
             repos: Object.fromEntries(repoRoots.map((repo) => [repo.repoId, repo.path])),
             ...(releaseHeads ? { releaseHeads } : {}),

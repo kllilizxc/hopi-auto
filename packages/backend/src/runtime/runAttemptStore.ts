@@ -1,11 +1,7 @@
-import { appendFile, mkdir, rename } from 'node:fs/promises'
+import { appendFile, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
-import {
-  type RoleExecutionIdentity,
-  type RoleRunResult,
-  STORED_PASS_RESULTS,
-} from '../agent/RoleRunner'
+import { PASS_RESULTS, type RoleExecutionIdentity, type RoleRunResult } from '../agent/RoleRunner'
 import {
   AGENT_TRANSCRIPT_ENTRY_KINDS,
   AGENT_TRANSCRIPT_TRANSPORTS,
@@ -13,6 +9,7 @@ import {
 } from '../agent/runtimeEvents'
 import { codingReasoningEffortSchema } from '../domain/projectCodingDefaults'
 import { stableIdSchema } from '../domain/stableId'
+import { writeJsonAtomically } from '../storage/atomicFile'
 import {
   readDurableJsonLines,
   repairDurableJsonLineTail,
@@ -26,7 +23,7 @@ import { runStoragePath, runStorageRoot } from './runPaths'
 export const RUN_ATTEMPT_STATUSES = ['queued', 'running', 'finished', 'interrupted'] as const
 export type RunAttemptStatus = (typeof RUN_ATTEMPT_STATUSES)[number]
 
-const nullableResultSchema = z.enum(STORED_PASS_RESULTS).nullable()
+const nullableResultSchema = z.enum(PASS_RESULTS).nullable()
 const roleExecutionIdentitySchema = z
   .object({
     transport: z.enum(AGENT_TRANSCRIPT_TRANSPORTS),
@@ -381,11 +378,11 @@ export function createRunAttemptStore(
       const enqueue = (event: AgentRuntimeEvent) => {
         if (closed) return writeTail
         const stored = storeEvent(event, now())
-        writeTail = writeTail
+        const write = writeTail
           .catch(() => undefined)
           .then(() => appendFile(eventsPath, `${JSON.stringify(stored)}\n`))
-          .catch(() => undefined)
-        return writeTail
+        writeTail = write
+        return write
       }
       const close = async (next: RunAttemptSummary, event: AgentRuntimeEvent) => {
         if (closed) return
@@ -563,23 +560,20 @@ export function createRunAttemptStore(
           const summary = 'Coordinator stopped before recording an Attempt outcome.'
           const eventsPath = join(resolve(path, '..'), 'events.jsonl')
           await repairDurableJsonLineTail(eventsPath)
-            .then(() =>
-              appendFile(
-                eventsPath,
-                `${JSON.stringify(
-                  storeEvent(
-                    {
-                      kind: 'message',
-                      level: 'error',
-                      role: 'coordinator',
-                      content: summary,
-                    },
-                    new Date(endedAt),
-                  ),
-                )}\n`,
+          await appendFile(
+            eventsPath,
+            `${JSON.stringify(
+              storeEvent(
+                {
+                  kind: 'message',
+                  level: 'error',
+                  role: 'coordinator',
+                  content: summary,
+                },
+                new Date(endedAt),
               ),
-            )
-            .catch(() => undefined)
+            )}\n`,
+          )
           await writeManifest(path, {
             ...manifest,
             endedAt,
@@ -726,10 +720,7 @@ async function readOptionalText(path: string) {
 
 async function writeManifest(path: string, manifest: RunAttemptSummary) {
   const validated = attemptManifestSchema.parse(manifest)
-  await mkdir(resolve(path, '..'), { recursive: true })
-  const temporaryPath = `${path}.tmp.${crypto.randomUUID()}`
-  await Bun.write(temporaryPath, `${JSON.stringify(validated, null, 2)}\n`)
-  await rename(temporaryPath, path)
+  await writeJsonAtomically(path, validated)
 }
 
 function storeEvent(event: AgentRuntimeEvent, createdAt: Date): StoredRunAttemptEvent {

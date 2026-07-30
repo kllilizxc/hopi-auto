@@ -216,13 +216,13 @@ test('compact Goal workspaces keep the active surface full-height and open Assis
   expect(styles).not.toContain('grid-template-rows: minmax(310px, 44vh)')
 })
 
-test('Assistant and Reflection use floating corner chrome while Kanban owns the full background', async () => {
+test('Assistant and Wake use floating corner chrome while Kanban owns the full background', async () => {
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
   const assistant = await Bun.file(
     new URL('../components/AssistantPanel.tsx', import.meta.url),
   ).text()
   const layout = await Bun.file(new URL('../components/Layout.tsx', import.meta.url)).text()
-  const reflectionButtonRule = styles.match(/\.reflection-debug-button\s*\{([^}]*)\}/)?.[1] ?? ''
+  const wakeButtonRule = styles.match(/\.wake-debug-button\s*\{([^}]*)\}/)?.[1] ?? ''
   const boardSurfaceRule =
     styles.match(
       /\.goal-workspace-surface--board > \.workspace-topbar,\s*\.goal-workspace-surface--board > \.workspace-main\s*\{([^}]*)\}/,
@@ -230,12 +230,12 @@ test('Assistant and Reflection use floating corner chrome while Kanban owns the 
 
   expect(assistant).toContain("'assistant-corner-chrome'")
   expect(assistant).not.toContain('assistant-header')
-  expect(assistant).not.toContain('reflection-debug-toolbar')
-  expect(assistant).not.toContain('Runtime reflections')
+  expect(assistant).not.toContain('wake-debug-toolbar')
+  expect(assistant).not.toContain('Runtime wakes')
   expect(layout).not.toContain('className="assistant-header"')
   expect(layout).toContain("surface === 'board' && 'goal-workspace-surface--board'")
   expect(styles).toContain('-webkit-mask-image: radial-gradient')
-  expect(reflectionButtonRule).toContain('opacity: 0')
+  expect(wakeButtonRule).toContain('opacity: 0')
   expect(boardSurfaceRule).toContain('background: transparent')
 })
 
@@ -244,20 +244,20 @@ test('stream virtualization is the only authority for variable row height', asyn
   const assistant = await Bun.file(
     new URL('../components/AssistantPanel.tsx', import.meta.url),
   ).text()
-  const reflection = await Bun.file(
-    new URL('../components/ReflectionDebugPanel.tsx', import.meta.url),
+  const wake = await Bun.file(
+    new URL('../components/WakeDebugPanel.tsx', import.meta.url),
   ).text()
   const feed = await Bun.file(
     new URL('../components/UnifiedMessageFeed.tsx', import.meta.url),
   ).text()
-  const runRowRule = styles.match(/\.reflection-run-row\s*\{([^}]*)\}/)?.[1] ?? ''
+  const runRowRule = styles.match(/\.wake-run-row\s*\{([^}]*)\}/)?.[1] ?? ''
   const messageRowRule =
     styles.match(
       /\.unified-feed-message-row,\s*\.unified-feed-action-row,\s*\.unified-feed-activity,\s*\.unified-feed-live-activity\s*\{([^}]*)\}/,
     )?.[1] ?? ''
 
-  expect(assistant).toContain("import('./ReflectionDebugPanel')")
-  expect(reflection).toContain('className="reflection-run-virtuoso"')
+  expect(assistant).toContain("import('./WakeDebugPanel')")
+  expect(wake).toContain('className="wake-run-virtuoso"')
   expect(feed).toContain('<Virtuoso')
   expect(runRowRule).not.toContain('content-visibility')
   expect(runRowRule).not.toContain('contain-intrinsic-size')
@@ -301,7 +301,7 @@ test('Assistant Attention chrome stays quiet, aligned, and free of duplicate ico
   expect(cornerRule).toContain('justify-content: flex-end')
   expect(cornerRule).toContain('min-height: 54px')
   expect(cornerRule).not.toContain('min-height: 72px')
-  expect(assistant.indexOf("className={cn('reflection-debug-button'")).toBeLessThan(
+  expect(assistant.indexOf("className={cn('wake-debug-button'")).toBeLessThan(
     assistant.indexOf('assistant-needs-you-count'),
   )
   expect(assistant).toContain('className="composer-context__dismiss"')

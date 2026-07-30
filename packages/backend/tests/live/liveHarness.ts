@@ -1,4 +1,5 @@
 import { appendFile, mkdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ensureDefaultAgentAdapterConfig } from '../../src/agent/defaultAdapterConfig'
 import { parseInboxEventDocument } from '../../src/domain/assistantWorkspaceDocuments'
@@ -12,7 +13,6 @@ import { type MvpServer, createServer } from '../../src/mvpServer'
 import {
   browserAdapterEnvironment,
   browserHarnessAdapterCommand,
-  defaultBrowserTestHome,
   hasManagedBrowserConfiguration,
   resolveBrowserHarnessBackendCommand,
 } from '../../src/runtime/browserEnvironment'
@@ -85,7 +85,6 @@ export interface LiveHarness {
   repoRoot: string
   baseUrl: string
   codingDefaults: ProjectCodingDefaults
-  modelBoundaries: { reflection: 'real' | 'deterministic' }
   code: CodeProvenance
   currentPhase: string
   lastCheckpoint: string | null
@@ -144,19 +143,13 @@ export interface StateRecorder {
   stop(): Promise<void>
 }
 
-export async function startLiveHarness(
-  scenario: string,
-  _options: { deterministicReflection?: boolean } = {},
-): Promise<LiveHarness> {
+export async function startLiveHarness(scenario: string): Promise<LiveHarness> {
   const logicalRunLimit = resolveLogicalRunLimit()
   const run = await startTestRun(scenario, 'live')
   const { artifactRoot, startedAt } = run
   const homeRoot = join(artifactRoot, 'home')
   const repoRoot = join(artifactRoot, 'repo')
   const codingDefaults = liveCodingDefaults()
-  const modelBoundaries = {
-    reflection: 'deterministic',
-  } as const
   const code = run.code
   await ensureDefaultAgentAdapterConfig(homeRoot, codingDefaults)
   const server = createServer({
@@ -171,7 +164,6 @@ export async function startLiveHarness(
     repoRoot,
     baseUrl: `http://127.0.0.1:${server.port}`,
     codingDefaults,
-    modelBoundaries,
     code,
     currentPhase: 'startup',
     lastCheckpoint: null,
@@ -186,7 +178,6 @@ export async function startLiveHarness(
   await recordAction(harness, 'server_started', {
     baseUrl: harness.baseUrl,
     codingDefaults,
-    modelBoundaries,
     logicalRunLimit,
   })
   return harness
@@ -247,7 +238,6 @@ export async function finishLiveHarness(
     usage = await readModelUsage(harness.homeRoot)
     return {
       codingDefaults: harness.codingDefaults,
-      modelBoundaries: harness.modelBoundaries,
       browserAuditPolicy:
         process.env.HOPI_E2E_ALLOW_UNAUDITED_BROWSER === '1' ? 'optional' : 'required',
       logicalRunSafety: { limit: harness.logicalRunLimit },
@@ -498,21 +488,21 @@ export async function waitForGoalQuiescence(
   let previous = ''
   return waitForValue(
     async () => {
-      const [state, reflections, pendingInbox] = await Promise.all([
+      const [state, wakes, pendingInbox] = await Promise.all([
         requestJson<LiveState>(harness.baseUrl, '/api/state'),
         requestJson<{
-          items: Array<{ manifest: { reflectionId: string; status: string } }>
-        }>(harness.baseUrl, '/api/debug/reflections?limit=100'),
+          items: Array<{ manifest: { wakeId: string; status: string } }>
+        }>(harness.baseUrl, '/api/debug/wakes?limit=100'),
         readPendingInboxEvents(harness.homeRoot),
       ])
       const goal = state.projects
         .find((project) => project.projectId === projectId)
         ?.goals.find((candidate) => candidate.id === goalId)
-      const signature = JSON.stringify({ state, reflections: reflections.items, pendingInbox })
+      const signature = JSON.stringify({ state, wakes: wakes.items, pendingInbox })
       const quiet =
         goal?.lifecycle === 'done' &&
         state.activeRuns.length === 0 &&
-        reflections.items.every((item) => item.manifest.status !== 'running') &&
+        wakes.items.every((item) => item.manifest.status !== 'running') &&
         pendingInbox.length === 0
       if (!quiet || signature !== previous) {
         previous = signature
@@ -523,7 +513,7 @@ export async function waitForGoalQuiescence(
     (value) => value.quiet && value.stableFor >= (options.stableMs ?? 3_000),
     {
       timeoutMs: options.timeoutMs ?? 5 * 60_000,
-      description: `Goal ${projectId}/${goalId} and post-completion Reflection to settle`,
+      description: `Goal ${projectId}/${goalId} and post-completion Wake to settle`,
     },
   )
 }
@@ -2093,6 +2083,10 @@ export function liveCodingDefaults() {
   return normalizeProjectCodingDefaults(input)
 }
 
+function defaultBrowserTestHome() {
+  return join(homedir(), '.hopi', 'browser-test-host')
+}
+
 function resolveBrowserHarnessInvocation(context: BrowserHarnessContext) {
   const backendCommand = resolveBrowserHarnessBackendCommand()
   if (!backendCommand) throw new Error('Browser Harness is not installed')
@@ -2111,7 +2105,7 @@ export async function readModelUsage(homeRoot: string) {
   const tokens = { input: 0, cachedInput: 0, output: 0 }
   const byScope = {
     assistant: { input: 0, cachedInput: 0, output: 0, usageEvents: 0 },
-    reflection: { input: 0, cachedInput: 0, output: 0, usageEvents: 0 },
+    wake: { input: 0, cachedInput: 0, output: 0, usageEvents: 0 },
     planner: { input: 0, cachedInput: 0, output: 0, usageEvents: 0 },
     generator: { input: 0, cachedInput: 0, output: 0, usageEvents: 0 },
     reviewer: { input: 0, cachedInput: 0, output: 0, usageEvents: 0 },
@@ -2180,7 +2174,7 @@ export async function countLogicalRuns(
 ) {
   const logicalRuns = {
     assistant: 0,
-    reflection: 0,
+    wake: 0,
     planner: 0,
     generator: 0,
     reviewer: 0,
@@ -2198,10 +2192,12 @@ export async function countLogicalRuns(
     logicalRuns.assistant +=
       typeof manifest.attempt === 'number' && manifest.attempt > 0 ? manifest.attempt : 1
   }
-  for await (const path of new Bun.Glob(
-    '.hopi/runtime/assistant/wakes/runs/*/reflection.json',
-  ).scan({ cwd: homeRoot, onlyFiles: true, dot: true })) {
-    if (await Bun.file(join(homeRoot, path)).exists()) logicalRuns.reflection += 1
+  for await (const path of new Bun.Glob('.hopi/runtime/assistant/wakes/runs/*/wake.json').scan({
+    cwd: homeRoot,
+    onlyFiles: true,
+    dot: true,
+  })) {
+    if (await Bun.file(join(homeRoot, path)).exists()) logicalRuns.wake += 1
   }
   for await (const path of new Bun.Glob('.hopi/runtime/runs/*/attempt.json').scan({
     cwd: homeRoot,
@@ -2236,7 +2232,7 @@ async function readLogicalRunManifest<T>(path: string, tolerateUnreadable = fals
 
 async function transcriptScope(homeRoot: string, path: string) {
   if (path.includes('/assistant/turns/')) return 'assistant' as const
-  if (path.includes('/assistant/reflections/')) return 'reflection' as const
+  if (path.includes('/assistant/wakes/')) return 'wake' as const
   if (path.includes('/runs/')) {
     const manifestPath = join(homeRoot, path.slice(0, path.lastIndexOf('/')), 'attempt.json')
     try {
@@ -2262,7 +2258,6 @@ async function writeRunReport(
 ) {
   await writeTestRunReport(harness, status, {
     codingDefaults: harness.codingDefaults,
-    modelBoundaries: harness.modelBoundaries,
     browserAuditPolicy:
       process.env.HOPI_E2E_ALLOW_UNAUDITED_BROWSER === '1' ? 'optional' : 'required',
     logicalRunSafety: { limit: harness.logicalRunLimit },

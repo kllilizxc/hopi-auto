@@ -14,7 +14,6 @@ import type { AgentRuntimeEvent, AgentTranscriptTransport } from './runtimeEvent
 import {
   type AssistantTransport,
   type VendorSession,
-  isExplicitSessionFailure,
   parseVendorAssistantOutput,
 } from './vendorAssistantOutput'
 import { type ProcessTranscriptFormat, isNonFatalProcessDiagnostic } from './vendorTranscript'
@@ -24,10 +23,8 @@ import {
   withNativeCompactionEnabled,
 } from './vendorTransport'
 
-export const PASS_RESULTS = ['success', 'reject', 'attention', 'fail'] as const
-export const STORED_PASS_RESULTS = [...PASS_RESULTS, 'replan'] as const
+export const PASS_RESULTS = ['success', 'reject', 'fail'] as const
 export type PassResultKind = (typeof PASS_RESULTS)[number]
-export type StoredPassResultKind = (typeof STORED_PASS_RESULTS)[number]
 
 export interface ResponsibilitySession extends VendorSession {
   executionKey: string
@@ -108,7 +105,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
     await observer?.onExecution?.(roleExecutionIdentity(config))
     const transport = resumableTransport(config)
     const executionKey = roleSessionExecutionKey(config, fullAccess, input.cwd)
-    let session =
+    const session =
       transport &&
       input.session?.transport === transport &&
       input.session.executionKey === executionKey
@@ -175,61 +172,16 @@ export class ConfiguredRoleRunner implements RoleRunner {
     let execution: Awaited<ReturnType<typeof execute>>
     try {
       execution = await execute()
-      if (session && execution.sessionInvalid && !input.signal?.aborted) {
-        await observer?.onEvent?.({
-          kind: 'message',
-          level: 'info',
-          role: 'coordinator',
-          content:
-            'The saved responsibility Session could not continue; rebuilding it once from the current assignment.',
-        })
+      if (execution.sessionInvalid) {
         await observer?.onSessionInvalid?.()
-        session = null
-        execution = await execute()
       }
     } catch (error) {
       return failedResult(`Unable to run ${input.responsibility}: ${errorMessage(error)}`)
     }
-    let processFailure = executionFailure(input, execution)
+    const processFailure = executionFailure(input, execution)
     if (processFailure) return processFailure
 
-    let parsed = await readResult(input.context.resultFile, execution, input.responsibility)
-    if (
-      !parsed.success &&
-      transport !== null &&
-      execution.session !== null &&
-      !input.signal?.aborted
-    ) {
-      const recoveryCause = outcomeRecoveryCause(parsed.error, execution.interactiveTool)
-      await observer?.onEvent?.({
-        kind: 'message',
-        level: 'info',
-        role: 'coordinator',
-        content: `${recoveryCause} Continuing the same Session once inside this Run to complete the responsibility outcome.`,
-      })
-      session = execution.session
-      let recovery: ProcessExecution
-      try {
-        recovery = await execute(outcomeRecoveryPrompt(input.responsibility))
-      } catch (error) {
-        return failedResult(
-          `${recoveryCause} Same-Run outcome recovery could not start: ${errorMessage(error)}`,
-          execution.exitCode,
-        )
-      }
-      if (recovery.sessionInvalid) await observer?.onSessionInvalid?.()
-      execution = combineExecutions(execution, recovery)
-      processFailure = executionFailure(input, execution)
-      if (processFailure) return processFailure
-      parsed = await readResult(input.context.resultFile, execution, input.responsibility)
-      if (!parsed.success) {
-        await observer?.onSessionInvalid?.()
-        return failedResult(
-          `${recoveryCause} Same-Run outcome recovery also failed: ${parsed.error}`,
-          execution.exitCode,
-        )
-      }
-    }
+    const parsed = await readResult(input.context.resultFile, execution, input.responsibility)
 
     const workflowAfter = await workflowDocumentStatus(input)
     if (workflowBefore !== workflowAfter || workflowAfter !== '') {
@@ -320,29 +272,8 @@ export function roleSessionExecutionKey(
   })
 }
 
-export class MockRoleRunner implements RoleRunner {
-  private readonly results: RoleRunResult[]
-
-  constructor(results: RoleRunResult[] = []) {
-    this.results = [...results]
-  }
-
-  async run(): Promise<RoleRunResult> {
-    return (
-      this.results.shift() ?? {
-        result: 'success',
-        summary: 'Mock responsibility completed.',
-        artifacts: [],
-        exitCode: 0,
-      }
-    )
-  }
-}
-
 function resultAllowed(responsibility: Responsibility, result: PassResultKind) {
-  if (responsibility === 'planner') {
-    return result === 'success' || result === 'attention' || result === 'fail'
-  }
+  if (responsibility === 'planner') return result === 'success' || result === 'fail'
   if (responsibility === 'generator') return result !== 'reject'
   return true
 }
@@ -365,39 +296,6 @@ function executionFailure(input: RoleRunInput, execution: ProcessExecution): Rol
     )
   }
   return null
-}
-
-function combineExecutions(first: ProcessExecution, second: ProcessExecution): ProcessExecution {
-  return {
-    ...second,
-    session: second.session ?? first.session,
-    sessionInvalid: first.sessionInvalid || second.sessionInvalid,
-    completedExecution: first.completedExecution || second.completedExecution,
-    infrastructureFailure: second.completedExecution
-      ? second.infrastructureFailure
-      : (second.infrastructureFailure ?? first.infrastructureFailure),
-    interactiveTool: second.interactiveTool ?? first.interactiveTool,
-  }
-}
-
-function outcomeRecoveryCause(error: string, interactiveTool: string | null) {
-  if (interactiveTool === 'EnterPlanMode' || interactiveTool === 'ExitPlanMode') {
-    return 'The non-interactive responsibility entered vendor Plan Mode and could not obtain operator approval.'
-  }
-  if (interactiveTool === 'AskUserQuestion') {
-    return 'The non-interactive responsibility requested a direct user answer on a channel without an operator.'
-  }
-  return `The vendor exited without a valid responsibility outcome: ${error}.`
-}
-
-function outcomeRecoveryPrompt(responsibility: Responsibility) {
-  return [
-    '# Complete Current Responsibility',
-    '',
-    `No valid terminal outcome was captured for the current ${responsibility} invocation.`,
-    'The current Session, workspace, assignment, and execution boundary are unchanged.',
-    'The final response must be exactly one responsibility outcome JSON object.',
-  ].join('\n')
 }
 
 async function readResult(
@@ -666,7 +564,6 @@ async function executeProcessWithTempDir(
   let terminalError: string | null = null
   let structuredOutcome: unknown
   let finalText: string | null = null
-  let interactiveTool: string | null = null
   let transcriptTail: Promise<void> = Promise.resolve()
   const recordLine = (stream: 'stdout' | 'stderr', line: string) => {
     transcriptTail = transcriptTail.then(() =>
@@ -711,7 +608,6 @@ async function executeProcessWithTempDir(
           }
           if (output.finalText) finalText = output.finalText
           if (output.assistantText) finalText = output.assistantText
-          if (output.interactiveTool) interactiveTool = output.interactiveTool
         }
         await emitLine(observer, transcriptNormalizer, format, 'stdout', input, redact(line))
       }),
@@ -720,7 +616,6 @@ async function executeProcessWithTempDir(
         if (!isNonFatalProcessDiagnostic({ format, stream: 'stderr', line })) {
           stderr.push(redact(line))
         }
-        if (session && isExplicitSessionFailure(line)) sessionInvalid = true
         await emitLine(observer, transcriptNormalizer, format, 'stderr', input, redact(line))
       }),
     ])
@@ -761,9 +656,6 @@ async function executeProcessWithTempDir(
           : null,
       structuredOutcome,
       finalText,
-      interactiveTool,
-      infrastructureFailure: transcriptNormalizer.unresolvedInfrastructureFailure(),
-      completedExecution: transcriptNormalizer.completedExecution(),
     }
   } finally {
     clearInterval(heartbeat)

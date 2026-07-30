@@ -18,6 +18,31 @@ const canonicalRefSchema = z.string().min(1)
 const uniqueStableIdsSchema = z
   .array(stableIdSchema)
   .refine((values) => new Set(values).size === values.length, 'references must be unique')
+export const workContextRefSchema = z
+  .object({
+    path: canonicalRefSchema,
+    purpose: z.string().trim().min(1),
+  })
+  .strict()
+const uniqueWorkContextRefsSchema = z
+  .array(workContextRefSchema)
+  .refine(
+    (values) => new Set(values.map((reference) => reference.path)).size === values.length,
+    'context reference paths must be unique',
+  )
+export const workOwnerMessageSchema = z
+  .object({
+    recordedAt: timestampSchema,
+    sourceEventId: z.string().trim().min(1),
+    content: z.string().trim().min(1),
+  })
+  .strict()
+const uniqueWorkOwnerMessagesSchema = z
+  .array(workOwnerMessageSchema)
+  .refine(
+    (values) => new Set(values.map((message) => message.sourceEventId)).size === values.length,
+    'owner message source events must be unique',
+  )
 
 export const goalAttributesSchema = z
   .object({
@@ -36,12 +61,15 @@ const workBaseSchema = z.object({
   dependsOn: uniqueStableIdsSchema,
   contractRevision: z.number().int().positive(),
   evidenceRefs: uniqueStableIdsSchema,
+  contextRefs: uniqueWorkContextRefsSchema,
+  ownerMessages: uniqueWorkOwnerMessagesSchema,
 })
 
 const planningWorkAttributesObjectSchema = workBaseSchema
   .extend({
     kind: z.literal('planning'),
     stage: z.enum(PLANNING_STAGES),
+    revisionInput: z.string().min(1).optional(),
   })
   .strict()
 
@@ -112,6 +140,8 @@ export type WorkAttributes = z.infer<typeof workAttributesSchema>
 export type AttentionAttributes = z.infer<typeof attentionAttributesSchema>
 export type InputAttributes = z.infer<typeof inputAttributesSchema>
 export type EvidenceAttributes = z.infer<typeof evidenceAttributesSchema>
+export type WorkContextRef = z.infer<typeof workContextRefSchema>
+export type WorkOwnerMessage = z.infer<typeof workOwnerMessageSchema>
 
 export type GoalDocument = MarkdownDocument<GoalAttributes>
 export type WorkDocument = MarkdownDocument<WorkAttributes>

@@ -70,7 +70,7 @@ test('artifact summary derives generic and HOPI facts without mutating the sourc
           id: 'EV-pending',
           receivedAt: '2026-07-16T00:00:00.000Z',
           status: 'pending',
-          source: 'reflection',
+          source: 'system',
           visibility: 'internal',
           sourceDigest: 'c'.repeat(64),
           attachments: [],
@@ -88,12 +88,12 @@ test('artifact summary derives generic and HOPI facts without mutating the sourc
       lastCheckpoint: 'goal_admitted',
       error: 'Timed out waiting for completion. Last value: {"large":"state"}',
       usage: {
-        logicalRuns: { assistant: 1, reflection: 1, planner: 1, generator: 1, reviewer: 0 },
+        logicalRuns: { assistant: 1, wake: 1, planner: 1, generator: 1, reviewer: 0 },
         logicalRunTotal: 4,
         tokens: { input: 100, cachedInput: 60, uncachedInput: 40, output: 10 },
         byScope: {
           assistant: { input: 40, cachedInput: 20, output: 4 },
-          reflection: { input: 0, cachedInput: 0, output: 0 },
+          wake: { input: 0, cachedInput: 0, output: 0 },
           planner: { input: 30, cachedInput: 20, output: 3 },
           generator: { input: 30, cachedInput: 20, output: 3 },
           reviewer: { input: 0, cachedInput: 0, output: 0 },

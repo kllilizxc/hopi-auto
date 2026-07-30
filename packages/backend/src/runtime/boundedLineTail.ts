@@ -1,5 +1,5 @@
-export const DEFAULT_DIAGNOSTIC_TAIL_MAX_LINES = 200
-export const DEFAULT_DIAGNOSTIC_TAIL_MAX_CHARACTERS = 64 * 1024
+const DEFAULT_DIAGNOSTIC_TAIL_MAX_LINES = 200
+const DEFAULT_DIAGNOSTIC_TAIL_MAX_CHARACTERS = 64 * 1024
 
 export class BoundedLineTail {
   private readonly lines: string[] = []

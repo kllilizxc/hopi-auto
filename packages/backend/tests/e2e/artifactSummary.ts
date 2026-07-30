@@ -239,7 +239,9 @@ function usageSummary(report: TestRunReport): UsageSummary | null {
     const byScope = recordValue(usage.byScope)
     const roles = [
       'assistant',
-      'reflection',
+      'wake',
+      // Historical Test Runs used a model-backed Wake scope.
+      'wake',
       'planner',
       'generator',
       'reviewer',

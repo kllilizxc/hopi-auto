@@ -1,6 +1,6 @@
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { DEFAULT_PRIMARY_REPO_ID, projectReleaseBranch, projectReleaseRef } from '../domain/project'
+import { projectReleaseBranch, projectReleaseRef } from '../domain/project'
 import { STABLE_ID_PATTERN } from '../domain/stableId'
 
 export interface StableWorktreeInput {
@@ -8,8 +8,8 @@ export interface StableWorktreeInput {
   projectId: string
   goalId: string
   workId: string
-  repoId?: string
-  primaryRepoId?: string
+  repoId: string
+  primaryRepoId: string
 }
 
 export interface StableWorktree {
@@ -31,7 +31,7 @@ export class StableWorktreeSyncError extends StableWorktreeError {}
 export function createStableWorktreeManager(): StableWorktreeManager {
   function worktree(input: StableWorktreeInput): StableWorktree {
     assertInput(input)
-    const repoId = input.repoId ?? DEFAULT_PRIMARY_REPO_ID
+    const repoId = input.repoId
     const workRoot = join(dirname(resolve(input.projectRoot)), 'work', input.goalId, input.workId)
     return {
       path: workRoot,
@@ -145,7 +145,7 @@ export function createStableWorktreeManager(): StableWorktreeManager {
     const status = await worktreeStatus(expected.path)
     if (status) {
       throw new StableWorktreeSyncError(
-        `Cannot synchronize dirty Work checkout ${input.workId} with release ${releaseHead.stdout}; preserve its uncheckpointed source and replan`,
+        `Cannot synchronize dirty Work checkout ${input.workId} with release ${releaseHead.stdout}; its uncheckpointed source remains preserved`,
       )
     }
 
@@ -209,7 +209,7 @@ export function createStableWorktreeManager(): StableWorktreeManager {
     }
     if (nextStatus) {
       throw new StableWorktreeSyncError(
-        `Work ${input.workId} synchronized with release ${releaseHead.stdout} at ${nextHead.stdout}, but the merge exposed preserved source changes (${nextStatus}); replan this Work lineage`,
+        `Work ${input.workId} synchronized with release ${releaseHead.stdout} at ${nextHead.stdout}, but the merge exposed preserved source changes (${nextStatus})`,
       )
     }
     return expected
@@ -268,8 +268,8 @@ function assertInput(input: StableWorktreeInput) {
   assertStableId(input.projectId, 'projectId')
   assertStableId(input.goalId, 'goalId')
   assertStableId(input.workId, 'workId')
-  assertStableId(input.repoId ?? DEFAULT_PRIMARY_REPO_ID, 'repoId')
-  assertStableId(input.primaryRepoId ?? DEFAULT_PRIMARY_REPO_ID, 'primaryRepoId')
+  assertStableId(input.repoId, 'repoId')
+  assertStableId(input.primaryRepoId, 'primaryRepoId')
 }
 
 function assertStableId(value: string, label: string) {

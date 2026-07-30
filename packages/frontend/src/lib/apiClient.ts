@@ -13,7 +13,7 @@ import type {
   ProjectCodingDefaults,
   ProjectDirectorySelection,
   ProjectRebindPlan,
-  ReflectionRunSummary,
+  WakeRunSummary,
   RunAttemptDetail,
   RunAttemptEvent,
   RunAttemptSummary,
@@ -88,13 +88,13 @@ export function readAssistantFeedChanges(
   )
 }
 
-export function readReflectionRuns(input: CursorPageRequest = {}) {
-  return apiRequest<CursorPage<ReflectionRunSummary>>(withPage('/api/debug/reflections', input))
+export function readWakeRuns(input: CursorPageRequest = {}) {
+  return apiRequest<CursorPage<WakeRunSummary>>(withPage('/api/debug/wakes', input))
 }
 
-export function readReflectionRunEvents(reflectionId: string, input: CursorPageRequest = {}) {
+export function readWakeRunEvents(wakeId: string, input: CursorPageRequest = {}) {
   return apiRequest<CursorPage<RunAttemptEvent>>(
-    withPage(`/api/debug/reflections/${encodeURIComponent(reflectionId)}/events`, input),
+    withPage(`/api/debug/wakes/${encodeURIComponent(wakeId)}/events`, input),
   )
 }
 

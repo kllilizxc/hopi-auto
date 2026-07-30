@@ -75,7 +75,7 @@ without creating another product actor.
 User turns continue the speaking session. A Project wake runs in a provider-native fork of the
 speaking session. The fork inherits the same conversation context and provider cache, but its turns
 never join the speaking-session history. It is the same Assistant with the same Project authority,
-not a Reflection role, handoff target, or second product identity.
+not another role, handoff target, or second product identity.
 
 Native fork is a transport capability. HOPI does not approximate it by rebuilding a fresh prompt or
 copying a transcript. A configured transport that cannot fork reports that capability failure
@@ -105,8 +105,8 @@ restart replays the retained pending input or unobserved Project facts.
 
 ## Wake-Up
 
-Reflection is not an Agent, a role, or a model invocation. A Project event is only a reason to wake
-the same Project Assistant in a supervision fork.
+Wake is a deterministic state observer, not an Agent, role, or model invocation. A Project event is
+only a reason to enqueue the same Project Assistant in a supervision fork.
 
 On a wake, one Assistant invocation receives:
 
@@ -308,17 +308,17 @@ The Assistant changes Work through the same canonical Work document used by resp
 Changing dependencies replaces the nonterminal Engineering Work's `dependsOn` set and is accepted
 only when the resulting graph is valid and acyclic.
 
-An unchanged nonterminal Work whose latest settled Attempt is `attention`, `fail`, `invalid`, or an
-operational failure is already waiting for Assistant judgment. It is not redispatched merely because
-an Attention remains open or a supervision wake occurs. Attention records any responsibility that
-must remain visible; the settled Attempt remains the execution blocker for that exact Work
-assignment.
+An unchanged nonterminal Work whose latest settled Attempt has an `attention`, `invalid`, or
+operational-failure application, or a `fail` result, is already waiting for Assistant judgment. It is
+not redispatched merely because an Attention remains open or a supervision wake occurs. Attention
+records any responsibility that must remain visible; the settled Attempt remains the execution
+blocker for that exact Work assignment.
 
-Continuing with a message appends a timestamped, source-traced Project Owner note to that document.
-If an Attempt is active, HOPI interrupts it and schedules the changed Work in the same persistent
-responsibility lineage. This is transport recovery, not a new queue or workflow state: the resumed
-Agent receives the current Work document and its prior provider session. Project Owner message
-blocks do not change the responsibility-session compatibility fingerprint; ordinary Work contract
+Continuing with a message appends a timestamped, source-traced entry to the Work's structured
+`ownerMessages`. If an Attempt is active, HOPI interrupts it and schedules the changed Work in the
+same persistent responsibility lineage. This is transport recovery, not a new queue or workflow
+state: the resumed Agent receives the current Work document and its prior provider session. Owner
+messages do not change the responsibility-session compatibility fingerprint; ordinary Work contract
 or dependency changes still do.
 
 Cancelling Work means that execution path is no longer part of the Goal. It terminates the target and

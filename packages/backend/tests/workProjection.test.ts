@@ -78,7 +78,7 @@ describe('derived Work projection', () => {
     const projection = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
       ...runtime(),
       projectEligible: false,
-      passCapacity: { generator: false },
+      passCapacity: { planner: true, generator: false, reviewer: true },
     }).find((item) => item.workId === 'W-1')
 
     expect(projection).toMatchObject({
@@ -205,6 +205,7 @@ function runtime() {
   return {
     projectEligible: true,
     liveRunWorkIds: new Set<string>(),
+    settledFailureWorkIds: new Set<string>(),
     passCapacity: { planner: true, generator: true, reviewer: true },
     now: new Date('2026-07-11T00:00:00Z'),
   }
@@ -243,6 +244,8 @@ function work(
     dependsOn: [],
     contractRevision: 1,
     evidenceRefs: stage === 'done' && kind === 'engineering' ? ['E-1'] : [],
+    contextRefs: [],
+    ownerMessages: [],
     ...overrides,
   }
   return kind === 'planning'

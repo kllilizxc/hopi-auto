@@ -37,7 +37,7 @@ describe('Project reset maintenance', () => {
     expect(plan.assistant.eventIds).toEqual(['EV-P1'])
     expect(plan.assistant.attentionIds).toEqual(['AT-P1'])
     expect(plan.runtime.runRoots).toHaveLength(1)
-    expect(plan.runtime.reflectionRunRoots).toHaveLength(1)
+    expect(plan.runtime.wakeRunRoots).toHaveLength(1)
     expect(plan.repos[0]?.taskWorktrees).toEqual([await realpath(fixture.taskRoot)])
     expect(plan.repos[0]?.workRefs).toEqual(['refs/heads/hopi/work/P-1/G-1/W-1'])
     expect(await Bun.file(fixture.goalPath).exists()).toBe(true)
@@ -256,7 +256,7 @@ async function createFixture() {
   await writeJson(join(homeRoot, '.hopi/runtime/runs/R-P2/attempt.json'), {
     projectId: 'P-2',
   })
-  await writeJson(join(homeRoot, '.hopi/runtime/assistant/wakes/runs/WK-P1/reflection.json'), {
+  await writeJson(join(homeRoot, '.hopi/runtime/assistant/wakes/runs/WK-P1/wake.json'), {
     scope: { kind: 'project', projectId: 'P-1' },
   })
   await writeFile(join(homeRoot, '.hopi/runtime/assistant/turns/EV-P1/events.jsonl'), '')

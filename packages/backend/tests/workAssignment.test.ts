@@ -13,6 +13,8 @@ test('Work assignment fingerprint ignores Evidence history but changes with exec
       dependsOn: [],
       contractRevision: 1,
       evidenceRefs: [],
+      contextRefs: [],
+      ownerMessages: [],
     },
     body: '## Acceptance Criteria\n\n- Deliver the current contract.\n',
   }
@@ -22,6 +24,8 @@ test('Work assignment fingerprint ignores Evidence history but changes with exec
     attributes: {
       ...work.attributes,
       evidenceRefs: ['E-R-1', 'E-R-2'],
+      contextRefs: [],
+      ownerMessages: [],
     },
   })
   const revised = await workAssignmentHash({
@@ -30,14 +34,36 @@ test('Work assignment fingerprint ignores Evidence history but changes with exec
   })
   const withOwnerMessage = await workAssignmentHash({
     ...work,
-    body: appendProjectOwnerMessage(work.body, {
-      recordedAt: '2026-07-25T00:00:00.000Z',
-      sourceEventId: 'EV-guidance',
-      content: 'Use the verified API command.',
-    }),
+    attributes: {
+      ...work.attributes,
+      ownerMessages: [
+        ...appendProjectOwnerMessage(work.attributes.ownerMessages, {
+          recordedAt: '2026-07-25T00:00:00.000Z',
+          sourceEventId: 'EV-guidance',
+          content: 'Use the verified API command.',
+        }),
+      ],
+    },
   })
 
   expect(withHistory).toBe(initial)
   expect(withOwnerMessage).toBe(initial)
   expect(revised).not.toBe(initial)
+})
+
+test('Project Owner messages are idempotent by source event', () => {
+  const message = {
+    recordedAt: '2026-07-25T00:00:00.000Z',
+    sourceEventId: 'EV-guidance',
+    content: 'Use the verified API command.',
+  }
+  const first = appendProjectOwnerMessage([], message)
+
+  expect(appendProjectOwnerMessage(first, message)).toBe(first)
+  expect(() =>
+    appendProjectOwnerMessage(first, {
+      ...message,
+      content: 'Use a different command.',
+    }),
+  ).toThrow('Project Owner message already exists for EV-guidance')
 })

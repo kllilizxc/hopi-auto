@@ -323,6 +323,52 @@ describe('RunAttemptStore', () => {
     await recorder.value.interrupt('test complete')
   })
 
+  test('fails an Attempt event write instead of silently losing its trace', async () => {
+    const store = createRunAttemptStore(temporaryRoot)
+    const recorder = await store.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-write-failure',
+      responsibility: 'generator',
+      runRoot: runRoot('R-write-failure'),
+    })
+    const eventsPath = join(runRoot('R-write-failure'), 'events.jsonl')
+    await rm(eventsPath)
+    await mkdir(eventsPath)
+
+    await expect(
+      recorder.record({
+        kind: 'message',
+        level: 'info',
+        role: 'generator',
+        content: 'This event must be durable.',
+      }),
+    ).rejects.toThrow()
+  })
+
+  test('does not close a recovered Attempt when its interruption event cannot be stored', async () => {
+    const first = createRunAttemptStore(temporaryRoot)
+    await first.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-recovery-write-failure',
+      responsibility: 'generator',
+      runRoot: runRoot('R-recovery-write-failure'),
+    })
+    const eventsPath = join(runRoot('R-recovery-write-failure'), 'events.jsonl')
+    await rm(eventsPath)
+    await mkdir(eventsPath)
+
+    const restarted = createRunAttemptStore(temporaryRoot)
+    await expect(restarted.interruptRunningAttempts()).rejects.toThrow()
+    expect(await restarted.read('P-1', 'G-1', 'W-1', 'R-recovery-write-failure')).toMatchObject({
+      status: 'running',
+      endedAt: null,
+    })
+  })
+
   test('discards a torn event tail before restart recovery appends its interruption', async () => {
     const first = createRunAttemptStore(temporaryRoot, {
       now: () => new Date('2026-07-11T00:00:00Z'),

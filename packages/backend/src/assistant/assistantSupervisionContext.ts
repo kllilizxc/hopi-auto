@@ -1,53 +1,41 @@
-import type { AssistantStateSnapshot } from './assistantState'
+import type {
+  AssistantStateGoalSnapshot,
+  AssistantStateRuntime,
+  AssistantStateSnapshot,
+  AssistantStateWorkSnapshot,
+} from './assistantState'
 
 export function assistantMaterialWakeKeys(snapshot: AssistantStateSnapshot) {
   const keys: string[] = []
   for (const attention of snapshot.workspaceAttentions) {
-    if (!isRecord(attention)) continue
-    const attributes = isRecord(attention.attributes) ? attention.attributes : attention
-    if (attributes.resolvedAt !== null) continue
-    keys.push(
-      `workspace-attention:${String(attributes.id ?? '')}:${String(attributes.updatedAt ?? attributes.createdAt ?? '')}`,
-    )
+    if (attention.resolvedAt !== null) continue
+    keys.push(`workspace-attention:${attention.id}:${attention.updatedAt}`)
   }
 
   for (const project of snapshot.projects) {
-    if (!isRecord(project)) continue
-    const projectId = String(project.projectId ?? '')
+    const projectId = project.projectId
     if (project.available === false) {
-      keys.push(`project-unavailable:${projectId}:${String(project.error ?? '')}`)
+      keys.push(`project-unavailable:${projectId}:${project.error ?? ''}`)
     }
-    if (!Array.isArray(project.goals)) continue
     for (const goal of project.goals) {
-      if (!isRecord(goal)) continue
-      const goalDocument = isRecord(goal.goal) ? goal.goal : null
-      const goalAttributes =
-        goalDocument && isRecord(goalDocument.attributes) ? goalDocument.attributes : null
-      const goalId = String(goalAttributes?.id ?? '')
-      const lifecycle = String(goalAttributes?.lifecycle ?? '')
-      if (lifecycle && lifecycle !== 'active') {
+      const goalId = goal.goal.attributes.id
+      const lifecycle = goal.goal.attributes.lifecycle
+      if (lifecycle !== 'active') {
         keys.push(
-          `goal:${projectId}:${goalId}:${lifecycle}:${String(goalAttributes?.contractRevision ?? '')}`,
+          `goal:${projectId}:${goalId}:${lifecycle}:${goal.goal.attributes.contractRevision}`,
         )
       }
-      if (Array.isArray(goal.attentions)) {
-        for (const attention of goal.attentions) {
-          if (!isRecord(attention)) continue
-          const attributes = isRecord(attention.attributes) ? attention.attributes : attention
-          if (attributes.resolvedAt !== null) continue
-          keys.push(
-            `goal-attention:${projectId}:${goalId}:${String(attributes.id ?? '')}:${String(attributes.updatedAt ?? attributes.createdAt ?? '')}`,
-          )
-        }
+      for (const attention of goal.attentions) {
+        if (attention.attributes.resolvedAt !== null) continue
+        keys.push(
+          `goal-attention:${projectId}:${goalId}:${attention.attributes.id}:${attention.attributes.createdAt}`,
+        )
       }
       collectRuntimeWakeKeys(keys, projectId, goalId, goal.latestPlanningOutcome)
-      if (!Array.isArray(goal.works)) continue
       for (const work of goal.works) {
-        if (!isRecord(work)) continue
-        const attributes = isRecord(work.attributes) ? work.attributes : null
-        const workId = String(attributes?.id ?? '')
+        const workId = work.attributes.id
         collectRuntimeWakeKeys(keys, projectId, goalId, work, workId)
-        const stage = String(attributes?.stage ?? '')
+        const stage = work.attributes.stage
         if (stage === 'done' || stage === 'cancelled') {
           keys.push(`work-terminal:${projectId}:${goalId}:${workId}:${stage}`)
         }
@@ -64,31 +52,13 @@ export function assistantSupervisionProjection(snapshot: AssistantStateSnapshot)
     materialFacts: assistantMaterialWakeKeys(snapshot),
     unresolvedAttention: snapshot.workspaceAttentions,
     activeRuns: snapshot.activeRuns,
-    projects: snapshot.projects.map((project) => {
-      if (!isRecord(project)) return project
-      return {
-        projectId: project.projectId,
-        available: project.available,
-        releaseHead: project.releaseHead,
-        ...(project.error ? { error: project.error } : {}),
-        ...(Array.isArray(project.goals)
-          ? {
-              goals: project.goals.map((goal) => {
-                if (!isRecord(goal)) return goal
-                return {
-                  goal: compactDocument(goal.goal, 4_000),
-                  design: Array.isArray(goal.design)
-                    ? goal.design.map((document) => compactDocument(document, 4_000))
-                    : [],
-                  attentions: goal.attentions,
-                  latestPlanningOutcome: compactWork(goal.latestPlanningOutcome),
-                  works: Array.isArray(goal.works) ? goal.works.map(compactWork) : [],
-                }
-              }),
-            }
-          : { goals: [] }),
-      }
-    }),
+    projects: snapshot.projects.map((project) => ({
+      projectId: project.projectId,
+      available: project.available,
+      releaseHead: project.releaseHead,
+      ...(project.error ? { error: project.error } : {}),
+      goals: project.goals.map(compactGoal),
+    })),
   }
 }
 
@@ -96,68 +66,66 @@ function collectRuntimeWakeKeys(
   keys: string[],
   projectId: string,
   goalId: string,
-  value: unknown,
+  value: { runtime: AssistantStateRuntime } | null,
   workId = 'planning',
 ) {
-  if (!isRecord(value) || !isRecord(value.runtime)) return
-  const runtime = value.runtime
-  const attempts = Array.isArray(runtime.recentAttempts) ? runtime.recentAttempts : []
-  const latestTerminal = attempts.find(
-    (attempt) => isRecord(attempt) && attempt.status === 'finished' && attempt.result !== null,
+  if (!value) return
+  const latestTerminal = value.runtime.recentAttempts.find(
+    (attempt) => attempt.status === 'finished' && attempt.result !== null,
   )
-  if (isRecord(latestTerminal) && typeof latestTerminal.runId === 'string') {
+  if (latestTerminal) {
     keys.push(
-      `attempt:${projectId}:${goalId}:${workId}:${latestTerminal.runId}:${String(latestTerminal.result ?? '')}:${String(latestTerminal.application ?? '')}`,
+      `attempt:${projectId}:${goalId}:${workId}:${latestTerminal.runId}:${latestTerminal.result ?? ''}:${latestTerminal.application ?? ''}`,
     )
   }
-  if (runtime.stale === true) {
-    const latest = isRecord(runtime.latestAttempt) ? runtime.latestAttempt : null
-    keys.push(`stale:${projectId}:${goalId}:${workId}:${String(latest?.runId ?? '')}`)
+  if (value.runtime.stale) {
+    keys.push(`stale:${projectId}:${goalId}:${workId}:${value.runtime.latestAttempt?.runId ?? ''}`)
   }
 }
 
-function compactDocument(value: unknown, bodyLimit: number) {
-  if (!isRecord(value)) return value
+function compactGoal(goal: AssistantStateGoalSnapshot) {
   return {
-    ...(value.attributes ? { attributes: value.attributes } : {}),
-    ...(value.path ? { path: value.path } : {}),
-    ...(typeof value.body === 'string' ? { body: boundedText(value.body, bodyLimit) } : {}),
-    ...(typeof value.content === 'string'
-      ? { content: boundedText(value.content, bodyLimit) }
-      : {}),
+    goal: {
+      attributes: goal.goal.attributes,
+      path: goal.goal.path,
+      body: boundedText(goal.goal.body, 4_000),
+    },
+    design: goal.design.map((document) => ({
+      ...document,
+      excerpt: boundedText(document.excerpt, 4_000),
+    })),
+    attentions: goal.attentions,
+    latestPlanningOutcome: goal.latestPlanningOutcome
+      ? compactWork(goal.latestPlanningOutcome)
+      : null,
+    works: goal.works.map(compactWork),
   }
 }
 
-function compactWork(value: unknown) {
-  if (!isRecord(value)) return value
-  const runtime = isRecord(value.runtime) ? value.runtime : null
-  const projection = isRecord(value.projection) ? value.projection : null
+function compactWork(
+  value: AssistantStateWorkSnapshot | AssistantStateGoalSnapshot['latestPlanningOutcome'],
+) {
+  if (!value) return null
   return {
     attributes: value.attributes,
     path: value.path,
-    ...(projection ? { projection } : {}),
-    ...(value.candidateIntegration ? { candidateIntegration: value.candidateIntegration } : {}),
-    ...(runtime
-      ? {
-          runtime: {
-            activeResponsibility: runtime.activeResponsibility,
-            attemptCount: runtime.attemptCount,
-            stale: runtime.stale,
-            lastActivityAt: runtime.lastActivityAt,
-            latestAttempt: runtime.latestAttempt,
-            recentAttempts: runtime.recentAttempts,
-            paths: runtime.paths,
-          },
-        }
+    ...('projection' in value && value.projection ? { projection: value.projection } : {}),
+    ...('candidateIntegration' in value && value.candidateIntegration
+      ? { candidateIntegration: value.candidateIntegration }
       : {}),
+    runtime: {
+      activeResponsibility: value.runtime.activeResponsibility,
+      attemptCount: value.runtime.attemptCount,
+      stale: value.runtime.stale,
+      lastActivityAt: value.runtime.lastActivityAt,
+      latestAttempt: value.runtime.latestAttempt,
+      recentAttempts: value.runtime.recentAttempts,
+      paths: value.runtime.paths,
+    },
   }
 }
 
 function boundedText(value: string, limit: number) {
   if (value.length <= limit) return value
   return `${value.slice(0, limit).trimEnd()}\n[content omitted; inspect the canonical path for the full document]`
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
