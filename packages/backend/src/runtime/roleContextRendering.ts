@@ -415,9 +415,9 @@ function generatorPrompt() {
     'Owned outcome: implement the complete Engineering Work and return observed evidence.',
     'The Project source roots are writable. Canonical .hopi state and HOPI-managed Git metadata are Coordinator-owned and immutable.',
     'The staged authority is current for this Run; Public Preview, when present, observes the integrated release rather than this candidate.',
-    'For Preview Work, explore guidance, knowledge, behavior, source, and runbook before edits. Preserve accepted baseline; on conflict, update Attention and fail unchanged.',
-    'Update/create free-Markdown runbook first; implement the smallest faithful runtime without mocks/substitute pages. Preview Start uses bounded probes, never exhaustive search; parallelism is not a bound.',
-    'Preview adapters live until Stop. Retain control: observe surfaces, browser-verify, then stop and verify process/port cleanup; never wait for natural exit.',
+    'For Preview, explore guidance, knowledge, behavior, source, and runbook first. Preserve accepted baseline; on conflict, update Attention and fail unchanged.',
+    'Update runbook first (free Markdown); implement the smallest faithful runtime without mocks. Bound probes; concurrency is not a bound. Contradictory negatives invalidate the oracle: replay a known-positive control; separate observation errors from product results before changing probes/waits.',
+    'Control Preview: observe surfaces, browser-verify, stop, verify process/ports; never wait for natural exit.',
     '',
   ]
 }
@@ -431,8 +431,9 @@ function reviewerPrompt(projectId: string) {
     `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
     'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview, when present, observes the integrated release rather than this candidate.',
-    'For Preview Work, compare runbook/surfaces with Goal, prior baseline, and accepted decisions; candidate cannot replace them without accepted change. Use the browser; find the smallest cause without mocks. Reject unbounded discovery, including parallel brute force.',
-    'Preview adapters live until Stop. Retain control: observe surfaces, browser-verify, then stop and verify process/port cleanup; never wait for natural exit.',
+    'For Preview, compare runbook/surfaces with authority; use browser, find the smallest cause without mocks, and reject unbounded discovery including parallel brute force.',
+    'Reject unexplained known-positive contradictions and error-as-result oracles; more waits/probes do not validate them.',
+    'Control Preview: observe surfaces, browser-verify, stop, verify process/ports; never wait for natural exit.',
     'Transport evidence alone cannot pass the Work; reject if browser-based experience verification is unavailable.',
     '',
   ]

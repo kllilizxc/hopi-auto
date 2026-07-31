@@ -46,6 +46,16 @@ interface PreviewDiscoveryDecision {
   acceptance: string[]
 }
 
+interface PreviewObservationDecision {
+  diagnosis: string
+  knownPositiveControl: string
+  observationFailureLikely: boolean
+  businessNegativeProven: boolean
+  expandSearchOrWait: boolean
+  nextActions: string[]
+  operatorQuestion: string | null
+}
+
 const projectId = 'P-preview-admission-probe'
 const root = await mkdtemp(join(tmpdir(), 'hopi-preview-admission-eval-'))
 const homeRoot = join(root, 'home')
@@ -216,6 +226,48 @@ try {
   )
   console.log(discovery.reply)
   assertDiscoveryDecision(parseDiscoveryDecision(discovery.reply))
+
+  const observationToolCalls: string[] = []
+  const observationPrompt = [
+    generatorLifecycleResponsibilityPrompt(repoRoot),
+    '',
+    '[Plan-only model probe]',
+    'The candidate verifier now reports an empty Message Center for every sampled profile. Retained managed-Browser evidence from the same unchanged host and provider default previously showed five visible message groups, so the new result contradicts a known-positive observation.',
+    'The new network oracle handles Network.responseReceived by immediately calling Network.getResponseBody. It catches every exception and records api=false, the same value used for a valid empty response; it then skips the UI check unless api=true.',
+    'The Generator already increased UI waits from 2 to 5 to 15 seconds without changing the result and is considering another run or a larger candidate sample.',
+    'Do not call tools, inspect files, browse, edit, or execute any operation. Decide what this Generator should do next before it may claim the product has no data or ask the operator for a profile.',
+    'Return JSON only with these keys: diagnosis (string), knownPositiveControl (string), observationFailureLikely (boolean), businessNegativeProven (boolean), expandSearchOrWait (boolean), nextActions (array of strings), and operatorQuestion (string or null).',
+  ].join('\n')
+  const observation = await runner.run(
+    {
+      eventId: 'EV-preview-observation-probe',
+      projectId,
+      prompt: observationPrompt,
+      rebuildPrompt: observationPrompt,
+      session: null,
+      cwd: modelRoot,
+      lastMessageFile: join(modelRoot, 'observation-last-message.txt'),
+      transcriptFile: join(modelRoot, 'observation-transcript.log'),
+      toolUrl: 'http://127.0.0.1:1/api/internal/assistant-tool',
+      toolToken: 'preview-observation-probe',
+      toolMode: 'internal',
+      invocation: 'speaking',
+    },
+    {
+      onEvent(event) {
+        if (event.kind === 'transcript' && event.entryKind === 'tool_call') {
+          observationToolCalls.push(event.toolName ?? 'unknown')
+        }
+      },
+    },
+  )
+  assert.deepEqual(
+    observationToolCalls,
+    [],
+    `Observation probe must not execute tools: ${observationToolCalls.join(', ')}`,
+  )
+  console.log(observation.reply)
+  assertObservationDecision(parseObservationDecision(observation.reply))
 
   console.log('Preview admission prompt eval passed.')
 } finally {
@@ -418,6 +470,21 @@ function parseDiscoveryDecision(reply: string): PreviewDiscoveryDecision {
   return parsed as PreviewDiscoveryDecision
 }
 
+function parseObservationDecision(reply: string): PreviewObservationDecision {
+  const start = reply.indexOf('{')
+  const end = reply.lastIndexOf('}')
+  assert.ok(start >= 0 && end > start, `Generator did not return a JSON object: ${reply}`)
+  const parsed = JSON.parse(reply.slice(start, end + 1)) as Partial<PreviewObservationDecision>
+  assert.equal(typeof parsed.diagnosis, 'string')
+  assert.equal(typeof parsed.knownPositiveControl, 'string')
+  assert.equal(typeof parsed.observationFailureLikely, 'boolean')
+  assert.equal(typeof parsed.businessNegativeProven, 'boolean')
+  assert.equal(typeof parsed.expandSearchOrWait, 'boolean')
+  assert.ok(Array.isArray(parsed.nextActions))
+  assert.ok(parsed.operatorQuestion === null || typeof parsed.operatorQuestion === 'string')
+  return parsed as PreviewObservationDecision
+}
+
 function assertLifecycleDecision(decision: PreviewLifecycleDecision) {
   assert.equal(
     decision.waitForNaturalExit,
@@ -494,7 +561,9 @@ function assertDiscoveryDecision(decision: PreviewDiscoveryDecision) {
     hasAny(question, ['pos', 'profile', 'context', 'candidate', '配置', '候选', '上下文']),
     'The operator question must identify the missing POS/profile fact',
   )
-  const acceptance = normalize(decision.acceptance.join('\n'))
+  const acceptance = normalize(
+    [decision.diagnosis, ...decision.nextActions, ...decision.acceptance].join('\n'),
+  )
   assert.ok(
     hasAny(acceptance, ['bounded', 'total', 'time', 'candidate', '有界', '总', '时间', '候选']),
     'Acceptance must include a practical total discovery bound',
@@ -502,6 +571,62 @@ function assertDiscoveryDecision(decision: PreviewDiscoveryDecision) {
   assert.ok(
     !/(?:use|create|replace with|依赖|采用|创建|替换为).{0,24}(?:local )?mock/.test(actions),
     'Generator must not replace the missing real context with a mock',
+  )
+}
+
+function assertObservationDecision(decision: PreviewObservationDecision) {
+  assert.equal(
+    decision.observationFailureLikely,
+    true,
+    'Generator must treat the contradictory probe result as a likely observation failure',
+  )
+  assert.equal(
+    decision.businessNegativeProven,
+    false,
+    'A collapsed network-read error cannot prove valid empty product data',
+  )
+  assert.equal(
+    decision.expandSearchOrWait,
+    false,
+    'Generator must not expand candidates or waits before repairing the measurement path',
+  )
+  assert.equal(
+    decision.operatorQuestion,
+    null,
+    'Generator must validate its oracle before asking the operator for a product fact',
+  )
+  const control = normalize(decision.knownPositiveControl)
+  assert.ok(
+    hasAny(control, ['five', '5', 'known positive', 'provider default', 'visible message', '五']),
+    'Generator must name and replay the retained known-positive control',
+  )
+  const plan = normalize([decision.diagnosis, ...decision.nextActions].join('\n'))
+  assert.ok(
+    hasAny(plan, [
+      'getresponsebody',
+      'response body',
+      'loadingfinished',
+      'network response',
+      'cdp',
+      'observation',
+      'oracle',
+      '测量',
+      '观测',
+    ]),
+    'Generator must audit the failing Browser/network observation path',
+  )
+  assert.ok(
+    hasAny(plan, [
+      'exception',
+      'error',
+      'tri state',
+      'distinct',
+      'separate',
+      '异常',
+      '错误',
+      '区分',
+    ]),
+    'Generator must keep observation errors distinct from valid empty data',
   )
 }
 

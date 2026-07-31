@@ -110,6 +110,15 @@ still cannot be established with bounded exploration, Preview remains fail-close
 updates the smallest Attention so Assistant can ask one precise question; it does not publish a
 partial experience, fabricate a mock, or hide the uncertainty behind a large runtime scan.
 
+Experience verification also has a bounded observation contract. A verified business-negative
+result (for example, an empty experience) is distinct from an observation failure. Browser, network,
+or assertion errors must remain observable and must not be collapsed into the same value as valid
+empty product data. When a candidate result contradicts a known-positive observation, current
+application behavior, or another accepted fact, Generator treats the measurement as unproved and
+audits the smallest relevant observation path before changing search scope, retry count, or timeout.
+It first replays a known-positive control when one is available, then fixes or explains the oracle;
+only a successfully observed negative result can justify an Attention about missing product data.
+
 An existing runbook and accepted Project, Goal, or operator inputs are the current
 intended-experience authority. Discarding old Preview conclusions discards obsolete implementation
 and acceptance evidence, not those durable product decisions. A route, service, package, or
@@ -144,6 +153,9 @@ available. HTTP responses, process state, and port cleanup remain necessary oper
 cannot replace that judgment.
 Reviewer also rejects a candidate whose ordinary Start depends on exhaustive runtime discovery or
 resource fan-out with no practical total bound; making the same search concurrent is not a bound.
+Reviewer rejects verification that converts observation errors into business-negative results or
+leaves a contradiction with a known-positive control unexplained. Increasing waits or probes does
+not repair an invalid oracle.
 
 Reviewer also checks the proposed runbook and announced surfaces against the current Goal, the
 previous runbook baseline, and accepted operator decisions rather than treating the Engineering Work
