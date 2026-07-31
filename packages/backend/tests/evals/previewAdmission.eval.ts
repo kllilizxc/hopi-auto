@@ -11,6 +11,7 @@ import {
   type AssistantModelRunner,
   createConfiguredAssistantModelRunner,
 } from '../../src/assistant/workspaceAssistant'
+import { assistantDecisionPromptSchema } from '../../src/domain/assistantDecisionPrompt'
 import { createServer } from '../../src/mvpServer'
 import { renderResponsibilityPrompt } from '../../src/runtime/roleContextRendering'
 import { agentAdapterConfigPath } from '../../src/storage/assistantRuntimePaths'
@@ -45,6 +46,7 @@ interface PreviewDiscoveryDecision {
   numericCandidateCapIsPracticalBound: boolean
   repeatTimeBudgetedScan: boolean
   attentionQuestion: string | null
+  attentionDecisionPrompt: unknown
   acceptance: string[]
 }
 
@@ -197,7 +199,7 @@ try {
     'After repairing the observation path, a known-positive control passes. One real fail-closed pass then sampled MyStore/POS profiles serially (concurrency 1, candidate cap 192) for a fixed three-minute wall-clock budget; it received valid empty responses and found no profile that was non-empty in both hosts.',
     'The Generator now proposes optimizing valid-empty candidates to finish earlier and rerunning another fixed three-minute sample. It still has no accepted fact identifying a qualifying profile, and a sampled absence cannot establish one.',
     'Do not call tools, inspect files, browse, edit, or execute any operation. Decide what this Generator should do next and what precise operator question, if any, should be routed through Attention and Assistant.',
-    'Return JSON only with these keys: diagnosis (string), nextActions (array of strings), exhaustiveRuntimeScan (boolean), lowerConcurrencyMakesTotalCostPractical (boolean), numericCandidateCapIsPracticalBound (boolean), repeatTimeBudgetedScan (boolean), attentionQuestion (string or null), and acceptance (array of strings).',
+    'Return JSON only with these keys: diagnosis (string), nextActions (array of strings), exhaustiveRuntimeScan (boolean), lowerConcurrencyMakesTotalCostPractical (boolean), numericCandidateCapIsPracticalBound (boolean), repeatTimeBudgetedScan (boolean), attentionQuestion (string or null), attentionDecisionPrompt (the exact staged targeted-attention shape {questions:[{id,header,question,options:[{id,label,description,recommended?}],allowOther}]} with one question and 2-3 options), and acceptance (array of strings).',
   ].join('\n')
   const discovery = await runner.run(
     {
@@ -461,6 +463,7 @@ function parseDiscoveryDecision(reply: string): PreviewDiscoveryDecision {
   assert.equal(typeof parsed.numericCandidateCapIsPracticalBound, 'boolean')
   assert.equal(typeof parsed.repeatTimeBudgetedScan, 'boolean')
   assert.ok(parsed.attentionQuestion === null || typeof parsed.attentionQuestion === 'string')
+  assert.ok('attentionDecisionPrompt' in parsed)
   assert.ok(Array.isArray(parsed.acceptance))
   return parsed as PreviewDiscoveryDecision
 }
@@ -565,6 +568,18 @@ function assertDiscoveryDecision(decision: PreviewDiscoveryDecision) {
   assert.ok(
     hasAny(question, ['pos', 'profile', 'context', 'candidate', '配置', '候选', '上下文']),
     'The operator question must identify the missing POS/profile fact',
+  )
+  const decisionPrompt = assistantDecisionPromptSchema.parse(decision.attentionDecisionPrompt)
+  assert.equal(decisionPrompt.questions.length, 1)
+  assert.ok(
+    hasAny(normalize(decisionPrompt.questions[0]?.question ?? ''), [
+      'pos',
+      'profile',
+      'context',
+      '配置',
+      '上下文',
+    ]),
+    'The Attention decisionPrompt must expose the precise missing POS/profile question to the operator',
   )
   const acceptance = normalize(
     [decision.diagnosis, ...decision.nextActions, ...decision.acceptance].join('\n'),

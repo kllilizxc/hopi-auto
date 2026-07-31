@@ -1014,7 +1014,9 @@ describe('WorkspaceAssistant conversation', () => {
     )
     expect(seen[0]?.prompt).toContain('a per-attempt deadline does not authorize repeated sampling')
     expect(seen[0]?.prompt).toContain('instead of optimizing or rerunning the sample')
-    expect(seen[0]?.prompt).toContain('ask the smallest precise question')
+    expect(seen[0]?.prompt).toContain(
+      'put the smallest precise question in the Attention decisionPrompt',
+    )
     expect(seen[0]?.prompt).toContain(
       'do not create dependent Engineering Work until it is resolved',
     )

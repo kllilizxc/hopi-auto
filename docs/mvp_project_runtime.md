@@ -111,9 +111,9 @@ and source. A per-attempt wall-clock deadline makes only that attempt finite; re
 does not make discovery bounded or establish an unknown Project fact. Generator may repair an invalid
 observation oracle and replay its known-positive control. Once a valid oracle leaves a required fact
 unknown after bounded exploration, Generator does not optimize or rerun sampling: Preview remains
-fail-closed and the Agent updates the smallest Attention so Assistant can ask one precise question.
-It does not publish a partial experience, fabricate a mock, or hide the uncertainty behind runtime
-sampling.
+fail-closed and the Agent updates the smallest Attention with one precise `decisionPrompt` the
+operator can answer directly. It does not publish a partial experience, fabricate a mock, or hide
+the uncertainty behind runtime sampling.
 
 Experience verification also has a bounded observation contract. A verified business-negative
 result (for example, an empty experience) is distinct from an observation failure. Browser, network,
