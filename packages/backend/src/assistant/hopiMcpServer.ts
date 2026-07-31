@@ -52,7 +52,7 @@ server.registerTool(
   'hopi_create_goal',
   {
     description:
-      'Create one Goal from the current Inbox turn and atomically create its first Work. Planning shapes the Goal contract; Engineering starts managed Generator delivery, Reviewer verification, Evidence, and recovery without a Planning pass. For Preview, preserve current docs/hopi/preview/runbook.md decisions unless this turn explicitly changes them; rebuild or ignore-old wording applies to implementation and evidence, not that runbook.',
+      'Create one Goal from the current Inbox turn and atomically create its first Work. Planning shapes the Goal contract; Engineering starts managed Generator delivery, Reviewer verification, Evidence, and recovery without a Planning pass. A diagnosed missing Preview adapter can start with Engineering: Generator explores and creates or updates docs/hopi/preview/runbook.md before implementation; use Planning only for a genuinely unresolved contract. For Preview, preserve current docs/hopi/preview/runbook.md decisions unless this turn explicitly changes them; rebuild or ignore-old wording applies to implementation and evidence, not that runbook.',
     inputSchema: assistantMcpToolSchemas.hopi_create_goal,
   },
   (args) => callTool('hopi_create_goal', args),

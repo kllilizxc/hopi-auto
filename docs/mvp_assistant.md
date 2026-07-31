@@ -461,6 +461,15 @@ and desired Project capability, not a workflow choice. Assistant already has ord
 and Planning-or-Engineering Work capabilities for its own judgment; Preview has no special repair
 operation or repair workflow.
 
+A user-initiated Preview Start is itself a request for a working Project Preview. Its failure wakes
+Assistant with that requested capability; it does not require a second “ask to repair” action or an
+operator-authored implementation prompt. Assistant diagnoses the current Project state. When the
+adapter or runbook capability is missing or stale and no existing Work owns the repair, Assistant
+creates the smallest Goal with an Engineering Work; Generator explores the Project and maintains the
+free-Markdown runbook before implementation. When an existing Work already owns the repair,
+Assistant supervises that Work instead of creating a duplicate. Planning or Attention is used only
+when a real unresolved product decision changes the outcome, not merely because the adapter is absent.
+
 Every work-domain operation shared by the product UI and speaking Assistant uses the same domain
 validator and document store. Host configuration is deliberately outside that parity: model and
 full-access settings remain direct operator UI/API controls and are not model tools. Directory

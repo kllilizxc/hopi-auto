@@ -1175,6 +1175,11 @@ describe('MVP server', () => {
       method: 'POST',
     })
     await waitForAssistantCalls(calls, 1)
+    expect(
+      calls[0]?.prompt.includes(
+        'Requested capability: make Project Preview work from the current Project state.',
+      ),
+    ).toBe(true)
     expect(calls[0]).toMatchObject({
       invocation: 'speaking',
       sessionId: null,
@@ -1195,6 +1200,11 @@ describe('MVP server', () => {
       method: 'POST',
     })
     await waitForAssistantCalls(calls, 2)
+    expect(
+      calls[1]?.prompt.includes(
+        'Requested capability: make Project Preview work from the current Project state.',
+      ),
+    ).toBe(true)
     expect(calls[1]).toMatchObject({
       invocation: 'supervision',
       sessionId: 'preview-bootstrap-session',
@@ -1783,7 +1793,13 @@ describe('MVP server', () => {
       failureReason: 'missing',
       error: expect.stringContaining('scripts/hopi/preview'),
     })
-    expect(await waitForPreviewFailureEvent(homeRoot, publisher)).toMatchObject({
+    const previewFailureEvent = await waitForPreviewFailureEvent(homeRoot, publisher)
+    expect(
+      previewFailureEvent.body.includes(
+        'Requested capability: make Project Preview work from the current Project state.',
+      ),
+    ).toBe(true)
+    expect(previewFailureEvent).toMatchObject({
       attributes: {
         status: 'pending',
         source: 'system',

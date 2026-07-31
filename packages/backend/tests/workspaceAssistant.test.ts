@@ -992,14 +992,22 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('only operator-facing entries as surfaces')
     expect(seen[0]?.prompt).toContain('transport reachability is not semantic completion evidence')
     expect(seen[0]?.prompt).toContain(
-      'docs/hopi/preview/runbook.md remains intended-surface and host-child authority',
+      'When docs/hopi/preview/runbook.md exists, it remains intended-surface and host-child authority',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'If absent, infer no intended-experience facts; Generator creates it through exploration',
     )
     expect(seen[0]?.prompt).toContain(
       'until accepted Project, Goal, or operator input explicitly changes it',
     )
     expect(seen[0]?.prompt).toContain(
-      'Never treat a generic rebuild or instruction to ignore old Preview conclusions as demoting that baseline',
+      'Never treat a generic rebuild or instruction to ignore old Preview conclusions as demoting an existing baseline',
     )
+    expect(seen[0]?.prompt).toContain(
+      'A user-initiated Preview Start already requests a working Preview',
+    )
+    expect(seen[0]?.prompt).toContain('Do not wait for a second repair message')
+    expect(seen[0]?.prompt).toContain('create the smallest Goal with an Engineering Work yourself')
     expect(seen[0]?.prompt).toContain(
       'do not create dependent Engineering Work until it is resolved',
     )

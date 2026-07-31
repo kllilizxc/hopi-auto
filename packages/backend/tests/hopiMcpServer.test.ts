@@ -92,6 +92,12 @@ describe('HOPI MCP server', () => {
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
       'without a Planning pass',
     )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
+      'A diagnosed missing Preview adapter can start with Engineering',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
+      'use Planning only for a genuinely unresolved contract',
+    )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
       'Choose planning',
     )

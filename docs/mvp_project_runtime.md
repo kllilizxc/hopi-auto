@@ -96,6 +96,10 @@ Engineering Work creates or changes Preview, Generator first creates or refreshe
 exploring applicable Repo guidance, knowledge sources, the existing application, and current source,
 then implements the adapter. Technical facts discovered during implementation are written back in
 the same Work. Ordinary Start/Stop and runtime failure do not create a separate runbook workflow.
+However, a user-initiated Start already requests the working Preview capability. If diagnosis finds
+that no adapter exists and no current Work owns that capability, Assistant creates the ordinary
+Engineering Work itself; the operator does not have to ask for repair separately. This admission
+uses the existing Goal/Work model and is not a Preview-specific repair workflow.
 
 An existing runbook and accepted Project, Goal, or operator inputs are the current
 intended-experience authority. Discarding old Preview conclusions discards obsolete implementation

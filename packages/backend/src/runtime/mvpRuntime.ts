@@ -143,6 +143,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
           details: [
             `Reason: ${event.reason}.`,
             `Detail: ${event.message}`,
+            'Requested capability: make Project Preview work from the current Project state.',
             `Session manifest: ${event.manifestPath}`,
             `Log: ${event.logPath}`,
           ],
