@@ -101,10 +101,12 @@ An existing runbook and accepted Project, Goal, or operator inputs are the curre
 intended-experience authority. Discarding old Preview conclusions discards obsolete implementation
 and acceptance evidence, not those durable product decisions. A route, service, package, or
 successful response proves technical availability only; it does not create an operator entry or
-override the runbook. When exploration exposes a conflict or a missing answer that can change the
-Preview boundary, composition, or acceptance, the responsible Agent asks the smallest question
-before starting dependent implementation and updates an existing unresolved Attention instead of
-duplicating it.
+override the runbook. Only accepted input that explicitly changes a product decision may revise this
+baseline; a generic rebuild or instruction to ignore old Preview conclusions cannot demote it. When
+exploration exposes a conflict or a missing answer that can change the Preview boundary,
+composition, or acceptance, the responsible Agent preserves the runbook boundary, asks the smallest
+question before starting dependent implementation, and updates an existing unresolved Attention
+instead of duplicating it.
 
 Preview does not inspect, classify, replace, snapshot, or seek approval for the databases selected
 by Project configuration. Its services may read and write those databases normally. After Preview

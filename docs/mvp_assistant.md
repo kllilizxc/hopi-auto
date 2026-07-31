@@ -441,6 +441,11 @@ Preview boundary, composition, or acceptance, Assistant or Planner keeps only th
 Attention and does not create dependent Engineering Work yet. This is Agent judgment over the
 contract, not a new global scheduling state or path classifier.
 
+A generic request to rebuild Preview or ignore prior failures never invalidates the current
+runbook's surface and host-child decisions. Only accepted input that explicitly changes such a
+product decision may revise that baseline; conflicting source discovery is evidence for a question,
+not authority for a replacement scope.
+
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
 

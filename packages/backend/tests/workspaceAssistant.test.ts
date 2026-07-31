@@ -992,10 +992,13 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('only operator-facing entries as surfaces')
     expect(seen[0]?.prompt).toContain('transport reachability is not semantic completion evidence')
     expect(seen[0]?.prompt).toContain(
-      'accepted Project, Goal, or operator inputs remain intended-experience authority',
+      'docs/hopi/preview/runbook.md remains intended-surface and host-child authority',
     )
     expect(seen[0]?.prompt).toContain(
-      'A live route or service proves availability only, not a user entry',
+      'until accepted Project, Goal, or operator input explicitly changes it',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'Never treat a generic rebuild or instruction to ignore old Preview conclusions as demoting that baseline',
     )
     expect(seen[0]?.prompt).toContain(
       'do not create dependent Engineering Work until it is resolved',

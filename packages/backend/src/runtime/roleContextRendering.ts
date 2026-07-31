@@ -163,7 +163,7 @@ export function renderResponsibilityPrompt(
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
     '$HOPI_REPOS_FILE is the complete Project source-root map; roots may contain source, knowledge, or both, and list existing Repo guidance. Other source and Work runtimes are outside this assignment.',
     'Project Preview starts the smallest real runtime composition needed for the intended Project experience and announces only operator-facing entries as surfaces. Internal application dependencies and infrastructure may run without becoming surfaces; transport reachability is not semantic completion evidence.',
-    'Current Preview runbook and accepted inputs remain experience authority; routes and reachable services prove availability, not operator-entry scope.',
+    'docs/hopi/preview/runbook.md remains surface and host-child authority until accepted input explicitly changes it; never demote it as an old conclusion. Routes and services only prove availability.',
     'Do not inspect, classify, isolate, snapshot, or seek approval for Preview database connections or writes. After completion, at most warn the operator that connected data may have changed.',
     'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
     ...(paths.hasImages
@@ -400,7 +400,7 @@ function plannerPrompt(paths: {
     'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
     'The proposal owns the current nonterminal dependsOn graph and may atomically add, remove, or redirect edges. Leave one valid acyclic graph; terminal Work is immutable.',
     'Owned Project Repo context: .hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology.',
-    'For Preview planning, discarding old conclusions never discards durable product decisions. If missing input can change boundary, composition, or acceptance, reuse or update the smallest Attention and propose no dependent Engineering Work; never substitute a speculative superset.',
+    'For Preview planning, preserve that baseline. If source conflicts or missing input can change it, keep the runbook boundary in proposed design and Repo context, reuse or update the smallest Attention, and propose no dependent Engineering Work.',
     ...(paths.bootstrapSourceRoot
       ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),
@@ -415,7 +415,7 @@ function generatorPrompt() {
     'Owned outcome: implement the complete Engineering Work and return observed evidence.',
     'The Project source roots are writable. Canonical .hopi state and HOPI-managed Git metadata are Coordinator-owned and immutable.',
     'The staged authority is current for this Run; Public Preview, when present, observes the integrated release rather than this candidate.',
-    'For Preview Work, read the runbook and explore guidance, knowledge, application behavior, and source before edits. If missing input can change boundary, composition, or acceptance, reuse or update its Attention and fail unchanged.',
+    'For Preview Work, read runbook and explore guidance, knowledge, application, and source before edits. Preserve its baseline unless accepted input changes it; on conflict, reuse or update Attention and fail unchanged.',
     'Otherwise update or create the free-Markdown runbook first, preserve accepted experience, then implement the smallest faithful runtime and record facts; never use mocks or substitute pages to hide a dependency.',
     '',
   ]
@@ -430,7 +430,7 @@ function reviewerPrompt(projectId: string) {
     `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
     'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview, when present, observes the integrated release rather than this candidate.',
-    'For Preview Work, compare candidate runbook and surfaces with the Goal, previous runbook, and accepted decisions; live routes cannot redefine experience. Start and use the candidate in the browser, tracing incomplete experience to the smallest runtime or source cause without mocks.',
+    'For Preview Work, compare candidate runbook and surfaces with Goal, previous runbook, and accepted decisions; without an explicit accepted change, the candidate cannot replace that baseline. Start/use it in the browser; trace incomplete experience to the smallest runtime or source cause without mocks.',
     'Transport evidence alone cannot pass the Work; reject if browser-based experience verification is unavailable.',
     '',
   ]
