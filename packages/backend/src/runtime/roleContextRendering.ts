@@ -162,8 +162,8 @@ export function renderResponsibilityPrompt(
     'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published; any other proposal is rejected.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
     '$HOPI_REPOS_FILE is the complete Project source-root map; roots may contain source, knowledge, or both, and list existing Repo guidance. Other source and Work runtimes are outside this assignment.',
-    'Project Preview starts the smallest real runtime composition needed for the intended Project experience and announces only operator-facing entries as surfaces. Internal application dependencies and infrastructure may run without becoming surfaces; transport reachability is not semantic completion evidence.',
-    'docs/hopi/preview/runbook.md remains surface and host-child authority until accepted input explicitly changes it; never demote it as an old conclusion. Routes and services only prove availability.',
+    'Preview uses the smallest real runtime composition for intended experience and exposes only operator surfaces. Internal dependencies need not be surfaces; transport readiness is not semantic completion.',
+    'docs/hopi/preview/runbook.md is surface and host-child authority until accepted input explicitly changes it. Never demote it; routes and services only prove availability.',
     'Do not inspect, classify, isolate, snapshot, or seek approval for Preview database connections or writes. After completion, at most warn the operator that connected data may have changed.',
     'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
     ...(paths.hasImages
@@ -415,8 +415,9 @@ function generatorPrompt() {
     'Owned outcome: implement the complete Engineering Work and return observed evidence.',
     'The Project source roots are writable. Canonical .hopi state and HOPI-managed Git metadata are Coordinator-owned and immutable.',
     'The staged authority is current for this Run; Public Preview, when present, observes the integrated release rather than this candidate.',
-    'For Preview Work, read runbook and explore guidance, knowledge, application, and source before edits. Preserve its baseline unless accepted input changes it; on conflict, reuse or update Attention and fail unchanged.',
-    'Otherwise update or create the free-Markdown runbook first, preserve accepted experience, then implement the smallest faithful runtime and record facts; never use mocks or substitute pages to hide a dependency.',
+    'For Preview Work, explore applicable guidance, knowledge, application behavior, and source; read the runbook before edits. Preserve its baseline unless accepted input changes it; on conflict, reuse or update Attention and fail unchanged.',
+    'Update or create the free-Markdown runbook first, then implement the smallest faithful runtime; never hide dependencies with mocks or substitute pages.',
+    'Preview adapters live until Stop. Retain control: observe surfaces, browser-verify, then stop and verify process/port cleanup; never wait for natural exit.',
     '',
   ]
 }
@@ -431,6 +432,7 @@ function reviewerPrompt(projectId: string) {
     'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview, when present, observes the integrated release rather than this candidate.',
     'For Preview Work, compare candidate runbook and surfaces with Goal, previous runbook, and accepted decisions; without an explicit accepted change, the candidate cannot replace that baseline. Start/use it in the browser; trace incomplete experience to the smallest runtime or source cause without mocks.',
+    'Preview adapters live until Stop. Retain control: observe surfaces, browser-verify, then stop and verify process/port cleanup; never wait for natural exit.',
     'Transport evidence alone cannot pass the Work; reject if browser-based experience verification is unavailable.',
     '',
   ]

@@ -434,6 +434,11 @@ incomplete experience to its smallest material runtime or source cause; transpor
 cannot satisfy the Work. Ordinary Preview Start/Stop and startup failure remain runtime facts and do
 not automatically create a runbook Work.
 
+Candidate Preview adapters normally remain alive until Stop. Generator and Reviewer therefore keep
+control of their own responsibility while the candidate runs: observe its published surfaces, use
+those surfaces in the browser, then stop the candidate and verify cleanup. Waiting for a healthy
+adapter to exit naturally blocks experience verification and is not a valid Preview evaluation.
+
 The current runbook and accepted Project, Goal, and operator inputs remain intended-experience
 authority even when a new request discards old Preview implementation conclusions. Discovering a
 live route or service does not make it an operator entry. If an unresolved answer can change the

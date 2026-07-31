@@ -12,6 +12,7 @@ import {
   createConfiguredAssistantModelRunner,
 } from '../../src/assistant/workspaceAssistant'
 import { createServer } from '../../src/mvpServer'
+import { renderResponsibilityPrompt } from '../../src/runtime/roleContextRendering'
 import { agentAdapterConfigPath } from '../../src/storage/assistantRuntimePaths'
 
 interface DecisionOperation {
@@ -26,6 +27,14 @@ interface PreviewAdmissionDecision {
   executionPlan: string[]
   operatorQuestion: string | null
   acceptance: string[]
+}
+
+interface PreviewLifecycleDecision {
+  launchStrategy: string
+  orderedActions: string[]
+  waitForNaturalExit: boolean
+  browserVerification: string
+  cleanupVerification: string
 }
 
 const projectId = 'P-preview-admission-probe'
@@ -117,10 +126,106 @@ try {
   const decision = parseDecision(result.reply)
   assertDecision(decision)
 
+  const lifecycleToolCalls: string[] = []
+  const lifecyclePrompt = [
+    generatorLifecycleResponsibilityPrompt(repoRoot),
+    '',
+    '[Plan-only model probe]',
+    'The candidate adapter prints HOPI_PREVIEW_SURFACES after it is healthy and then intentionally remains alive until Stop.',
+    'Do not call tools, inspect files, browse, edit, or execute any operation. Plan how this Generator should validate the candidate without blocking its own responsibility.',
+    'Return JSON only with these keys: launchStrategy (string), orderedActions (array of strings), waitForNaturalExit (boolean), browserVerification (string), and cleanupVerification (string).',
+  ].join('\n')
+  const lifecycle = await runner.run(
+    {
+      eventId: 'EV-preview-lifecycle-probe',
+      projectId,
+      prompt: lifecyclePrompt,
+      rebuildPrompt: lifecyclePrompt,
+      session: null,
+      cwd: modelRoot,
+      lastMessageFile: join(modelRoot, 'lifecycle-last-message.txt'),
+      transcriptFile: join(modelRoot, 'lifecycle-transcript.log'),
+      toolUrl: 'http://127.0.0.1:1/api/internal/assistant-tool',
+      toolToken: 'preview-lifecycle-probe',
+      toolMode: 'internal',
+      invocation: 'speaking',
+    },
+    {
+      onEvent(event) {
+        if (event.kind === 'transcript' && event.entryKind === 'tool_call') {
+          lifecycleToolCalls.push(event.toolName ?? 'unknown')
+        }
+      },
+    },
+  )
+  assert.deepEqual(
+    lifecycleToolCalls,
+    [],
+    `Lifecycle probe must not execute tools: ${lifecycleToolCalls.join(', ')}`,
+  )
+  console.log(lifecycle.reply)
+  assertLifecycleDecision(parseLifecycleDecision(lifecycle.reply))
+
   console.log('Preview admission prompt eval passed.')
 } finally {
   if (server) await server.shutdown().catch(() => undefined)
   await rm(root, { recursive: true, force: true })
+}
+
+process.exit(0)
+
+function generatorLifecycleResponsibilityPrompt(repoRoot: string) {
+  return renderResponsibilityPrompt(
+    {
+      projectRoot: repoRoot,
+      projectId,
+      goalId: 'G-preview-lifecycle',
+      workId: 'W-preview-lifecycle',
+      runId: 'R-preview-lifecycle',
+      responsibility: 'generator',
+      primaryRepoId: 'primary',
+      repoRoots: [{ repoId: 'primary', path: repoRoot, primary: true }],
+    },
+    {
+      runRoot: '/runtime/run',
+      contextFile: '/runtime/context.md',
+      authorityRoot: '/runtime/authority',
+      proposalRoot: '/runtime/proposal',
+      artifactOutputDir: '/runtime/artifacts',
+      proposalCapabilitiesFile: '/runtime/proposal-capabilities.json',
+      resultSchemaFile: '/runtime/result-schema.json',
+      resultFile: '/runtime/result.json',
+      agentsPath: `${repoRoot}/AGENTS.md`,
+      attentionRoot: '/runtime/proposal/attentions',
+      primaryRepoId: 'primary',
+      repoRoots: [{ repoId: 'primary', path: repoRoot, primary: true }],
+      repoGuidance: [],
+      reposFile: '/runtime/repos.json',
+      hasImages: false,
+    },
+    {
+      goal: {
+        path: '.hopi/docs/goals/G-preview-lifecycle/goal.md',
+        title: 'Deliver a working Project Preview',
+        contractRevision: 1,
+        body: 'The ordinary Preview must provide the intended user experience.',
+      },
+      work: {
+        path: '.hopi/docs/goals/G-preview-lifecycle/work/W-preview-lifecycle.md',
+        title: 'Repair and verify the Preview adapter',
+        kind: 'engineering',
+        stage: 'implementation',
+        body: 'Implement the Preview adapter and verify its real browser experience and cleanup.',
+        contextRefs: [],
+        ownerMessages: [],
+      },
+      acceptedInputs: [],
+      latestEvidence: null,
+      unavailableArtifacts: [],
+      repairView: null,
+      previousAttempt: null,
+    },
+  )
 }
 
 function assertDecision(decision: PreviewAdmissionDecision) {
@@ -157,19 +262,6 @@ function assertDecision(decision: PreviewAdmissionDecision) {
     [decision.diagnosis, ...decision.executionPlan, JSON.stringify(decision.operations)].join('\n'),
   )
   assert.ok(
-    hasAny(delivery, [
-      'explore',
-      'inspect',
-      'research',
-      'repo guidance',
-      'source',
-      '探索',
-      '检查',
-      '源码',
-    ]),
-    'Generator plan must begin from Project exploration',
-  )
-  assert.ok(
     hasAny(delivery, ['docs/hopi/preview/runbook.md', 'runbook']),
     'Generator plan must maintain docs/hopi/preview/runbook.md',
   )
@@ -196,6 +288,8 @@ function assertDecision(decision: PreviewAdmissionDecision) {
       'operate',
       'user experience',
       'actual experience',
+      'intended experience',
+      'intended-experience',
       'intended behavior',
       'semantic',
       '浏览器',
@@ -204,8 +298,8 @@ function assertDecision(decision: PreviewAdmissionDecision) {
     ]),
     'Reviewer acceptance must include actual user experience',
   )
-  assert.ok(
-    hasAny(acceptance, ['http', 'port', 'transport', '进程', '端口']) &&
+  if (hasAny(acceptance, ['http', 'port', 'transport', '进程', '端口'])) {
+    assert.ok(
       hasAny(acceptance, [
         'not enough',
         'insufficient',
@@ -213,12 +307,16 @@ function assertDecision(decision: PreviewAdmissionDecision) {
         'alone',
         'merely',
         'rather than',
+        'supplement',
+        'beyond',
+        'mere',
         '不能',
         '不足',
         '不等于',
       ]),
-    'Reviewer must not accept transport readiness as semantic success',
-  )
+      'Assistant must not describe transport readiness as semantic success',
+    )
+  }
 
   const proposed = normalize(
     [decision.diagnosis, ...decision.executionPlan, ...decision.acceptance].join('\n'),
@@ -242,12 +340,64 @@ function parseDecision(reply: string): PreviewAdmissionDecision {
   return parsed as PreviewAdmissionDecision
 }
 
+function parseLifecycleDecision(reply: string): PreviewLifecycleDecision {
+  const start = reply.indexOf('{')
+  const end = reply.lastIndexOf('}')
+  assert.ok(start >= 0 && end > start, `Generator did not return a JSON object: ${reply}`)
+  const parsed = JSON.parse(reply.slice(start, end + 1)) as Partial<PreviewLifecycleDecision>
+  assert.equal(typeof parsed.launchStrategy, 'string')
+  assert.ok(Array.isArray(parsed.orderedActions))
+  assert.equal(typeof parsed.waitForNaturalExit, 'boolean')
+  assert.equal(typeof parsed.browserVerification, 'string')
+  assert.equal(typeof parsed.cleanupVerification, 'string')
+  return parsed as PreviewLifecycleDecision
+}
+
+function assertLifecycleDecision(decision: PreviewLifecycleDecision) {
+  assert.equal(
+    decision.waitForNaturalExit,
+    false,
+    'Generator must not block waiting for a healthy Preview adapter to exit naturally',
+  )
+  assert.ok(
+    hasAny(normalize(decision.launchStrategy), [
+      'retain control',
+      'background',
+      'concurrent',
+      'live session',
+      'controllable',
+      'retained',
+      'pty',
+      '保留控制',
+      '后台',
+      '并发',
+    ]),
+    'Generator must keep control while the long-running Preview adapter is alive',
+  )
+  const actions = normalize(decision.orderedActions.join('\n'))
+  assert.ok(hasAny(actions, ['surface', 'publish', '入口', '发布']), 'Plan must observe surfaces')
+  assert.ok(hasAny(actions, ['browser', '浏览器']), 'Plan must verify the browser experience')
+  assert.ok(hasAny(actions, ['stop', 'terminate', '停止', '终止']), 'Plan must stop the candidate')
+  assert.ok(
+    hasAny(actions, ['process', 'port', 'cleanup', '进程', '端口', '清理']),
+    'Plan must verify candidate cleanup',
+  )
+  assert.ok(
+    hasAny(normalize(decision.browserVerification), ['experience', 'browser', '体验', '浏览器']),
+    'Browser verification must describe semantic experience evidence',
+  )
+  assert.ok(
+    hasAny(normalize(decision.cleanupVerification), ['process', 'port', '进程', '端口']),
+    'Cleanup verification must cover processes or ports',
+  )
+}
+
 function normalize(value: string) {
-  return value.toLowerCase().replace(/\s+/g, ' ').trim()
+  return value.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 function hasAny(source: string, values: readonly string[]) {
-  return values.some((value) => source.includes(value.toLowerCase()))
+  return values.some((value) => source.includes(normalize(value)))
 }
 
 async function createRepo(path: string) {

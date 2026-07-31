@@ -108,14 +108,12 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
     expect(prompt).toContain('smallest real runtime composition')
-    expect(prompt).toContain('only operator-facing entries as surfaces')
-    expect(prompt).toContain('transport reachability is not semantic completion evidence')
-    expect(prompt).toContain(
-      'docs/hopi/preview/runbook.md remains surface and host-child authority',
-    )
+    expect(prompt).toContain('exposes only operator surfaces')
+    expect(prompt).toContain('transport readiness is not semantic completion')
+    expect(prompt).toContain('docs/hopi/preview/runbook.md is surface and host-child authority')
     expect(prompt).toContain('until accepted input explicitly changes it')
-    expect(prompt).toContain('never demote it as an old conclusion')
-    expect(prompt).toContain('Routes and services only prove availability')
+    expect(prompt).toContain('Never demote it')
+    expect(prompt).toContain('routes and services only prove availability')
     expect(prompt).toContain('keep the runbook boundary in proposed design and Repo context')
     expect(prompt).toContain('propose no dependent Engineering Work')
     expect(prompt).toContain('reuse or update the smallest Attention')
@@ -662,14 +660,18 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('__HOPI_EXECUTION_ENVELOPE__')
     expect(generatorPrompt).toContain('HOPI-managed Git metadata are Coordinator-owned')
     expect(generatorPrompt).toContain(
-      'read runbook and explore guidance, knowledge, application, and source before edits',
+      'explore applicable guidance, knowledge, application behavior, and source',
     )
+    expect(generatorPrompt).toContain('read the runbook before edits')
     expect(generatorPrompt).toContain('Preserve its baseline unless accepted input changes it')
     expect(generatorPrompt).toContain('reuse or update Attention and fail unchanged')
-    expect(generatorPrompt).toContain('update or create the free-Markdown runbook first')
-    expect(generatorPrompt).toContain('preserve accepted experience')
+    expect(generatorPrompt).toContain('Update or create the free-Markdown runbook first')
     expect(generatorPrompt).toContain('smallest faithful runtime')
-    expect(generatorPrompt).toContain('never use mocks or substitute pages')
+    expect(generatorPrompt).toContain('never hide dependencies with mocks or substitute pages')
+    expect(generatorPrompt).toContain('Retain control')
+    expect(generatorPrompt).toContain('observe surfaces, browser-verify')
+    expect(generatorPrompt).toContain('stop and verify process/port cleanup')
+    expect(generatorPrompt).toContain('never wait for natural exit')
     expect(reviewerPrompt).toContain('Start/use it in the browser')
     expect(reviewerPrompt).toContain(
       'current Goal, intended-experience authority, and Engineering Work contract',
@@ -678,6 +680,10 @@ describe('RoleContextStager', () => {
     expect(reviewerPrompt).toContain('the candidate cannot replace that baseline')
     expect(reviewerPrompt).toContain('to the smallest runtime or source cause')
     expect(reviewerPrompt).toContain('Transport evidence alone cannot pass the Work')
+    expect(reviewerPrompt).toContain('Retain control')
+    expect(reviewerPrompt).toContain('observe surfaces, browser-verify')
+    expect(reviewerPrompt).toContain('stop and verify process/port cleanup')
+    expect(reviewerPrompt).toContain('never wait for natural exit')
     expect(reviewerPrompt).toContain(
       'reject if browser-based experience verification is unavailable',
     )
