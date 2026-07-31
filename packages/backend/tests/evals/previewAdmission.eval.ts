@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -66,6 +66,8 @@ try {
     input.prompt,
     /Requested capability: make Project Preview work from the current Project state\./,
   )
+  assert.match(input.prompt, /Adapter-declared prerequisites are implementation claims/)
+  await waitForAssistantCompletion(homeRoot, input.eventId)
 
   await server.shutdown()
   server = null
@@ -81,6 +83,7 @@ try {
     input.prompt,
     '',
     '[Decision probe]',
+    'Read-only diagnosis is complete: docs/hopi/preview/runbook.md says ordinary Preview Start must produce the intended experience without operator runtime inputs. The existing adapter exits only because it requires mybusinessSession and mystoreSession, prerequisites absent from the runbook and accepted Project facts.',
     'Do not call tools, inspect files, browse, edit, or execute any operation. Describe the exact HOPI decision and operations you would take if execution were enabled.',
     'Return JSON only with these keys: diagnosis (string), operations (array of objects with tool, arguments, and reason), executionPlan (array of strings in order), operatorQuestion (string or null), and acceptance (array of strings).',
     'Do not invent project-specific product facts that are absent from the current Project state.',
@@ -128,12 +131,26 @@ function assertDecision(decision: PreviewAdmissionDecision) {
   )
   assert.ok(
     hasAny(operations, ['engineering work', 'engineeringwork', 'engineering']),
-    'Missing Preview capability must enter directly through Engineering Work',
+    'Broken Preview capability must enter directly through Engineering Work',
   )
   assert.equal(
     decision.operatorQuestion,
     null,
-    'A missing adapter alone is not a product ambiguity that requires operator input',
+    'An adapter prerequisite absent from accepted authority is not a product ambiguity',
+  )
+
+  const diagnosis = normalize(decision.diagnosis)
+  assert.ok(
+    hasAny(diagnosis, [
+      'stale',
+      'conflict',
+      'contradict',
+      'implementation claim',
+      '过时',
+      '冲突',
+      '实现声明',
+    ]),
+    'Assistant must treat an unauthorized adapter prerequisite as stale implementation, not missing operator input',
   )
 
   const delivery = normalize(
@@ -239,6 +256,18 @@ async function createRepo(path: string) {
   await git(path, ['config', 'user.email', 'hopi@example.test'])
   await git(path, ['config', 'user.name', 'HOPI Eval'])
   await Bun.write(join(path, 'README.md'), '# Preview admission prompt eval\n')
+  await mkdir(join(path, 'docs', 'hopi', 'preview'), { recursive: true })
+  await Bun.write(
+    join(path, 'docs', 'hopi', 'preview', 'runbook.md'),
+    '# Preview runbook\n\nOrdinary Preview Start provides the intended experience without operator runtime inputs.\n',
+  )
+  const adapter = join(path, 'scripts', 'hopi', 'preview')
+  await mkdir(join(path, 'scripts', 'hopi'), { recursive: true })
+  await Bun.write(
+    adapter,
+    '#!/bin/sh\necho "mybusinessSession and mystoreSession runtime inputs are required" >&2\nexit 1\n',
+  )
+  await chmod(adapter, 0o755)
   await git(path, ['add', '.'])
   await git(path, ['commit', '-m', 'initial fixture'])
 }
@@ -288,4 +317,18 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+async function waitForAssistantCompletion(homeRoot: string, eventId: string) {
+  const path = join(homeRoot, '.hopi', 'runtime', 'assistant', 'turns', eventId, 'turn.json')
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    const file = Bun.file(path)
+    if (await file.exists()) {
+      const turn = (await file.json()) as { status?: unknown }
+      if (turn.status === 'completed') return
+    }
+    await Bun.sleep(10)
+  }
+  throw new Error('Captured Preview failure Assistant turn did not settle')
 }

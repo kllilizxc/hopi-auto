@@ -144,6 +144,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
             `Reason: ${event.reason}.`,
             `Detail: ${event.message}`,
             'Requested capability: make Project Preview work from the current Project state.',
+            'Adapter-declared prerequisites are implementation claims, not proof that the operator owes an input; compare them with the current runbook and accepted Project facts.',
             `Session manifest: ${event.manifestPath}`,
             `Log: ${event.logPath}`,
           ],

@@ -470,6 +470,12 @@ free-Markdown runbook before implementation. When an existing Work already owns 
 Assistant supervises that Work instead of creating a duplicate. Planning or Attention is used only
 when a real unresolved product decision changes the outcome, not merely because the adapter is absent.
 
+An adapter-declared prerequisite is an implementation claim, not evidence that the operator owes
+HOPI another input. Assistant compares missing runtime inputs, environment values, sessions, and
+other startup prerequisites with the current runbook and accepted Project facts. When that authority
+does not require the prerequisite, the adapter is stale and the failed Start enters Engineering Work;
+Assistant does not stop after reporting the implementation's own missing input.
+
 Every work-domain operation shared by the product UI and speaking Assistant uses the same domain
 validator and document store. Host configuration is deliberately outside that parity: model and
 full-access settings remain direct operator UI/API controls and are not model tools. Directory

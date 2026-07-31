@@ -1799,6 +1799,9 @@ describe('MVP server', () => {
         'Requested capability: make Project Preview work from the current Project state.',
       ),
     ).toBe(true)
+    expect(previewFailureEvent.body).toContain(
+      'Adapter-declared prerequisites are implementation claims',
+    )
     expect(previewFailureEvent).toMatchObject({
       attributes: {
         status: 'pending',
