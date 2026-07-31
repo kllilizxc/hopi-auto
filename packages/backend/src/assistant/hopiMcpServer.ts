@@ -52,7 +52,7 @@ server.registerTool(
   'hopi_create_goal',
   {
     description:
-      'Create one Goal from the current Inbox turn and atomically create its first Work. Planning shapes the Goal contract; Engineering starts managed Generator delivery, Reviewer verification, Evidence, and recovery without a Planning pass.',
+      'Create one Goal from the current Inbox turn and atomically create its first Work. Planning shapes the Goal contract; Engineering starts managed Generator delivery, Reviewer verification, Evidence, and recovery without a Planning pass. For Preview, preserve current docs/hopi/preview/runbook.md decisions unless this turn explicitly changes them; rebuild or ignore-old wording applies to implementation and evidence, not that runbook.',
     inputSchema: assistantMcpToolSchemas.hopi_create_goal,
   },
   (args) => callTool('hopi_create_goal', args),
@@ -62,7 +62,7 @@ server.registerTool(
   'hopi_create_work',
   {
     description:
-      'Create one Work in an active Goal. Planning records an explicit normalized contract change; Engineering records a complete Work contract and dependencies and starts its managed Generator, Reviewer, Evidence, and recovery lifecycle.',
+      'Create one Work in an active Goal. Planning records an explicit normalized contract change; Engineering records a complete Work contract and dependencies and starts its managed Generator, Reviewer, Evidence, and recovery lifecycle. Preview Work preserves current docs/hopi/preview/runbook.md decisions unless accepted input explicitly changes them; rebuild or ignore-old wording does not.',
     inputSchema: assistantMcpToolSchemas.hopi_create_work,
   },
   (args) => callTool('hopi_create_work', args),

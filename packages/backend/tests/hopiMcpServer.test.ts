@@ -196,9 +196,21 @@ describe('HOPI MCP server', () => {
     expect(
       JSON.stringify(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.inputSchema),
     ).not.toContain('"repos"')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
+      'Preview Work preserves current docs/hopi/preview/runbook.md decisions',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
+      'rebuild or ignore-old wording does not',
+    )
     expect(
       JSON.stringify(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.inputSchema),
     ).not.toContain('"repos"')
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
+      'preserve current docs/hopi/preview/runbook.md decisions',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
+      'implementation and evidence, not that runbook',
+    )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.inputSchema,
     ).toMatchObject({
