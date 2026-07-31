@@ -1010,8 +1010,10 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('create the smallest Goal with an Engineering Work yourself')
     expect(seen[0]?.prompt).toContain('Ordinary Preview Start must remain practical and bounded')
     expect(seen[0]?.prompt).toContain(
-      'parallelism or a numeric candidate cap is not a practical bound',
+      'parallelism, a numeric candidate cap, or a per-attempt deadline',
     )
+    expect(seen[0]?.prompt).toContain('a per-attempt deadline does not authorize repeated sampling')
+    expect(seen[0]?.prompt).toContain('instead of optimizing or rerunning the sample')
     expect(seen[0]?.prompt).toContain('ask the smallest precise question')
     expect(seen[0]?.prompt).toContain(
       'do not create dependent Engineering Work until it is resolved',

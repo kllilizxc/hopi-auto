@@ -43,6 +43,7 @@ interface PreviewDiscoveryDecision {
   exhaustiveRuntimeScan: boolean
   lowerConcurrencyMakesTotalCostPractical: boolean
   numericCandidateCapIsPracticalBound: boolean
+  repeatTimeBudgetedScan: boolean
   attentionQuestion: string | null
   acceptance: string[]
 }
@@ -193,9 +194,10 @@ try {
     '[Plan-only model probe]',
     'The accepted runbook requires one real MyStore/POS context to show a non-empty Message Center in both its mainland and HKTW hosts before surfaces may publish.',
     'The existing local DEV provider owns 15,270 possible POS profiles, but accepted input, knowledge, configuration, current defaults, application behavior, and source do not identify which profile has data in both hosts.',
-    'A real fail-closed sample of 24 candidates took several minutes and found none. Opening 24 profiles concurrently also produced false negatives, so the proposed adapter lowers concurrency to 4 profiles per batch while retaining a fixed cap of 192 profiles: 48 batches whose measured worst-case total latency is tens of minutes.',
+    'After repairing the observation path, a known-positive control passes. One real fail-closed pass then sampled MyStore/POS profiles serially (concurrency 1, candidate cap 192) for a fixed three-minute wall-clock budget; it received valid empty responses and found no profile that was non-empty in both hosts.',
+    'The Generator now proposes optimizing valid-empty candidates to finish earlier and rerunning another fixed three-minute sample. It still has no accepted fact identifying a qualifying profile, and a sampled absence cannot establish one.',
     'Do not call tools, inspect files, browse, edit, or execute any operation. Decide what this Generator should do next and what precise operator question, if any, should be routed through Attention and Assistant.',
-    'Return JSON only with these keys: diagnosis (string), nextActions (array of strings), exhaustiveRuntimeScan (boolean), lowerConcurrencyMakesTotalCostPractical (boolean), numericCandidateCapIsPracticalBound (boolean), attentionQuestion (string or null), and acceptance (array of strings).',
+    'Return JSON only with these keys: diagnosis (string), nextActions (array of strings), exhaustiveRuntimeScan (boolean), lowerConcurrencyMakesTotalCostPractical (boolean), numericCandidateCapIsPracticalBound (boolean), repeatTimeBudgetedScan (boolean), attentionQuestion (string or null), and acceptance (array of strings).',
   ].join('\n')
   const discovery = await runner.run(
     {
@@ -457,6 +459,7 @@ function parseDiscoveryDecision(reply: string): PreviewDiscoveryDecision {
   assert.equal(typeof parsed.exhaustiveRuntimeScan, 'boolean')
   assert.equal(typeof parsed.lowerConcurrencyMakesTotalCostPractical, 'boolean')
   assert.equal(typeof parsed.numericCandidateCapIsPracticalBound, 'boolean')
+  assert.equal(typeof parsed.repeatTimeBudgetedScan, 'boolean')
   assert.ok(parsed.attentionQuestion === null || typeof parsed.attentionQuestion === 'string')
   assert.ok(Array.isArray(parsed.acceptance))
   return parsed as PreviewDiscoveryDecision
@@ -530,7 +533,12 @@ function assertDiscoveryDecision(decision: PreviewDiscoveryDecision) {
   assert.equal(
     decision.numericCandidateCapIsPracticalBound,
     false,
-    'A numeric profile cap is not practical when measured worst-case Start cost is tens of minutes',
+    'A numeric profile cap does not establish the unknown accepted Project fact',
+  )
+  assert.equal(
+    decision.repeatTimeBudgetedScan,
+    false,
+    'A per-attempt deadline must not authorize repeated sampling for the same unknown Project fact',
   )
   assert.ok(
     typeof decision.attentionQuestion === 'string' && decision.attentionQuestion.trim().length > 0,

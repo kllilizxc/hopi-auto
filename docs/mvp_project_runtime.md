@@ -107,10 +107,13 @@ exhaustive or combinatorial search on every Start. Parallel execution changes la
 search is bounded. A numeric candidate cap is also insufficient when measured worst-case latency or
 resource fan-out remains unsuitable for an ordinary Start. Generator first derives required facts
 from accepted input, the runbook, applicable guidance, configuration, current application behavior,
-and source. If a material fact
-still cannot be established with bounded exploration, Preview remains fail-closed and the Agent
-updates the smallest Attention so Assistant can ask one precise question; it does not publish a
-partial experience, fabricate a mock, or hide the uncertainty behind a large runtime scan.
+and source. A per-attempt wall-clock deadline makes only that attempt finite; repeating such attempts
+does not make discovery bounded or establish an unknown Project fact. Generator may repair an invalid
+observation oracle and replay its known-positive control. Once a valid oracle leaves a required fact
+unknown after bounded exploration, Generator does not optimize or rerun sampling: Preview remains
+fail-closed and the Agent updates the smallest Attention so Assistant can ask one precise question.
+It does not publish a partial experience, fabricate a mock, or hide the uncertainty behind runtime
+sampling.
 
 Experience verification also has a bounded observation contract. A verified business-negative
 result (for example, an empty experience) is distinct from an observation failure. Browser, network,
