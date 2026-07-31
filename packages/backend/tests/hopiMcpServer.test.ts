@@ -167,13 +167,19 @@ describe('HOPI MCP server', () => {
       'live routes or services do not',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'exposes only operator-facing entries as surfaces',
+      'exposes only operator-facing entries',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'transport reachability is runtime state, not Work completion evidence',
+      'transport is runtime state, not Work evidence',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'Do not gate Preview on database classification or writes',
+      'Start preparation must be practical and bounded',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'parallelism is not a bound',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'Do not gate on database classification or writes',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
       'durable provider transcript',

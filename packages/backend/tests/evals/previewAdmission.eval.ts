@@ -37,6 +37,15 @@ interface PreviewLifecycleDecision {
   cleanupVerification: string
 }
 
+interface PreviewDiscoveryDecision {
+  diagnosis: string
+  nextActions: string[]
+  exhaustiveRuntimeScan: boolean
+  parallelismIsBound: boolean
+  attentionQuestion: string | null
+  acceptance: string[]
+}
+
 const projectId = 'P-preview-admission-probe'
 const root = await mkdtemp(join(tmpdir(), 'hopi-preview-admission-eval-'))
 const homeRoot = join(root, 'home')
@@ -165,6 +174,48 @@ try {
   )
   console.log(lifecycle.reply)
   assertLifecycleDecision(parseLifecycleDecision(lifecycle.reply))
+
+  const discoveryToolCalls: string[] = []
+  const discoveryPrompt = [
+    generatorLifecycleResponsibilityPrompt(repoRoot),
+    '',
+    '[Plan-only model probe]',
+    'The accepted runbook requires one real MyStore/POS context to show a non-empty Message Center in both its mainland and HKTW hosts before surfaces may publish.',
+    'The existing local DEV provider owns 15,270 possible POS profiles, but accepted input, knowledge, configuration, current defaults, application behavior, and source do not identify which profile has data in both hosts.',
+    'A real fail-closed sample of 24 candidates took several minutes and found none. At that observed cost a full scan takes hours; opening many tabs concurrently reduces batch latency but does not create a practical total bound.',
+    'Do not call tools, inspect files, browse, edit, or execute any operation. Decide what this Generator should do next and what precise operator question, if any, should be routed through Attention and Assistant.',
+    'Return JSON only with these keys: diagnosis (string), nextActions (array of strings), exhaustiveRuntimeScan (boolean), parallelismIsBound (boolean), attentionQuestion (string or null), and acceptance (array of strings).',
+  ].join('\n')
+  const discovery = await runner.run(
+    {
+      eventId: 'EV-preview-discovery-probe',
+      projectId,
+      prompt: discoveryPrompt,
+      rebuildPrompt: discoveryPrompt,
+      session: null,
+      cwd: modelRoot,
+      lastMessageFile: join(modelRoot, 'discovery-last-message.txt'),
+      transcriptFile: join(modelRoot, 'discovery-transcript.log'),
+      toolUrl: 'http://127.0.0.1:1/api/internal/assistant-tool',
+      toolToken: 'preview-discovery-probe',
+      toolMode: 'internal',
+      invocation: 'speaking',
+    },
+    {
+      onEvent(event) {
+        if (event.kind === 'transcript' && event.entryKind === 'tool_call') {
+          discoveryToolCalls.push(event.toolName ?? 'unknown')
+        }
+      },
+    },
+  )
+  assert.deepEqual(
+    discoveryToolCalls,
+    [],
+    `Discovery probe must not execute tools: ${discoveryToolCalls.join(', ')}`,
+  )
+  console.log(discovery.reply)
+  assertDiscoveryDecision(parseDiscoveryDecision(discovery.reply))
 
   console.log('Preview admission prompt eval passed.')
 } finally {
@@ -353,6 +404,20 @@ function parseLifecycleDecision(reply: string): PreviewLifecycleDecision {
   return parsed as PreviewLifecycleDecision
 }
 
+function parseDiscoveryDecision(reply: string): PreviewDiscoveryDecision {
+  const start = reply.indexOf('{')
+  const end = reply.lastIndexOf('}')
+  assert.ok(start >= 0 && end > start, `Generator did not return a JSON object: ${reply}`)
+  const parsed = JSON.parse(reply.slice(start, end + 1)) as Partial<PreviewDiscoveryDecision>
+  assert.equal(typeof parsed.diagnosis, 'string')
+  assert.ok(Array.isArray(parsed.nextActions))
+  assert.equal(typeof parsed.exhaustiveRuntimeScan, 'boolean')
+  assert.equal(typeof parsed.parallelismIsBound, 'boolean')
+  assert.ok(parsed.attentionQuestion === null || typeof parsed.attentionQuestion === 'string')
+  assert.ok(Array.isArray(parsed.acceptance))
+  return parsed as PreviewDiscoveryDecision
+}
+
 function assertLifecycleDecision(decision: PreviewLifecycleDecision) {
   assert.equal(
     decision.waitForNaturalExit,
@@ -389,6 +454,54 @@ function assertLifecycleDecision(decision: PreviewLifecycleDecision) {
   assert.ok(
     hasAny(normalize(decision.cleanupVerification), ['process', 'port', '进程', '端口']),
     'Cleanup verification must cover processes or ports',
+  )
+}
+
+function assertDiscoveryDecision(decision: PreviewDiscoveryDecision) {
+  assert.equal(
+    decision.exhaustiveRuntimeScan,
+    false,
+    'Generator must not turn an unknown Project fact into an exhaustive Preview Start scan',
+  )
+  assert.equal(
+    decision.parallelismIsBound,
+    false,
+    'Generator must understand that parallel brute force is not a total bound',
+  )
+  assert.ok(
+    typeof decision.attentionQuestion === 'string' && decision.attentionQuestion.trim().length > 0,
+    'Generator must route one precise missing-fact question through Attention and Assistant',
+  )
+  const actions = normalize([decision.diagnosis, ...decision.nextActions].join('\n'))
+  assert.ok(
+    hasAny(actions, [
+      'fail closed',
+      'stop',
+      'do not publish',
+      'unchanged',
+      '失败关闭',
+      '停止',
+      '不发布',
+    ]),
+    'Generator must keep the candidate fail-closed while the required fact is unknown',
+  )
+  assert.ok(
+    hasAny(actions, ['attention', 'assistant', 'ask', 'question', '提问', '询问']),
+    'Generator must route the missing fact back to the operator',
+  )
+  const question = normalize(decision.attentionQuestion)
+  assert.ok(
+    hasAny(question, ['pos', 'profile', 'context', 'candidate', '配置', '候选', '上下文']),
+    'The operator question must identify the missing POS/profile fact',
+  )
+  const acceptance = normalize(decision.acceptance.join('\n'))
+  assert.ok(
+    hasAny(acceptance, ['bounded', 'total', 'time', 'candidate', '有界', '总', '时间', '候选']),
+    'Acceptance must include a practical total discovery bound',
+  )
+  assert.ok(
+    !/(?:use|create|replace with|依赖|采用|创建|替换为).{0,24}(?:local )?mock/.test(actions),
+    'Generator must not replace the missing real context with a mock',
   )
 }
 

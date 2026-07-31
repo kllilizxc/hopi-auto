@@ -101,6 +101,15 @@ that no adapter exists and no current Work owns that capability, Assistant creat
 Engineering Work itself; the operator does not have to ask for repair separately. This admission
 uses the existing Goal/Work model and is not a Preview-specific repair workflow.
 
+Ordinary Preview Start must remain a practical, bounded operator action. Engineering exploration may
+use representative runtime probes, but the adapter must not turn a missing Project fact into an
+exhaustive or combinatorial search on every Start. Parallel execution changes latency, not whether a
+search is bounded. Generator first derives required facts from accepted input, the runbook,
+applicable guidance, configuration, current application behavior, and source. If a material fact
+still cannot be established with bounded exploration, Preview remains fail-closed and the Agent
+updates the smallest Attention so Assistant can ask one precise question; it does not publish a
+partial experience, fabricate a mock, or hide the uncertainty behind a large runtime scan.
+
 An existing runbook and accepted Project, Goal, or operator inputs are the current
 intended-experience authority. Discarding old Preview conclusions discards obsolete implementation
 and acceptance evidence, not those durable product decisions. A route, service, package, or
@@ -133,6 +142,8 @@ transport result. Reviewer investigates the runtime, relevant knowledge, and sou
 explain the smallest material cause, and rejects when the intended experience is not faithfully
 available. HTTP responses, process state, and port cleanup remain necessary operational evidence but
 cannot replace that judgment.
+Reviewer also rejects a candidate whose ordinary Start depends on exhaustive runtime discovery or
+resource fan-out with no practical total bound; making the same search concurrent is not a bound.
 
 Reviewer also checks the proposed runbook and announced surfaces against the current Goal, the
 previous runbook baseline, and accepted operator decisions rather than treating the Engineering Work
