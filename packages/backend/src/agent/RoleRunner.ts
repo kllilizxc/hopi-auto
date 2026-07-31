@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { ProjectCodingReasoningEffort } from '../domain/projectCodingDefaults'
 import { BoundedLineTail } from '../runtime/boundedLineTail'
+import { ensureManagedBrowser } from '../runtime/browserEnvironment'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
 import { createEnvironmentSecretRedactor } from './environmentSecretRedactor'
@@ -85,17 +86,22 @@ export interface RoleRunner {
 export interface ConfiguredRoleRunnerOptions {
   resolveConfig(input: RoleRunInput): RoleTransportConfig | Promise<RoleTransportConfig>
   fullAccess?(input: RoleRunInput): boolean | Promise<boolean>
+  prepareManagedBrowser?(homeRoot: string): Promise<unknown>
   heartbeatMs?: number
 }
 
 export class ConfiguredRoleRunner implements RoleRunner {
   private readonly resolveConfig: ConfiguredRoleRunnerOptions['resolveConfig']
   private readonly fullAccess: NonNullable<ConfiguredRoleRunnerOptions['fullAccess']>
+  private readonly prepareManagedBrowser: NonNullable<
+    ConfiguredRoleRunnerOptions['prepareManagedBrowser']
+  >
   private readonly heartbeatMs: number
 
   constructor(options: ConfiguredRoleRunnerOptions) {
     this.resolveConfig = options.resolveConfig
     this.fullAccess = options.fullAccess ?? (() => false)
+    this.prepareManagedBrowser = options.prepareManagedBrowser ?? ensureManagedBrowser
     this.heartbeatMs = options.heartbeatMs ?? 10_000
   }
 
@@ -103,6 +109,13 @@ export class ConfiguredRoleRunner implements RoleRunner {
     const config = await this.resolveConfig(input)
     const fullAccess = await this.fullAccess(input)
     await observer?.onExecution?.(roleExecutionIdentity(config))
+    if (input.context.browserHarnessCommand && input.context.browserHome) {
+      try {
+        await this.prepareManagedBrowser(input.context.browserHome)
+      } catch (error) {
+        return failedResult(`Managed browser preflight failed: ${errorMessage(error)}`)
+      }
+    }
     const transport = resumableTransport(config)
     const executionKey = roleSessionExecutionKey(config, fullAccess, input.cwd)
     const session =

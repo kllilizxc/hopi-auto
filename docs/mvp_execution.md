@@ -1129,6 +1129,26 @@ executable and a supported local browser are installed, along with a Run-owned a
 and `HOPI_BROWSER_TARGETS_FILE`. The command is a Home-owned adapter over the host Harness rather
 than a direct executable path. It exposes two browser targets:
 
+Before starting a responsibility sandbox that exposes this command, the host ensures the default
+managed browser has a healthy DevTools endpoint. The bounded Agent therefore attaches through a
+ready Home-owned capability instead of trying to launch Chrome from inside its sandbox. A failed
+host preflight is an operational Run failure, not application evidence and not a reason to replace
+browser verification with transport checks.
+
+The adapter is a Python-stdin runner rather than a Playwright-compatible CLI. A role invokes it with
+the helper program on standard input, for example:
+
+```sh
+"$HOPI_BROWSER_HARNESS_COMMAND" --target managed <<'PY'
+goto_url(...)
+wait_for_load()
+print(page_info())
+PY
+```
+
+Helpers such as `js(...)` and `capture_screenshot(...)` provide semantic and rendered evidence
+without reverse-engineering the installed Harness.
+
 - `managed` is the default target. It uses one persistent HOPI-owned browser profile per Assistant
   Home and a dedicated DevTools endpoint. Browser Harness connections may be recreated without an
   operator permission prompt, while cookies and browser storage retained by that profile survive

@@ -172,6 +172,7 @@ export async function startLiveHarness(scenario: string): Promise<LiveHarness> {
     server,
     stopped: false,
   }
+  ownManagedBrowser(harness, homeRoot)
   ownTestRunServer(harness, server)
   registerLogicalRunSafety(harness, homeRoot, { limit: logicalRunLimit })
   await writeRunReport(harness, 'running')
@@ -181,6 +182,49 @@ export async function startLiveHarness(scenario: string): Promise<LiveHarness> {
     logicalRunLimit,
   })
   return harness
+}
+
+function ownManagedBrowser(context: TestRunContext, homeRoot: string) {
+  return registerTestRunCleanup(context, {
+    name: 'managed-browser',
+    timeoutMs: cleanupTimeoutMs(),
+    cleanup: () => stopOwnedManagedBrowser(homeRoot, 'SIGTERM'),
+    force: () => stopOwnedManagedBrowser(homeRoot, 'SIGKILL'),
+  })
+}
+
+async function stopOwnedManagedBrowser(homeRoot: string, signal: 'SIGTERM' | 'SIGKILL') {
+  const stateFile = join(homeRoot, '.hopi', 'browser', 'managed', 'state.json')
+  const file = Bun.file(stateFile)
+  if (!(await file.exists())) return
+  const state = (await file.json()) as { launchedPid?: unknown; profileRoot?: unknown }
+  if (!Number.isInteger(state.launchedPid) || typeof state.profileRoot !== 'string') return
+  const pid = state.launchedPid as number
+  const expectedProfileRoot = join(resolve(homeRoot), '.hopi', 'browser', 'managed', 'profile')
+  if (resolve(state.profileRoot) !== expectedProfileRoot) {
+    throw new Error(`Managed browser state does not belong to Test Run Home: ${state.profileRoot}`)
+  }
+  const command = await processCommand(pid)
+  if (!command) return
+  if (!command.includes(`--user-data-dir=${expectedProfileRoot}`)) {
+    throw new Error(`Refusing to stop an unexpected managed browser PID ${pid}: ${command}`)
+  }
+  process.kill(pid, signal)
+  const deadline = Date.now() + cleanupTimeoutMs()
+  while (Date.now() < deadline) {
+    if (!(await processCommand(pid))) return
+    await Bun.sleep(50)
+  }
+  throw new Error(`Managed browser PID ${pid} did not stop after ${signal}`)
+}
+
+async function processCommand(pid: number) {
+  const child = Bun.spawn(['ps', '-p', String(pid), '-o', 'command='], {
+    stdout: 'pipe',
+    stderr: 'ignore',
+  })
+  const [command, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited])
+  return exitCode === 0 ? command.trim() : ''
 }
 
 export async function enterHarnessPhase(harness: LiveHarness, phase: string) {

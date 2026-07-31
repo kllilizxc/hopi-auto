@@ -263,6 +263,70 @@ describe('ConfiguredRoleRunner', () => {
     expect(await Bun.file(join(fixture.runRoot, 'transcript.log')).text()).toContain(warning)
   })
 
+  test('prepares an advertised managed browser before starting the responsibility sandbox', async () => {
+    const fixture = await createFixture()
+    const marker = join(fixture.root, 'managed-browser-ready')
+    const browserHome = join(fixture.root, 'browser-home')
+    fixture.context.browserHarnessCommand = '/tmp/hopi-browser-harness'
+    fixture.context.browserHome = browserHome
+    const binary = await fakeCodex(
+      fixture.root,
+      `if (!(await Bun.file(${JSON.stringify(marker)}).exists())) throw new Error("browser was not prepared")
+      await Bun.write(process.env.HOPI_OUTCOME_FILE, JSON.stringify({result:"success",summary:"browser ready",artifacts:[]}))`,
+    )
+    const prepared: string[] = []
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        binary,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      }),
+      async prepareManagedBrowser(homeRoot) {
+        prepared.push(homeRoot)
+        await Bun.write(marker, 'ready\n')
+      },
+    })
+
+    const result = await runner.run(fixture.input('reviewer', fixture.repoRoot))
+
+    expect(result).toMatchObject({ result: 'success', summary: 'browser ready' })
+    expect(prepared).toEqual([browserHome])
+  })
+
+  test('fails operationally before invoking a role when managed browser preflight fails', async () => {
+    const fixture = await createFixture()
+    const invoked = join(fixture.root, 'vendor-invoked')
+    fixture.context.browserHarnessCommand = '/tmp/hopi-browser-harness'
+    fixture.context.browserHome = join(fixture.root, 'browser-home')
+    const binary = await fakeCodex(
+      fixture.root,
+      `await Bun.write(${JSON.stringify(invoked)}, "invoked")`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'codex',
+        binary,
+        cwdMode: 'root',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      }),
+      async prepareManagedBrowser() {
+        throw new Error('Chrome did not publish DevTools')
+      },
+    })
+
+    const result = await runner.run(fixture.input('reviewer', fixture.repoRoot))
+
+    expect(result).toMatchObject({
+      result: 'fail',
+      failureKind: 'operational',
+      summary: 'Managed browser preflight failed: Chrome did not publish DevTools',
+    })
+    expect(await Bun.file(invoked).exists()).toBe(false)
+  })
+
   test('captures a built-in vendor session as soon as the responsibility reports it', async () => {
     const fixture = await createFixture()
     const binary = await fakeCodex(

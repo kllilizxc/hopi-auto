@@ -44,6 +44,8 @@
     "e2e:live:028": "cd packages/backend && bun run tests/live/projectAttentionRecovery.live.ts",
     "e2e:live:032": "cd packages/backend && bun run tests/live/preferenceJudgment.live.ts",
     "e2e:live:033": "cd packages/backend && bun run tests/live/environmentJudgment.live.ts",
+    "e2e:live:034": "cd packages/backend && bun run tests/live/previewAdmission.live.ts",
+    "e2e:live:035": "cd packages/backend && bun run tests/live/previewAutonomousDelivery.live.ts",
     "eval:preview:prompt": "cd packages/backend && bun run tests/evals/previewAdmission.eval.ts",
     "e2e:regression": "cd packages/backend && bun run tests/e2e/regression.ts",
     "e2e:regression:live": "cd packages/backend && bun run tests/e2e/regression.ts --live",

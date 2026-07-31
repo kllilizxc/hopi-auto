@@ -31,6 +31,12 @@ describe('browser environment', () => {
     expect(browserTargetManifest()).toEqual({
       defaultTarget: 'managed',
       selector: '--target <managed|operator>',
+      invocation: {
+        kind: 'python-stdin',
+        example:
+          '"$HOPI_BROWSER_HARNESS_COMMAND" --target managed <<\'PY\'\ngoto_url(...)\nwait_for_load()\nprint(page_info())\nPY',
+        helpers: ['goto_url', 'wait_for_load', 'page_info', 'js', 'capture_screenshot'],
+      },
       targets: {
         managed: {
           loginState: 'HOPI-owned persistent browser profile',
