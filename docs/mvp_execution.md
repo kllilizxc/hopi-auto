@@ -1000,12 +1000,12 @@ checkpoint, or demonstration is evidence about the implementation, not a substit
 accepted deliverable.
 
 A started long-running command remains active until it completes, fails, is explicitly cancelled, or
-reaches its selected timeout. The Codex responsibility adapter presents a shell invocation as one
-blocking call and disables asynchronous unified exec, so delayed output cannot create a second model
-turn that starts equivalent work in parallel. A vendor adapter that returns a live command Session
-treats it as that same invocation until settlement or termination. Independent responsibility Runs
-remain concurrent under the ordinary scheduler capacities. This is an adapter execution property,
-not another durable Run state, command classifier, lock, or scheduler concept.
+reaches its selected timeout. A live command Session is the same shell invocation, not another model
+turn, Work, or responsibility Run. Codex unified exec therefore remains available so an Agent can
+observe, interact with, and terminate one long-running invocation without detaching it or starting
+equivalent work in parallel. Independent responsibility Runs remain concurrent under the ordinary
+scheduler capacities. This is an adapter execution property, not another durable Run state, command
+classifier, lock, or scheduler concept.
 HOPI observes descendant process groups while the responsibility invocation is alive and terminates
 the observed tree when that invocation settles or is interrupted. A descendant that deliberately
 escapes before it can be observed is not an independent Work Attempt, has no durable result owner,

@@ -220,7 +220,6 @@ export async function resolveConfiguredTransportCommand(options: {
     const cmd = [options.config.binary ?? 'codex']
     appendCodexHttpsOnlyConfig(cmd)
     appendCodexShellEnvironmentConfig(cmd)
-    cmd.push('--disable', 'unified_exec')
     const sandbox = options.fullAccess
       ? 'danger-full-access'
       : options.config.sandbox === 'danger-full-access'
