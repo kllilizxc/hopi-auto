@@ -104,8 +104,10 @@ uses the existing Goal/Work model and is not a Preview-specific repair workflow.
 Ordinary Preview Start must remain a practical, bounded operator action. Engineering exploration may
 use representative runtime probes, but the adapter must not turn a missing Project fact into an
 exhaustive or combinatorial search on every Start. Parallel execution changes latency, not whether a
-search is bounded. Generator first derives required facts from accepted input, the runbook,
-applicable guidance, configuration, current application behavior, and source. If a material fact
+search is bounded. A numeric candidate cap is also insufficient when measured worst-case latency or
+resource fan-out remains unsuitable for an ordinary Start. Generator first derives required facts
+from accepted input, the runbook, applicable guidance, configuration, current application behavior,
+and source. If a material fact
 still cannot be established with bounded exploration, Preview remains fail-closed and the Agent
 updates the smallest Attention so Assistant can ask one precise question; it does not publish a
 partial experience, fabricate a mock, or hide the uncertainty behind a large runtime scan.

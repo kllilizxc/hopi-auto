@@ -1009,7 +1009,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('Do not wait for a second repair message')
     expect(seen[0]?.prompt).toContain('create the smallest Goal with an Engineering Work yourself')
     expect(seen[0]?.prompt).toContain('Ordinary Preview Start must remain practical and bounded')
-    expect(seen[0]?.prompt).toContain('parallelism alone is not a bound')
+    expect(seen[0]?.prompt).toContain(
+      'parallelism or a numeric candidate cap is not a practical bound',
+    )
     expect(seen[0]?.prompt).toContain('ask the smallest precise question')
     expect(seen[0]?.prompt).toContain(
       'do not create dependent Engineering Work until it is resolved',

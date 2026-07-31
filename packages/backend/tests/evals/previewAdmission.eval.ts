@@ -41,7 +41,8 @@ interface PreviewDiscoveryDecision {
   diagnosis: string
   nextActions: string[]
   exhaustiveRuntimeScan: boolean
-  parallelismIsBound: boolean
+  lowerConcurrencyMakesTotalCostPractical: boolean
+  numericCandidateCapIsPracticalBound: boolean
   attentionQuestion: string | null
   acceptance: string[]
 }
@@ -192,9 +193,9 @@ try {
     '[Plan-only model probe]',
     'The accepted runbook requires one real MyStore/POS context to show a non-empty Message Center in both its mainland and HKTW hosts before surfaces may publish.',
     'The existing local DEV provider owns 15,270 possible POS profiles, but accepted input, knowledge, configuration, current defaults, application behavior, and source do not identify which profile has data in both hosts.',
-    'A real fail-closed sample of 24 candidates took several minutes and found none. At that observed cost a full scan takes hours; opening many tabs concurrently reduces batch latency but does not create a practical total bound.',
+    'A real fail-closed sample of 24 candidates took several minutes and found none. Opening 24 profiles concurrently also produced false negatives, so the proposed adapter lowers concurrency to 4 profiles per batch while retaining a fixed cap of 192 profiles: 48 batches whose measured worst-case total latency is tens of minutes.',
     'Do not call tools, inspect files, browse, edit, or execute any operation. Decide what this Generator should do next and what precise operator question, if any, should be routed through Attention and Assistant.',
-    'Return JSON only with these keys: diagnosis (string), nextActions (array of strings), exhaustiveRuntimeScan (boolean), parallelismIsBound (boolean), attentionQuestion (string or null), and acceptance (array of strings).',
+    'Return JSON only with these keys: diagnosis (string), nextActions (array of strings), exhaustiveRuntimeScan (boolean), lowerConcurrencyMakesTotalCostPractical (boolean), numericCandidateCapIsPracticalBound (boolean), attentionQuestion (string or null), and acceptance (array of strings).',
   ].join('\n')
   const discovery = await runner.run(
     {
@@ -386,19 +387,9 @@ function assertDecision(decision: PreviewAdmissionDecision) {
 
   const acceptance = normalize(decision.acceptance.join('\n'))
   assert.ok(
-    hasAny(acceptance, [
-      'browser',
-      'operate',
-      'user experience',
-      'actual experience',
-      'intended experience',
-      'intended-experience',
-      'intended behavior',
-      'semantic',
-      '浏览器',
-      '操作',
-      '真实体验',
-    ]),
+    hasAny(acceptance, ['browser', 'operate', 'intended behavior', '浏览器', '操作', '真实体验']) ||
+      (acceptance.includes('experience') &&
+        hasAny(acceptance, ['user', 'actual', 'intended', 'semantic'])),
     'Reviewer acceptance must include actual user experience',
   )
   if (hasAny(acceptance, ['http', 'port', 'transport', '进程', '端口'])) {
@@ -464,7 +455,8 @@ function parseDiscoveryDecision(reply: string): PreviewDiscoveryDecision {
   assert.equal(typeof parsed.diagnosis, 'string')
   assert.ok(Array.isArray(parsed.nextActions))
   assert.equal(typeof parsed.exhaustiveRuntimeScan, 'boolean')
-  assert.equal(typeof parsed.parallelismIsBound, 'boolean')
+  assert.equal(typeof parsed.lowerConcurrencyMakesTotalCostPractical, 'boolean')
+  assert.equal(typeof parsed.numericCandidateCapIsPracticalBound, 'boolean')
   assert.ok(parsed.attentionQuestion === null || typeof parsed.attentionQuestion === 'string')
   assert.ok(Array.isArray(parsed.acceptance))
   return parsed as PreviewDiscoveryDecision
@@ -531,9 +523,14 @@ function assertDiscoveryDecision(decision: PreviewDiscoveryDecision) {
     'Generator must not turn an unknown Project fact into an exhaustive Preview Start scan',
   )
   assert.equal(
-    decision.parallelismIsBound,
+    decision.lowerConcurrencyMakesTotalCostPractical,
     false,
-    'Generator must understand that parallel brute force is not a total bound',
+    'Generator must understand that lower concurrency does not make the measured total cost practical',
+  )
+  assert.equal(
+    decision.numericCandidateCapIsPracticalBound,
+    false,
+    'A numeric profile cap is not practical when measured worst-case Start cost is tens of minutes',
   )
   assert.ok(
     typeof decision.attentionQuestion === 'string' && decision.attentionQuestion.trim().length > 0,

@@ -662,35 +662,37 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain(
       'For Preview, explore guidance, knowledge, behavior, source, and runbook first',
     )
-    expect(generatorPrompt).toContain('Preserve accepted baseline')
+    expect(generatorPrompt).toContain('Preserve baseline')
     expect(generatorPrompt).toContain('update Attention and fail unchanged')
-    expect(generatorPrompt).toContain('Update runbook first (free Markdown)')
+    expect(generatorPrompt).toContain('Update free-Markdown runbook first')
     expect(generatorPrompt).toContain('smallest faithful runtime')
-    expect(generatorPrompt).toContain('without mocks')
-    expect(generatorPrompt).toContain('Bound probes')
-    expect(generatorPrompt).toContain('concurrency is not a bound')
+    expect(generatorPrompt).toContain('no mocks')
+    expect(generatorPrompt).toContain('Keep ordinary Start practical')
+    expect(generatorPrompt).toContain(
+      'candidate caps/concurrency alone do not bound total probe cost',
+    )
     expect(generatorPrompt).toContain('Contradictory negatives invalidate the oracle')
     expect(generatorPrompt).toContain('replay a known-positive control')
     expect(generatorPrompt).toContain('separate observation errors from product results')
     expect(generatorPrompt).toContain('Control Preview')
     expect(generatorPrompt).toContain('observe surfaces, browser-verify')
-    expect(generatorPrompt).toContain('stop, verify process/ports')
-    expect(generatorPrompt).toContain('never wait for natural exit')
+    expect(generatorPrompt).toContain('stop, check process/ports')
+    expect(generatorPrompt).toContain('never await natural exit')
     expect(reviewerPrompt).toContain('use browser')
     expect(reviewerPrompt).toContain(
       'current Goal, intended-experience authority, and Engineering Work contract',
     )
     expect(reviewerPrompt).toContain('compare runbook/surfaces with authority')
     expect(reviewerPrompt).toContain('find the smallest cause')
-    expect(reviewerPrompt).toContain('reject unbounded discovery')
-    expect(reviewerPrompt).toContain('including parallel brute force')
+    expect(reviewerPrompt).toContain('reject unbounded total probe cost')
+    expect(reviewerPrompt).toContain('candidate caps/parallelism alone do not bound it')
     expect(reviewerPrompt).toContain('unexplained known-positive contradictions')
     expect(reviewerPrompt).toContain('more waits/probes do not validate them')
     expect(reviewerPrompt).toContain('Transport evidence alone cannot pass the Work')
     expect(reviewerPrompt).toContain('Control Preview')
     expect(reviewerPrompt).toContain('observe surfaces, browser-verify')
-    expect(reviewerPrompt).toContain('stop, verify process/ports')
-    expect(reviewerPrompt).toContain('never wait for natural exit')
+    expect(reviewerPrompt).toContain('stop, check process/ports')
+    expect(reviewerPrompt).toContain('never await natural exit')
     expect(reviewerPrompt).toContain(
       'reject if browser-based experience verification is unavailable',
     )
@@ -746,7 +748,7 @@ describe('RoleContextStager', () => {
     expect(generatorCapabilities.writable[0].guidance).toBeUndefined()
     expect(generatorPrompt).toContain('implement the complete Engineering Work')
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
-    expect(reviewerPrompt).toContain('Source, Project documents, canonical .hopi state')
+    expect(reviewerPrompt).toContain('Source, Project docs, canonical .hopi state')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)
     expect(
       await Bun.file(
