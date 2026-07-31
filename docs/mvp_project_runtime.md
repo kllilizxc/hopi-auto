@@ -97,6 +97,15 @@ exploring applicable Repo guidance, knowledge sources, the existing application,
 then implements the adapter. Technical facts discovered during implementation are written back in
 the same Work. Ordinary Start/Stop and runtime failure do not create a separate runbook workflow.
 
+An existing runbook and accepted Project, Goal, or operator inputs are the current
+intended-experience authority. Discarding old Preview conclusions discards obsolete implementation
+and acceptance evidence, not those durable product decisions. A route, service, package, or
+successful response proves technical availability only; it does not create an operator entry or
+override the runbook. When exploration exposes a conflict or a missing answer that can change the
+Preview boundary, composition, or acceptance, the responsible Agent asks the smallest question
+before starting dependent implementation and updates an existing unresolved Attention instead of
+duplicating it.
+
 Preview does not inspect, classify, replace, snapshot, or seek approval for the databases selected
 by Project configuration. Its services may read and write those databases normally. After Preview
 starts or an interaction finishes, Assistant may warn the operator that connected data may have
@@ -118,6 +127,11 @@ transport result. Reviewer investigates the runtime, relevant knowledge, and sou
 explain the smallest material cause, and rejects when the intended experience is not faithfully
 available. HTTP responses, process state, and port cleanup remain necessary operational evidence but
 cannot replace that judgment.
+
+Reviewer also checks the proposed runbook and announced surfaces against the current Goal, the
+previous runbook baseline, and accepted operator decisions rather than treating the Engineering Work
+contract as independent product authority. A candidate cannot pass by rewriting the runbook around
+whatever routes happen to start.
 
 One Preview session may announce any number of surfaces. A surface is only an opaque named entry
 that the operator can open; HOPI does not infer application hierarchy, service dependencies, or

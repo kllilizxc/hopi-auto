@@ -152,6 +152,12 @@ describe('HOPI MCP server', () => {
       'starts the smallest real runtime composition',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'accepted Project, Goal, or operator inputs define the intended experience',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'live routes or services do not define user entries',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
       'exposes only operator-facing entries as surfaces',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(

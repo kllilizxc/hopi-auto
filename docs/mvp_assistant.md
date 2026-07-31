@@ -434,6 +434,13 @@ incomplete experience to its smallest material runtime or source cause; transpor
 cannot satisfy the Work. Ordinary Preview Start/Stop and startup failure remain runtime facts and do
 not automatically create a runbook Work.
 
+The current runbook and accepted Project, Goal, and operator inputs remain intended-experience
+authority even when a new request discards old Preview implementation conclusions. Discovering a
+live route or service does not make it an operator entry. If an unresolved answer can change the
+Preview boundary, composition, or acceptance, Assistant or Planner keeps only the smallest relevant
+Attention and does not create dependent Engineering Work yet. This is Agent judgment over the
+contract, not a new global scheduling state or path classifier.
+
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
 
@@ -532,6 +539,12 @@ Attention therefore remains a durable Assistant todo until Assistant explicitly 
 reference after judging the represented condition clear; it does not become a separate scheduling
 gate. Planner's empty proposal means only that Planning changed no canonical contract or DAG; it
 does not claim that Coordinator will retry a blocked responsibility.
+
+The absence of a generic scheduling gate does not authorize speculative work. When Planner itself
+finds that an operator answer changes the contract it is planning, it publishes or refreshes that
+Attention and leaves dependent Engineering Work uncreated. Generator encountering the same
+unresolved contract boundary makes no source change, reuses the existing Attention, and fails the
+Attempt so Assistant can continue the question.
 
 Goal delivery and other HOPI effects are asynchronous after admission. Once a mutating tool reports
 that the requested effect is accepted, the Assistant replies to the current user immediately from

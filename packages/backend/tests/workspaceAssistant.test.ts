@@ -991,6 +991,15 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('smallest real runtime composition')
     expect(seen[0]?.prompt).toContain('only operator-facing entries as surfaces')
     expect(seen[0]?.prompt).toContain('transport reachability is not semantic completion evidence')
+    expect(seen[0]?.prompt).toContain(
+      'accepted Project, Goal, or operator inputs remain intended-experience authority',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'A live route or service proves availability only, not a user entry',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'do not create dependent Engineering Work until it is resolved',
+    )
     expect(seen[0]?.prompt).toContain('docs/hopi/preview/runbook.md')
     expect(seen[0]?.prompt).toContain(
       'Ordinary Preview Start/Stop and startup failure do not automatically create a runbook Work',

@@ -110,6 +110,14 @@ describe('RoleContextStager', () => {
     expect(prompt).toContain('smallest real runtime composition')
     expect(prompt).toContain('only operator-facing entries as surfaces')
     expect(prompt).toContain('transport reachability is not semantic completion evidence')
+    expect(prompt).toContain(
+      'Current Preview runbook and accepted inputs remain experience authority',
+    )
+    expect(prompt).toContain('prove availability, not operator-entry scope')
+    expect(prompt).toContain('discarding old conclusions never discards durable product decisions')
+    expect(prompt).toContain('propose no dependent Engineering Work')
+    expect(prompt).toContain('reuse or update the smallest Attention')
+    expect(prompt).toContain('never substitute a speculative superset')
     expect(prompt).toContain('Do not inspect, classify, isolate, snapshot, or seek approval')
     expect(prompt).toContain('at most warn the operator')
     expect(prompt).toContain(
@@ -653,16 +661,20 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('__HOPI_EXECUTION_ENVELOPE__')
     expect(generatorPrompt).toContain('HOPI-managed Git metadata are Coordinator-owned')
     expect(generatorPrompt).toContain(
-      'first read or create primary-Repo docs/hopi/preview/runbook.md as free Markdown',
+      'read the runbook and explore guidance, knowledge, application behavior, and source before edits',
     )
-    expect(generatorPrompt).toContain(
-      'Before implementation, explore applicable Repo guidance, relevant knowledge',
+    expect(generatorPrompt).toContain('reuse or update its Attention and fail unchanged')
+    expect(generatorPrompt).toContain('update or create the free-Markdown runbook first')
+    expect(generatorPrompt).toContain('preserve accepted experience')
+    expect(generatorPrompt).toContain('smallest faithful runtime')
+    expect(generatorPrompt).toContain('never use mocks or substitute pages')
+    expect(reviewerPrompt).toContain('Start and use the candidate in the browser')
+    expect(reviewerPrompt).toContain(
+      'current Goal, intended-experience authority, and Engineering Work contract',
     )
-    expect(generatorPrompt).toContain('smallest faithful runtime composition')
-    expect(generatorPrompt).toContain('write discoveries back in this Work')
-    expect(generatorPrompt).toContain('Never hide an unexplained dependency')
-    expect(reviewerPrompt).toContain('start and use the candidate through the browser')
-    expect(reviewerPrompt).toContain('to the smallest material cause')
+    expect(reviewerPrompt).toContain('compare candidate runbook and surfaces with the Goal')
+    expect(reviewerPrompt).toContain('live routes cannot redefine experience')
+    expect(reviewerPrompt).toContain('to the smallest runtime or source cause')
     expect(reviewerPrompt).toContain('Transport evidence alone cannot pass the Work')
     expect(reviewerPrompt).toContain(
       'reject if browser-based experience verification is unavailable',

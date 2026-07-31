@@ -112,7 +112,7 @@ server.registerTool(
   'hopi_control_preview',
   {
     description:
-      'Start or stop reviewed Project Preview. The Project adapter starts the smallest real runtime composition needed for the intended experience and exposes only operator-facing entries as surfaces; transport reachability is runtime state, not Work completion evidence. Do not gate Preview on database classification or writes; at most warn afterward that connected data may have changed. Optional runtime inputs are bounded non-secret values because Assistant tool arguments remain in its durable provider transcript.',
+      'Start or stop reviewed Project Preview. Current runbook and accepted Project, Goal, or operator inputs define the intended experience; live routes or services do not define user entries. The adapter starts the smallest real runtime composition and exposes only operator-facing entries as surfaces; transport reachability is runtime state, not Work completion evidence. Do not gate Preview on database classification or writes; at most warn afterward that connected data may have changed. Optional runtime inputs must be bounded non-secret values because arguments persist in the durable provider transcript.',
     inputSchema: assistantMcpToolSchemas.hopi_control_preview,
   },
   (args) => callTool('hopi_control_preview', args),
