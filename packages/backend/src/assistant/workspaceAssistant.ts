@@ -1048,7 +1048,8 @@ const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
-  'Project Preview starts every runnable service in the Project Repos and announces every service as a surface. Frontends connect to locally started backends; a frontend-only Project starts only its frontend.',
+  'Project Preview starts the smallest real runtime composition needed for the intended Project experience and announces only operator-facing entries as surfaces. Internal application dependencies and infrastructure may run without becoming surfaces; transport reachability is not semantic completion evidence.',
+  'Engineering Work that creates or changes Preview maintains docs/hopi/preview/runbook.md before implementation. Ordinary Preview Start/Stop and startup failure do not automatically create a runbook Work.',
   'Do not inspect, classify, isolate, snapshot, or seek approval for Preview database connections or writes. After completion, at most warn the operator that connected data may have changed.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',

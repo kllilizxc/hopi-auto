@@ -149,10 +149,13 @@ describe('HOPI MCP server', () => {
       'bounded non-secret values',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'starts every runnable service',
+      'starts the smallest real runtime composition',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'connects frontends to local backends',
+      'exposes only operator-facing entries as surfaces',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
+      'transport reachability is runtime state, not Work completion evidence',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
       'Do not gate Preview on database classification or writes',

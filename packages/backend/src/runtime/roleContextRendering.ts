@@ -162,7 +162,7 @@ export function renderResponsibilityPrompt(
     'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published; any other proposal is rejected.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
     '$HOPI_REPOS_FILE is the complete Project source-root map; roots may contain source, knowledge, or both, and list existing Repo guidance. Other source and Work runtimes are outside this assignment.',
-    'Project Preview starts every runnable service in the Project Repos and announces every service as a surface. Frontends connect to locally started backends; a frontend-only Project starts only its frontend.',
+    'Project Preview starts the smallest real runtime composition needed for the intended Project experience and announces only operator-facing entries as surfaces. Internal application dependencies and infrastructure may run without becoming surfaces; transport reachability is not semantic completion evidence.',
     'Do not inspect, classify, isolate, snapshot, or seek approval for Preview database connections or writes. After completion, at most warn the operator that connected data may have changed.',
     'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
     ...(paths.hasImages
@@ -413,6 +413,8 @@ function generatorPrompt() {
     'Owned outcome: implement the complete Engineering Work and return observed evidence.',
     'The Project source roots are writable. Canonical .hopi state and HOPI-managed Git metadata are Coordinator-owned and immutable.',
     'The staged authority is current for this Run; Public Preview, when present, observes the integrated release rather than this candidate.',
+    'When this Work creates or changes Preview, first read or create primary-Repo docs/hopi/preview/runbook.md as free Markdown. Before implementation, explore applicable Repo guidance, relevant knowledge, actual application behavior, and source; update the runbook with the best intended experience and confirmed runtime facts.',
+    'Implement the smallest faithful runtime composition, surface only operator entries, and write discoveries back in this Work. Never hide an unexplained dependency with mocks or a substitute page.',
     '',
   ]
 }
@@ -426,6 +428,8 @@ function reviewerPrompt(projectId: string) {
     `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
     'Source, Project documents, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview, when present, observes the integrated release rather than this candidate.',
+    'When this Work creates or changes Preview, start and use the candidate through the browser. Treat missing data, context, or usability as a symptom; trace runtime, guidance, relevant knowledge, and source to the smallest material cause without mocks or substitute pages.',
+    'Transport evidence alone cannot pass the Work; reject if browser-based experience verification is unavailable.',
     '',
   ]
 }

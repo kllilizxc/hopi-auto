@@ -84,11 +84,18 @@ Prepare script prevents Preview startup and produces a factual Project event.
 has already established the exact managed release boundary before invoking it. The adapter uses the
 provided Repo roots and never an unintegrated Work candidate.
 
-The Preview adapter follows one topology rule: start every runnable service in the Project Repos and
-announce every service as a surface. When the Project contains frontend and backend services, the
-frontend connects to the locally started backend. When it contains only a frontend, the adapter
-starts only that frontend. The same rule covers any other number or mixture of services without a
-separate frontend, backend, or multi-service mode.
+The Preview adapter starts the smallest real runtime composition needed to provide the intended
+Project experience. A process may be an operator-facing entry, an internal application dependency,
+or supporting infrastructure; only entries that an operator should open are announced as surfaces.
+The Project decides that composition from its current product behavior rather than Repo count,
+package scripts, or a global frontend/backend topology rule.
+
+Projects keep the current understanding of that experience in the primary Repo at
+`docs/hopi/preview/runbook.md`. The runbook is ordinary free-form Markdown, not a HOPI schema. When
+Engineering Work creates or changes Preview, Generator first creates or refreshes the runbook by
+exploring applicable Repo guidance, knowledge sources, the existing application, and current source,
+then implements the adapter. Technical facts discovered during implementation are written back in
+the same Work. Ordinary Start/Stop and runtime failure do not create a separate runbook workflow.
 
 Preview does not inspect, classify, replace, snapshot, or seek approval for the databases selected
 by Project configuration. Its services may read and write those databases normally. After Preview
@@ -103,6 +110,14 @@ HOPI_PREVIEW_SURFACES=<json>
 
 HOPI considers Preview `running` only after the announced transports are reachable. Reachability is
 not proof that a Goal is complete or that a surface is semantically correct.
+
+When Engineering Work creates or changes Preview, Reviewer must independently use the candidate
+Preview through the available browser environment. An incomplete experience such as missing data,
+missing application context, or an unusable page is a starting observation, not an acceptable
+transport result. Reviewer investigates the runtime, relevant knowledge, and source until it can
+explain the smallest material cause, and rejects when the intended experience is not faithfully
+available. HTTP responses, process state, and port cleanup remain necessary operational evidence but
+cannot replace that judgment.
 
 One Preview session may announce any number of surfaces. A surface is only an opaque named entry
 that the operator can open; HOPI does not infer application hierarchy, service dependencies, or

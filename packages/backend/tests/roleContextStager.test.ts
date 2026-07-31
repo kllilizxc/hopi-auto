@@ -107,10 +107,9 @@ describe('RoleContextStager', () => {
     expect(prompt).not.toContain('plan separate Work for independent outcomes')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
     expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
-    expect(prompt).toContain('Project Preview starts every runnable service')
-    expect(prompt).toContain('announces every service as a surface')
-    expect(prompt).toContain('Frontends connect to locally started backends')
-    expect(prompt).toContain('a frontend-only Project starts only its frontend')
+    expect(prompt).toContain('smallest real runtime composition')
+    expect(prompt).toContain('only operator-facing entries as surfaces')
+    expect(prompt).toContain('transport reachability is not semantic completion evidence')
     expect(prompt).toContain('Do not inspect, classify, isolate, snapshot, or seek approval')
     expect(prompt).toContain('at most warn the operator')
     expect(prompt).toContain(
@@ -653,6 +652,21 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('Current execution environment:')
     expect(generatorPrompt).toContain('__HOPI_EXECUTION_ENVELOPE__')
     expect(generatorPrompt).toContain('HOPI-managed Git metadata are Coordinator-owned')
+    expect(generatorPrompt).toContain(
+      'first read or create primary-Repo docs/hopi/preview/runbook.md as free Markdown',
+    )
+    expect(generatorPrompt).toContain(
+      'Before implementation, explore applicable Repo guidance, relevant knowledge',
+    )
+    expect(generatorPrompt).toContain('smallest faithful runtime composition')
+    expect(generatorPrompt).toContain('write discoveries back in this Work')
+    expect(generatorPrompt).toContain('Never hide an unexplained dependency')
+    expect(reviewerPrompt).toContain('start and use the candidate through the browser')
+    expect(reviewerPrompt).toContain('to the smallest material cause')
+    expect(reviewerPrompt).toContain('Transport evidence alone cannot pass the Work')
+    expect(reviewerPrompt).toContain(
+      'reject if browser-based experience verification is unavailable',
+    )
     expect(generatorPrompt).toContain('Run scratch: $HOPI_RUN_SCRATCH')
     expect(generatorPrompt).toContain('Task worktrees are disposable source projections')
     expect(generatorPrompt).toContain('$HOPI_CACHE_DIR persists across responsibility Attempts')
@@ -689,7 +703,7 @@ describe('RoleContextStager', () => {
       expect(prompt).not.toContain('choose the available browser client')
       expect(prompt).not.toContain('Do not enter a vendor plan-approval mode')
       expect(prompt).toContain('ends on completion, failure, termination, or its selected timeout')
-      expect(prompt.length).toBeLessThan(5_000)
+      expect(prompt.length).toBeLessThan(5_500)
     }
     const generatorCapabilities = await Bun.file(generator.proposalCapabilitiesFile).json()
     expect(generatorCapabilities).toMatchObject({

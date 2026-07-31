@@ -988,10 +988,13 @@ describe('WorkspaceAssistant conversation', () => {
     )
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).not.toContain('Reply with outcome and action in 1-2 sentences')
-    expect(seen[0]?.prompt).toContain('Project Preview starts every runnable service')
-    expect(seen[0]?.prompt).toContain('announces every service as a surface')
-    expect(seen[0]?.prompt).toContain('Frontends connect to locally started backends')
-    expect(seen[0]?.prompt).toContain('a frontend-only Project starts only its frontend')
+    expect(seen[0]?.prompt).toContain('smallest real runtime composition')
+    expect(seen[0]?.prompt).toContain('only operator-facing entries as surfaces')
+    expect(seen[0]?.prompt).toContain('transport reachability is not semantic completion evidence')
+    expect(seen[0]?.prompt).toContain('docs/hopi/preview/runbook.md')
+    expect(seen[0]?.prompt).toContain(
+      'Ordinary Preview Start/Stop and startup failure do not automatically create a runbook Work',
+    )
     expect(seen[0]?.prompt).toContain(
       'Do not inspect, classify, isolate, snapshot, or seek approval',
     )

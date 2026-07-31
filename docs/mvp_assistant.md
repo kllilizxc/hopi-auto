@@ -421,10 +421,18 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Manage Attention | Create, update, or resolve one Project todo | Assistant-owned durable Attention |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 
-Preview starts every runnable Project service, connects frontends to locally started backends, and
-announces every service as a surface. Database selection and writes belong to Project configuration
-and do not require Preview analysis or approval. Assistant may warn after completion that connected
-data may have changed, but does not turn that warning into prior work or a gate.
+Preview starts the smallest real runtime composition needed for the intended Project experience and
+announces only operator-facing entries as surfaces. Internal applications and infrastructure may run
+without becoming surfaces. Database selection and writes belong to Project configuration and do not
+require Preview analysis or approval. Assistant may warn after completion that connected data may
+have changed, but does not turn that warning into prior work or a gate.
+
+When current Engineering Work creates or changes Preview, Generator owns
+`docs/hopi/preview/runbook.md` in the primary Repo as ordinary free-form source documentation and
+updates it before implementation. Reviewer independently uses the candidate Preview and traces an
+incomplete experience to its smallest material runtime or source cause; transport reachability alone
+cannot satisfy the Work. Ordinary Preview Start/Stop and startup failure remain runtime facts and do
+not automatically create a runbook Work.
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
