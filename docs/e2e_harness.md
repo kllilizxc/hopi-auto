@@ -82,6 +82,13 @@ The operator-browser daemon is never part of Test Run cleanup or initialization.
 interactive per-attachment authorization outside unattended regression while preserving exact
 operator login access as a separate host capability.
 
+HOPI-launched managed Chrome uses Chrome's current Headless implementation. It retains one inert
+`data:` page as the Harness attachment anchor: unlike `about:blank`, the Harness treats that page as
+a real, non-reusable target, so every scenario `new_tab` receives a new target ID that Run cleanup
+can own and close. The anchor is browser infrastructure rather than a user-visible tab or scenario
+resource. The `operator` target remains headed because its purpose is to reuse the operator's visible
+browser and current login state. A host-supplied managed endpoint may choose its own presentation.
+
 Browser ownership is a host adapter, not a scenario concern. On a host where Chrome runs outside the
 backend environment, such as WSL with an isolated Windows automation browser, the host may supply its
 loopback DevTools endpoint through `HOPI_BROWSER_MANAGED_CDP_URL`. HOPI then reuses that browser

@@ -413,13 +413,6 @@ function MessageRow({
             </AppButton>
           </div>
         ) : null}
-        {isUser && item.text.trim() ? (
-          <div className="unified-feed-message__bubble">{item.text}</div>
-        ) : !isUser && item.text.trim() ? (
-          <div className="unified-feed-message__text">
-            <AssistantMessageText text={item.text} />
-          </div>
-        ) : null}
         {needsYou ? (
           <div className="unified-feed-attention-request">
             {needsYouAttentions.map((attention) => (
@@ -448,6 +441,21 @@ function MessageRow({
               />
             ) : null}
           </div>
+        ) : null}
+        {isUser && item.text.trim() ? (
+          <div className="unified-feed-message__bubble">{item.text}</div>
+        ) : !isUser && !needsYou && item.text.trim() ? (
+          <div className="unified-feed-message__text">
+            <AssistantMessageText text={item.text} />
+          </div>
+        ) : null}
+        {needsYou && item.text.trim() && item.text.trim() !== 'Your input is needed.' ? (
+          <AppDisclosure
+            className="unified-feed-attention-request__related-update"
+            summary="Related update"
+          >
+            <AssistantMessageText text={item.text} />
+          </AppDisclosure>
         ) : null}
         {item.attachments && item.attachments.length > 0 ? (
           <div className="unified-feed-message__attachments">

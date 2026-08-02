@@ -96,6 +96,43 @@ describe('PassOutcomeCoordinator', () => {
     )
   })
 
+  test('rejects a Planner Attention proposal that also stages executable Work', async () => {
+    const fixture = await createFixture()
+    const context = await fixture.stage('plan-initial', 'run-plan-attention-work', 'planner')
+    await Bun.write(
+      join(context.proposalRoot, ...fixture.store.paths.workDocument('goal-1', 'W-1').split('/')),
+      renderWorkDocument(engineeringWork('W-1', 'generate')),
+    )
+    const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-runtime-choice')
+    await Bun.write(
+      join(context.proposalRoot, ...attentionPath.split('/')),
+      renderAttentionDocument({
+        attributes: {
+          id: 'A-runtime-choice',
+          target: 'project:project-1/goal:goal-1/work:plan-initial',
+          createdAt: '2026-07-11T00:00:00Z',
+          resolvedAt: null,
+          summary: 'The executable topology still needs an operator decision.',
+        },
+        body: '## Needs you\n\nChoose the executable topology.\n',
+      }),
+    )
+
+    const result = await fixture.outcomes.apply(
+      fixture.input('plan-initial', 'run-plan-attention-work', 'planner', context, 'fail'),
+    )
+    const goalPackage = await fixture.store.readPackage('goal-1')
+
+    expect(result).toEqual({
+      kind: 'invalid',
+      reason:
+        'Planner Attention proposal may not create or rewrite Work; unresolved planning must settle before executable Work is published',
+    })
+    expect(goalPackage.works.has('W-1')).toBe(false)
+    expect(goalPackage.attentions.has('A-runtime-choice')).toBe(false)
+    expect(goalPackage.evidence.has('E-run-plan-attention-work')).toBe(false)
+  })
+
   test('retains Planner project context while an existing Attention keeps Planning open', async () => {
     const fixture = await createFixture()
     const attentionPath = fixture.store.paths.attentionDocument('goal-1', 'A-existing')

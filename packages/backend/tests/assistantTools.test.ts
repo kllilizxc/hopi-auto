@@ -2115,7 +2115,20 @@ describe('Assistant HOPI tools', () => {
 
   test('reads current control state without inlining durable history', async () => {
     const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.goalStore.createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+      acceptedInput: {
+        attributes: {
+          sourceHomeId: 'H-1',
+          sourceEventId: 'EV-accepted',
+          sourceDigest: 'a'.repeat(64),
+          attachments: [],
+        },
+        body: 'Use the current repository configuration.\n',
+      },
+    })
     await fixture.attempts.reserve({
       projectId: 'P-1',
       goalId: 'G-1',
@@ -2181,6 +2194,7 @@ describe('Assistant HOPI tools', () => {
         goals: Array<{
           works: Array<{ path: string; body?: unknown }>
           design?: Array<{ path: string; content?: unknown }>
+          acceptedInputs: Array<{ acceptedInput: string; path: string }>
           evidence?: unknown
         }>
       }>
@@ -2211,6 +2225,12 @@ describe('Assistant HOPI tools', () => {
     )
     expect(current.projects[0]?.goals[0]?.works[0]).not.toHaveProperty('body')
     expect(current.projects[0]?.goals[0]?.design?.[0]).not.toHaveProperty('content')
+    expect(current.projects[0]?.goals[0]?.acceptedInputs).toEqual([
+      expect.objectContaining({
+        acceptedInput: 'Use the current repository configuration.\n',
+        path: expect.stringContaining('/inputs/H-1/EV-accepted.md'),
+      }),
+    ])
     expect(current.projects[0]?.goals[0]).not.toHaveProperty('evidence')
 
     await attempt.interrupt(new Error('test interruption'))

@@ -26,6 +26,19 @@ describe('decideGoalReconciliation', () => {
     expect(decide(goalPackage)).toMatchObject({ kind: 'dispatch', workId: 'W-1' })
   })
 
+  test('dispatches ready Planning before Engineering so supervision can replace the plan', () => {
+    const goalPackage = packageWith([
+      work('engineering-0001', 'engineering', 'generate'),
+      work('plan-supervision', 'planning', 'plan'),
+    ])
+
+    expect(decide(goalPackage)).toEqual({
+      kind: 'dispatch',
+      workId: 'plan-supervision',
+      responsibility: 'planner',
+    })
+  })
+
   test('does not use an open Work Attention as a scheduling gate', () => {
     const target = 'project:P-1/goal:G-1/work:W-1'
     const pending = attention('A-1', target)

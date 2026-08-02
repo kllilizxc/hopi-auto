@@ -106,19 +106,31 @@ describe('RoleContextStager', () => {
     )
     expect(prompt).not.toContain('plan separate Work for independent outcomes')
     expect(prompt).toContain('Coordinator alone changes canonical control state')
-    expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project source-root map')
-    expect(prompt).toContain('smallest real runtime composition')
-    expect(prompt).toContain('exposes only operator surfaces')
-    expect(prompt).toContain('transport readiness is not semantic completion')
-    expect(prompt).toContain('docs/hopi/preview/runbook.md is surface and host-child authority')
-    expect(prompt).toContain('until accepted input explicitly changes it')
-    expect(prompt).toContain('Never demote it')
-    expect(prompt).toContain('routes and services only prove availability')
-    expect(prompt).toContain('keep the runbook boundary in proposed design and Repo context')
-    expect(prompt).toContain('propose no dependent Engineering Work')
+    expect(prompt).toContain('$HOPI_REPOS_FILE is the complete Project root map')
+    expect(prompt).toContain('Read only its roots')
+    expect(prompt).toContain('never scan parents/siblings')
+    expect(prompt).toContain(
+      'preserve that baseline and runbook boundary in design and Repo context',
+    )
+    expect(prompt).toContain(
+      'If source conflicts or missing authority can materially change the plan',
+    )
+    expect(prompt).toContain('propose no Work in the same result')
     expect(prompt).toContain('reuse or update the smallest Attention')
-    expect(prompt).toContain('Do not inspect, classify, isolate, snapshot, or seek approval')
-    expect(prompt).toContain('at most warn the operator')
+    expect(prompt).toContain(
+      'smallest real delivery supported by current source and toolchain facts',
+    )
+    expect(prompt).toContain('one coherent durable candidate and one primary verification strategy')
+    expect(prompt).toContain('stable contract, artifact, or proof boundary')
+    expect(prompt).toContain('Rehearse every proposed Work')
+    expect(prompt).toContain('Split independent flows, state machines, operation families')
+    expect(prompt).toContain('keep each accepted intermediate release buildable')
+    expect(prompt).toContain('durable candidate, deliberately deferred behavior')
+    expect(prompt).toContain('Use judgment, not quotas or prescribed headings')
+    expect(prompt).toContain('named test suite is only a container, not a proof boundary')
+    expect(prompt).toContain('One aggregate suite cannot make independently failing')
+    expect(prompt).toContain('Do not turn a one-time deliverable into a general parser')
+    expect(prompt).toContain('finite accepted input grammar and material invariants')
     expect(prompt).toContain(
       '.hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology',
     )
@@ -184,12 +196,10 @@ describe('RoleContextStager', () => {
     )
     expect(prompt).not.toContain('Reviewer success')
     expect(prompt).not.toContain('terminal proof boundary')
-    expect(prompt).toContain(
-      'cannot predict the checkpoint commit Coordinator creates after the Run',
-    )
-    expect(prompt).toContain('Coordinator Evidence owns that commit identity')
-    expect(prompt).toContain('owns the current nonterminal dependsOn graph')
-    expect(prompt).toContain('may atomically add, remove, or redirect edges')
+    expect(prompt).toContain('never the future checkpoint identity')
+    expect(prompt).toContain('Coordinator Evidence owns it')
+    expect(prompt).toContain('owns the nonterminal dependsOn DAG')
+    expect(prompt).toContain('leave it acyclic')
     expect(await Bun.file(bundle.resultSchemaFile).json()).toMatchObject({
       properties: {
         summary: {
@@ -309,7 +319,7 @@ describe('RoleContextStager', () => {
     expect(context).toContain(
       `Applicable Repo guidance knowledge: ${join(knowledgeRoot, 'AGENTS.md')}`,
     )
-    expect(prompt).toContain('roots may contain source, knowledge, or both')
+    expect(prompt).toContain('They may contain source or knowledge')
     expect(prompt).not.toContain('local-preview.md')
   })
 
@@ -331,7 +341,7 @@ describe('RoleContextStager', () => {
     expect(planner.operatorPreferenceFile).toBeDefined()
     expect(await Bun.file(planner.operatorPreferenceFile ?? '').text()).toBe(preference)
     expect(await Bun.file(planner.promptFile).text()).toContain(
-      'Operator preferences are defaults below current Input',
+      'Preferences rank below current Input',
     )
     expect(await Bun.file(planner.contextFile).text()).toContain('Operator preference snapshot:')
     expect(planner.authorityFiles.some((file) => file.path === '.hopi/preference.md')).toBe(false)
@@ -659,46 +669,68 @@ describe('RoleContextStager', () => {
     expect(generatorPrompt).toContain('Current execution environment:')
     expect(generatorPrompt).toContain('__HOPI_EXECUTION_ENVELOPE__')
     expect(generatorPrompt).toContain('HOPI-managed Git metadata are Coordinator-owned')
+    expect(generatorPrompt).toContain('Preview goal:')
+    expect(generatorPrompt).toContain('normal user entry running quickly')
+    expect(generatorPrompt).toContain('mockable authentication')
+    expect(generatorPrompt).toContain('visible useful data')
+    expect(generatorPrompt).toContain('Prefer local data; fall back to DEV')
+    expect(generatorPrompt).toContain('Read or create docs/hopi/preview/runbook.md')
+    expect(generatorPrompt).toContain('Explore current source first, then relevant knowledge')
     expect(generatorPrompt).toContain(
-      'For Preview, explore guidance, knowledge, behavior, source, and runbook first',
+      'one short question only if a necessary fact remains unavailable',
     )
-    expect(generatorPrompt).toContain('Preserve baseline')
-    expect(generatorPrompt).toContain('update Attention and fail unchanged')
-    expect(generatorPrompt).toContain('Runbook first (free Markdown)')
-    expect(generatorPrompt).toContain('smallest faithful runtime')
-    expect(generatorPrompt).toContain('no mocks')
-    expect(generatorPrompt).toContain('Caps/concurrency/deadlines do not bound repeated discovery')
-    expect(generatorPrompt).toContain('If a valid oracle leaves a required fact unknown')
-    expect(generatorPrompt).toContain('do not rerun sampling')
-    expect(generatorPrompt).toContain('write one precise decisionPrompt in smallest Attention')
-    expect(generatorPrompt).toContain('and fail unchanged')
-    expect(generatorPrompt).toContain('Contradictory negatives invalidate the oracle')
-    expect(generatorPrompt).toContain('replay known-positive')
-    expect(generatorPrompt).toContain('separate observation error from product result')
-    expect(generatorPrompt).toContain('Control Preview')
-    expect(generatorPrompt).toContain('observe surfaces, browser-verify')
-    expect(generatorPrompt).toContain('stop, check process/ports')
+    expect(generatorPrompt).toContain('shortest working launch path')
+    expect(generatorPrompt).toContain('failed adapter topology')
+    expect(generatorPrompt).toContain(
+      'old runbook implementation restrictions are revisable history',
+    )
+    expect(generatorPrompt).toContain('Mock authentication and local sample data are valid')
+    expect(generatorPrompt).toContain('Start and browser-check before broad builds or test suites')
+    expect(generatorPrompt).toContain('page, data, and one basic interaction')
+    expect(generatorPrompt).toContain('Check from fresh browser state')
+    expect(generatorPrompt).toContain('required user/session state must come from Preview')
+    expect(generatorPrompt).toContain('not manual test-browser seeding')
+    expect(generatorPrompt).toContain(
+      'stop product exploration and finish focused checks and cleanup',
+    )
+    expect(generatorPrompt).toContain('do not open or repair extra routes or features')
+    expect(generatorPrompt).toContain('Keep edits small and coherent')
+    expect(generatorPrompt).toContain('retry only that file')
+    expect(generatorPrompt).toContain('never resend one large multi-file patch')
+    expect(generatorPrompt).toContain('optional scripts/hopi/prepare')
+    expect(generatorPrompt).toContain('foreground scripts/hopi/preview')
+    expect(generatorPrompt).toContain(
+      'HOPI_PREVIEW_SURFACES=<nonempty JSON array of {id,label,url}>',
+    )
+    expect(generatorPrompt).toContain('after the Preview is usable')
+    expect(generatorPrompt).toContain('stays alive until Stop')
+    expect(generatorPrompt).toContain('Entries are normal user routes, never docs/logs/health')
+    expect(generatorPrompt).toContain('verify process/port/resource cleanup')
     expect(generatorPrompt).toContain('never await natural exit')
-    expect(reviewerPrompt).toContain('use browser')
+    expect(reviewerPrompt).toContain('browser-use every surface')
     expect(reviewerPrompt).toContain(
       'current Goal, intended-experience authority, and Engineering Work contract',
     )
-    expect(reviewerPrompt).toContain('compare runbook/surfaces with authority')
-    expect(reviewerPrompt).toContain('find the smallest cause')
-    expect(reviewerPrompt).toContain(
-      'Reject caps/concurrency/deadlines and repeated sampling as bounds',
-    )
-    expect(reviewerPrompt).toContain('after a valid oracle leaves a required fact unknown')
-    expect(reviewerPrompt).toContain('unexplained known-positive contradictions')
-    expect(reviewerPrompt).toContain('more waits/probes do not validate them')
-    expect(reviewerPrompt).toContain('Transport evidence alone cannot pass the Work')
-    expect(reviewerPrompt).toContain('Control Preview')
-    expect(reviewerPrompt).toContain('observe surfaces, browser-verify')
-    expect(reviewerPrompt).toContain('stop, check process/ports')
+    expect(reviewerPrompt).toContain('compare the runbook and surfaces with accepted authority')
+    expect(reviewerPrompt).toContain('authentication works including by mock')
+    expect(reviewerPrompt).toContain('useful data is visible')
+    expect(reviewerPrompt).toContain('one basic interaction works')
+    expect(reviewerPrompt).toContain('Prefer local data; DEV data is acceptable')
+    expect(reviewerPrompt).toContain('Do not require production-equivalent infrastructure')
+    expect(reviewerPrompt).toContain('live authentication, or every product capability')
+    expect(reviewerPrompt).toContain('Start from fresh browser state')
+    expect(reviewerPrompt).toContain('reject manual test-browser seeding')
+    expect(reviewerPrompt).toContain('stop product exploration')
+    expect(reviewerPrompt).toContain('do not inspect additional routes or features')
+    expect(reviewerPrompt).toContain('HTTP/process/port evidence alone cannot pass')
+    expect(reviewerPrompt).toContain('reject a blank, broken, or data-empty experience')
+    expect(reviewerPrompt).toContain('Stop and verify process/port/resource cleanup')
     expect(reviewerPrompt).toContain('never await natural exit')
     expect(reviewerPrompt).toContain(
-      'reject if browser-based experience verification is unavailable',
+      'Reject if browser-based experience verification is unavailable',
     )
+    expect(generatorPrompt).not.toContain('no mock or local-preview/test/demo/fixture substitutes')
+    expect(reviewerPrompt).not.toContain('Reject mocks')
     expect(generatorPrompt).toContain('Run scratch: $HOPI_RUN_SCRATCH')
     expect(generatorPrompt).toContain('Task worktrees are disposable source projections')
     expect(generatorPrompt).toContain('$HOPI_CACHE_DIR persists across responsibility Attempts')
@@ -749,7 +781,7 @@ describe('RoleContextStager', () => {
       ],
     })
     expect(generatorCapabilities.writable[0].guidance).toBeUndefined()
-    expect(generatorPrompt).toContain('implement the complete Engineering Work')
+    expect(generatorPrompt).toContain('Implement Engineering Work')
     expect(reviewerPrompt).toContain(`git merge-base ${projectReleaseRef('project-1')} HEAD`)
     expect(reviewerPrompt).toContain('Source, Project docs, canonical .hopi state')
     expect((await stat(reviewer.runtimeScratchDir)).isDirectory()).toBe(true)

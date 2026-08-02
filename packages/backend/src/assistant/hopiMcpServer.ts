@@ -112,7 +112,7 @@ server.registerTool(
   'hopi_control_preview',
   {
     description:
-      'Start or stop Project Preview. The current runbook defines surfaces and host-child boundaries until accepted input explicitly changes them; live routes or services do not. The adapter starts the smallest real runtime composition and exposes only operator-facing entries; transport is runtime state, not Work evidence. Start preparation must be practical and bounded: missing Project facts do not justify exhaustive discovery, and parallelism is not a bound. Do not gate on database classification or writes; at most warn afterward. Runtime inputs must be bounded non-secret values because arguments persist in the durable provider transcript.',
+      'Start/stop Preview. Goal: an operator entry opens with mockable authentication and useful visible data; prefer local data, then DEV. A failed service is evidence, not Goal scope. Work states experience acceptance only; failed topology and old runbook restrictions are replaceable unless current operator input requires them. Read/update the runbook, explore source then relevant knowledge, start and browser-check the shortest path before broad tests, and ask only for one undiscoverable fact. Expose operator entries only. Reachability alone is insufficient: page and data must work. Stop cleans owned resources.',
     inputSchema: assistantMcpToolSchemas.hopi_control_preview,
   },
   (args) => callTool('hopi_control_preview', args),

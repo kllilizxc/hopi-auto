@@ -9,7 +9,7 @@ import {
   renderWorkDocument,
 } from '../../src/domain/canonicalDocuments'
 import { type MvpServer, createServer } from '../../src/mvpServer'
-import { requestJson, waitForValue } from './deterministicHarness'
+import { ScriptedAssistantRunner, requestJson, waitForValue } from './deterministicHarness'
 
 const PROJECT_ID = 'P-evidence-handoff'
 const GOAL_ID = 'G-evidence-handoff'
@@ -46,6 +46,7 @@ test('hands accepted dependency Evidence and immutable Run artifacts to downstre
     server = createServer({
       rootDir: join(temporaryRoot, 'home'),
       port: 0,
+      assistantRunner: new ScriptedAssistantRunner([]),
       roleRunner: roles,
     })
     const baseUrl = `http://127.0.0.1:${server.port}`

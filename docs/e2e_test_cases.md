@@ -1135,8 +1135,8 @@ Pass conditions:
 - Upper Assistant, Attention, Inbox, session, and delivery semantics remain identical.
 - A compatible same-vendor speaking or Work responsibility session resumes; a vendor switch starts
   a new session from durable context.
-- Responsibility sessions never cross Work, role, or material Work-revision boundaries, and
-  Wake never inherits one.
+- Responsibility sessions never cross Work, role, material Work-revision, or responsibility runtime
+  contract boundaries, and Wake never inherits one.
 - Interrupted responsibility files remain available to the compatible replacement Attempt and are
   never reconstructed from model memory alone.
 - Codex responsibility commands ignore implicit user configuration while retaining explicit HOPI

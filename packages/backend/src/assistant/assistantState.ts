@@ -15,6 +15,7 @@ import { parseWorkAttentionTarget } from '../domain/attentionTarget'
 import {
   type AttentionAttributes,
   type GoalAttributes,
+  type InputAttributes,
   type WorkAttributes,
   type WorkDocument,
   isEngineeringWork,
@@ -173,6 +174,11 @@ export interface AssistantStatePlanningOutcome {
 
 export interface AssistantStateGoalSnapshot {
   goal: { attributes: GoalAttributes; body: string; path: string }
+  acceptedInputs: Array<{
+    attributes: InputAttributes
+    body: string
+    path: string
+  }>
   latestPlanningOutcome: AssistantStatePlanningOutcome | null
   works: AssistantStateWorkSnapshot[]
   attentions: Array<{
@@ -441,6 +447,23 @@ export function createAssistantStateReader(options: {
                   body: boundedText(goalPackage.goal.body, input.includeEvidence ? 4_000 : 800),
                   path: project.store.paths.absolute(project.store.paths.goalDocument(goalId)),
                 },
+                acceptedInputs: goalPackage.inputs
+                  .toSorted(
+                    (left, right) =>
+                      left.attributes.sourceHomeId.localeCompare(right.attributes.sourceHomeId) ||
+                      left.attributes.sourceEventId.localeCompare(right.attributes.sourceEventId),
+                  )
+                  .map((acceptedInput) => ({
+                    attributes: acceptedInput.attributes,
+                    body: boundedText(acceptedInput.body, input.includeEvidence ? 4_000 : 1_200),
+                    path: project.store.paths.absolute(
+                      project.store.paths.inputDocument(
+                        goalId,
+                        acceptedInput.attributes.sourceHomeId,
+                        acceptedInput.attributes.sourceEventId,
+                      ),
+                    ),
+                  })),
                 design: design.files.flatMap((file) =>
                   file.content
                     ? [
@@ -1066,6 +1089,7 @@ async function semanticDigest(
       ...(project.error ? { error: project.error } : {}),
       goals: project.goals.map((goal) => ({
         goal: goal.goal.attributes,
+        acceptedInputs: goal.acceptedInputs.map((acceptedInput) => acceptedInput.attributes),
         latestPlanningOutcome: goal.latestPlanningOutcome
           ? {
               attributes: goal.latestPlanningOutcome.attributes,

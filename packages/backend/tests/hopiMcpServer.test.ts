@@ -152,37 +152,37 @@ describe('HOPI MCP server', () => {
       },
     })
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'bounded non-secret values',
+      'mockable authentication and useful visible data',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'starts the smallest real runtime composition',
+      'prefer local data, then DEV',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'current runbook defines surfaces and host-child boundaries',
+      'A failed service is evidence, not Goal scope',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'until accepted input explicitly changes them',
+      'Work states experience acceptance only',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'live routes or services do not',
+      'Read/update the runbook',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'exposes only operator-facing entries',
+      'explore source then relevant knowledge',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'transport is runtime state, not Work evidence',
+      'shortest path before broad tests',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'Start preparation must be practical and bounded',
+      'ask only for one undiscoverable fact',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'parallelism is not a bound',
+      'Expose operator entries only',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'Do not gate on database classification or writes',
+      'Reachability alone is insufficient: page and data must work',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_preview')?.description).toContain(
-      'durable provider transcript',
+      'Stop cleans owned resources',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_write_design')?.inputSchema,

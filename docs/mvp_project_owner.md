@@ -130,6 +130,7 @@ Agent role.
 Wake-up is edge-triggered:
 
 - new operator input wakes the Assistant
+- every published Planner settlement is a material Project event
 - every published Reviewer `reject` is a material Project event
 - settled failure, Attention, Goal completion or cancellation, Project availability changes, and
   explicit runtime liveness recovery are material Project events
@@ -138,24 +139,40 @@ Transient logs, command output, running progress, and the ordinary Generator-to-
 not wake the Assistant by themselves. Material events are derived from durable Project and Attempt
 truth, so a process restart can recover an unobserved event without a second event store.
 
-Wake-up does not gate responsibility scheduling. A Reviewer `reject` returns the Work to `generate`,
-and the next Generator may start while the Project Assistant observes the rejection and current
-aggregate state. Concurrent observation does not transfer execution ownership: the active
-responsibility Attempt owns that Work's execution and Evidence, while Assistant shell effects remain
-outside the Attempt even when they persist on the host or a remote system; they have no Work Evidence,
-review, retry, recovery, or supervision and cannot settle the Attempt. The Assistant may finish
-silently. If it changes the
-affected Work or Goal, the ordinary Assistant effect barrier invalidates or interrupts execution
-based on the superseded authority; the Assistant is neither another approval stage nor an implicit
-replacement for Generator or Reviewer.
+After a Planner settlement or Reviewer `reject`, Coordinator completes the material wake observation
+before redispatching that Project. Once its internal event is selected, Coordinator holds new
+responsibility dispatch for the Project until the corresponding Assistant turn settles. A Reviewer
+`reject` still returns the Work to `generate`, but the next Generator cannot start before Assistant
+has received the rejection together with current aggregate state. The same boundary lets Assistant
+judge whether a new plan is realistically executable before its Engineering Work starts. This is a
+transient supervision boundary, not a new approval stage: Assistant may finish silently and dispatch
+resumes immediately. If Assistant changes the affected Work or Goal, the ordinary effect barrier
+applies the new authority before execution resumes. Assistant is neither an implicit replacement for
+Generator or Reviewer nor the owner of their Evidence.
+
+Planner supervision reads the Work bodies, not only the DAG. A shared package, port, profile, or
+feature name does not make several independently deliverable user flows, state machines, operation
+families, consumer migrations, or proof environments one executable Work. When this defect is
+material, Assistant requests same-contract Planning and names the concrete mixed boundaries; ready
+Planning is dispatched before Engineering so Planner can revise the nonterminal plan. This remains a
+model judgment without numeric size thresholds or a mandatory approval step.
+
+Assistant also treats a named test suite, browser harness, adapter, or application as a proof
+container rather than evidence that all scenarios inside it form one proof boundary. It checks
+whether the Work body says what durable candidate becomes usable now, what behavior remains outside
+the Work, and why its focused proof can accept that candidate without simultaneously completing
+independent flows. Missing headings or wording are never defects by themselves; an unrealistic
+execution boundary is.
 
 Events coalesce while an invocation is running. A material fact has one stable observation identity,
-such as the published Reviewer Run that rejected a Work; a following Generator start does not turn
-that same rejection into another wake. The observed cursor advances when its durable Inbox event is
-stored. A process interruption leaves that event pending, so restart can fork the latest speaking
-session and reassess current truth. A terminal provider failure is recorded and exposed once on the
-same event rather than retried indefinitely; the event body and current Project state retain the
-facts for the next speaking turn or material wake.
+such as the published Reviewer Run that rejected a Work; later state movement neither turns that
+rejection into another wake nor invalidates its pending Inbox event. The observed digest records the
+snapshot that caused publication, while Assistant always receives current Project state when the
+event is processed and judges whether the original fact still requires action. The observed cursor
+advances when its durable Inbox event is stored. A process interruption leaves that event pending, so
+restart can fork the latest speaking session and reassess current truth. A terminal provider failure
+is recorded and exposed once on the same event rather than retried indefinitely; the event body and
+current Project state retain the facts for the next speaking turn or material wake.
 
 A running Work Attempt supplies its own later settlement edge, so unresolved Attention does not
 create polling while delegated work is active. When no responsibility is active, unresolved
@@ -262,6 +279,22 @@ Needs You is the operator presentation of one or more open Attention records pre
 Project Assistant in a public Inbox turn. `present_attention_to_user` records only their exact
 canonical references on that turn. The UI reads current `summary` and optional `decisionPrompt`
 directly from Attention; the detailed `body` remains available behind disclosure.
+
+The referenced Attention is the single semantic source of the operator request. The public Inbox
+reply may record the related Project outcome, but the Needs You card leads with the current
+Attention question and keeps that reply behind disclosure so runtime status cannot obscure or
+duplicate the requested action. Assistant presents an existing Goal Attention directly when it
+already asks the smallest answerable question; it does not resolve and recreate the same condition
+as workspace Attention merely to paraphrase it. A replacement workspace Attention is justified
+only by a different current condition after the stale Goal Attention is resolved.
+
+Before presentation, Assistant compares the request with the current Goal's accepted Inputs,
+current design/runbook, and current source consumer. Project conversation history, older Goals,
+historical Attention rationale, and adapter-declared prerequisites are supporting evidence rather
+than current authority. A requested file, credential reference, configuration, or other artifact
+must have a concrete current consumer and known accepted shape; otherwise Assistant repairs the
+stale implementation or asks about the underlying product choice instead of asking the operator to
+locate an invented artifact.
 
 - one presentation may batch several related Attention records and several related questions
 - an exact unresolved Attention referenced by the presentation renders as `Needs you`

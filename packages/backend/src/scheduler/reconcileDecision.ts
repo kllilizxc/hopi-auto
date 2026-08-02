@@ -52,6 +52,9 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
       } => projection.ready && projection.responsibility !== null,
     )
     .toSorted((left, right) => {
+      const responsibilityDifference =
+        responsibilityRank(left.responsibility) - responsibilityRank(right.responsibility)
+      if (responsibilityDifference) return responsibilityDifference
       const rankDifference =
         dependencyRank(left.workId, goalPackage) - dependencyRank(right.workId, goalPackage)
       return rankDifference || left.workId.localeCompare(right.workId)
@@ -78,6 +81,10 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
       ),
     ],
   }
+}
+
+function responsibilityRank(responsibility: 'planner' | 'generator' | 'reviewer') {
+  return responsibility === 'planner' ? 0 : 1
 }
 
 function dependencyRank(

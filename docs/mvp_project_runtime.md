@@ -84,61 +84,45 @@ Prepare script prevents Preview startup and produces a factual Project event.
 has already established the exact managed release boundary before invoking it. The adapter uses the
 provided Repo roots and never an unintegrated Work candidate.
 
-The Preview adapter starts the smallest real runtime composition needed to provide the intended
-Project experience. A process may be an operator-facing entry, an internal application dependency,
-or supporting infrastructure; only entries that an operator should open are announced as surfaces.
-The Project decides that composition from its current product behavior rather than Repo count,
-package scripts, or a global frontend/backend topology rule.
+Preview has one practical target: open the normal user entry with working authentication and useful
+visible data. Authentication may be mocked. Prefer local data, including deterministic sample data,
+and fall back to DEV when local data is unavailable or more expensive to provide. Preview does not
+need production-equivalent infrastructure or every product capability.
 
 Projects keep the current understanding of that experience in the primary Repo at
 `docs/hopi/preview/runbook.md`. The runbook is ordinary free-form Markdown, not a HOPI schema. When
-Engineering Work creates or changes Preview, Generator first creates or refreshes the runbook by
-exploring applicable Repo guidance, knowledge sources, the existing application, and current source,
-then implements the adapter. Technical facts discovered during implementation are written back in
-the same Work. Ordinary Start/Stop and runtime failure do not create a separate runbook workflow.
+Engineering Work creates or changes Preview, Generator reads or updates it before implementation.
+It records only the current user entry, chosen authentication and data path, launch facts, and useful
+verification knowledge. Ordinary Start/Stop and runtime failure do not create separate runbook Work.
 However, a user-initiated Start already requests the working Preview capability. If diagnosis finds
 that no adapter exists and no current Work owns that capability, Assistant creates the ordinary
 Engineering Work itself; the operator does not have to ask for repair separately. This admission
 uses the existing Goal/Work model and is not a Preview-specific repair workflow.
 
-Ordinary Preview Start must remain a practical, bounded operator action. Engineering exploration may
-use representative runtime probes, but the adapter must not turn a missing Project fact into an
-exhaustive or combinatorial search on every Start. Parallel execution changes latency, not whether a
-search is bounded. A numeric candidate cap is also insufficient when measured worst-case latency or
-resource fan-out remains unsuitable for an ordinary Start. Generator first derives required facts
-from accepted input, the runbook, applicable guidance, configuration, current application behavior,
-and source. A per-attempt wall-clock deadline makes only that attempt finite; repeating such attempts
-does not make discovery bounded or establish an unknown Project fact. Generator may repair an invalid
-observation oracle and replay its known-positive control. Once a valid oracle leaves a required fact
-unknown after bounded exploration, Generator does not optimize or rerun sampling: Preview remains
-fail-closed and the Agent updates the smallest Attention with one precise `decisionPrompt` the
-operator can answer directly. It does not publish a partial experience, fabricate a mock, or hide
-the uncertainty behind runtime sampling.
+Generator explores in this order: current runbook and source, relevant knowledge, then one short
+operator question only if a necessary fact remains unavailable. It chooses the shortest working
+launch path, starts it before broad builds or test suites, and fixes only blockers to the page, data,
+and one basic interaction. Mock authentication and local sample data are valid implementation
+choices. Implementation uses small coherent edits; after a failed patch, Generator inspects and
+retries only that file instead of resending a large multi-file change. Unrelated services,
+production completeness, and exhaustive diagnosis are outside scope. Once the normal entry,
+authentication, useful data, and one basic interaction are observed, Generator stops product
+exploration and finishes focused checks and cleanup; it does not open or repair extra routes or
+features. The entry check starts from fresh browser state without pre-existing local or session
+storage. Generator must make any required user configuration or session available through Preview
+itself, not by manually seeding only its test browser.
 
-Experience verification also has a bounded observation contract. A verified business-negative
-result (for example, an empty experience) is distinct from an observation failure. Browser, network,
-or assertion errors must remain observable and must not be collapsed into the same value as valid
-empty product data. When a candidate result contradicts a known-positive observation, current
-application behavior, or another accepted fact, Generator treats the measurement as unproved and
-audits the smallest relevant observation path before changing search scope, retry count, or timeout.
-It first replays a known-positive control when one is available, then fixes or explains the oracle;
-only a successfully observed negative result can justify an Attention about missing product data.
+A failed service or startup stage is evidence that Preview is unavailable, not the scope of the next
+Goal. Assistant writes Preview Goal and Work contracts only in experience terms: user entry, working
+authentication, visible useful data, and one basic interaction. Failed topology and old runbook
+implementation restrictions are revisable technical history. They do not require a specific service
+or prohibit mock authentication or local data unless current operator input explicitly says so.
+Assistant reads only the session status and bounded failure summary before creating that Work;
+source inspection, reproduction, root-cause analysis, implementation, and browser verification
+belong to Generator.
 
-An existing runbook and accepted Project, Goal, or operator inputs are the current
-intended-experience authority. Discarding old Preview conclusions discards obsolete implementation
-and acceptance evidence, not those durable product decisions. A route, service, package, or
-successful response proves technical availability only; it does not create an operator entry or
-override the runbook. Only accepted input that explicitly changes a product decision may revise this
-baseline; a generic rebuild or instruction to ignore old Preview conclusions cannot demote it. When
-exploration exposes a conflict or a missing answer that can change the Preview boundary,
-composition, or acceptance, the responsible Agent preserves the runbook boundary, asks the smallest
-question before starting dependent implementation, and updates an existing unresolved Attention
-instead of duplicating it.
-
-Preview does not inspect, classify, replace, snapshot, or seek approval for the databases selected
-by Project configuration. Its services may read and write those databases normally. After Preview
-starts or an interaction finishes, Assistant may warn the operator that connected data may have
-changed; the warning is informational and never a startup or verification gate.
+Preview services may read and write their configured local or DEV data normally. Database
+classification, snapshots, and approval are not Preview gates.
 
 The script announces:
 
@@ -147,31 +131,22 @@ HOPI_PREVIEW_SURFACES=<json>
 ```
 
 HOPI considers Preview `running` only after the announced transports are reachable. Reachability is
-not proof that a Goal is complete or that a surface is semantically correct.
+runtime state, not user-experience acceptance.
 
-When Engineering Work creates or changes Preview, Reviewer must independently use the candidate
-Preview through the available browser environment. An incomplete experience such as missing data,
-missing application context, or an unusable page is a starting observation, not an acceptable
-transport result. Reviewer investigates the runtime, relevant knowledge, and source until it can
-explain the smallest material cause, and rejects when the intended experience is not faithfully
-available. HTTP responses, process state, and port cleanup remain necessary operational evidence but
-cannot replace that judgment.
-Reviewer also rejects a candidate whose ordinary Start depends on exhaustive runtime discovery or
-resource fan-out with no practical total bound; making the same search concurrent is not a bound.
-Reviewer rejects verification that converts observation errors into business-negative results or
-leaves a contradiction with a known-positive control unexplained. Increasing waits or probes does
-not repair an invalid oracle.
+When Engineering Work creates or changes Preview, Reviewer independently starts and uses every
+candidate surface in a browser. It passes when the intended product entry opens, authentication works
+(including by mock), useful data is visible, and one basic interaction works. A blank, broken, or
+data-empty page fails. HTTP responses and process state alone cannot pass, but Reviewer does not
+require live authentication, production-equivalent infrastructure, or unrelated product capability.
+Once those experience facts are observed, Reviewer does not explore additional routes or features;
+it stops the candidate and verifies owned process, port, and resource cleanup. Reviewer starts from
+fresh browser state and rejects a Preview that works only after manually seeding its validation
+browser.
 
-Reviewer also checks the proposed runbook and announced surfaces against the current Goal, the
-previous runbook baseline, and accepted operator decisions rather than treating the Engineering Work
-contract as independent product authority. A candidate cannot pass by rewriting the runbook around
-whatever routes happen to start.
-
-One Preview session may announce any number of surfaces. A surface is only an opaque named entry
-that the operator can open; HOPI does not infer application hierarchy, service dependencies, or
-relationships between entries. The Project adapter starts whatever the Project needs and announces
-all currently available entries together. The product UI exposes them through one Preview control
-whose menu opens the selected surface.
+One Preview session may announce any number of surfaces. A surface is only an opaque user entry that
+the operator should open; internal dependencies are not surfaces. HOPI does not infer application
+hierarchy or service relationships. The product UI exposes the announced entries through one Preview
+control.
 
 The Preview child is a process-group leader owned by HOPI. Project children remain in that group.
 The adapter may clean up non-process resources it explicitly creates, such as containers, but does

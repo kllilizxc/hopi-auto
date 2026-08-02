@@ -217,6 +217,19 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(1)
   })
 
+  test('wakes immediately for a published Planning outcome before Engineering dispatch', async () => {
+    const fixture = await setup(['P-1'])
+    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    fixture.setSnapshot(planningOutcomeSnapshot())
+
+    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    await fixture.wake.waitForIdle()
+
+    const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
+    expect(event?.attributes.context?.projectId).toBe('P-1')
+    expect(event?.body).toContain('attempt:P-1:G-1:planning:R-plan-1:success:published')
+  })
+
   test('publishes a state edge without requiring a cached speaking Session', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
@@ -486,6 +499,7 @@ function reviewerRejectSnapshot(
               body: 'Goal',
               path: '/tmp/G-1/goal.md',
             },
+            acceptedInputs: [],
             design: [],
             attentions: [],
             latestPlanningOutcome: null,
@@ -509,6 +523,52 @@ function reviewerRejectSnapshot(
                 ]),
               },
             ],
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function planningOutcomeSnapshot(): AssistantStateSnapshot {
+  const current = reviewerRejectSnapshot('R-unused-review', 'R-unused-generator', '8')
+  const project = current.projects[0]
+  const goal = project?.goals[0]
+  if (!project || !goal) throw new Error('Missing planning snapshot Project')
+  return {
+    ...current,
+    activeRuns: [],
+    projects: [
+      {
+        ...project,
+        goals: [
+          {
+            ...goal,
+            latestPlanningOutcome: {
+              attributes: {
+                id: 'plan-initial',
+                title: 'Plan current Goal',
+                kind: 'planning',
+                stage: 'done',
+                notBefore: null,
+                dependsOn: [],
+                contractRevision: 1,
+              },
+              path: '/tmp/G-1/works/plan-initial.md',
+              runtime: runtime([
+                attempt('R-plan-1', 'planner', 'finished', 'success', 'published'),
+              ]),
+              evidence: {
+                count: 1,
+                latest: {
+                  id: 'E-R-plan-1',
+                  producerRun: 'R-plan-1',
+                  artifactCount: 0,
+                  path: '/tmp/G-1/evidence/E-R-plan-1.md',
+                },
+              },
+            },
+            works: [],
           },
         ],
       },

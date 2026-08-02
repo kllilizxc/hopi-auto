@@ -26,6 +26,7 @@ import {
   bindResponsibilitySessionRunView,
   createResponsibilitySessionStore,
 } from '../runtime/responsibilitySessionStore'
+import { responsibilityRuntimeDigest } from '../runtime/roleContextRendering'
 import {
   type Responsibility,
   type RoleContextBundle,
@@ -472,6 +473,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         const sessionScope = {
           contractRevision: owningWork.attributes.contractRevision,
           assignmentHash,
+          runtimeDigest: responsibilityRuntimeDigest(responsibility),
         }
         const responsibilitySession = await responsibilitySessions.open(sessionKey, sessionScope)
         const context = await contextStager.prepare({

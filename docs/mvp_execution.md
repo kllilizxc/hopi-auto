@@ -528,15 +528,22 @@ violations remain corruption errors. Recovery therefore keeps all complete histo
 the event log into a best-effort parser.
 
 One provider-neutral responsibility session belongs to each
-`Project + Goal + Work + responsibility + Work assignment fingerprint` tuple. The fingerprint is the
-canonical Work document without append-only `evidenceRefs`; it still includes the Work body, stage,
-dependencies, scheduling, kind, and contract revision. It contains both the saved vendor conversation
-identity and one writable responsibility workspace. An Attempt is one process invocation and remains
-a separate immutable diagnostic record; a later Attempt for the same tuple resumes the conversation
-and workspace after interruption, Pause/Resume, Attention resolution, operational retry, or a
-Generator/Reviewer feedback loop. Appending Evidence history does not fork a Session. A Planner
-change to executable Work authority does, even when the Goal contract revision itself stays current.
-A different Work, responsibility, or material Work assignment never inherits either. The first
+`Project + Goal + Work + responsibility + Work assignment fingerprint + responsibility runtime contract digest`
+tuple. The fingerprint is the canonical Work document without append-only `evidenceRefs`; it still
+includes the Work body, stage, dependencies, scheduling, kind, and contract revision. The runtime
+contract digest covers the role's code-owned prompt contract and an explicit runtime-boundary
+revision. Changing either starts a fresh vendor conversation and writable responsibility workspace;
+durable Attempts, Evidence, and canonical source authority remain available through the ordinary
+assignment. This prevents a changed role contract from inheriting conclusions or scratch state
+formed under obsolete instructions without making every Reviewer rejection a forced reset.
+
+The session contains both the saved vendor conversation identity and one writable responsibility
+workspace. An Attempt is one process invocation and remains a separate immutable diagnostic record;
+a later Attempt for the same tuple resumes the conversation and workspace after interruption,
+Pause/Resume, Attention resolution, operational retry, or a Generator/Reviewer feedback loop.
+Appending Evidence history does not fork a Session. A Planner change to executable Work authority
+does, even when the Goal contract revision itself stays current. A different Work, responsibility,
+material Work assignment, or runtime contract never inherits either. The first
 invocation receives the complete current assignment. A resumed invocation receives every complete
 top-level assignment section that changed since the Session last accepted an invocation; unchanged
 sections remain authoritative in the saved conversation. If no accepted assignment snapshot exists,
@@ -812,6 +819,31 @@ assess it through one primary verification strategy. Planner splits at a stable 
 boundary when accepted concerns require independent proof, even when the ordered Work serves one
 product or runtime flow. A validated prerequisite is a durable outcome for its dependents even when
 it is not directly operator-facing.
+
+A stable architecture boundary is necessary but not sufficient to make a realistic Work. Before
+publishing, Planner rehearses one Generator and Reviewer cycle against the source surfaces it
+inspected. A Work is too broad when that cycle must independently deliver several user flows, state
+machines, operation families, consumer migrations, or materially different proof environments,
+even if all of them share one package, port, profile, or feature name. The plan splits those fronts
+at their independently usable or reviewable seams and keeps each intermediate release buildable,
+using a compatibility layer when a shared contract must land before all consumers migrate.
+
+This is a semantic feasibility judgment, not a file, line, token, command, or duration quota. A
+large cohesive change may remain one Work when its implementation and proof form one causal chain;
+small edits belong in separate Work when they settle independent behavior. Conversely, a long list
+of test commands does not itself force a split. Distinct browser flows, API matrices, stateful
+interactions, or operational proof that can fail and be accepted independently are evidence of
+different proof boundaries rather than one generic "full regression" strategy.
+
+A test suite, browser harness, package, adapter, or application is a proof container, not itself a
+proof boundary. Naming one suite as the terminal oracle cannot make unrelated scenarios cohesive.
+Planner walks each proposed Work from its current release precondition through implementation and
+review, and asks where a useful buildable candidate could be accepted before the rest. When list,
+detail, authoring, attachment, feedback, administration, or other operation families can reach such
+independent accepted states, they remain separate execution fronts even if one later aggregate suite
+runs all of them. The Work body identifies the candidate it delivers, the behavior deliberately left
+to later Work, and the focused proof that makes this candidate independently reviewable. This is
+ordinary semantic contract prose, not a prescribed heading template or machine-enforced scorecard.
 
 Independently testable code alone is not a Work boundary. A helper or refactor whose only useful
 effect remains inside its consumer receives the same Generator, Reviewer, and C1 cycle. Sparse means
@@ -1150,9 +1182,12 @@ Helpers such as `js(...)` and `capture_screenshot(...)` provide semantic and ren
 without reverse-engineering the installed Harness.
 
 - `managed` is the default target. It uses one persistent HOPI-owned browser profile per Assistant
-  Home and a dedicated DevTools endpoint. Browser Harness connections may be recreated without an
+  Home and a dedicated DevTools endpoint. HOPI-launched managed Chrome is headless because this is an
+  unattended execution environment rather than an operator surface. It keeps one inert `data:`
+  attachment anchor so Browser Harness always has a real non-task target; task tabs remain separately
+  identifiable and closeable by target ID. Browser Harness connections may be recreated without an
   operator permission prompt, while cookies and browser storage retained by that profile survive
-  Runs and Coordinator restarts.
+  Runs and Coordinator restarts. A host-supplied managed endpoint controls its own presentation.
 - `operator` attaches to the operator's running browser and therefore sees that browser's live login
   state. Its Harness daemon is Home-scoped and reused rather than restarted by ordinary Runs. Chrome
   may require operator authorization whenever that browser attachment is genuinely recreated.
@@ -1596,10 +1631,10 @@ Wake is a deterministic state observer, not a second model. When a scope becomes
 publishes one internal Inbox event in that same Assistant conversation. The event carries the current
 scope digest and the exact open, Assistant-owned Attention references that have no already-durable
 successor or future revisit. A scheduled revisit carries its exact Attention reference. The speaking
-thread receives the current state separately. Immediately before model execution HOPI compares the
-event's observed scope digest with that current state; a mismatch settles the obsolete internal turn
-silently without invoking the model. A matching turn owns every judgment and optional operator
-notification. Wake reports `started` only after its runtime record and Inbox handoff are durable;
+thread receives the current state separately. The event's observed scope digest identifies the
+snapshot that caused publication; it does not invalidate the durable fact when current state has
+advanced. The model receives both, owns every judgment, and may settle silently when current truth
+requires no action. Wake reports `started` only after its runtime record and Inbox handoff are durable;
 publication failure remains a Coordinator failure and retries through the ordinary wake edge.
 
 The state event describes consequences rather than prescribing an action. Coordinator does not
@@ -1632,6 +1667,10 @@ Each cycle:
 7. publishes validated outcomes and wakes dependents after upstream `done`
 8. evaluates completion
 9. observes the latest semantic digest and starts or coalesces a non-blocking Wake
+
+When ready Planning and Engineering coexist in one Goal, Reconciler dispatches Planning first. This
+lets a same-contract supervision request revise or cancel nonterminal Engineering authority before
+Generator starts; dependency rank and stable Work identity order the remaining candidates.
 
 `ready(work)` is one conjunction:
 
@@ -1712,10 +1751,16 @@ Goal criteria, current design, Work Evidence, Git facts, and project documentati
 - if more delivery is required, it creates the smallest additional Engineering Work; after the
   proposal validates, Coordinator marks Planning Work `done`
 - if operator authority or missing external information is required, it publishes targeted
-  Attention and leaves Planning Work at `plan`
+  Attention and leaves Planning Work at `plan`; Coordinator rejects the whole proposal if it also
+  creates or rewrites Work
 - if proof is sufficient, it returns `success` without creating additional Engineering Work;
   Coordinator retains the Planner Evidence, marks Planning Work `done`, and changes Goal lifecycle
   to `done` atomically
+
+Every published Planner settlement is an immediate material wake. Coordinator observes and settles
+that Project Assistant turn before dispatching newly planned Engineering Work. Assistant judges
+material feasibility and decomposition defects and may stay silent; it is not a second Planner or an
+approval requirement.
 
 Coordinator then verifies only structural conditions:
 

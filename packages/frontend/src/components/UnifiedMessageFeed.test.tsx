@@ -159,7 +159,11 @@ test('decorates the exact unresolved Assistant request and restores it after res
   expect(marked).toContain('Confirm whether this release is internal only.')
   expect(marked).toContain('Release window')
   expect(marked).toContain('Today')
-  expect(marked).toContain('Which release strategy should I use?')
+  expect(marked).toContain('Related update')
+  expect(marked).not.toContain('Which release strategy should I use?')
+  expect(marked.indexOf('Choose whether to release today or tomorrow.')).toBeLessThan(
+    marked.indexOf('Related update'),
+  )
   expect(marked).not.toContain('The candidate is ready and the release window')
   expect(marked).toContain('aria-label="Reply to this request"')
   expect(marked).toContain('>Reply<')
@@ -168,19 +172,21 @@ test('decorates the exact unresolved Assistant request and restores it after res
   ).not.toContain('<svg')
   expect(resolved).not.toContain('needs-you')
   expect(resolved).not.toContain('Reply to this request')
+  expect(resolved).not.toContain('Related update')
+  expect(resolved).toContain('Which release strategy should I use?')
 })
 
-test('renders only Attention presentation when a Needs You reply is empty', () => {
+test('renders only Attention presentation when a Needs You reply is generic', () => {
   const markup = renderToStaticMarkup(
     <UnifiedMessageFeed
-      feedKey="needs-you-empty-reply"
+      feedKey="needs-you-generic-reply"
       items={[
         {
           id: 'request',
           createdAt: '2026-07-12T12:00:00.000Z',
           kind: 'assistant_message',
           role: 'assistant',
-          text: '',
+          text: 'Your input is needed.',
           groupId: 'inbox:EV-request',
         },
       ]}
@@ -212,6 +218,8 @@ test('renders only Attention presentation when a Needs You reply is empty', () =
   expect(markup).toContain('Needs you')
   expect(markup).toContain('Choose a release window.')
   expect(markup.match(/assistant-message-markdown/g)).toHaveLength(1)
+  expect(markup).not.toContain('Related update')
+  expect(markup).not.toContain('Your input is needed.')
 })
 
 test('submits several selected choices as one readable reply', () => {

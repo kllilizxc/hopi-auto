@@ -203,6 +203,7 @@ export async function ensureManagedBrowser(
         '--remote-debugging-port=0',
         '--no-first-run',
         '--no-default-browser-check',
+        '--headless=new',
         '--enable-logging',
         `--log-file=${chromeLog}`,
         'data:text/html,<title>HOPI%20Managed%20Browser</title>',
@@ -282,14 +283,36 @@ async function readManagedBrowserEndpoint(
   try {
     lines = (await Bun.file(join(profileRoot, 'DevToolsActivePort')).text()).split(/\r?\n/)
   } catch {
-    return null
+    return readPersistedManagedBrowserEndpoint(profileRoot)
   }
   const port = Number(lines[0]?.trim())
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    return readPersistedManagedBrowserEndpoint(profileRoot)
+  }
   const browserPath = lines[1]?.trim()
-  if (!browserPath?.startsWith('/devtools/browser/')) return null
+  if (!browserPath?.startsWith('/devtools/browser/')) {
+    return readPersistedManagedBrowserEndpoint(profileRoot)
+  }
   const httpUrl = `http://127.0.0.1:${port}`
-  return readDevToolsEndpoint(httpUrl, profileRoot, browserPath)
+  return (
+    (await readDevToolsEndpoint(httpUrl, profileRoot, browserPath)) ??
+    readPersistedManagedBrowserEndpoint(profileRoot)
+  )
+}
+
+async function readPersistedManagedBrowserEndpoint(
+  profileRoot: string,
+): Promise<ManagedBrowserEndpoint | null> {
+  try {
+    const state = (await Bun.file(join(dirname(profileRoot), 'state.json')).json()) as {
+      httpUrl?: unknown
+      profileRoot?: unknown
+    }
+    if (state.profileRoot !== profileRoot || typeof state.httpUrl !== 'string') return null
+    return readDevToolsEndpoint(state.httpUrl, profileRoot)
+  } catch {
+    return null
+  }
 }
 
 async function readDevToolsEndpoint(

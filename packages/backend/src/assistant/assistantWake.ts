@@ -575,6 +575,7 @@ function workspaceAttentionRevisionKey(attention: WorkspaceAttentionDocument) {
 }
 
 function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
+  if (snapshot.projects.some(projectHasPublishedPlanningOutcome)) return true
   if (snapshot.projects.some(projectHasPublishedReviewerReject)) return true
   if (snapshot.projects.some(projectHasStaleRun)) return true
   if (snapshot.projects.some(projectHasSettledFailure)) return true
@@ -585,6 +586,15 @@ function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
     return project.goals.some((goal) =>
       goal.attentions.some((attention) => attention.attributes.resolvedAt === null),
     )
+  })
+}
+
+function projectHasPublishedPlanningOutcome(project: AssistantStateSnapshot['projects'][number]) {
+  return project.goals.some((goal) => {
+    const latestPublished = goal.latestPlanningOutcome?.runtime.recentAttempts.find(
+      (attempt) => attempt.status === 'finished' && attempt.application === 'published',
+    )
+    return latestPublished?.responsibility === 'planner'
   })
 }
 

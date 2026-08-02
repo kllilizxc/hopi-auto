@@ -90,6 +90,11 @@ function compactGoal(goal: AssistantStateGoalSnapshot) {
       path: goal.goal.path,
       body: boundedText(goal.goal.body, 4_000),
     },
+    acceptedInputs: goal.acceptedInputs.map((acceptedInput) => ({
+      attributes: acceptedInput.attributes,
+      path: acceptedInput.path,
+      acceptedInput: boundedText(acceptedInput.body, 4_000),
+    })),
     design: goal.design.map((document) => ({
       ...document,
       excerpt: boundedText(document.excerpt, 4_000),
@@ -109,6 +114,7 @@ function compactWork(
   return {
     attributes: value.attributes,
     path: value.path,
+    body: boundedText(value.body ?? '', 4_000),
     ...('projection' in value && value.projection ? { projection: value.projection } : {}),
     ...('candidateIntegration' in value && value.candidateIntegration
       ? { candidateIntegration: value.candidateIntegration }

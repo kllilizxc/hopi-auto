@@ -41,6 +41,7 @@ describe('ResponsibilitySessionStore', () => {
     expect(resumed).toMatchObject({
       contractRevision: 1,
       assignmentHash: 'a'.repeat(64),
+      runtimeDigest: 'f'.repeat(64),
       session: {
         transport: 'codex',
         sessionId: 'thread-generator',
@@ -91,6 +92,37 @@ describe('ResponsibilitySessionStore', () => {
     expect(await Bun.file(revisionTwo.workspaceDir).exists()).toBe(false)
   })
 
+  test('starts a fresh conversation and workspace when the responsibility runtime contract changes', async () => {
+    const root = await temporaryRoot()
+    const store = createResponsibilitySessionStore(root)
+    const generator = key('W-1', 'generator')
+    const oldRuntime = scope(1, 'a', 'c')
+    const currentRuntime = scope(1, 'a', 'd')
+    const oldSession = await store.open(generator, oldRuntime)
+    await Bun.write(join(oldSession.workspaceDir, 'obsolete-assumption.txt'), 'old contract')
+    await store.write(generator, oldRuntime, {
+      transport: 'codex',
+      sessionId: 'old-runtime',
+      executionKey: 'old-runtime-key',
+    })
+
+    const currentSession = await store.open(generator, currentRuntime)
+
+    expect(currentSession).toMatchObject({
+      contractRevision: 1,
+      assignmentHash: 'a'.repeat(64),
+      runtimeDigest: 'd'.repeat(64),
+      session: null,
+    })
+    expect(currentSession.workspaceDir).not.toBe(oldSession.workspaceDir)
+    expect(
+      await Bun.file(join(currentSession.workspaceDir, 'obsolete-assumption.txt')).exists(),
+    ).toBe(false)
+    expect(await Bun.file(join(oldSession.workspaceDir, 'obsolete-assumption.txt')).text()).toBe(
+      'old contract',
+    )
+  })
+
   test('rejects malformed metadata', async () => {
     const root = await temporaryRoot()
     const store = createResponsibilitySessionStore(root)
@@ -130,8 +162,12 @@ function key(workId: string, responsibility: 'generator' | 'reviewer') {
   return { projectId: 'P-1', goalId: 'G-1', workId, responsibility } as const
 }
 
-function scope(contractRevision: number, character: string) {
-  return { contractRevision, assignmentHash: character.repeat(64) }
+function scope(contractRevision: number, character: string, runtimeCharacter = 'f') {
+  return {
+    contractRevision,
+    assignmentHash: character.repeat(64),
+    runtimeDigest: runtimeCharacter.repeat(64),
+  }
 }
 
 async function temporaryRoot() {

@@ -34,6 +34,20 @@ export class CoordinatorBootError extends Error {}
 const HOPI_TEMPORARY_FILE =
   /(?:\.tmp\.|\.hopi-tmp-)[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+const GENERATED_DIRECTORY_NAMES = new Set([
+  '.git',
+  '.next',
+  '.turbo',
+  '.venv',
+  '.vite',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+  'target',
+  'venv',
+])
+
 export async function bootstrapCoordinator(input: {
   homeRoot: string
   home: AssistantHomeStore
@@ -41,7 +55,14 @@ export async function bootstrapCoordinator(input: {
   projects: readonly CoordinatorBootstrapProject[]
 }): Promise<CoordinatorBootstrapResult> {
   const homeHopiRoot = join(input.homeRoot, '.hopi')
-  await removeAbandonedTemporaryFiles(homeHopiRoot, new Set([join(homeHopiRoot, 'projects')]))
+  await removeAbandonedTemporaryFiles(
+    homeHopiRoot,
+    new Set(
+      ['archive', 'browser', 'cache', 'projects', 'runtime'].map((name) =>
+        join(homeHopiRoot, name),
+      ),
+    ),
+  )
   await rm(join(input.homeRoot, '.hopi', 'runtime', 'leases'), {
     recursive: true,
     force: true,
@@ -67,9 +88,7 @@ export async function bootstrapCoordinator(input: {
       eligible.add(project.projectId)
     } catch (error) {
       blocked.add(project.projectId)
-      console.error(
-        `[project bootstrap blocked] ${project.projectId}: ${errorMessage(error)}`,
-      )
+      console.error(`[project bootstrap blocked] ${project.projectId}: ${errorMessage(error)}`)
     }
   }
   return { homeId, eligibleProjectIds: eligible, blockedProjectIds: blocked }
@@ -205,7 +224,7 @@ async function removeAbandonedTemporaryFiles(root: string, skipped: ReadonlySet<
       await rm(path, { recursive: true, force: true })
       continue
     }
-    if (entry.isDirectory() && !skipped.has(path)) {
+    if (entry.isDirectory() && !skipped.has(path) && !GENERATED_DIRECTORY_NAMES.has(entry.name)) {
       await removeAbandonedTemporaryFiles(path, skipped)
     }
   }

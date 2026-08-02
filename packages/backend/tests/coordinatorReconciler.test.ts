@@ -421,27 +421,46 @@ describe('CoordinatorReconciler', () => {
     expect(dispatched).toEqual(['G-2', 'G-1'])
   })
 
-  test('lets a Project wake supervise the same Goal while its repair Run continues', async () => {
+  test('settles Project supervision before dispatching a Reviewer-reject repair Run', async () => {
     const fixture = await workspaceFixture()
     await Bun.write(
       fixture.home.paths.projectLinksPath,
       projectLinks([['P-1', '/tmp/project-one']]),
     )
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-reviewer-reject',
-      content: 'Reviewer rejected the current candidate.',
-      context: { projectId: 'P-1' },
-    })
     const goalPackage = engineeringPackage('G-1')
+    const work = goalPackage.works.get('W-1')
+    if (!work) throw new Error('Missing Engineering Work')
+    work.attributes.stage = 'review'
+    let reviewerSettled = false
+    let wakePublished = false
+    const wake = {
+      async observe() {
+        if (!reviewerSettled || wakePublished) return 'unchanged' as const
+        wakePublished = true
+        await fixture.workspace.receiveSystemEvent({
+          eventId: 'EV-reviewer-reject',
+          content: 'Reviewer rejected the current candidate.',
+          context: { projectId: 'P-1' },
+        })
+        return 'started' as const
+      },
+      acknowledgeProjects: async () => undefined,
+      isActive: () => false,
+      listRuns: async () => [],
+      listRunSummaries: async () => [],
+      readRunEvents: async () => null,
+      waitForIdle: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AssistantWake
+    let finishReviewer: (() => void) | undefined
+    const reviewerGate = new Promise<void>((resolve) => {
+      finishReviewer = resolve
+    })
     let finishAssistant: (() => void) | undefined
     const assistantGate = new Promise<void>((resolve) => {
       finishAssistant = resolve
     })
     let dispatches = 0
-    let markDispatched: (() => void) | undefined
-    const dispatched = new Promise<void>((resolve) => {
-      markDispatched = resolve
-    })
     const coordinator = createCoordinatorReconciler({
       workspace: fixture.workspace,
       assistant: {
@@ -454,6 +473,7 @@ describe('CoordinatorReconciler', () => {
           return { kind: 'answered' as const, eventId }
         },
       },
+      wake,
       projects: [
         {
           projectId: 'P-1',
@@ -466,7 +486,18 @@ describe('CoordinatorReconciler', () => {
             liveWorkIds: () => new Set<string>(),
             async reconcileGoal() {
               dispatches += 1
-              markDispatched?.()
+              if (dispatches === 1) {
+                await reviewerGate
+                reviewerSettled = true
+                work.attributes.stage = 'generate'
+                return {
+                  kind: 'pass_finished' as const,
+                  workId: 'W-1',
+                  runId: 'R-reviewer-reject',
+                  result: 'reject',
+                  application: 'published',
+                }
+              }
               goalPackage.goal.attributes.lifecycle = 'paused'
               return {
                 kind: 'pass_finished' as const,
@@ -481,13 +512,21 @@ describe('CoordinatorReconciler', () => {
       ],
     })
 
-    coordinator.start()
-    await dispatched
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    finishReviewer?.()
+    await coordinator.waitForIdle()
+    expect(dispatches).toBe(1)
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
+    expect(wakePublished).toBe(true)
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
     expect(dispatches).toBe(1)
 
     finishAssistant?.()
     await coordinator.waitForIdle()
-    await coordinator.stop()
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'passes_started', count: 1 })
+    await coordinator.waitForIdle()
+    expect(dispatches).toBe(2)
   })
 
   test('rechecks a dynamically protected Goal after candidate scanning', async () => {

@@ -952,7 +952,20 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: '你好。', session: codexSession('thread-1') }
       },
     }))
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.goalStore.createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+      acceptedInput: {
+        attributes: {
+          sourceHomeId: 'H-1',
+          sourceEventId: 'EV-accepted',
+          sourceDigest: 'a'.repeat(64),
+          attachments: [],
+        },
+        body: 'Use the current repository configuration.\n',
+      },
+    })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
     await fixture.workspace.receiveEvent({
       eventId: 'EV-1',
@@ -970,7 +983,11 @@ describe('WorkspaceAssistant conversation', () => {
       reply: '你好。',
       disposition: 'answered',
     })
-    expect(goalPackage.inputs).toHaveLength(0)
+    expect(goalPackage.inputs).toEqual([
+      expect.objectContaining({
+        attributes: expect.objectContaining({ sourceEventId: 'EV-accepted' }),
+      }),
+    ])
     expect(
       [...goalPackage.works.values()].filter((work) => work.attributes.stage === 'plan'),
     ).toHaveLength(0)
@@ -980,54 +997,85 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).not.toContain('[Current scoped HOPI state observation]')
     expect(seen[0]?.prompt).toContain('[Current Project state and unresolved Attention')
     expect(seen[0]?.prompt).toContain('"lifecycle": "active"')
+    expect(seen[0]?.prompt).toContain('"acceptedInputs"')
+    expect(seen[0]?.prompt).toContain('Use the current repository configuration.')
+    expect(seen[0]?.prompt).toContain('EV-accepted.md')
     expect(seen[0]?.prompt).not.toContain('Role: HOPI Project owner')
     expect(seen[0]?.prompt).not.toContain('Each Engineering Work receives every Repo binding')
-    expect(seen[0]?.prompt).toContain('rejection wakes supervision without blocking repair')
+    expect(seen[0]?.prompt).toContain(
+      'holds new responsibility dispatch for that Project until this turn settles',
+    )
     expect(seen[0]?.prompt).toContain(
       'A Work requested in this turn can start only after the turn settles',
     )
+    expect(seen[0]?.prompt).toContain('Inspect proposed Work bodies, not only DAG shape')
+    expect(seen[0]?.prompt).toContain(
+      'request same-contract Planning and name the mixed boundaries',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'A named test suite, browser harness, adapter, or application is a proof container',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'useful buildable candidate with intentionally deferred behavior',
+    )
+    expect(seen[0]?.prompt).toContain('Do not demand headings or formulaic output')
+    expect(seen[0]?.prompt).toContain('Current authority is ordered by meaning, not recency')
+    expect(seen[0]?.prompt).toContain(
+      'current turn and current Goal accepted Inputs, design/runbook, and current source facts outrank Project conversation history',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'Do not resolve and recreate the same condition as workspace Attention merely to paraphrase it',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'verify that current authority or a concrete current source consumer establishes what it is and how it is consumed',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'put the complete operator action in the Attention summary or decisionPrompt',
+    )
     expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
     expect(seen[0]?.prompt).not.toContain('Reply with outcome and action in 1-2 sentences')
-    expect(seen[0]?.prompt).toContain('smallest real runtime composition')
-    expect(seen[0]?.prompt).toContain('only operator-facing entries as surfaces')
-    expect(seen[0]?.prompt).toContain('transport reachability is not semantic completion evidence')
-    expect(seen[0]?.prompt).toContain(
-      'When docs/hopi/preview/runbook.md exists, it remains intended-surface and host-child authority',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'If absent, infer no intended-experience facts; Generator creates it through exploration',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'until accepted Project, Goal, or operator input explicitly changes it',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'Never treat a generic rebuild or instruction to ignore old Preview conclusions as demoting an existing baseline',
-    )
+    expect(seen[0]?.prompt).toContain('normal user entry opens')
+    expect(seen[0]?.prompt).toContain('authentication may be mocked')
+    expect(seen[0]?.prompt).toContain('useful data is visible')
+    expect(seen[0]?.prompt).toContain('Prefer local data; fall back to DEV')
+    expect(seen[0]?.prompt).toContain('only entries the operator should open as surfaces')
+    expect(seen[0]?.prompt).toContain('docs/hopi/preview/runbook.md is free-form Project guidance')
     expect(seen[0]?.prompt).toContain(
       'A user-initiated Preview Start already requests a working Preview',
     )
+    expect(seen[0]?.prompt).toContain('read only the session status and bounded log summary')
+    expect(seen[0]?.prompt).toContain(
+      'do not inspect source, reproduce services, or find the root cause in Assistant',
+    )
+    expect(seen[0]?.prompt).toContain('immediately create the smallest experience-oriented Goal')
+    expect(seen[0]?.prompt).toContain(
+      'Generator owns exploration, reproduction, runbook maintenance',
+    )
     expect(seen[0]?.prompt).toContain('Do not wait for a second repair message')
-    expect(seen[0]?.prompt).toContain('create the smallest Goal with an Engineering Work yourself')
-    expect(seen[0]?.prompt).toContain('Ordinary Preview Start must remain practical and bounded')
+    expect(seen[0]?.prompt).toContain('A Preview failure is only evidence')
+    expect(seen[0]?.prompt).toContain('does not define the Goal around the failing service')
     expect(seen[0]?.prompt).toContain(
-      'parallelism, a numeric candidate cap, or a per-attempt deadline',
+      'Create Preview Goal and Work contracts in experience terms only',
     )
-    expect(seen[0]?.prompt).toContain('a per-attempt deadline does not authorize repeated sampling')
-    expect(seen[0]?.prompt).toContain('instead of optimizing or rerunning the sample')
+    expect(seen[0]?.prompt).toContain('do not prescribe services, root causes, live authentication')
+    expect(seen[0]?.prompt).toContain('do not prohibit mock authentication or local sample data')
     expect(seen[0]?.prompt).toContain(
-      'put the smallest precise question in the Attention decisionPrompt',
+      'Old runbook and adapter implementation restrictions are revisable technical history',
     )
+    expect(seen[0]?.prompt).toContain('runbook and source first, then relevant knowledge')
     expect(seen[0]?.prompt).toContain(
-      'do not create dependent Engineering Work until it is resolved',
+      'one short question only when a necessary fact remains unavailable',
     )
-    expect(seen[0]?.prompt).toContain('docs/hopi/preview/runbook.md')
-    expect(seen[0]?.prompt).toContain(
-      'Ordinary Preview Start/Stop and startup failure do not automatically create a runbook Work',
+    expect(seen[0]?.prompt).toContain('shortest working path')
+    expect(seen[0]?.prompt).toContain('may mock authentication or provide local sample data')
+    expect(seen[0]?.prompt).toContain('browser-checks before broad builds or test suites')
+    expect(seen[0]?.prompt).toContain('page opens with useful data and one basic interaction works')
+    expect(seen[0]?.prompt).toContain('Do not expand it to unrelated services')
+    expect(seen[0]?.prompt).toContain('transport reachability alone cannot pass')
+    expect(seen[0]?.prompt).toContain('do not add a database approval gate')
+    expect(seen[0]?.prompt).not.toContain(
+      'must not replace a missing fact with exhaustive discovery',
     )
-    expect(seen[0]?.prompt).toContain(
-      'Do not inspect, classify, isolate, snapshot, or seek approval',
-    )
-    expect(seen[0]?.prompt).toContain('at most warn the operator')
     expect(seen[0]?.prompt).not.toContain('omit internals unless asked or decision-relevant')
     expect(seen[0]?.prompt).not.toContain('Only HOPI operatorUrl is linkable')
     expect(seen[0]?.prompt).toContain('task worktrees are disposable')
@@ -1086,7 +1134,9 @@ describe('WorkspaceAssistant conversation', () => {
 
     expect(sessionIds).toEqual([null, 'thread-1'])
     expect(prompts[0]).not.toContain('Role: HOPI Project owner')
-    expect(prompts[0]).toContain('rejection wakes supervision without blocking repair')
+    expect(prompts[0]).toContain(
+      'holds new responsibility dispatch for that Project until this turn settles',
+    )
     expect(prompts[1]).not.toContain('# HOPI Workspace Assistant')
     expect(prompts[1]).not.toContain('[Operator-facing reply contract]')
     expect(prompts[1]).not.toContain('[Current durable cross-Project user preferences]')
@@ -1509,11 +1559,13 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).not.toContain('User: A Work stage changed')
   })
 
-  test('silently supersedes an internal state observation before invoking the model', async () => {
+  test('processes a durable internal observation against current state after its digest advances', async () => {
     let modelCalls = 0
+    const prompts: string[] = []
     const fixture = await setup(() => ({
-      async run() {
+      async run(input) {
         modelCalls += 1
+        prompts.push(input.prompt)
         return { reply: '', session: codexSession('thread-current') }
       },
     }))
@@ -1531,14 +1583,16 @@ describe('WorkspaceAssistant conversation', () => {
       eventId: 'EV-stale-observation',
     })
 
-    expect(modelCalls).toBe(0)
-    expect(await fixture.conversation.readTurn('EV-stale-observation')).toBeNull()
+    expect(modelCalls).toBe(1)
+    expect(await fixture.conversation.readTurn('EV-stale-observation')).not.toBeNull()
+    expect(prompts[0]).toContain('A previously observed Project failure.')
+    expect(prompts[0]).toContain('[Current supervision facts;')
     expect((await fixture.workspace.readEvent('EV-stale-observation'))?.attributes).toMatchObject({
       source: 'system',
       visibility: 'internal',
       status: 'handled',
       reply: null,
-      disposition: 'superseded',
+      disposition: 'silent',
     })
 
     const currentDigest = (await fixture.state.read({ projectId: 'P-1', attemptHistoryLimit: 12 }))
@@ -1555,7 +1609,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     await fixture.assistant.process('EV-current-observation')
 
-    expect(modelCalls).toBe(1)
+    expect(modelCalls).toBe(2)
     expect((await fixture.workspace.readEvent('EV-current-observation'))?.attributes).toMatchObject(
       {
         status: 'handled',
@@ -1595,6 +1649,7 @@ describe('WorkspaceAssistant conversation', () => {
                 body: oversizedArchiveBody,
                 path: '/canonical/G-1/goal.md',
               },
+              acceptedInputs: [],
               design: [],
               attentions: [],
               latestPlanningOutcome: null,
@@ -1668,6 +1723,10 @@ describe('WorkspaceAssistant conversation', () => {
     expect(encoded).toBeDefined()
     const current = JSON.parse(encoded ?? '{}')
     expect(current.projects[0].goals[0].works).toHaveLength(2)
+    expect(current.projects[0].goals[0].works[0].body).toContain('archive-')
+    expect(current.projects[0].goals[0].works[0].body).toContain(
+      '[content omitted; inspect the canonical path for the full document]',
+    )
     expect(current.projects[0].goals[0].works[1]).toMatchObject({
       path: '/canonical/G-1/works/W-z-failed.md',
       projection: { failedPredicates: ['failed_attempt'] },

@@ -64,7 +64,9 @@ will provide the next settlement edge.
 
 `present_attention_to_user` links a public turn to one or more unresolved Attention records.
 Needs You renders their current operator summaries and optional shared choice UI; complete rationale
-stays in Attention detail. Presentation does not change scheduling or resolution.
+stays in Attention detail. The Attention question is the card's primary content; any related
+Assistant update is retained behind disclosure. Presentation does not change scheduling or
+resolution.
 
 Each conversation feed also owns its incremental synchronization cursor. Home or another Project may
 continue changing without advancing the selected Project's cursor; otherwise a cached Project feed
@@ -91,6 +93,11 @@ This is a communication policy, not a response schema. HOPI does not parse repli
 character limit, run a summarizer, or require fixed headings. Technical evidence remains available
 in Kanban and Attempt details, while the Assistant conversation stays focused on conclusions and
 actions.
+
+For Needs You, the smallest current Attention question is the next action. Do not repeat it in the
+ordinary reply, combine it with a run chronology, or require the operator to understand an internal
+artifact name before answering. If a short follow-up from the operator is needed to understand what
+was requested, the original request was not yet ready for presentation.
 
 ## Speaking Session And Supervision Fork
 
@@ -234,10 +241,11 @@ documents and the recorded tool result remain the only evidence of an effect.
 only the conversation projection.
 User turns are always public. Wake turns begin internal; a non-empty final response publishes them
 while an empty response leaves them hidden. These fields do not grant mutation authority.
-Before invoking the model for an internal turn that carries an observed scope digest, HOPI compares
-that digest with the current scoped state. A mismatch settles the turn silently as superseded; the
-model never receives an obsolete operational observation. User turns are never discarded by this
-check.
+For an internal turn, the observed scope digest records which immutable state observation caused the
+wake; it is provenance, not permission to discard the event. Before invoking the model HOPI reads the
+latest scoped state and supplies it beside the durable material fact. Later state movement therefore
+cannot erase an unobserved Reviewer rejection or Planning outcome. Assistant may still judge from
+current truth that no intervention is needed and finish silently.
 
 The vendor-qualified session cache and normalized live events are runtime data under
 `.hopi/runtime/assistant/`. Home uses `sessions/home.json`; each Project uses
@@ -375,7 +383,9 @@ interruption instead leaves the event pending for restart. This keeps transport 
 execution boundary without inventing Attention or a hidden retry policy.
 
 The current-turn envelope contains the immutable Inbox ID, source, body, optional Project/Goal page
-context, attachment references, and a bounded current-state projection. A supervision turn receives
+context, attachment references, and a bounded current-state projection. Each Goal entry includes its
+accepted Inputs as bounded excerpts with canonical paths, so a recent Project conversation cannot
+silently replace the durable instruction that Goal execution accepted. A supervision turn receives
 the material wake facts, complete latest terminal result, recent Attempt sequence, and canonical
 paths needed to inspect deeper evidence. The model calls `hopi_read_state` or
 `hopi_read_conversation` when it needs a narrower or newer view. Goal and Project tools expose
@@ -421,35 +431,38 @@ The exact JSON schemas are implementation details, but the MVP exposes these cap
 | Manage Attention | Create, update, or resolve one Project todo | Assistant-owned durable Attention |
 | Control Preview | Start or stop reviewed Preview | Runtime process only |
 
-Preview starts the smallest real runtime composition needed for the intended Project experience and
-announces only operator-facing entries as surfaces. Internal applications and infrastructure may run
-without becoming surfaces. Database selection and writes belong to Project configuration and do not
-require Preview analysis or approval. Assistant may warn after completion that connected data may
-have changed, but does not turn that warning into prior work or a gate.
+Preview optimizes for one usable local experience: the normal user entry opens, authentication works
+(mocking is allowed), and useful data is visible. Local data is preferred; DEV is the fallback. Only
+operator-facing entries are surfaces. Production-equivalent infrastructure and unrelated product
+capabilities are not required. Preview may use configured local or DEV data without a separate
+database approval gate.
 
-When current Engineering Work creates or changes Preview, Generator owns
-`docs/hopi/preview/runbook.md` in the primary Repo as ordinary free-form source documentation and
-updates it before implementation. Reviewer independently uses the candidate Preview and traces an
-incomplete experience to its smallest material runtime or source cause; transport reachability alone
-cannot satisfy the Work. Ordinary Preview Start/Stop and startup failure remain runtime facts and do
-not automatically create a runbook Work.
+When current Engineering Work creates or changes Preview, Generator reads or updates the free-form
+`docs/hopi/preview/runbook.md`, explores source first and relevant knowledge second, and chooses the
+shortest working path. It starts and browser-checks before broad tests and asks one short question
+only when a necessary fact remains unavailable. Mock authentication and local sample data are valid
+Preview choices. Reviewer checks the page, visible data, and one basic interaction; transport
+reachability alone cannot satisfy the Work. Generator and Reviewer stop product exploration once
+the required entry, authentication, data, and one interaction are observed; extra routes and
+features are outside that verification. Their browser check starts from fresh state; user
+configuration or session state needed by the application must come from Preview itself rather than
+manual setup of the validation browser. Ordinary Preview Start/Stop does not create separate
+runbook Work.
+
+Preview startup failures trigger experience-oriented repair, not service-oriented contracts. The
+failed stage is diagnostic evidence only. Assistant does not prescribe that service, retain the
+failed topology, or prohibit mocks and local data unless the current operator input explicitly makes
+that provider choice part of the requested experience. Assistant reads only the failed session and
+bounded log summary, then immediately creates the Work; it does not inspect source, reproduce
+services, or investigate root cause before handoff. Those tasks belong to Generator.
 
 Candidate Preview adapters normally remain alive until Stop. Generator and Reviewer therefore keep
 control of their own responsibility while the candidate runs: observe its published surfaces, use
 those surfaces in the browser, then stop the candidate and verify cleanup. Waiting for a healthy
 adapter to exit naturally blocks experience verification and is not a valid Preview evaluation.
 
-The current runbook and accepted Project, Goal, and operator inputs remain intended-experience
-authority even when a new request discards old Preview implementation conclusions. Discovering a
-live route or service does not make it an operator entry. If an unresolved answer can change the
-Preview boundary, composition, or acceptance, Assistant or Planner keeps only the smallest relevant
-Attention and does not create dependent Engineering Work yet. This is Agent judgment over the
-contract, not a new global scheduling state or path classifier.
-
-A generic request to rebuild Preview or ignore prior failures never invalidates the current
-runbook's surface and host-child decisions. Only accepted input that explicitly changes such a
-product decision may revise that baseline; conflicting source discovery is evidence for a question,
-not authority for a replacement scope.
+The runbook and accepted Project, Goal, and operator inputs guide which user entries belong in
+Preview. A live route or internal dependency does not automatically become a surface.
 
 Tools control canonical facts, never Kanban columns. Kanban changes only because its projection
 observes the resulting Goal, Work, Run, or Attention truth.
@@ -567,7 +580,9 @@ does not claim that Coordinator will retry a blocked responsibility.
 
 The absence of a generic scheduling gate does not authorize speculative work. When Planner itself
 finds that an operator answer changes the contract it is planning, it publishes or refreshes that
-Attention and leaves dependent Engineering Work uncreated. Generator encountering the same
+Attention and leaves dependent Engineering Work uncreated. An Attention-bearing Planner proposal is
+therefore invalid if it also creates or rewrites Work: observations and durable design context may be
+published, but the executable DAG waits for the missing authority. Generator encountering the same
 unresolved contract boundary makes no source change, reuses the existing Attention, and fails the
 Attempt so Assistant can continue the question.
 
@@ -722,10 +737,23 @@ the judgment; Assistant does not need to replace or cancel an otherwise valid Wo
 its prior question.
 An operator message or reply does not mutate Attention automatically.
 
+Current authority is ordered by meaning, not recency: the current turn and current Goal accepted
+Inputs, design/runbook, and source facts outrank Project conversation history, older Goal documents,
+historical Attention rationale, Assistant updates, and adapter claims. Project-scoped conversation
+continuity remains useful supporting context, but it cannot revive a superseded requirement. When
+sources conflict, Assistant inspects the current canonical paths and resolves the conflict before
+presenting Attention.
+
+Assistant presents an existing precise Goal Attention by its exact reference. It does not copy the
+same condition into workspace Attention for shorter wording. If the Goal Attention is stale,
+Assistant resolves it; only a genuinely different unresolved condition may become new workspace
+Attention. A path or configuration request is presentable only when current authority or a current
+source consumer establishes what the artifact is and how it is consumed.
+
 `present_attention_to_user` stages one or more exact open Attention references on the current public
 turn. While any reference remains unresolved, the turn renders as `Needs you` using each Attention's
-current Assistant reply, each Attention's current summary, and optional shared choice UI; complete
-bodies remain available as detail. Reply
+current summary and optional shared choice UI; complete bodies and the related Assistant reply remain
+available as detail. Reply
 stores the message and exact Attention references as context but leaves the next action to Assistant
 judgment. The header count navigates to the newest visible unresolved request.
 

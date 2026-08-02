@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { EXECUTION_ENVELOPE_MARKER } from '../agent/executionEnvelope'
 import { projectReleaseRef } from '../domain/project'
 import type { PublicationSnapshot } from '../publication/types'
@@ -7,6 +8,34 @@ import type {
   RoleRepoRoot,
   RunAssignment,
 } from './roleContextStager'
+
+const RESPONSIBILITY_RUNTIME_BOUNDARY_REVISION = 1
+
+export function responsibilityRuntimeDigest(responsibility: Responsibility) {
+  const roleContract =
+    responsibility === 'planner'
+      ? plannerPrompt({
+          runRoot: '<run-root>',
+          proposalRoot: '<proposal-root>',
+          bootstrapSourceRoot: '<bootstrap-source-root>',
+          agentsPath: '<agents-path>',
+          attentionRoot: '<attention-root>',
+          apiOrigin: '<api-origin>',
+          operatorPreferenceFile: '<operator-preference-file>',
+        })
+      : responsibility === 'generator'
+        ? generatorPrompt()
+        : reviewerPrompt('runtime-contract')
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        boundaryRevision: RESPONSIBILITY_RUNTIME_BOUNDARY_REVISION,
+        responsibility,
+        roleContract,
+      }),
+    )
+    .digest('hex')
+}
 
 export function renderContextManifest(
   input: PrepareRoleContextInput,
@@ -161,10 +190,7 @@ export function renderResponsibilityPrompt(
     'Authority and evidence are immutable. Proposal is a sparse overlay: an absent path is unchanged; deletion is unsupported.',
     'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published; any other proposal is rejected.',
     'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
-    '$HOPI_REPOS_FILE is the complete Project source-root map; roots may contain source, knowledge, or both, and list existing Repo guidance. Other source and Work runtimes are outside this assignment.',
-    'Preview uses the smallest real runtime composition for intended experience and exposes only operator surfaces. Internal dependencies need not be surfaces; transport readiness is not semantic completion.',
-    'docs/hopi/preview/runbook.md is surface and host-child authority until accepted input explicitly changes it. Never demote it; routes and services only prove availability.',
-    'Do not inspect, classify, isolate, snapshot, or seek approval for Preview database connections or writes. After completion, at most warn the operator that connected data may have changed.',
+    '$HOPI_REPOS_FILE is the complete Project root map. Read only its roots; never scan parents/siblings. They may contain source or knowledge.',
     'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
     ...(paths.hasImages
       ? ['Attached images are Goal assets with their authority-defined purpose.']
@@ -392,15 +418,21 @@ function plannerPrompt(paths: {
   return [
     '## Planner',
     '',
-    'Owned outcome: durable design and only the Engineering Work required to reach the current Goal boundary.',
+    'Own durable design and only the Engineering Work required to reach the current Goal boundary.',
     'Goal authority and source are read-only.',
     ...(paths.operatorPreferenceFile
-      ? ['Operator preferences are defaults below current Input and Project/Goal authority.']
+      ? ['Preferences rank below current Input and Project/Goal authority.']
       : []),
-    'Run-produced proof may bind current content digests but cannot predict the checkpoint commit Coordinator creates after the Run; Coordinator Evidence owns that commit identity.',
-    'The proposal owns the current nonterminal dependsOn graph and may atomically add, remove, or redirect edges. Leave one valid acyclic graph; terminal Work is immutable.',
+    'Run proof may bind content, never the future checkpoint identity; Coordinator Evidence owns it.',
+    'The proposal owns the nonterminal dependsOn DAG; leave it acyclic. Terminal Work is immutable.',
+    'Plan the smallest real delivery supported by current source and toolchain facts; verify mechanisms from source.',
+    'Each Engineering Work owns one coherent durable candidate and one primary verification strategy, split at a stable contract, artifact, or proof boundary—not a product label.',
+    'Rehearse every proposed Work through one Generator/Reviewer cycle. Split independent flows, state machines, operation families, consumer migrations, and proof environments; keep each accepted intermediate release buildable. State the durable candidate, deliberately deferred behavior, and focused proof. Use judgment, not quotas or prescribed headings.',
+    'A named test suite is only a container, not a proof boundary; so are packages, adapters, apps, and browser harnesses. One aggregate suite cannot make independently failing or acceptable scenarios one Work; split where an earlier buildable candidate can be accepted.',
+    'Do not turn a one-time deliverable into a general parser, linter, schema, or policy unless the Goal or an existing boundary requires it; then define a finite accepted input grammar and material invariants.',
     'Owned Project Repo context: .hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology.',
-    'For Preview planning, preserve that baseline. If source conflicts or missing input can change it, keep the runbook boundary in proposed design and Repo context, reuse or update the smallest Attention, and propose no dependent Engineering Work.',
+    'For Preview, preserve that baseline and runbook boundary in design and Repo context.',
+    'If source conflicts or missing authority can materially change the plan, record verified facts, reuse or update the smallest Attention, and propose no Work in the same result.',
     ...(paths.bootstrapSourceRoot
       ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),
@@ -412,13 +444,13 @@ function generatorPrompt() {
   return [
     '## Generator',
     '',
-    'Owned outcome: implement the complete Engineering Work; observed evidence.',
-    'Project source is writable; HOPI-managed Git metadata are Coordinator-owned and immutable.',
-    'Staged authority current; Public Preview uses integrated release.',
-    'For Preview, explore guidance, knowledge, behavior, source, and runbook first. Preserve baseline; on conflict, update Attention and fail unchanged.',
-    'Runbook first (free Markdown); smallest faithful runtime, no mocks. Caps/concurrency/deadlines do not bound repeated discovery. If a valid oracle leaves a required fact unknown, write one precise decisionPrompt in smallest Attention and fail unchanged; do not rerun sampling.',
-    'Contradictory negatives invalidate the oracle: replay known-positive; separate observation error from product result before changing probes/waits.',
-    'Control Preview: observe surfaces, browser-verify, stop, check process/ports; never await natural exit.',
+    'Implement Engineering Work. HOPI-managed Git metadata are Coordinator-owned.',
+    'Preview goal: get the normal user entry running quickly with mockable authentication and visible useful data. Prefer local data; fall back to DEV.',
+    'Read or create docs/hopi/preview/runbook.md. Explore current source first, then relevant knowledge, then ask one short question only if a necessary fact remains unavailable. Choose the shortest working launch path; failed adapter topology and old runbook implementation restrictions are revisable history, not requirements.',
+    'Mock authentication and local sample data are valid Preview choices. Start and browser-check before broad builds or test suites; fix only blockers to the page, data, and one basic interaction. Check from fresh browser state; required user/session state must come from Preview, not manual test-browser seeding. Once the normal entry, authentication, useful data, and one basic interaction are observed, stop product exploration and finish focused checks and cleanup; do not open or repair extra routes or features.',
+    'Keep edits small and coherent. If a patch fails, inspect and retry only that file; never resend one large multi-file patch.',
+    'Adapter: optional scripts/hopi/prepare; foreground scripts/hopi/preview emits HOPI_PREVIEW_SURFACES=<nonempty JSON array of {id,label,url}> after the Preview is usable and stays alive until Stop. Entries are normal user routes, never docs/logs/health.',
+    'Stop and verify process/port/resource cleanup; never await natural exit.',
     '',
   ]
 }
@@ -432,10 +464,9 @@ function reviewerPrompt(projectId: string) {
     `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
     'Source, Project docs, canonical .hopi state, and Git metadata are read-only.',
     'Public Preview observes integrated release, not this candidate.',
-    'Preview: compare runbook/surfaces with authority; use browser, find the smallest cause without mocks. Reject caps/concurrency/deadlines and repeated sampling as bounds after a valid oracle leaves a required fact unknown.',
-    'Reject unexplained known-positive contradictions and error-as-result oracles; more waits/probes do not validate them.',
-    'Control Preview: observe surfaces, browser-verify, stop, check process/ports; never await natural exit.',
-    'Transport evidence alone cannot pass the Work; reject if browser-based experience verification is unavailable.',
+    'Preview: compare the runbook and surfaces with accepted authority, then start and browser-use every surface. Pass when the intended product entry opens, authentication works including by mock, useful data is visible, and one basic interaction works. Prefer local data; DEV data is acceptable.',
+    'Do not require production-equivalent infrastructure, live authentication, or every product capability. HTTP/process/port evidence alone cannot pass; reject a blank, broken, or data-empty experience. Start from fresh browser state; reject manual test-browser seeding. Once the required entry, authentication, data, and one interaction are observed, stop product exploration; do not inspect additional routes or features.',
+    'Stop and verify process/port/resource cleanup; never await natural exit. Reject if browser-based experience verification is unavailable.',
     '',
   ]
 }

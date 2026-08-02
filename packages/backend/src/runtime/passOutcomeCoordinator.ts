@@ -118,6 +118,14 @@ export function createPassOutcomeCoordinator(
   ): Promise<PassOutcomeApplication> {
     const targetedAttentions = proposal.newAttentions
     if (targetedAttentions.length > 0) {
+      if (
+        input.responsibility === 'planner' &&
+        proposal.changedWrites.some((write) => isWorkPath(store, input.goalId, write.path))
+      ) {
+        throw new PassProposalError(
+          'Planner Attention proposal may not create or rewrite Work; unresolved planning must settle before executable Work is published',
+        )
+      }
       const application = buildAttentionApplication(
         store,
         input,

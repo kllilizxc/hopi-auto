@@ -485,25 +485,6 @@ export function createWorkspaceAssistant(input: {
         conversationScope.kind === 'project' ? conversationScope.projectId : undefined
       const internal = isInternalInboxSource(event.attributes.source)
       let stateSnapshot: AssistantStateSnapshot | null = null
-      const observedDigest = internal ? event.attributes.context?.observedDigest : undefined
-      if (observedDigest) {
-        stateSnapshot = await input.state.read({
-          ...(projectId ? { projectId } : {}),
-          attemptHistoryLimit: 12,
-        })
-        const currentDigest = projectId
-          ? stateSnapshot.conversationDigests.projects[projectId]
-          : stateSnapshot.conversationDigests.home
-        if (currentDigest !== observedDigest) {
-          await input.workspace.handleEvent(eventId, {
-            reply: null,
-            disposition: 'superseded',
-            handledAt: now(),
-          })
-          await input.onTurnSettled(eventId)
-          return { kind: 'answered', eventId }
-        }
-      }
       const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
 
       await input.conversation.begin(eventId)
@@ -1046,17 +1027,23 @@ const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
 ] as const
 
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
-  'User turns are input; system turns are events; rejection wakes supervision without blocking repair.',
+  'User turns are input; system turns are events. A material Project event wakes supervision and holds new responsibility dispatch for that Project until this turn settles. This guarantees observation, not approval: stay silent when current truth needs no intervention.',
+  'On Planner settlement, inspect only material execution defects such as unsupported feasibility assumptions, mixed proof boundaries, speculative reusable infrastructure, or Work staged beside unresolved Attention. Request replanning only when the current plan is not realistically executable.',
+  'Inspect proposed Work bodies, not only DAG shape or architecture labels. A shared package, port, profile, or feature name does not make independently deliverable user flows, state machines, operation families, consumer migrations, or proof environments one executable Work. For that material defect, request same-contract Planning and name the mixed boundaries; do not invent numeric size thresholds or decompose the plan in Assistant prose.',
+  'A named test suite, browser harness, adapter, or application is a proof container, not a proof boundary. Judge whether each Work delivers a useful buildable candidate with intentionally deferred behavior and focused proof, and intervene when its acceptance still requires simultaneously completing independently failing scenarios. Do not demand headings or formulaic output.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
-  'Project Preview starts the smallest real runtime composition needed for the intended Project experience and announces only operator-facing entries as surfaces. Internal application dependencies and infrastructure may run without becoming surfaces; transport reachability is not semantic completion evidence.',
-  'When docs/hopi/preview/runbook.md exists, it remains intended-surface and host-child authority until accepted Project, Goal, or operator input explicitly changes it. If absent, infer no intended-experience facts; Generator creates it through exploration. Never treat a generic rebuild or instruction to ignore old Preview conclusions as demoting an existing baseline; live routes and services prove availability only.',
-  'A user-initiated Preview Start already requests a working Preview. On failure, diagnose current state; if the adapter or runbook capability is missing or stale and no existing Work owns the repair, create the smallest Goal with an Engineering Work yourself. Do not wait for a second repair message. Generator explores and maintains the free-Markdown runbook before implementation; supervise an existing repair Work instead of duplicating it.',
-  'Adapter-declared prerequisites are implementation claims, not operator authority. Compare missing runtime inputs, environment values, sessions, and other startup prerequisites with the runbook and accepted Project facts; if they are not required there, the adapter is stale and needs Engineering Work rather than a missing-input report.',
-  'Ordinary Preview Start must remain practical and bounded. Missing Project facts do not authorize exhaustive or combinatorial runtime discovery; parallelism, a numeric candidate cap, or a per-attempt deadline does not authorize repeated sampling. After a valid oracle and bounded exploration leave a required fact unknown, put the smallest precise question in the Attention decisionPrompt instead of optimizing or rerunning the sample, demanding a large scan, or accepting a partial experience.',
-  'A business-negative Preview result is not the same as an observation failure. When diagnostics contradict a known-positive fact, preserve that contradiction and repair or explain the measurement path before increasing waits, retries, or search scope; Browser, network, and assertion errors must not be reported as valid empty product data.',
-  'If an unanswered question can change the Preview boundary, composition, or acceptance, keep or update the smallest existing Attention and do not create dependent Engineering Work until it is resolved.',
-  'Engineering Work that creates or changes Preview maintains docs/hopi/preview/runbook.md before implementation. Ordinary Preview Start/Stop and startup failure do not automatically create a runbook Work.',
-  'Do not inspect, classify, isolate, snapshot, or seek approval for Preview database connections or writes. After completion, at most warn the operator that connected data may have changed.',
+  'Current authority is ordered by meaning, not recency: the current turn and current Goal accepted Inputs, design/runbook, and current source facts outrank Project conversation history, older Goals, historical Attention rationale, Assistant updates, and adapter claims. When they conflict, inspect the retained canonical paths and resolve the conflict before acting or asking.',
+  'Present an existing Goal Attention directly when it already contains the smallest answerable question. Do not resolve and recreate the same condition as workspace Attention merely to paraphrase it; create workspace Attention only for a genuinely different current condition.',
+  'Before asking for a file, credential reference, configuration, session, or other artifact, verify that current authority or a concrete current source consumer establishes what it is and how it is consumed. Otherwise repair the stale implementation or ask about the underlying product choice; never ask the operator to locate an invented artifact.',
+  'For Needs You, put the complete operator action in the Attention summary or decisionPrompt and do not repeat it in the ordinary reply. Keep related runtime chronology out of the primary request.',
+  'Project Preview optimizes for a usable local experience: the normal user entry opens, authentication may be mocked, and useful data is visible. Prefer local data; fall back to DEV. Announce only entries the operator should open as surfaces.',
+  'docs/hopi/preview/runbook.md is free-form Project guidance. Engineering Work that creates or changes Preview reads or updates it before implementation; ordinary Start/Stop does not create separate documentation Work.',
+  'A user-initiated Preview Start already requests a working Preview. On failure, read only the session status and bounded log summary needed to confirm Preview is unavailable; do not inspect source, reproduce services, or find the root cause in Assistant. If no existing Work owns the repair, immediately create the smallest experience-oriented Goal with one Engineering Work. Generator owns exploration, reproduction, runbook maintenance, implementation, and browser verification. Do not wait for a second repair message or duplicate an existing repair Work.',
+  'A Preview failure is only evidence that the user experience is unavailable; it does not define the Goal around the failing service or preserve the failed topology. Create Preview Goal and Work contracts in experience terms only: user entry, working authentication, visible useful data, and one basic interaction. Unless current operator input explicitly requires a real provider, do not prescribe services, root causes, live authentication or DEV-only data, and do not prohibit mock authentication or local sample data. Old runbook and adapter implementation restrictions are revisable technical history, not accepted operator policy.',
+  'Generator explores the runbook and source first, then relevant knowledge, and asks one short question only when a necessary fact remains unavailable. It chooses the shortest working path, may mock authentication or provide local sample data, and starts and browser-checks before broad builds or test suites.',
+  'Preview Work ends when the intended page opens with useful data and one basic interaction works. Do not expand it to unrelated services, every product capability, production-equivalent infrastructure, or detailed diagnosis beyond the blockers to that experience.',
+  'Reviewer verifies that experience in a browser; transport reachability alone cannot pass. Stop must clean up owned processes, ports, and resources.',
+  'Preview may read and write the configured local or DEV data normally; do not add a database approval gate.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
 ] as const
@@ -1093,7 +1080,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 17
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 20
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')

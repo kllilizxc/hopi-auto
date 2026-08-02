@@ -109,6 +109,7 @@ function compactRepoStateIndex(value: AssistantStateProjectSnapshot['repos'][num
 function compactGoalStateIndex(value: AssistantStateGoalSnapshot) {
   return {
     goal: compactDocumentStateIndex(value.goal),
+    acceptedInputs: value.acceptedInputs.map(compactGoalInputStateIndex),
     design: value.design.map(compactDesignStateIndex),
     attentions: value.attentions.map(compactGoalAttentionStateIndex),
     latestPlanningOutcome:
@@ -116,6 +117,14 @@ function compactGoalStateIndex(value: AssistantStateGoalSnapshot) {
         ? null
         : compactWorkStateIndex(value.latestPlanningOutcome, false),
     works: value.works.map((work) => compactWorkStateIndex(work, true)),
+  }
+}
+
+function compactGoalInputStateIndex(value: AssistantStateGoalSnapshot['acceptedInputs'][number]) {
+  return {
+    attributes: value.attributes,
+    acceptedInput: boundedStateText(value.body, 1_200),
+    path: value.path,
   }
 }
 

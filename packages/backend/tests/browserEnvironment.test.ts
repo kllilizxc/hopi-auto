@@ -73,7 +73,29 @@ describe('browser environment', () => {
     expect(browserHarnessRuntimeRoot(fixture.homeRoot).length).toBeLessThan(80)
     expect(
       (await Bun.file(join(first.profileRoot, 'launch-args.json')).json()) as string[],
-    ).toContain('data:text/html,<title>HOPI%20Managed%20Browser</title>')
+    ).toEqual(
+      expect.arrayContaining([
+        '--headless=new',
+        'data:text/html,<title>HOPI%20Managed%20Browser</title>',
+      ]),
+    )
+  })
+
+  test('reuses the persisted healthy endpoint after Chrome removes DevToolsActivePort', async () => {
+    const fixture = await createFixture()
+    const first = await ensureManagedBrowser(fixture.homeRoot, {
+      browserCommand: fixture.fakeBrowser,
+    })
+    const state = await managedState(fixture.homeRoot)
+    managedPids.add(state.launchedPid)
+    await rm(join(first.profileRoot, 'DevToolsActivePort'))
+
+    const reused = await ensureManagedBrowser(fixture.homeRoot, {
+      browserCommand: fixture.fakeBrowser,
+    })
+
+    expect(reused).toEqual(first)
+    expect((await managedState(fixture.homeRoot)).launchedPid).toBe(state.launchedPid)
   })
 
   test('uses a supplied loopback endpoint without launching another browser', async () => {

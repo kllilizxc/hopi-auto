@@ -1,7 +1,10 @@
 import type { AssistantWake } from '../assistant/assistantWake'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
-import type { InboxEventAttributes } from '../domain/assistantWorkspaceDocuments'
+import {
+  type InboxEventAttributes,
+  isInternalInboxSource,
+} from '../domain/assistantWorkspaceDocuments'
 import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
 import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
@@ -92,6 +95,7 @@ export function createCoordinatorReconciler(
   const reservations = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
   const assistantTurnBarriers = new Map<string, AssistantTurnBarrier>()
+  const projectsAwaitingSettlementObservation = new Map<string, number>()
   const projectActivityVersions = new Map<string, number>()
   let wakeTimer: ReturnType<typeof setTimeout> | null = null
   let deadlineTimer: ReturnType<typeof setTimeout> | null = null
@@ -330,7 +334,9 @@ export function createCoordinatorReconciler(
     if (event) {
       const controller = new AbortController()
       const context = event.attributes.context
-      if (context?.projectId && context.goalId) {
+      if (context?.projectId && isInternalInboxSource(event.attributes.source)) {
+        coordinator.protectAssistantProject(event.attributes.id, context.projectId)
+      } else if (context?.projectId && context.goalId) {
         coordinator.protectAssistantGoal(event.attributes.id, context.projectId, context.goalId)
       }
       const promise = options.assistant
@@ -361,6 +367,10 @@ export function createCoordinatorReconciler(
       })
       return { kind: 'assistant_started', count: 1 }
     }
+
+    const observedSettlementProjects = new Map(projectsAwaitingSettlementObservation)
+    const settlementObservation = await observePendingResponsibilitySettlements()
+    if (settlementObservation === 'started') return { kind: 'idle' }
 
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
     const passCounts = reservationPassCounts(reservations)
@@ -435,6 +445,14 @@ export function createCoordinatorReconciler(
     // stop() may run while the asynchronous candidate scan is in progress.
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
 
+    const settlementAddedDuringScan = [...projectsAwaitingSettlementObservation].some(
+      ([projectId, generation]) => observedSettlementProjects.get(projectId) !== generation,
+    )
+    if (settlementAddedDuringScan) {
+      const observation = await observePendingResponsibilitySettlements()
+      if (observation === 'started') return { kind: 'idle' }
+    }
+
     const deterministic = candidates.find(
       (candidate) =>
         eligibleProjects.has(candidate.project.projectId) &&
@@ -498,6 +516,17 @@ export function createCoordinatorReconciler(
             eligibleProjects.delete(candidate.project.projectId)
             await reportProjectFailure(candidate.project.projectId, result.reason)
           }
+          if (
+            result.kind === 'pass_finished' &&
+            (responsibility === 'planner' ||
+              (responsibility === 'reviewer' && result.result === 'reject'))
+          ) {
+            const projectId = candidate.project.projectId
+            projectsAwaitingSettlementObservation.set(
+              projectId,
+              (projectsAwaitingSettlementObservation.get(projectId) ?? 0) + 1,
+            )
+          }
         })
         .catch(async (error) => {
           eligibleProjects.delete(candidate.project.projectId)
@@ -554,6 +583,23 @@ export function createCoordinatorReconciler(
     return barrier
   }
 
+  async function observePendingResponsibilitySettlements() {
+    if (projectsAwaitingSettlementObservation.size === 0) return null
+    const observedProjects = [...projectsAwaitingSettlementObservation]
+    const result = await options.wake.observe({
+      settled: reservations.size === 0,
+      busyScopeKeys: [...assistantActive.values()].map((entry) => entry.scopeKey),
+    })
+    if (result === 'baseline' || result === 'unchanged') {
+      for (const [projectId, generation] of observedProjects) {
+        if (projectsAwaitingSettlementObservation.get(projectId) === generation) {
+          projectsAwaitingSettlementObservation.delete(projectId)
+        }
+      }
+    }
+    return result
+  }
+
   function protectBarrierProject(barrier: AssistantTurnBarrier, projectId: string) {
     if (!barrier.activityVersions.has(projectId)) {
       barrier.activityVersions.set(projectId, projectActivityVersion(projectId))
@@ -596,6 +642,7 @@ export function createCoordinatorReconciler(
   }
 
   function goalDispatchBlocked(projectId: string, goalId: string) {
+    if (projectsAwaitingSettlementObservation.has(projectId)) return true
     const key = goalBarrierKey(projectId, goalId)
     for (const barrier of assistantTurnBarriers.values()) {
       if (barrier.projects.has(projectId) || barrier.goals.has(key)) return true

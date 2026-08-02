@@ -2938,6 +2938,26 @@ button:disabled,
   margin-top: 8px;
 }
 
+.unified-feed-attention-request__related-update {
+  margin-top: 16px;
+  color: var(--color-neutral-450);
+  font-size: 12px;
+}
+
+.unified-feed-attention-request__related-update
+  > .app-disclosure__heading
+  > .app-disclosure__trigger {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.unified-feed-attention-request__related-update .app-disclosure__body {
+  padding-top: 8px;
+  color: var(--color-neutral-300);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .assistant-decision-prompt {
   display: grid;
   gap: 18px;
