@@ -138,11 +138,7 @@ export function createRoleContextStager(
       const reportRun = input.directive?.protocol === 'report'
       const workspaceMode =
         input.directive?.workspaceMode ??
-        (input.responsibility === 'generator'
-          ? 'isolated_write'
-          : input.responsibility === 'reviewer'
-            ? 'read_only'
-            : 'none')
+        (input.responsibility === 'generator' ? 'isolated_write' : 'read_only')
       const apiOrigin = input.apiOrigin ? normalizeApiOrigin(input.apiOrigin) : undefined
       const primaryRepoId = input.primaryRepoId
       assertStableId(primaryRepoId, 'primaryRepoId')
@@ -214,7 +210,10 @@ export function createRoleContextStager(
           ]),
         ),
       )
-      const repoProjection = workspaceMode === 'none' ? 'release' : 'candidate'
+      const repoProjection =
+        workspaceMode === 'none' || (!input.directive && input.responsibility === 'planner')
+          ? 'release'
+          : 'candidate'
       const repoProjectionHeads = Object.fromEntries(
         await Promise.all(
           repoRoots.map(async (repo) => [

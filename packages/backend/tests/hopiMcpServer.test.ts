@@ -59,6 +59,7 @@ describe('HOPI MCP server', () => {
     expect(names).toEqual(
       [
         'hopi_control_goal',
+        'hopi_control_operation',
         'hopi_control_preview',
         'hopi_control_work',
         'hopi_create_goal',
@@ -87,19 +88,13 @@ describe('HOPI MCP server', () => {
       'sleeping or polling',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'Engineering starts managed Generator delivery',
+      'explicit Run instructions',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'without a Planning pass',
-    )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'A diagnosed missing Preview adapter can start with Engineering',
-    )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'use Planning only for a genuinely unresolved contract',
+      'rather than a mandatory role pipeline',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
-      'Choose planning',
+      'Generator delivery',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.inputSchema).toMatchObject(
       {
@@ -110,7 +105,7 @@ describe('HOPI MCP server', () => {
       },
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'managed Generator, Reviewer, Evidence, and recovery lifecycle',
+      'does not imply a mandatory Generator/Reviewer sequence',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
       'normalized contract change',
@@ -128,17 +123,25 @@ describe('HOPI MCP server', () => {
       'Goal-local design Markdown',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'complete Work contract',
+      'concrete objective',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).not.toContain(
       'Use ',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.description).toContain(
-      'Goal lifecycle or priority',
+      'Completion is a semantic decision',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
       'change dependencies',
     )
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_control_operation')?.description,
+    ).toContain('requiredForGoal is explicit per Operation')
+    expect(
+      tools.tools.find((tool) => tool.name === 'hopi_control_operation')?.inputSchema,
+    ).toMatchObject({
+      required: ['projectId', 'goalId', 'action'],
+    })
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.description,
     ).toContain('Attention stores an operator summary, optional choices, complete Agent detail')
@@ -209,19 +212,13 @@ describe('HOPI MCP server', () => {
       JSON.stringify(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.inputSchema),
     ).not.toContain('"repos"')
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'Preview Work preserves current docs/hopi/preview/runbook.md decisions',
-    )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'rebuild or ignore-old wording does not',
+      'Creation does not imply a mandatory Generator/Reviewer sequence',
     )
     expect(
       JSON.stringify(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.inputSchema),
     ).not.toContain('"repos"')
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'preserve current docs/hopi/preview/runbook.md decisions',
-    )
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'implementation and evidence, not that runbook',
+      'later execution uses explicit Run instructions',
     )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.inputSchema,
@@ -234,7 +231,10 @@ describe('HOPI MCP server', () => {
       properties: { action: expect.any(Object) },
     })
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
-      'same responsibility lineage',
+      'durable natural-language Report',
+    )
+    expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
+      'never implies Work completion',
     )
     expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)
@@ -282,6 +282,7 @@ describe('HOPI MCP server', () => {
     expect(names.sort()).toEqual(
       [
         'hopi_control_goal',
+        'hopi_control_operation',
         'hopi_control_preview',
         'hopi_control_work',
         'hopi_create_goal',
