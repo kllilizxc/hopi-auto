@@ -54,9 +54,9 @@ interface AttemptView {
   workId: string
   runId: string
   responsibility: 'planner' | 'generator' | 'reviewer'
-  status: string
-  result: string | null
-  application: string | null
+  status: 'queued' | 'running' | 'settled'
+  termination: 'normal' | 'cancelled' | 'interrupted' | 'crashed' | 'timed_out' | null
+  candidateCommits: Array<{ repoId: string; baseCommit: string; resultCommit: string }>
 }
 
 let harness: LiveHarness | null = null
@@ -307,18 +307,16 @@ async function readAttempts(
 }
 
 function assertRealDelivery(attempts: AttemptView[], projectId: string) {
-  for (const responsibility of ['planner', 'generator', 'reviewer'] as const) {
-    assert.ok(
-      attempts.some(
-        (attempt) =>
-          attempt.responsibility === responsibility &&
-          attempt.status === 'finished' &&
-          attempt.result === 'success',
-      ),
-      `${projectId} lacks a successful real ${responsibility}`,
-    )
-  }
-  assert.ok(attempts.some((attempt) => attempt.application === 'integrated'))
+  assert.ok(
+    attempts.some(
+      (attempt) =>
+        attempt.responsibility === 'generator' &&
+        attempt.status === 'settled' &&
+        attempt.termination === 'normal' &&
+        attempt.candidateCommits.length > 0,
+    ),
+    `${projectId} lacks a normal Generator Run with candidate source`,
+  )
 }
 
 async function initializeProtocolRepo(root: string, label: string) {

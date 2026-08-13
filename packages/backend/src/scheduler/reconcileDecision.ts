@@ -8,7 +8,6 @@ export type ReconcileDecision =
       workId: string
       responsibility: 'planner' | 'generator' | 'reviewer'
     }
-  | { kind: 'ensure_planning' }
   | { kind: 'finish_cancellation' }
   | { kind: 'wait'; reasons: string[] }
 
@@ -33,16 +32,6 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
   }
   if (!runtime.projectEligible) {
     return { kind: 'wait', reasons: ['project_ineligible'] }
-  }
-
-  const nonterminal = [...goalPackage.works.values()].filter(
-    (work) => !isWorkTerminal(work.attributes),
-  )
-  if (nonterminal.length === 0) {
-    if (runtime.supervisorManagedGoal || (runtime.supervisorManagedWorkIds?.size ?? 0) > 0) {
-      return { kind: 'wait', reasons: ['awaiting_supervisor_completion'] }
-    }
-    return { kind: 'ensure_planning' }
   }
 
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, runtime)

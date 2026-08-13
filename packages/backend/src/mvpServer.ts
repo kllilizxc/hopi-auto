@@ -13,7 +13,6 @@ import {
   deriveGoalSummaries,
   deriveWorkCompletedAt,
   latestAgentPlan,
-  presentAttempt,
   presentGoal,
   presentGoalExecutionCost,
 } from './api/goalPresenter'
@@ -118,7 +117,6 @@ export {
   deriveWorkCompletedAt,
   goalCompletionProjection,
   latestAgentPlan,
-  presentAttempt,
 }
 
 export function createServer(options: ServerOptions = {}): MvpServer {
@@ -483,7 +481,6 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json(
             {
               eventId: event.attributes.id,
-              threadId: event.attributes.threadId,
               status: (await runtime.workspace.readEvent(event.attributes.id))?.attributes.status,
             },
             202,
@@ -515,7 +512,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
               )
             }
             const presentedAttempts = attempts.map((attempt, index) => ({
-              ...presentAttempt(attempt, goalPackage, attemptRoute.projectId, attemptRoute.goalId),
+              ...attempt,
               diagnostics: diagnostics[index] ?? null,
             }))
             return json({
@@ -555,7 +552,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             )
           }
           return json({
-            ...presentAttempt(attempt, goalPackage, attemptRoute.projectId, attemptRoute.goalId),
+            ...attempt,
             diagnostics: await runtime.attempts.readDiagnostics(
               attemptRoute.projectId,
               attemptRoute.goalId,

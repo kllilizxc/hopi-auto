@@ -124,31 +124,24 @@ try {
     const successful = attempts.filter(
       (attempt) =>
         attempt.responsibility === responsibility &&
-        attempt.status === 'finished' &&
-        attempt.result === 'success',
+        attempt.status === 'settled' &&
+        attempt.termination === 'normal',
     )
     assert.ok(successful.length > 0)
     const contexts = await Promise.all(
       successful.map((attempt) =>
         Bun.file(
-          join(
-            sourceRoot,
-            'home',
-            '.hopi',
-            'runtime',
-            'runs',
-            PROJECT_ID,
-            goal.id,
-            attempt.workId,
-            attempt.runId,
-            'context.md',
-          ),
+          join(sourceRoot, 'home', '.hopi', 'runtime', 'runs', attempt.runId, 'context.md'),
         ).text(),
       ),
     )
     assert.ok(contexts.some((context) => context.includes(assetPath)))
   }
-  assert.ok(attempts.some((attempt) => attempt.application === 'integrated'))
+  assert.ok(
+    attempts.some(
+      (attempt) => attempt.responsibility === 'generator' && attempt.candidateCommits.length > 0,
+    ),
+  )
   const tests = await runCommand(['bun', 'test'], integrationRoot)
   assert.equal(tests.exitCode, 0, tests.stderr || tests.stdout)
   assert.equal(
@@ -221,9 +214,9 @@ interface AttemptView {
   workId: string
   runId: string
   responsibility: 'planner' | 'generator' | 'reviewer'
-  status: string
-  result: string | null
-  application: string | null
+  status: 'queued' | 'running' | 'settled'
+  termination: 'normal' | 'cancelled' | 'interrupted' | 'crashed' | 'timed_out' | null
+  candidateCommits: Array<{ repoId: string; baseCommit: string; resultCommit: string }>
 }
 
 async function readAttempts(baseUrl: string, goalId: string, goal: LiveGoalDetail) {

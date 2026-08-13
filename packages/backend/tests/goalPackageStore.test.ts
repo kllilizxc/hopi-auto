@@ -339,7 +339,7 @@ describe('createGoalPackageStore', () => {
     ).toEqual([])
   })
 
-  test('allows Goal Document revisions while keeping Goal identity and title immutable', async () => {
+  test('keeps the original Goal statement immutable even across revisions', async () => {
     const publisher = new PublicationCoordinator()
     const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
     await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -348,29 +348,16 @@ describe('createGoalPackageStore', () => {
     const goal = parseGoalDocument(source)
     goal.body += '\nNew success criterion.\n'
 
-    await store.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: goalPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderGoalDocument(goal),
-      },
-    })
-    const revisedSource = await Bun.file(store.paths.absolute(goalPath)).text()
-    const revised = parseGoalDocument(revisedSource)
-    expect(revised.body).toContain('New success criterion.')
-    revised.attributes.title = 'Different Goal'
-
     await expect(
       store.publishGoal('G-1', {
         supportingWrites: [],
         gateWrite: {
           path: goalPath,
-          expectedHash: await hashBytes(new TextEncoder().encode(revisedSource)),
-          content: renderGoalDocument(revised),
+          expectedHash: await hashBytes(new TextEncoder().encode(source)),
+          content: renderGoalDocument(goal),
         },
       }),
-    ).rejects.toThrow('Goal identity and title are immutable')
+    ).rejects.toThrow('Goal identity, title, and original statement are immutable')
   })
 
   test('reuses the Coordinator reconciliation snapshot until publication changes', async () => {

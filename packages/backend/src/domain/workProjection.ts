@@ -1,4 +1,4 @@
-import { responsibilityFor } from '../runtime/softwareDelivery'
+import type { Responsibility } from '../runtime/roleContextStager'
 import { type WorkAttributes, isWorkTerminal } from './canonicalDocuments'
 import type { GoalPackage } from './goalPackage'
 
@@ -18,20 +18,17 @@ export type WorkReadinessReason =
   | 'stale_contract_revision'
   | 'dependency_incomplete'
   | 'not_before'
-  | 'failed_attempt'
+  | 'settled_run'
   | 'live_run'
   | 'capacity'
-  | 'no_responsibility'
-  | 'awaiting_supervisor'
+  | 'no_queued_run'
 
 export interface WorkRuntimeFacts {
   projectEligible: boolean
   liveRunWorkIds: ReadonlySet<string>
-  settledFailureWorkIds: ReadonlySet<string>
-  passCapacity: Record<'planner' | 'generator' | 'reviewer', boolean>
-  requestedRunProfiles?: ReadonlyMap<string, 'planner' | 'generator' | 'reviewer'>
-  supervisorManagedWorkIds?: ReadonlySet<string>
-  supervisorManagedGoal?: boolean
+  queuedRunProfiles: ReadonlyMap<string, Responsibility>
+  settledRunWorkIds: ReadonlySet<string>
+  runCapacity: Record<'planner' | 'generator' | 'reviewer', boolean>
   now?: Date
 }
 
@@ -65,10 +62,7 @@ export function deriveWorkProjection(
 ): WorkProjection {
   const goal = goalPackage.goal.attributes
   const now = runtime.now ?? new Date()
-  const requestedProfile = runtime.requestedRunProfiles?.get(work.id)
-  const supervisorManaged = runtime.supervisorManagedWorkIds?.has(work.id) ?? false
-  const responsibility =
-    requestedProfile ?? (supervisorManaged ? null : responsibilityFor(work.kind, work.stage))
+  const responsibility = runtime.queuedRunProfiles.get(work.id) ?? null
   const failedPredicates: WorkReadinessReason[] = []
   const terminal = isWorkTerminal(work)
   const cancelled = work.stage === 'cancelled'
@@ -88,16 +82,13 @@ export function deriveWorkProjection(
   }
   const scheduled = work.notBefore !== null && Date.parse(work.notBefore) > now.getTime()
   if (scheduled) failedPredicates.push('not_before')
-  const failedAttempt = runtime.settledFailureWorkIds.has(work.id)
-  if (failedAttempt) failedPredicates.push('failed_attempt')
+  const settledRun = runtime.settledRunWorkIds.has(work.id)
   const working = runtime.liveRunWorkIds.has(work.id)
   if (working) failedPredicates.push('live_run')
-  if (responsibility && runtime.passCapacity[responsibility] === false) {
+  if (responsibility && runtime.runCapacity[responsibility] === false) {
     failedPredicates.push('capacity')
   }
-  if (!terminal && !responsibility) {
-    failedPredicates.push(supervisorManaged ? 'awaiting_supervisor' : 'no_responsibility')
-  }
+  if (!terminal && !responsibility) failedPredicates.push('no_queued_run')
 
   const ready = failedPredicates.length === 0
   return {
@@ -112,10 +103,10 @@ export function deriveWorkProjection(
         ? 'working'
         : scheduled
           ? 'scheduled'
-          : failedAttempt
-            ? 'Waiting for Assistant'
-            : ready
-              ? 'queued'
+          : ready
+            ? 'queued'
+            : settledRun
+              ? 'Waiting for Assistant'
               : 'waiting',
     failedPredicates,
   }

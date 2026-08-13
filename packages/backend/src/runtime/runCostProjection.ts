@@ -1,13 +1,13 @@
 import type { Responsibility } from './roleContextStager'
 import type { RunAttemptDiagnostics } from './runAttemptDiagnostics'
+import type { RunTermination } from './runRequest'
 
 export interface RunCostEntry {
   workId: string
   runId: string
   responsibility: Responsibility
-  status: 'queued' | 'running' | 'finished' | 'interrupted'
-  result: string | null
-  application: string | null
+  status: 'queued' | 'running' | 'settled'
+  termination: RunTermination | null
   diagnostics: RunAttemptDiagnostics
 }
 
@@ -31,12 +31,11 @@ export interface RunCostSummary {
   runsWithVendorReportedCost: number
   vendorReportedCostUsd: number
   outcomes: {
-    success: number
-    rejected: number
-    preparationFailed: number
-    failed: number
+    normal: number
+    cancelled: number
     interrupted: number
-    stale: number
+    crashed: number
+    timedOut: number
   }
 }
 
@@ -61,12 +60,11 @@ export function summarizeRunCosts(entries: readonly RunCostEntry[]): RunCostSumm
     runsWithVendorReportedCost: 0,
     vendorReportedCostUsd: 0,
     outcomes: {
-      success: 0,
-      rejected: 0,
-      preparationFailed: 0,
-      failed: 0,
+      normal: 0,
+      cancelled: 0,
       interrupted: 0,
-      stale: 0,
+      crashed: 0,
+      timedOut: 0,
     },
   }
   for (const entry of entries) {
@@ -94,13 +92,11 @@ export function summarizeRunCosts(entries: readonly RunCostEntry[]): RunCostSumm
       summary.runsWithVendorReportedCost += 1
       summary.vendorReportedCostUsd += diagnostics.vendorReportedCostUsd
     }
-    if (entry.status === 'interrupted') summary.outcomes.interrupted += 1
-    else if (entry.application === 'stale') summary.outcomes.stale += 1
-    else if (entry.application === 'candidate_preparation_failed') {
-      summary.outcomes.preparationFailed += 1
-    } else if (entry.result === 'reject') summary.outcomes.rejected += 1
-    else if (entry.result === 'fail') summary.outcomes.failed += 1
-    else if (entry.result === 'success') summary.outcomes.success += 1
+    if (entry.termination === 'normal') summary.outcomes.normal += 1
+    else if (entry.termination === 'cancelled') summary.outcomes.cancelled += 1
+    else if (entry.termination === 'interrupted') summary.outcomes.interrupted += 1
+    else if (entry.termination === 'crashed') summary.outcomes.crashed += 1
+    else if (entry.termination === 'timed_out') summary.outcomes.timedOut += 1
   }
   return summary
 }

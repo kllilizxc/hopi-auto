@@ -5,8 +5,6 @@ import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocumen
 import type { GoalPackage } from '../domain/goalPackage'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { MvpRuntime } from '../runtime/mvpRuntime'
-import { deriveRunSchedulingFacts } from '../runtime/runAttemptStore'
-import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
 import {
   type ScopedAssistantAttention,
   goalCompletionProjection,
@@ -14,7 +12,7 @@ import {
   presentWorkspaceAttention,
   projectAssistantOpenRequests,
 } from './assistantFeedPresenter'
-import { attemptWorkIds, deriveGoalSummaries, presentActiveAttempt } from './goalPresenter'
+import { deriveGoalSummaries, presentActiveAttempt } from './goalPresenter'
 import { CONFIGURABLE_AGENT_ROLES } from './requestSchemas'
 
 export async function presentState(
@@ -76,15 +74,19 @@ export async function presentState(
       const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
         projectEligible: true,
         liveRunWorkIds: liveWorkIds,
-        settledFailureWorkIds: await settledFailureWorkIds(
-          goalPackage,
-          attemptSnapshot.listGoal(project.projectId, goalId),
-          attemptWorkIds(queuedAttempts, project.projectId, goalId),
+        queuedRunProfiles: new Map(
+          queuedAttempts
+            .filter(
+              (attempt) => attempt.projectId === project.projectId && attempt.goalId === goalId,
+            )
+            .map((attempt) => [attempt.workId, attempt.responsibility] as const),
         ),
-        passCapacity: { planner: true, generator: true, reviewer: true },
-        ...deriveRunSchedulingFacts(
-          [...attemptSnapshot.listGoal(project.projectId, goalId).values()].flat(),
+        settledRunWorkIds: new Set(
+          [...attemptSnapshot.listGoal(project.projectId, goalId)]
+            .filter(([, attempts]) => attempts.some((attempt) => attempt.status === 'settled'))
+            .map(([workId]) => workId),
         ),
+        runCapacity: { planner: true, generator: true, reviewer: true },
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
       const goalAttentionCount = [...goalPackage.attentions.values()].filter(

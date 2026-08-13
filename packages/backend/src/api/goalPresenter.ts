@@ -1,14 +1,12 @@
 import type { AgentPlanEvent, AgentRuntimeEvent } from '../agent/runtimeEvents'
 import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocuments'
-import { workAttentionTarget } from '../domain/attentionTarget'
 import type { WorkDocument } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import type { WorkProjection } from '../domain/workProjection'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import { type MvpProjectRuntime, type MvpRuntime, requireProject } from '../runtime/mvpRuntime'
-import { type RunAttemptSummary, deriveRunSchedulingFacts } from '../runtime/runAttemptStore'
+import type { RunAttemptSummary } from '../runtime/runAttemptStore'
 import { type RunCostEntry, summarizeRunCosts } from '../runtime/runCostProjection'
-import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
 import { presentGoalAttention, presentWorkspaceAttention } from './assistantFeedPresenter'
 import { ApiError } from './http'
 
@@ -87,65 +85,19 @@ export function deriveGoalSummaries(
   }
 }
 
-export function presentAttempt<
-  T extends {
-    runId: string
-    workId: string
-    result: string | null
-    summary: string | null
-    application: string | null
-  },
->(
-  attempt: T,
-  goalPackage: Awaited<ReturnType<MvpProjectRuntime['store']['readPackage']>>,
-  projectId: string,
-  goalId: string,
-) {
-  const producerRun = `${workAttentionTarget(projectId, goalId, attempt.workId)}/run:${attempt.runId}`
-  const evidence = [...goalPackage.evidence.values()].find(
-    (document) => document.attributes.producerRun === producerRun,
-  )
-  if (!evidence) return attempt
-  const consumed = [...goalPackage.works.values()].some((work) =>
-    work.attributes.evidenceRefs.includes(evidence.attributes.id),
-  )
-  return {
-    ...attempt,
-    result: attempt.result,
-    summary: attempt.summary,
-    application: attempt.application ?? (consumed ? 'published' : 'evidence_preserved'),
-  }
-}
-
 export function deriveWorkCompletedAt(
   work: Pick<WorkDocument['attributes'], 'kind' | 'stage'>,
-  attempts: readonly Pick<
-    RunAttemptSummary,
-    'responsibility' | 'status' | 'result' | 'endedAt' | 'application'
-  >[],
+  attempts: readonly Pick<RunAttemptSummary, 'status' | 'endedAt'>[],
 ): string | null {
   if (work.stage !== 'done') return null
 
-  const terminalResponsibility = work.kind === 'planning' ? 'planner' : 'reviewer'
-  const terminalApplications =
-    work.kind === 'planning'
-      ? new Set(['published'])
-      : new Set(['integrated', 'already_integrated'])
-  const successfulTerminalAttempts = attempts.filter(
-    (attempt) =>
-      attempt.responsibility === terminalResponsibility &&
-      attempt.status === 'finished' &&
-      attempt.result === 'success' &&
-      attempt.endedAt !== null,
-  )
-  const appliedAttempts = successfulTerminalAttempts.filter((attempt) =>
-    terminalApplications.has(attempt.application ?? ''),
-  )
-  return appliedAttempts.reduce<string | null>(
-    (latest, attempt) =>
-      attempt.endedAt && (!latest || attempt.endedAt > latest) ? attempt.endedAt : latest,
-    null,
-  )
+  return attempts
+    .filter((attempt) => attempt.status === 'settled')
+    .reduce<string | null>(
+      (latest, attempt) =>
+        attempt.endedAt && (!latest || attempt.endedAt > latest) ? attempt.endedAt : latest,
+      null,
+    )
 }
 
 export async function presentGoal(
@@ -178,7 +130,7 @@ export async function presentGoal(
       })),
     }
   }
-  const [workspace, designSnapshot, attemptSnapshot, operations] = await Promise.all([
+  const [workspace, designSnapshot, attemptSnapshot] = await Promise.all([
     runtime.workspace.readWorkspace(),
     view === 'full'
       ? runtime.publisher.snapshotTree(
@@ -187,7 +139,6 @@ export async function presentGoal(
         )
       : null,
     runtime.attempts.snapshot(),
-    project.reconciler.listGoalOperations(goalId),
   ])
   const attemptsByWork = attemptSnapshot.listGoal(projectId, goalId)
   const runningAttempts = attemptSnapshot.running()
@@ -209,13 +160,18 @@ export async function presentGoal(
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
     projectEligible: true,
     liveRunWorkIds: liveWorkIds,
-    settledFailureWorkIds: await settledFailureWorkIds(
-      goalPackage,
-      attemptsByWork,
-      attemptWorkIds(attemptSnapshot.queued(), projectId, goalId),
+    queuedRunProfiles: new Map(
+      attemptSnapshot
+        .queued()
+        .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
+        .map((attempt) => [attempt.workId, attempt.responsibility] as const),
     ),
-    passCapacity: { planner: true, generator: true, reviewer: true },
-    ...deriveRunSchedulingFacts([...attemptsByWork.values()].flat()),
+    settledRunWorkIds: new Set(
+      [...attemptsByWork]
+        .filter(([, attempts]) => attempts.some((attempt) => attempt.status === 'settled'))
+        .map(([workId]) => workId),
+    ),
+    runCapacity: { planner: true, generator: true, reviewer: true },
   })
   const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
   const agentPlanByWork = await readLiveAgentPlans(
@@ -255,7 +211,6 @@ export async function presentGoal(
     projectAttention: projectAttention
       ? presentWorkspaceAttention(projectAttention, projectId)
       : null,
-    operations,
   }
   if (view === 'board') return projection
   return {
@@ -350,8 +305,7 @@ function presentWorkBlocker(
       ? `${capitalize(projection.responsibility)} capacity`
       : 'Agent capacity'
   }
-  if (reasons.has('no_responsibility')) return 'unsupported work stage'
-  if (reasons.has('awaiting_supervisor')) return 'Supervisor'
+  if (reasons.has('no_queued_run')) return null
   return null
 }
 

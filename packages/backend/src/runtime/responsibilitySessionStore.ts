@@ -108,19 +108,15 @@ export function createResponsibilitySessionStore(homeRoot: string): Responsibili
     const runtimeDigest = runtimeDigestSchema.parse(scope.runtimeDigest)
     const responsibility = z.enum(RESPONSIBILITIES).parse(key.responsibility)
     const runId = stableIdSchema.parse(key.runId)
-    const assignmentRoot = join(
-      workRoot(key),
-      `run-${runId}`,
-      responsibility,
-      `assignment-${assignmentHash}`,
-    )
+    const assignmentRoot = join(workRoot(key), responsibility, `assignment-${assignmentHash}`)
     const runtimeRoot = join(assignmentRoot, `runtime-${runtimeDigest}`)
+    const runRoot = join(runtimeRoot, `run-${runId}`)
     return {
       contractRevision,
       assignmentHash,
       runtimeDigest,
-      manifestPath: join(runtimeRoot, 'session.json'),
-      workspaceDir: join(runtimeRoot, 'workspace'),
+      manifestPath: join(runRoot, 'session.json'),
+      workspaceDir: join(runRoot, 'workspace'),
     }
   }
 

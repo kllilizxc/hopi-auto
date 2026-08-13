@@ -55,9 +55,9 @@ interface AttemptView {
   workId: string
   runId: string
   responsibility: 'planner' | 'generator' | 'reviewer'
-  status: string
-  result: string | null
-  application: string | null
+  status: 'queued' | 'running' | 'settled'
+  termination: 'normal' | 'cancelled' | 'interrupted' | 'crashed' | 'timed_out' | null
+  candidateCommits: Array<{ repoId: string; baseCommit: string; resultCommit: string }>
 }
 
 let harness: LiveHarness | null = null
@@ -154,18 +154,18 @@ try {
   const engineering = finalGoal.works.filter((work) => work.kind === 'engineering')
   assert.ok(engineering.length >= 1)
   const attempts = await readAttempts(harness, goalId, finalGoal)
-  for (const responsibility of ['planner', 'generator', 'reviewer'] as const) {
-    assert.ok(
-      attempts.some(
-        (attempt) =>
-          attempt.responsibility === responsibility &&
-          attempt.status === 'finished' &&
-          attempt.result === 'success',
-      ),
-      `Expected one successful real ${responsibility}`,
-    )
-  }
-  assert.ok(attempts.some((attempt) => attempt.application === 'integrated'))
+  assert.ok(
+    attempts.some(
+      (attempt) =>
+        attempt.responsibility === 'generator' &&
+        attempt.status === 'settled' &&
+        attempt.termination === 'normal' &&
+        [PRIMARY_REPO_ID, SECONDARY_REPO_ID].every((repoId) =>
+          attempt.candidateCommits.some((candidate) => candidate.repoId === repoId),
+        ),
+    ),
+    'Expected one normal Generator Run with both Repo candidates',
+  )
   for (const repoId of [PRIMARY_REPO_ID, SECONDARY_REPO_ID]) {
     const root = integrations[repoId]
     assert.ok(root)
@@ -259,7 +259,7 @@ async function readAttempts(harness: LiveHarness, goalId: string, goal: GoalView
         harness.baseUrl,
         `/api/projects/${PROJECT_ID}/goals/${goalId}/works/${work.id}/attempts/${attempt.runId}/events?limit=200`,
       )
-      if (attempt.status === 'finished' && attempt.result === 'success') {
+      if (attempt.status === 'settled' && attempt.termination === 'normal') {
         assert.ok(
           events.items.some((event) => event.kind === 'transcript' && event.transport),
           `${attempt.responsibility} ${attempt.runId} must retain real transport events`,

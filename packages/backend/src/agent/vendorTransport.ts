@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
+import type { RunWorkspaceMode } from '../runtime/runRequest'
 import { readClaudeProviderEnvironment } from './claudeSettingsEnvironment'
 import { type ExecutionEnvelope, injectExecutionEnvelope } from './executionEnvelope'
 import { codingReasoningEffortSchema, providerQualifiedModelSchema } from './projectCodingDefaults'
@@ -14,11 +15,9 @@ export interface TransportCommand {
   stdin?: string
   transcriptFormat?: ProcessTranscriptFormat
   sessionTransport?: AssistantTransport
-  structuredOutcomeFile?: string
+  finalOutputFile?: string
   env?: Record<string, string>
   baseRef?: string
-  outcomeFile?: string
-  canonicalOutcomeFile?: string
   browserHarnessArtifactDir?: string
   canonicalBrowserHarnessArtifactDir?: string
   assignmentSnapshotFile?: string
@@ -26,17 +25,12 @@ export interface TransportCommand {
 }
 
 export interface TransportContextBundle {
-  outcomeMode?: 'structured' | 'freeform'
   runRoot?: string
   runViewRoot?: string
   runtimeScratchDir: string
   runtimeCacheDir: string
   authorityRoot?: string
-  proposalRoot?: string
-  attentionProposalDir?: string
   artifactOutputDir?: string
-  proposalCapabilitiesFile?: string
-  resultSchemaFile?: string
   primaryRepoRoot?: string
   bootstrapSourceRoot?: string
   operatorPreferenceFile?: string
@@ -47,8 +41,7 @@ export interface TransportContextBundle {
   contextFile: string
   artifactManifestFile?: string
   promptFile: string
-  outcomeFile: string
-  canonicalOutcomeFile: string
+  reportFile: string
   browserHarnessDir: string
   browserHarnessCommand?: string
   browserHarnessBackendCommand?: string
@@ -171,6 +164,7 @@ export async function resolveConfiguredTransportCommand(options: {
   runtimeWorkspace?: string
   continuationPrompt?: string
   refreshAssignment?: boolean
+  workspaceMode?: RunWorkspaceMode
 }): Promise<TransportCommand> {
   if ((options.bundle.imageFiles?.length ?? 0) > 0 && 'cmd' in options.config) {
     throw new Error('process responsibility transport does not support HOPI image inputs')
@@ -194,8 +188,6 @@ export async function resolveConfiguredTransportCommand(options: {
       ),
       cwdMode: options.config.cwdMode,
       baseRef: options.config.baseRef,
-      outcomeFile: options.bundle.outcomeFile,
-      canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
       browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
       env,
@@ -216,16 +208,19 @@ export async function resolveConfiguredTransportCommand(options: {
       : assignment)
 
   if (options.config.transport === 'codex') {
-    const structuredOutcomeFile = join(options.bundle.runtimeScratchDir, 'vendor-outcome.json')
-    await Bun.write(structuredOutcomeFile, '')
+    const finalOutputFile = join(options.bundle.runtimeScratchDir, 'vendor-report.md')
+    await Bun.write(finalOutputFile, '')
     const cmd = [options.config.binary ?? 'codex']
     appendCodexHttpsOnlyConfig(cmd)
     appendCodexShellEnvironmentConfig(cmd)
-    const sandbox = options.fullAccess
-      ? 'danger-full-access'
-      : options.config.sandbox === 'danger-full-access'
-        ? 'workspace-write'
-        : options.config.sandbox
+    const sandbox =
+      options.workspaceMode !== 'isolated_write'
+        ? 'read-only'
+        : options.fullAccess
+          ? 'danger-full-access'
+          : options.config.sandbox === 'danger-full-access'
+            ? 'workspace-write'
+            : options.config.sandbox
     cmd.push('-a', NON_INTERACTIVE_CODEX_APPROVAL_POLICY)
     if (options.config.reasoningEffort) {
       cmd.push('-c', `model_reasoning_effort="${options.config.reasoningEffort}"`)
@@ -236,43 +231,43 @@ export async function resolveConfiguredTransportCommand(options: {
     if (savedSession) {
       cmd.push('-s', sandbox)
       if (!options.fullAccess) {
-        for (const dir of options.bundle.extraWritableRoots ?? []) cmd.push('--add-dir', dir)
+        const roots = new Set([
+          ...(options.bundle.extraReadableRoots ?? []),
+          ...(options.bundle.extraWritableRoots ?? []),
+        ])
+        for (const dir of roots) cmd.push('--add-dir', dir)
       }
       if (options.config.model) cmd.push('-m', options.config.model)
       if (options.config.profile) cmd.push('-p', options.config.profile)
       cmd.push('exec', 'resume', '--ignore-user-config', '--skip-git-repo-check')
       for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
-      cmd.push(
-        '--output-last-message',
-        structuredOutcomeFile,
-        '--json',
-        savedSession.sessionId,
-        '-',
-      )
+      cmd.push('--output-last-message', finalOutputFile, '--json', savedSession.sessionId, '-')
     } else {
       cmd.push('exec', '--ignore-user-config', '--skip-git-repo-check')
       cmd.push('-s', sandbox)
       if (!options.fullAccess) {
-        for (const dir of options.bundle.extraWritableRoots ?? []) cmd.push('--add-dir', dir)
+        const roots = new Set([
+          ...(options.bundle.extraReadableRoots ?? []),
+          ...(options.bundle.extraWritableRoots ?? []),
+        ])
+        for (const dir of roots) cmd.push('--add-dir', dir)
       }
       if (options.config.model) cmd.push('-m', options.config.model)
       if (options.config.profile) cmd.push('-p', options.config.profile)
       for (const imageFile of options.bundle.imageFiles ?? []) cmd.push('-i', imageFile)
-      cmd.push('--output-last-message', structuredOutcomeFile, '--json', '-')
+      cmd.push('--output-last-message', finalOutputFile, '--json', '-')
     }
     return {
       cmd,
       cwdMode: options.config.cwdMode,
       baseRef: options.config.baseRef,
-      outcomeFile: options.bundle.outcomeFile,
-      canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
       browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
       env,
       stdin: prompt,
       transcriptFormat: vendorAdapterFor('codex').transcriptFormat,
       sessionTransport: 'codex',
-      structuredOutcomeFile,
+      finalOutputFile,
       assignmentSnapshotFile,
       assignmentSnapshot: assignment,
     }
@@ -312,9 +307,6 @@ export async function resolveConfiguredTransportCommand(options: {
       '--disallowed-tools',
       NON_INTERACTIVE_CLAUDE_TOOLS.join(','),
     ]
-    if (options.bundle.outcomeMode !== 'freeform') {
-      cmd.push('--json-schema', JSON.stringify(roleOutcomeJsonSchema(options.input.role)))
-    }
     appendClaudeNonInteractivePermission(cmd)
     if (!options.fullAccess) {
       const accessibleDirs = new Set([
@@ -333,8 +325,6 @@ export async function resolveConfiguredTransportCommand(options: {
       cmd,
       cwdMode: options.config.cwdMode,
       baseRef: options.config.baseRef,
-      outcomeFile: options.bundle.outcomeFile,
-      canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
       browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
       env,
@@ -386,8 +376,6 @@ export async function resolveConfiguredTransportCommand(options: {
     cmd,
     cwdMode: options.config.cwdMode,
     baseRef: options.config.baseRef,
-    outcomeFile: options.bundle.outcomeFile,
-    canonicalOutcomeFile: options.bundle.canonicalOutcomeFile,
     browserHarnessArtifactDir: options.bundle.browserHarnessArtifactDir,
     canonicalBrowserHarnessArtifactDir: options.bundle.canonicalBrowserHarnessArtifactDir,
     env: { ...env, OPENCODE_CONFIG: opencodeConfigPath },
@@ -485,7 +473,6 @@ function displayExecutionPath(path: string, bundle: TransportContextBundle) {
     [bundle.runtimeCacheDir, '$HOPI_CACHE_DIR'],
     [bundle.primaryRepoRoot, '$HOPI_PRIMARY_REPO_ROOT'],
     [bundle.authorityRoot, '$HOPI_AUTHORITY_ROOT'],
-    [bundle.proposalRoot, '$HOPI_PROPOSAL_ROOT'],
     [bundle.artifactOutputDir, '$HOPI_ARTIFACT_DIR'],
   ] as const
   return aliases.find(([candidate]) => candidate === path)?.[1] ?? path
@@ -573,32 +560,6 @@ function assignmentSections(source: string) {
   return sections
 }
 
-function roleOutcomeJsonSchema(role: string | undefined) {
-  const results =
-    role === 'planner' || role === 'generator' ? ['success', 'fail'] : ['success', 'reject', 'fail']
-  const summary =
-    role === 'planner'
-      ? {
-          type: 'string',
-          minLength: 1,
-          maxLength: 600,
-        }
-      : { type: 'string', minLength: 1 }
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      result: { type: 'string', enum: results },
-      summary,
-      artifacts: {
-        type: 'array',
-        items: { type: 'string', minLength: 1 },
-      },
-    },
-    required: ['result', 'summary', 'artifacts'],
-  }
-}
-
 function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTransportInvocation) {
   const runPath = (path: string) => agentVisibleRunPath(bundle, path)
   return {
@@ -607,17 +568,7 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     HOPI_CACHE_DIR: bundle.runtimeCacheDir,
     ...(bundle.runRoot ? { HOPI_RUN_DIR: runPath(bundle.runRoot) } : {}),
     ...(bundle.authorityRoot ? { HOPI_AUTHORITY_ROOT: runPath(bundle.authorityRoot) } : {}),
-    ...(bundle.proposalRoot ? { HOPI_PROPOSAL_ROOT: runPath(bundle.proposalRoot) } : {}),
-    ...(bundle.attentionProposalDir
-      ? { HOPI_ATTENTION_PROPOSAL_DIR: runPath(bundle.attentionProposalDir) }
-      : {}),
     ...(bundle.artifactOutputDir ? { HOPI_ARTIFACT_DIR: runPath(bundle.artifactOutputDir) } : {}),
-    ...(bundle.proposalCapabilitiesFile
-      ? { HOPI_PROPOSAL_CAPABILITIES_FILE: runPath(bundle.proposalCapabilitiesFile) }
-      : {}),
-    ...(bundle.resultSchemaFile
-      ? { HOPI_RESULT_SCHEMA_FILE: runPath(bundle.resultSchemaFile) }
-      : {}),
     ...(bundle.primaryRepoRoot ? { HOPI_PRIMARY_REPO_ROOT: bundle.primaryRepoRoot } : {}),
     ...(bundle.bootstrapSourceRoot
       ? { HOPI_BOOTSTRAP_SOURCE_ROOT: runPath(bundle.bootstrapSourceRoot) }
@@ -629,7 +580,7 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     ...(bundle.artifactManifestFile
       ? { HOPI_EVIDENCE_ARTIFACTS_FILE: runPath(bundle.artifactManifestFile) }
       : {}),
-    HOPI_OUTCOME_FILE: runPath(bundle.outcomeFile),
+    HOPI_REPORT_FILE: runPath(bundle.reportFile),
     HOPI_GOAL_FILE: runPath(bundle.goalFile),
     HOPI_DESIGN_FILE: runPath(bundle.designFile),
     HOPI_PROMPT_FILE: runPath(bundle.promptFile),
@@ -675,7 +626,7 @@ function placeholderValues(options: {
   return {
     CONTEXT_FILE: runPath(options.bundle.contextFile),
     EVIDENCE_ARTIFACTS_FILE: runPath(options.bundle.artifactManifestFile),
-    OUTCOME_FILE: runPath(options.bundle.outcomeFile),
+    REPORT_FILE: runPath(options.bundle.reportFile),
     GOAL_FILE: runPath(options.bundle.goalFile),
     DESIGN_FILE: runPath(options.bundle.designFile),
     PROMPT_FILE: runPath(options.bundle.promptFile),

@@ -187,9 +187,10 @@ function validateGoalTransition(goalId: string, previous: GoalPackage, next: Goa
   const after = next.goal
   if (
     after.attributes.id !== before.attributes.id ||
-    after.attributes.title !== before.attributes.title
+    after.attributes.title !== before.attributes.title ||
+    after.body !== before.body
   ) {
-    throw invalid(goalId, 'Goal identity and title are immutable')
+    throw invalid(goalId, 'Goal identity, title, and original statement are immutable')
   }
   if (
     after.attributes.contractRevision < before.attributes.contractRevision ||

@@ -224,9 +224,11 @@ A reset removes:
   responsibility sessions, Preview records, task worktrees, and Work refs
 
 It preserves the Assistant Home, Project link, Repo bindings, preferences, Project release source,
-and every user checkout. When Goal packages are tracked by the primary Project release ref, reset
-advances that ref with a commit containing only their deletion. It never rewrites or checks out a
-user branch.
+and every user checkout. Reset advances the primary Project release ref with a Project Reset epoch
+commit. When Goal packages are tracked by that ref, the same commit contains only their deletion;
+otherwise the tree may be unchanged. Historical commits remain reachable for audit, but C1 and
+other Project-state reconstruction stop at the latest reset epoch for that Project. Reset never
+rewrites or checks out a user branch.
 
 The maintenance command is dry-run by default. Mutation requires the exact Project ID as explicit
 confirmation and exclusive ownership of the Coordinator instance lock, so the running HOPI service

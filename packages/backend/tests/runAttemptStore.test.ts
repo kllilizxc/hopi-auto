@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { appendFile, mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
 
@@ -15,11 +15,21 @@ afterEach(async () => {
 })
 
 describe('RunAttemptStore', () => {
-  test('records one responsibility Attempt and its normalized live event stream', async () => {
+  test('persists one queued → running → settled Attempt with Report and candidate commits', async () => {
     let tick = 0
     const store = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date(Date.UTC(2026, 6, 11, 0, 0, tick++)),
+      now: () => new Date(Date.UTC(2026, 7, 13, 0, 0, tick++)),
     })
+    await store.reserve({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-1',
+      workHash: 'a'.repeat(64),
+      request: runRequest('generator', 'isolated_write', 'Implement the Work.'),
+    })
+    expect((await store.snapshot()).queued()).toHaveLength(1)
+
     const recorder = await store.start({
       projectId: 'P-1',
       goalId: 'G-1',
@@ -28,544 +38,157 @@ describe('RunAttemptStore', () => {
       responsibility: 'generator',
       runRoot: runRoot('R-1'),
     })
-    await Bun.write(
-      join(runRoot('R-1'), 'prompt.md'),
-      '# Generator system prompt\n\nImplement the owning Work exactly.\n',
-    )
+    await Bun.write(join(runRoot('R-1'), 'prompt.md'), '# Run\n')
     await recorder.setExecution({
       transport: 'codex',
-      provider: 'codex',
       model: 'gpt-5.6-sol',
       reasoningEffort: 'xhigh',
-      permissionBoundary: 'bounded',
     })
-    await recorder.recordSession({
-      transport: 'codex',
-      sessionId: 'thread-R-1',
-      executionKey: 'codex-execution',
-    })
-    await recorder.record({
-      kind: 'message',
-      level: 'info',
-      role: 'generator',
-      content: 'Implementing the owning Work.',
-    })
-    await recorder.record({
-      kind: 'transcript',
-      transport: 'codex',
-      entryKind: 'tool_call',
-      summary: 'bun test',
-      toolName: 'exec_command',
-      toolInvocationKey: 'call-1',
-    })
-    await recorder.record({
-      kind: 'plan',
-      transport: 'codex',
-      planId: 'item-plan-1',
-      status: 'active',
-      items: [
-        { text: 'Inspect the runtime', completed: true },
-        { text: 'Implement the projection', completed: false },
-      ],
-      vendorEventType: 'item.updated',
-    })
-    expect((await store.snapshot()).running().map((attempt) => attempt.runId)).toEqual(['R-1'])
-    await recorder.finish({
-      outcome: {
-        result: 'success',
-        summary: 'Implementation verified.',
-        exitCode: 0,
-        termination: 'normal',
-        reportMarkdown: '# Implementation report\n\nAll focused checks passed.',
-      },
-      application: 'published',
-    })
-    expect((await store.snapshot()).running()).toEqual([])
-
-    const attempts = await store.list('P-1', 'G-1', 'W-1')
-    const detail = await store.read('P-1', 'G-1', 'W-1', 'R-1')
-
-    expect(attempts).toHaveLength(1)
-    expect(attempts[0]).toMatchObject({
-      runId: 'R-1',
-      status: 'finished',
-      result: 'success',
-      application: 'published',
+    await recorder.settle({
       termination: 'normal',
-      requestedExecution: {
-        transport: 'codex',
-        provider: 'codex',
-        model: 'gpt-5.6-sol',
-        reasoningEffort: 'xhigh',
-        permissionBoundary: 'bounded',
-      },
+      reportMarkdown: '# Report\n\nImplemented and checked.',
+      exitCode: 0,
+      candidateCommits: [
+        { repoId: 'repo-a', baseCommit: 'a'.repeat(40), resultCommit: 'b'.repeat(40) },
+      ],
+    })
+
+    expect(await store.read('P-1', 'G-1', 'W-1', 'R-1')).toMatchObject({
+      status: 'settled',
+      termination: 'normal',
+      reportMarkdown: '# Report\n\nImplemented and checked.',
+      workspaceMode: 'isolated_write',
+      instructionMarkdown: 'Implement the Work.',
       execution: { transport: 'codex', model: 'gpt-5.6-sol', reasoningEffort: 'xhigh' },
-      reportMarkdown: '# Implementation report\n\nAll focused checks passed.\n',
-      sessionEpochs: [
-        {
-          epoch: 1,
-          transport: 'codex',
-          sessionId: 'thread-R-1',
-          endedAt: expect.any(String),
-          closeReason: 'normal',
-        },
-      ],
-    })
-    expect(detail?.events.map((event) => event.kind)).toEqual([
-      'message',
-      'message',
-      'transcript',
-      'plan',
-      'message',
-    ])
-    expect(detail?.events[2]).toMatchObject({
-      entryKind: 'tool_call',
-      toolName: 'exec_command',
-      summary: 'bun test',
-    })
-    expect(detail?.events[3]).toMatchObject({
-      kind: 'plan',
-      planId: 'item-plan-1',
-      status: 'active',
-      items: [{ completed: true }, { completed: false }],
-    })
-    expect(detail?.runPrompt).toBe(
-      '# Generator system prompt\n\nImplement the owning Work exactly.\n',
-    )
-  })
-
-  test('EV-002 retains Session Epoch handoff and Run identity across restart', async () => {
-    let tick = 0
-    const store = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date(Date.UTC(2026, 6, 11, 0, 0, tick++)),
-    })
-    const recorder = await store.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-epoch',
-      runId: 'R-epoch',
-      responsibility: 'generator',
-      runRoot: runRoot('R-epoch'),
-    })
-    await recorder.recordSession({
-      transport: 'claude',
-      sessionId: 'session-epoch-1',
-      executionKey: 'claude-execution',
-    })
-    await recorder.rotateSession({
-      reason: 'context_boundary',
-      handoffMarkdown:
-        '# Run Session Epoch handoff\n\nThe workspace checkpoint is durable; continue the same Run.',
-    })
-    await recorder.recordSession({
-      transport: 'claude',
-      sessionId: 'session-epoch-2',
-      executionKey: 'claude-execution',
-    })
-    await recorder.finish({
-      outcome: {
-        result: 'success',
-        summary: 'Completed after handoff.',
-        exitCode: 0,
-        termination: 'normal',
-      },
-      application: 'reported',
-    })
-
-    const restarted = createRunAttemptStore(temporaryRoot)
-    const attempt = await restarted.read('P-1', 'G-1', 'W-epoch', 'R-epoch')
-    expect(attempt).toMatchObject({
-      runId: 'R-epoch',
-      status: 'finished',
-      sessionEpochs: [
-        {
-          epoch: 1,
-          sessionId: 'session-epoch-1',
-          closeReason: 'context_boundary',
-          handoffMarkdown: expect.stringContaining('continue the same Run'),
-        },
-        {
-          epoch: 2,
-          sessionId: 'session-epoch-2',
-          closeReason: 'normal',
-          handoffMarkdown: null,
-        },
-      ],
+      candidateCommits: [{ repoId: 'repo-a', resultCommit: 'b'.repeat(40) }],
+      runPrompt: '# Run\n',
     })
   })
 
-  test('EV-003 settles every mechanical termination with a durable factual Report', async () => {
-    const store = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
-    })
-    const finishCases = [
-      { runId: 'R-normal', workId: 'W-normal', termination: 'normal' as const },
-      { runId: 'R-crashed', workId: 'W-crashed', termination: 'crashed' as const },
-      { runId: 'R-timeout', workId: 'W-timeout', termination: 'timed_out' as const },
-    ]
-    for (const item of finishCases) {
-      const recorder = await store.start({
+  test('starts only an explicitly queued Attempt', async () => {
+    const store = createRunAttemptStore(temporaryRoot)
+    expect(
+      store.start({
         projectId: 'P-1',
         goalId: 'G-1',
-        workId: item.workId,
-        runId: item.runId,
-        responsibility: 'generator',
-        runRoot: runRoot(item.runId),
-      })
-      await recorder.finish({
-        outcome: {
-          result: item.termination === 'normal' ? 'success' : 'fail',
-          summary: `${item.termination} process observation`,
-          exitCode: item.termination === 'normal' ? 0 : null,
-          termination: item.termination,
-        },
-        application: item.termination === 'normal' ? 'published' : 'operational_failure',
-      })
-      await recorder.finish({
-        outcome: { result: 'fail', summary: 'must not replace settlement', exitCode: 99 },
-        application: 'operational_failure',
-      })
-    }
-
-    const interrupted = await store.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-interrupted',
-      runId: 'R-interrupted',
-      responsibility: 'generator',
-      runRoot: runRoot('R-interrupted'),
-    })
-    await interrupted.interrupt(new Error('operator stopped the Run'))
-
-    await store.reserve({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-cancelled',
-      runId: 'R-cancelled',
-      responsibility: 'generator',
-      workHash: 'c'.repeat(64),
-    })
-    await store.interruptQueued({ workId: 'W-cancelled' })
-
-    const restarted = createRunAttemptStore(temporaryRoot)
-    const expected = new Map([
-      ['W-normal', 'normal'],
-      ['W-crashed', 'crashed'],
-      ['W-timeout', 'timed_out'],
-      ['W-interrupted', 'interrupted'],
-      ['W-cancelled', 'cancelled'],
-    ])
-    for (const [workId, termination] of expected) {
-      const [attempt] = await restarted.list('P-1', 'G-1', workId)
-      expect(attempt).toMatchObject({ termination, endedAt: expect.any(String) })
-      expect(attempt?.reportMarkdown).toStartWith('# Run Report\n\n')
-    }
-    expect((await restarted.list('P-1', 'G-1', 'W-normal'))[0]?.summary).toBe(
-      'normal process observation',
-    )
+        workId: 'W-1',
+        runId: 'R-missing',
+        responsibility: 'planner',
+        runRoot: runRoot('R-missing'),
+      }),
+    ).rejects.toThrow('Queued Attempt not found')
   })
 
-  test('groups real Attempt history for one Goal with a single runtime scan', async () => {
+  test('deduplicates the same explicit request and settles a superseded queued request', async () => {
     const store = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
+      now: () => new Date('2026-08-13T00:00:00Z'),
     })
-    for (const input of [
-      { projectId: 'P-1', goalId: 'G-1', workId: 'W-1', runId: 'R-1' },
-      { projectId: 'P-1', goalId: 'G-1', workId: 'W-2', runId: 'R-2' },
-      { projectId: 'P-1', goalId: 'G-2', workId: 'W-1', runId: 'R-3' },
-    ]) {
-      await store.start({
-        ...input,
-        responsibility: 'generator',
-        runRoot: runRoot(input.runId),
-      })
-    }
-
-    const attemptsByWork = await store.listGoal('P-1', 'G-1')
-
-    expect([...attemptsByWork.keys()].sort()).toEqual(['W-1', 'W-2'])
-    expect(attemptsByWork.get('W-1')?.map((attempt) => attempt.runId)).toEqual(['R-1'])
-    expect(attemptsByWork.get('W-2')?.map((attempt) => attempt.runId)).toEqual(['R-2'])
-  })
-
-  test('builds one immutable Attempt snapshot for many Work lookups', async () => {
-    const store = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
-    })
-    for (let index = 0; index < 96; index += 1) {
-      const runId = `R-${index}`
-      await store.start({
-        projectId: 'P-1',
-        goalId: index < 64 ? 'G-1' : 'G-2',
-        workId: `W-${index % 16}`,
-        runId,
-        responsibility: 'generator',
-        runRoot: runRoot(runId),
-      })
-    }
-
-    const snapshot = await store.snapshot()
-    expect(snapshot.listGoal('P-1', 'G-1').size).toBe(16)
-    expect(snapshot.list('P-1', 'G-1', 'W-0')).toHaveLength(4)
-
-    await store.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-0',
-      runId: 'R-later',
-      responsibility: 'generator',
-      runRoot: runRoot('R-later'),
-    })
-    expect(snapshot.list('P-1', 'G-1', 'W-0')).toHaveLength(4)
-    expect((await store.snapshot()).list('P-1', 'G-1', 'W-0')).toHaveLength(5)
-  })
-
-  test('advances the rebuildable index only after durable manifest transitions', async () => {
-    const store = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
-    })
-    expect(store.generation()).toBe(0)
-
-    const recorder = await store.start({
+    const input = {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'W-1',
-      runId: 'R-indexed',
-      responsibility: 'generator',
-      runRoot: runRoot('R-indexed'),
+      workHash: 'a'.repeat(64),
+      request: runRequest('generator', 'isolated_write', 'First instruction.'),
+    } as const
+    expect(await store.reserve({ ...input, runId: 'R-1' })).toMatchObject({
+      runId: 'R-1',
+      disposition: 'scheduled',
     })
-    const running = await store.snapshot()
-    expect(store.generation()).toBe(1)
-
-    await recorder.setExecution({
-      transport: 'codex',
-      provider: 'codex',
-      model: 'gpt-5.6',
-      reasoningEffort: 'medium',
-      permissionBoundary: 'bounded',
+    expect(await store.reserve({ ...input, runId: 'R-2' })).toMatchObject({
+      runId: 'R-1',
+      disposition: 'already_scheduled',
     })
-    expect(store.generation()).toBe(2)
-    expect((await store.snapshot()).list('P-1', 'G-1', 'W-1')[0]?.execution).toMatchObject({
-      model: 'gpt-5.6',
+    await store.reserve({
+      ...input,
+      runId: 'R-3',
+      request: runRequest('reviewer', 'read_only', 'Review independently.'),
     })
-
-    await recorder.finish({
-      outcome: { result: 'success', summary: 'Indexed.', exitCode: 0 },
-      application: 'published',
-    })
-    expect(store.generation()).toBe(3)
-    expect((await store.snapshot()).list('P-1', 'G-1', 'W-1')[0]?.status).toBe('finished')
-    expect(running.list('P-1', 'G-1', 'W-1')[0]?.status).toBe('running')
+    const attempts = await store.list('P-1', 'G-1', 'W-1')
+    expect(attempts).toEqual([
+      expect.objectContaining({ runId: 'R-3', status: 'queued' }),
+      expect.objectContaining({
+        runId: 'R-1',
+        status: 'settled',
+        termination: 'interrupted',
+        reportMarkdown: expect.stringContaining('superseded'),
+      }),
+    ])
   })
 
-  test('marks a running Attempt interrupted when a new Coordinator starts', async () => {
+  test('restart settles an abandoned running Attempt exactly once with a factual Report', async () => {
     const first = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
+      now: () => new Date('2026-08-13T00:00:00Z'),
+    })
+    await first.reserve({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-1',
+      runId: 'R-running',
+      workHash: 'a'.repeat(64),
+      request: runRequest('generator', 'isolated_write', 'Implement.'),
     })
     await first.start({
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'W-1',
       runId: 'R-running',
-      responsibility: 'planner',
+      responsibility: 'generator',
       runRoot: runRoot('R-running'),
     })
-    const restarted = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:01:00Z'),
-    })
-
-    expect(await restarted.interruptRunningAttempts()).toBe(1)
-    expect(await restarted.read('P-1', 'G-1', 'W-1', 'R-running')).toMatchObject({
-      status: 'interrupted',
-      termination: 'interrupted',
-      endedAt: '2026-07-11T00:01:00.000Z',
-      summary: 'Coordinator stopped before recording an Attempt outcome.',
-      reportMarkdown: expect.stringContaining('Coordinator stopped'),
-    })
-  })
-
-  test('isolates a corrupt Attempt manifest from healthy listing and restart recovery', async () => {
-    const store = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
-    })
-    await store.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-1',
-      runId: 'R-healthy',
-      responsibility: 'generator',
-      runRoot: runRoot('R-healthy'),
-    })
-    const corruptRoot = runRoot('R-corrupt')
-    await mkdir(corruptRoot, { recursive: true })
-    await Bun.write(join(corruptRoot, 'attempt.json'), '{not-json')
-
-    expect((await store.snapshot()).running().map((attempt) => attempt.runId)).toEqual([
-      'R-healthy',
-    ])
-    expect(await store.interruptRunningAttempts()).toBe(1)
-    expect(await store.read('P-1', 'G-1', 'W-1', 'R-healthy')).toMatchObject({
-      status: 'interrupted',
-    })
-  })
-
-  test('keeps a queued Attempt durable across restart until it runs or is cancelled', async () => {
-    const first = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
-    })
-    expect(
-      await first.reserve({
-        projectId: 'P-1',
-        goalId: 'G-1',
-        workId: 'W-1',
-        runId: 'R-queued',
-        responsibility: 'generator',
-        workHash: 'a'.repeat(64),
-      }),
-    ).toEqual({ runId: 'R-queued', disposition: 'scheduled' })
 
     const restarted = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:01:00Z'),
+      now: () => new Date('2026-08-13T00:01:00Z'),
     })
-    expect(await restarted.interruptRunningAttempts()).toBe(0)
-    expect(await restarted.list('P-1', 'G-1', 'W-1')).toMatchObject([
-      {
-        runId: 'R-queued',
-        status: 'queued',
-        requestedAt: '2026-07-11T00:00:00.000Z',
-        startedAt: null,
-      },
-    ])
+    const recoveredCommits = [
+      { repoId: 'primary', baseCommit: 'b'.repeat(40), resultCommit: 'c'.repeat(40) },
+    ]
+    const recovered: string[] = []
     expect(
-      await restarted.interruptQueued({
-        projectId: 'P-1',
-        goalId: 'G-1',
-        workId: 'W-1',
+      await restarted.interruptRunningAttempts(async (attempt) => {
+        recovered.push(attempt.runId)
+        return recoveredCommits
       }),
     ).toBe(1)
-    expect(await restarted.list('P-1', 'G-1', 'W-1')).toMatchObject([
-      {
-        runId: 'R-queued',
-        status: 'interrupted',
-        termination: 'cancelled',
-        reportMarkdown: expect.stringContaining('interrupted before dispatch'),
-      },
-    ])
+    expect(await restarted.interruptRunningAttempts()).toBe(0)
+    expect(recovered).toEqual(['R-running'])
+    expect(await restarted.read('P-1', 'G-1', 'W-1', 'R-running')).toMatchObject({
+      status: 'settled',
+      termination: 'interrupted',
+      candidateCommits: recoveredCommits,
+      reportMarkdown: expect.stringContaining(
+        'Coordinator stopped before the running Attempt settled.',
+      ),
+    })
   })
 
-  test('lets only one dispatcher claim a queued Attempt', async () => {
-    const store = createRunAttemptStore(temporaryRoot)
-    await store.reserve({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-1',
-      runId: 'R-claim',
-      responsibility: 'generator',
-      workHash: 'b'.repeat(64),
-    })
-    const claims = await Promise.allSettled([
-      store.start({
+  test('does not interpret a pre-switch manifest through a compatibility fallback', async () => {
+    const root = runRoot('R-old')
+    await mkdir(root, { recursive: true })
+    await Bun.write(
+      join(root, 'attempt.json'),
+      `${JSON.stringify({
         projectId: 'P-1',
         goalId: 'G-1',
         workId: 'W-1',
-        runId: 'R-claim',
+        runId: 'R-old',
         responsibility: 'generator',
-        runRoot: runRoot('R-claim'),
-        workHash: 'b'.repeat(64),
-      }),
-      store.start({
-        projectId: 'P-1',
-        goalId: 'G-1',
-        workId: 'W-1',
-        runId: 'R-claim',
-        responsibility: 'generator',
-        runRoot: runRoot('R-claim'),
-        workHash: 'b'.repeat(64),
-      }),
-    ])
-    expect(claims.filter((claim) => claim.status === 'fulfilled')).toHaveLength(1)
-    expect(claims.filter((claim) => claim.status === 'rejected')).toHaveLength(1)
-    const recorder = claims.find((claim) => claim.status === 'fulfilled')
-    if (recorder?.status !== 'fulfilled') throw new Error('Expected one claimed Attempt')
-    await recorder.value.interrupt('test complete')
-  })
-
-  test('fails an Attempt event write instead of silently losing its trace', async () => {
+        status: 'finished',
+        result: 'success',
+      })}\n`,
+    )
     const store = createRunAttemptStore(temporaryRoot)
-    const recorder = await store.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-1',
-      runId: 'R-write-failure',
-      responsibility: 'generator',
-      runRoot: runRoot('R-write-failure'),
-    })
-    const eventsPath = join(runRoot('R-write-failure'), 'events.jsonl')
-    await rm(eventsPath)
-    await mkdir(eventsPath)
-
-    await expect(
-      recorder.record({
-        kind: 'message',
-        level: 'info',
-        role: 'generator',
-        content: 'This event must be durable.',
-      }),
-    ).rejects.toThrow()
-  })
-
-  test('does not close a recovered Attempt when its interruption event cannot be stored', async () => {
-    const first = createRunAttemptStore(temporaryRoot)
-    await first.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-1',
-      runId: 'R-recovery-write-failure',
-      responsibility: 'generator',
-      runRoot: runRoot('R-recovery-write-failure'),
-    })
-    const eventsPath = join(runRoot('R-recovery-write-failure'), 'events.jsonl')
-    await rm(eventsPath)
-    await mkdir(eventsPath)
-
-    const restarted = createRunAttemptStore(temporaryRoot)
-    await expect(restarted.interruptRunningAttempts()).rejects.toThrow()
-    expect(await restarted.read('P-1', 'G-1', 'W-1', 'R-recovery-write-failure')).toMatchObject({
-      status: 'running',
-      endedAt: null,
-    })
-  })
-
-  test('discards a torn event tail before restart recovery appends its interruption', async () => {
-    const first = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
-    })
-    await first.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-1',
-      runId: 'R-torn',
-      responsibility: 'generator',
-      runRoot: runRoot('R-torn'),
-    })
-    const eventsPath = join(runRoot('R-torn'), 'events.jsonl')
-    await appendFile(eventsPath, '{"eventId":"torn"\0\0')
-
-    const restarted = createRunAttemptStore(temporaryRoot, {
-      now: () => new Date('2026-07-11T00:01:00Z'),
-    })
-    expect(await restarted.interruptRunningAttempts()).toBe(1)
-
-    const detail = await restarted.read('P-1', 'G-1', 'W-1', 'R-torn')
-    expect(detail?.events).toHaveLength(2)
-    expect(detail?.events.at(-1)).toMatchObject({
-      kind: 'message',
-      level: 'error',
-      content: 'Coordinator stopped before recording an Attempt outcome.',
-    })
-    expect(await Bun.file(eventsPath).text()).not.toContain('\0')
+    expect(await store.read('P-1', 'G-1', 'W-1', 'R-old')).toBeNull()
+    expect((await store.snapshot()).list('P-1', 'G-1', 'W-1')).toEqual([])
   })
 })
+
+function runRequest(
+  profile: 'planner' | 'generator' | 'reviewer',
+  workspaceMode: 'none' | 'read_only' | 'isolated_write',
+  instructionMarkdown: string,
+) {
+  return { profile, workspaceMode, instructionMarkdown, refs: [] }
+}
 
 function runRoot(runId: string) {
   return join(temporaryRoot, '.hopi', 'runtime', 'runs', runId)

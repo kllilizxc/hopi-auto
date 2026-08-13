@@ -5,14 +5,13 @@ import {
   type InboxEventAttributes,
   isInternalInboxSource,
 } from '../domain/assistantWorkspaceDocuments'
-import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
 import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
 import type { Responsibility } from '../runtime/roleContextStager'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { ProjectReconciler } from './projectReconciler'
-import { decideGoalReconciliation } from './reconcileDecision'
+import type { ReconcileDecision } from './reconcileDecision'
 
 export interface CoordinatorProjectRuntime {
   projectId: string
@@ -33,7 +32,7 @@ export interface CoordinatorReconcilerOptions {
 }
 
 export interface CoordinatorReconcileTick {
-  kind: 'assistant_started' | 'deterministic_action' | 'passes_started' | 'delivery' | 'idle'
+  kind: 'assistant_started' | 'deterministic_action' | 'runs_started' | 'delivery' | 'idle'
   count?: number
   nextWakeAt?: number | null
 }
@@ -79,7 +78,7 @@ interface GoalCandidate {
   project: CoordinatorProjectRuntime
   goalId: string
   priority: number
-  decision: ReturnType<typeof decideGoalReconciliation>
+  decision: ReconcileDecision
 }
 
 const COORDINATOR_RETRY_BASE_MS = 1_000
@@ -267,7 +266,7 @@ export function createCoordinatorReconciler(
             epoch === reconcileEpoch &&
             (result.kind === 'assistant_started' ||
               result.kind === 'deterministic_action' ||
-              result.kind === 'passes_started' ||
+              result.kind === 'runs_started' ||
               result.kind === 'delivery')
           ) {
             wakePending = true
@@ -373,7 +372,7 @@ export function createCoordinatorReconciler(
     if (settlementObservation === 'started') return { kind: 'idle' }
 
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
-    const passCounts = reservationPassCounts(reservations)
+    const runCounts = reservationRunCounts(reservations)
     const candidates: GoalCandidate[] = []
     let nextWakeAt: number | null = null
     for (const project of options.projects) {
@@ -401,30 +400,21 @@ export function createCoordinatorReconciler(
           if (goalPackage.goal.attributes.lifecycle !== 'active' && liveWorkIds.size > 0) {
             project.reconciler.interruptRuns(goalId)
           }
-          const runtime: WorkRuntimeFacts = {
+          const decision = await project.reconciler.decisionWhenEligible(goalId, goalPackage, {
             projectEligible: true,
             liveRunWorkIds: liveWorkIds,
-            settledFailureWorkIds: await project.reconciler.settledFailureWorkIds(
-              goalId,
-              goalPackage,
-            ),
-            passCapacity: {
-              planner: passCounts.planner < options.concurrency.planner,
-              generator: passCounts.generator < options.concurrency.generator,
-              reviewer: passCounts.reviewer < options.concurrency.reviewer,
+            runCapacity: {
+              planner: runCounts.planner < options.concurrency.planner,
+              generator: runCounts.generator < options.concurrency.generator,
+              reviewer: runCounts.reviewer < options.concurrency.reviewer,
             },
             now: now(),
-          }
+          })
           candidates.push({
             project,
             goalId,
             priority: goalPackage.goal.attributes.priority,
-            decision: decideGoalReconciliation({
-              projectId: project.projectId,
-              goalId,
-              goalPackage,
-              runtime,
-            }),
+            decision,
           })
         }
       } catch (error) {
@@ -457,22 +447,18 @@ export function createCoordinatorReconciler(
       (candidate) =>
         eligibleProjects.has(candidate.project.projectId) &&
         !goalDispatchBlocked(candidate.project.projectId, candidate.goalId) &&
-        ['ensure_planning', 'finish_cancellation'].includes(candidate.decision.kind),
+        candidate.decision.kind === 'finish_cancellation',
     )
     if (deterministic) {
       try {
-        const result = await deterministic.project.reconciler.reconcileGoal(deterministic.goalId, {
+        await deterministic.project.reconciler.reconcileGoal(deterministic.goalId, {
           projectEligible: true,
-          passCapacity: {
+          runCapacity: {
             planner: false,
             generator: false,
             reviewer: false,
           },
         })
-        if (result.kind === 'project_blocked') {
-          eligibleProjects.delete(deterministic.project.projectId)
-          await reportProjectFailure(deterministic.project.projectId, result.reason)
-        }
       } catch (error) {
         eligibleProjects.delete(deterministic.project.projectId)
         await reportProjectFailure(
@@ -489,7 +475,7 @@ export function createCoordinatorReconciler(
     }
 
     let started = 0
-    const reserved = { ...passCounts }
+    const reserved = { ...runCounts }
     for (const candidate of candidates) {
       if (candidate.decision.kind !== 'dispatch') continue
       if (!eligibleProjects.has(candidate.project.projectId)) continue
@@ -505,22 +491,14 @@ export function createCoordinatorReconciler(
       const promise = candidate.project.reconciler
         .reconcileGoal(candidate.goalId, {
           projectEligible: true,
-          passCapacity: {
+          runCapacity: {
             planner: responsibility === 'planner',
             generator: responsibility === 'generator',
             reviewer: responsibility === 'reviewer',
           },
         })
         .then(async (result) => {
-          if (result.kind === 'project_blocked') {
-            eligibleProjects.delete(candidate.project.projectId)
-            await reportProjectFailure(candidate.project.projectId, result.reason)
-          }
-          if (
-            result.kind === 'pass_finished' &&
-            (responsibility === 'planner' ||
-              (responsibility === 'reviewer' && result.result === 'reject'))
-          ) {
+          if (result.kind === 'run_settled') {
             const projectId = candidate.project.projectId
             projectsAwaitingSettlementObservation.set(
               projectId,
@@ -532,7 +510,7 @@ export function createCoordinatorReconciler(
           eligibleProjects.delete(candidate.project.projectId)
           await reportProjectFailure(
             candidate.project.projectId,
-            `Coordinator pass failed closed: ${errorMessage(error)}`,
+            `Coordinator Run failed closed: ${errorMessage(error)}`,
           )
         })
         .finally(() => {
@@ -542,7 +520,7 @@ export function createCoordinatorReconciler(
         })
         .catch((error) => {
           recordOperationalFailure(
-            `Coordinator continuation ${candidate.project.projectId}/${candidate.goalId}/${workId} failed`,
+            `Coordinator Run settlement ${candidate.project.projectId}/${candidate.goalId}/${workId} failed`,
             error,
           )
         })
@@ -551,7 +529,7 @@ export function createCoordinatorReconciler(
     }
     if (started > 0) {
       return {
-        kind: 'passes_started',
+        kind: 'runs_started',
         count: started,
         ...(nextWakeAt === null ? {} : { nextWakeAt }),
       }
@@ -702,7 +680,7 @@ function inboxSourceRank(source: InboxEventAttributes['source']) {
   return source === 'user' ? 0 : 1
 }
 
-function reservationPassCounts(
+function reservationRunCounts(
   reservations: ReadonlyMap<string, { responsibility: Responsibility }>,
 ) {
   const counts: Record<Responsibility, number> = { planner: 0, generator: 0, reviewer: 0 }

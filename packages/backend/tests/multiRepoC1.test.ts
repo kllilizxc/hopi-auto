@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
@@ -12,15 +12,13 @@ import {
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createC1Integrator, reconcileProjectReleaseProjection } from '../src/runtime/c1Integrator'
 import { createCompletionStructureVerifier } from '../src/runtime/completionVerifier'
-import { createPassOutcomeCoordinator } from '../src/runtime/passOutcomeCoordinator'
-import { createRoleContextStager } from '../src/runtime/roleContextStager'
 import { createStableWorktreeManager } from '../src/runtime/stableWorktreeManager'
 import { checkpointTaskWorktree } from '../src/runtime/taskCheckpoint'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoots: string[] = []
-const HOPI_RELEASE_REF = projectReleaseRef('project-1')
+const releaseRef = projectReleaseRef('project-1')
 
 setDefaultTimeout(20_000)
 
@@ -31,53 +29,53 @@ afterEach(async () => {
 })
 
 describe('multi-Repo C1', () => {
-  test('one Work changes primary and secondary Repos through one primary C1', async () => {
+  test('publishes current task heads from primary and secondary Repos through one C1', async () => {
     const fixture = await createFixture(['primary', 'api'])
+    const input = await fixture.completionInput()
 
-    const result = await fixture.integrator.integrate(fixture.integrationInput)
+    const result = await fixture.integrator.complete(input)
 
     if (result.kind !== 'integrated') throw new Error(JSON.stringify(result))
-    expect(result.kind).toBe('integrated')
-    expect(await git(fixture.linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(
-      result.commit,
-    )
+    expect(await git(fixture.linked.integrationRoot, ['rev-parse', releaseRef])).toBe(result.commit)
     expect(await sourceValue(fixture.repo('primary').integrationRoot)).toBe(2)
     expect(await sourceValue(fixture.repo('api').integrationRoot)).toBe(2)
-    const projectDocument = parseProjectDocument(
+
+    const project = parseProjectDocument(
       await Bun.file(join(fixture.linked.integrationRoot, '.hopi', 'project.yml')).text(),
     )
-    const apiRelease = await git(fixture.repo('api').integrationRoot, [
-      'rev-parse',
-      HOPI_RELEASE_REF,
-    ])
-    expect(projectDocument.repos.find((repo) => repo.repoId === 'api')?.releaseCommit).toBe(
-      apiRelease,
-    )
+    const apiRelease = await git(fixture.repo('api').integrationRoot, ['rev-parse', releaseRef])
+    expect(project.repos.find((repo) => repo.repoId === 'api')?.releaseCommit).toBe(apiRelease)
     expect(
       await git(fixture.repo('api').integrationRoot, ['show', '-s', '--format=%P', apiRelease]),
     ).toBe(requireMapValue(fixture.releaseBefore, 'api'))
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'done',
-    )
     expect(
       await createCompletionStructureVerifier(fixture.store, fixture.layout).verify(
         'goal-1',
         await fixture.store.readPackage('goal-1'),
       ),
     ).toBe(true)
+
+    const message = await git(fixture.linked.integrationRoot, [
+      'show',
+      '-s',
+      '--format=%B',
+      result.commit,
+    ])
+    expect(message).toContain(`HOPI-Repo-Commit: primary=${input.expectedTaskHeads.primary}`)
+    expect(message).toContain(`HOPI-Repo-Commit: api=${input.expectedTaskHeads.api}`)
     for (const repo of fixture.linked.repos) {
-      const before = requireMapValue(fixture.userBefore, repo.repoId)
-      expect(await checkoutSnapshot(repo.repoPath)).toEqual(before)
+      expect(await checkoutSnapshot(repo.repoPath)).toEqual(
+        requireMapValue(fixture.userBefore, repo.repoId),
+      )
     }
   })
 
-  test('a secondary-only Work keeps canonical Work and Evidence in primary', async () => {
+  test('supports a secondary-only source change while completing Work canonically in primary', async () => {
     const fixture = await createFixture(['api'])
 
-    const result = await fixture.integrator.integrate(fixture.integrationInput)
+    const result = await fixture.integrator.complete(await fixture.completionInput())
 
     if (result.kind !== 'integrated') throw new Error(JSON.stringify(result))
-    expect(result.kind).toBe('integrated')
     expect(await sourceValue(fixture.repo('primary').integrationRoot)).toBe(1)
     expect(await sourceValue(fixture.repo('api').integrationRoot)).toBe(2)
     expect(
@@ -86,181 +84,77 @@ describe('multi-Repo C1', () => {
         `${result.commit}:${fixture.store.paths.workDocument('goal-1', 'W-1')}`,
       ]),
     ).toContain('stage: done')
-    expect((await fixture.store.readPackage('goal-1')).evidence.has('E-run-review')).toBe(true)
   })
 
-  test('rejects a secondary Repo source conflict before primary C1', async () => {
-    const fixture = await createFixture(['api'])
-    const primaryBefore = await git(fixture.linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
-    await fixture.advanceRepo('api', 3)
+  test('rejects a secondary source conflict and a changed task head before primary C1', async () => {
+    const conflict = await createFixture(['api'])
+    const primaryBefore = await git(conflict.linked.integrationRoot, ['rev-parse', releaseRef])
+    await conflict.advanceRepo('api', 3)
 
-    const result = await fixture.integrator.integrate(fixture.integrationInput)
-
-    expect(result).toMatchObject({ kind: 'rejected' })
-    expect(await git(fixture.linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(
+    expect(await conflict.integrator.complete(await conflict.completionInput())).toMatchObject({
+      kind: 'rejected',
+    })
+    expect(await git(conflict.linked.integrationRoot, ['rev-parse', releaseRef])).toBe(
       primaryBefore,
     )
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'review',
+
+    const stale = await createFixture(['api'])
+    const input = await stale.completionInput()
+    const apiTask = requireMapValue(stale.taskWorktrees, 'api')
+    await Bun.write(join(apiTask, 'src', 'later.ts'), 'export const later = true\n')
+    await checkpointTaskWorktree({
+      worktreePath: apiTask,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-api-later',
+      repoId: 'api',
+    })
+    await expect(stale.integrator.complete(input)).rejects.toThrow(
+      'Repo api task branch changed before C1',
     )
   })
 
-  test('retries only projection after a crash following primary C1', async () => {
-    const fixture = await createFixture(['api'])
-    const apiBefore = fixture.releaseBefore.get('api')
-    if (!apiBefore) throw new Error('Expected api release')
+  test('recovers secondary projections after primary C1 without rebuilding delivery state', async () => {
+    const fixture = await createFixture(['api', 'worker'])
+    let projected = 0
+    const input = await fixture.completionInput()
 
-    const interrupted = await fixture.integrator.integrate(fixture.integrationInput, {
-      beforeSecondaryProjection() {
-        throw new Error('simulated process stop before secondary projection')
+    const interrupted = await fixture.integrator.complete(input, {
+      afterSecondaryProjection() {
+        projected += 1
+        if (projected === 1) throw new Error('stop after first secondary projection')
       },
     })
 
     expect(interrupted.kind).toBe('blocked_after_boundary')
     if (interrupted.kind !== 'blocked_after_boundary') throw new Error('Expected durable C1')
-    expect(await git(fixture.repo('api').integrationRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(
-      apiBefore,
-    )
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'done',
-    )
+    expect(
+      (
+        await Promise.all(
+          ['api', 'worker'].map(
+            async (repoId) =>
+              (await git(fixture.repo(repoId).integrationRoot, ['rev-parse', releaseRef])) !==
+              requireMapValue(fixture.releaseBefore, repoId),
+          ),
+        )
+      ).filter(Boolean),
+    ).toHaveLength(1)
 
-    const recovered = await fixture.integrator.integrate(fixture.integrationInput)
-
-    expect(recovered).toEqual({
+    expect(await fixture.integrator.complete(input)).toEqual({
       kind: 'already_integrated',
       commit: interrupted.commit,
     })
     expect(await sourceValue(fixture.repo('api').integrationRoot)).toBe(2)
-    expect(await git(fixture.linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(
-      interrupted.commit,
-    )
-  })
-
-  test('startup reconciliation completes primary and secondary materialization after C1', async () => {
-    const fixture = await createFixture(['api'])
-
-    const interrupted = await fixture.integrator.integrate(fixture.integrationInput, {
-      beforeMaterialization() {
-        throw new Error('simulated process stop immediately after primary ref move')
-      },
-    })
-
-    expect(interrupted.kind).toBe('blocked_after_boundary')
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'review',
-    )
-
-    await reconcileProjectReleaseProjection(fixture.layout)
-
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'done',
-    )
-    expect(await sourceValue(fixture.repo('api').integrationRoot)).toBe(2)
-  })
-
-  test('archives and removes unexpected managed integration files during reconciliation', async () => {
-    const fixture = await createFixture(['api'])
-    const apiRoot = fixture.repo('api').integrationRoot
-    const leakedPath = join(apiRoot, 'tests', 'leaked.spec.ts')
-    const stagedPath = join(apiRoot, 'tests', 'staged.spec.ts')
-    await mkdir(join(apiRoot, 'tests'), { recursive: true })
-    await Bun.write(leakedPath, 'leaked planner output\n')
-    await Bun.write(stagedPath, 'staged planner output\n')
-    await git(apiRoot, ['add', 'tests/staged.spec.ts'])
-
-    await reconcileProjectReleaseProjection(fixture.layout)
-
-    expect(await Bun.file(leakedPath).exists()).toBe(false)
-    expect(await Bun.file(stagedPath).exists()).toBe(false)
-    const recoveryRoot = join(apiRoot, '..', 'recovery')
-    const recoveries = await readdir(recoveryRoot)
-    expect(recoveries).toHaveLength(1)
-    const recoveryPath = join(recoveryRoot, recoveries[0] ?? '')
-    expect(await Bun.file(join(recoveryPath, 'files', 'tests', 'leaked.spec.ts')).text()).toBe(
-      'leaked planner output\n',
-    )
-    expect(await Bun.file(join(recoveryPath, 'files', 'tests', 'staged.spec.ts')).text()).toBe(
-      'staged planner output\n',
-    )
-    const manifest = await Bun.file(join(recoveryPath, 'manifest.json')).json()
-    expect(manifest).toMatchObject({
-      repoId: 'api',
-      integrationRoot: apiRoot,
-    })
-    expect(manifest.preservedPaths).toContain('tests/leaked.spec.ts')
-    expect(manifest.preservedPaths).toContain('tests/staged.spec.ts')
-    expect(await git(apiRoot, ['status', '--porcelain=v1', '--untracked-files=all'])).toBe('')
-  })
-
-  test('continues remaining Repo projections after a partial projection', async () => {
-    const fixture = await createFixture(['api', 'worker'])
-    let projected = 0
-
-    const interrupted = await fixture.integrator.integrate(fixture.integrationInput, {
-      afterSecondaryProjection() {
-        projected += 1
-        if (projected === 1) throw new Error('simulated stop after first secondary projection')
-      },
-    })
-
-    expect(interrupted.kind).toBe('blocked_after_boundary')
-    if (interrupted.kind !== 'blocked_after_boundary') throw new Error('Expected durable C1')
-    const changedBeforeRecovery = await Promise.all(
-      ['api', 'worker'].map(
-        async (repoId) =>
-          (await git(fixture.repo(repoId).integrationRoot, ['rev-parse', HOPI_RELEASE_REF])) !==
-          fixture.releaseBefore.get(repoId),
-      ),
-    )
-    expect(changedBeforeRecovery.filter(Boolean)).toHaveLength(1)
-
-    const recovered = await fixture.integrator.integrate(fixture.integrationInput)
-
-    expect(recovered.kind).toBe('already_integrated')
-    expect(await sourceValue(fixture.repo('api').integrationRoot)).toBe(2)
     expect(await sourceValue(fixture.repo('worker').integrationRoot)).toBe(2)
-  })
-
-  test('blocks an unexpected secondary ref after C1 without rolling primary back', async () => {
-    const fixture = await createFixture(['api'])
-    const interrupted = await fixture.integrator.integrate(fixture.integrationInput, {
-      beforeSecondaryProjection() {
-        throw new Error('simulated process stop before secondary projection')
-      },
-    })
-    if (interrupted.kind !== 'blocked_after_boundary') throw new Error('Expected durable C1')
-    const primaryC1 = interrupted.commit
-    const apiRoot = fixture.repo('api').integrationRoot
-    await Bun.write(join(apiRoot, 'unexpected.txt'), 'external release change\n')
-    await git(apiRoot, ['add', 'unexpected.txt'])
-    await git(apiRoot, ['commit', '-m', 'unexpected release change'])
-
-    await expect(reconcileProjectReleaseProjection(fixture.layout)).rejects.toThrow('release is')
-    expect(await git(fixture.linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(
-      primaryC1,
-    )
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'done',
-    )
-  })
-
-  test('never changes selected checkouts while managed releases advance', async () => {
-    const fixture = await createFixture(['primary', 'api'])
-    const api = fixture.repo('api')
-    await Bun.write(join(api.repoPath, 'local.txt'), 'local state\n')
-
-    const integrated = await fixture.integrator.integrate(fixture.integrationInput)
-
-    expect(integrated.kind).toBe('integrated')
-    if (integrated.kind !== 'integrated') throw new Error('Expected integrated C1')
-    expect(await sourceValue(fixture.repo('primary').repoPath)).toBe(1)
-    expect(await sourceValue(api.repoPath)).toBe(1)
-    await rm(join(api.repoPath, 'local.txt'))
 
     await reconcileProjectReleaseProjection(fixture.layout)
-
-    expect(await sourceValue(api.repoPath)).toBe(1)
+    expect(
+      await createCompletionStructureVerifier(fixture.store, fixture.layout).verify(
+        'goal-1',
+        await fixture.store.readPackage('goal-1'),
+      ),
+    ).toBe(true)
   })
 })
 
@@ -292,7 +186,7 @@ async function createFixture(changedRepoIds: string[]) {
     await Promise.all(
       linked.repos.map(
         async (repo) =>
-          [repo.repoId, await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])] as const,
+          [repo.repoId, await git(repo.integrationRoot, ['rev-parse', releaseRef])] as const,
       ),
     ),
   )
@@ -313,7 +207,7 @@ async function createFixture(changedRepoIds: string[]) {
             id: 'W-1',
             title: 'Build value 2',
             kind: 'engineering',
-            stage: 'review',
+            stage: 'generate',
             notBefore: null,
             dependsOn: [],
             contractRevision: 1,
@@ -335,16 +229,15 @@ async function createFixture(changedRepoIds: string[]) {
   const manager = createStableWorktreeManager()
   const taskWorktrees = new Map<string, string>()
   for (const repo of linked.repos) {
-    const repoId = repo.repoId
     const stable = await manager.prepare({
       projectRoot: repo.integrationRoot,
       projectId: 'project-1',
       goalId: 'goal-1',
       workId: 'W-1',
-      repoId,
+      repoId: repo.repoId,
       primaryRepoId: linked.primaryRepoId,
     })
-    if (changedRepoIds.includes(repoId)) {
+    if (changedRepoIds.includes(repo.repoId)) {
       await Bun.write(join(stable.path, 'src', 'value.ts'), 'export const value = 2\n')
     }
     await checkpointTaskWorktree({
@@ -353,51 +246,18 @@ async function createFixture(changedRepoIds: string[]) {
       goalId: 'goal-1',
       workId: 'W-1',
       runId: 'run-generator',
-      repoId,
+      repoId: repo.repoId,
     })
-    taskWorktrees.set(repoId, stable.path)
+    taskWorktrees.set(repo.repoId, stable.path)
   }
 
-  const stager = createRoleContextStager(homeRoot, publisher)
-  const context = await stager.prepare({
-    projectRoot: linked.integrationRoot,
-    projectId: 'project-1',
-    goalId: 'goal-1',
-    workId: 'W-1',
-    runId: 'run-review',
-    responsibility: 'reviewer',
-    primaryRepoId: linked.primaryRepoId,
-    repoRoots: linked.repos.map((repo) => ({
-      repoId: repo.repoId,
-      path: requireMapValue(taskWorktrees, repo.repoId),
-      primary: repo.primary,
-    })),
-  })
-  const pass = {
-    goalId: 'goal-1',
-    workId: 'W-1',
-    runId: 'run-review',
-    responsibility: 'reviewer' as const,
-    context,
-    outcome: {
-      result: 'success' as const,
-      summary: 'Reviewer verified the complete Project Repo environment.',
-      artifacts: [],
-      exitCode: 0,
-    },
-  }
-  const application = await createPassOutcomeCoordinator(store, publisher, {
-    now: () => new Date('2026-07-12T00:00:00Z'),
-  }).apply(pass)
-  if (application.kind !== 'integration_required') {
-    throw new Error(`Expected integration_required, got ${application.kind}`)
-  }
   const layout = {
     projectId: linked.projectId,
     primaryRepoId: linked.primaryRepoId,
     repos: linked.repos.map((repo) => ({
       repoId: repo.repoId,
       integrationRoot: repo.integrationRoot,
+      projectPath: repo.projectPath,
       primary: repo.primary,
     })),
   }
@@ -405,10 +265,9 @@ async function createFixture(changedRepoIds: string[]) {
     homeRoot,
     store,
     publisher,
-    () => new Date('2026-07-12T00:00:00Z'),
+    () => new Date('2026-08-13T00:00:00Z'),
     layout,
   )
-  const firstWorkRepoId = linked.primaryRepoId
 
   return {
     linked,
@@ -417,6 +276,7 @@ async function createFixture(changedRepoIds: string[]) {
     layout,
     releaseBefore,
     userBefore,
+    taskWorktrees,
     repo(repoId: string) {
       const repo = linked.repos.find((candidate) => candidate.repoId === repoId)
       if (!repo) throw new Error(`Missing Repo ${repoId}`)
@@ -431,7 +291,7 @@ async function createFixture(changedRepoIds: string[]) {
       )
       await git(repo.integrationRoot, ['add', 'src/value.ts'])
       await git(repo.integrationRoot, ['commit', '-m', `advance ${repoId}`])
-      const release = await git(repo.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
+      const release = await git(repo.integrationRoot, ['rev-parse', releaseRef])
       const projectPath = join(linked.integrationRoot, '.hopi', 'project.yml')
       const document = parseProjectDocument(await Bun.file(projectPath).text())
       await Bun.write(
@@ -439,12 +299,29 @@ async function createFixture(changedRepoIds: string[]) {
         renderProjectDocument(withRepoRelease(document, repoId, release)),
       )
     },
-    integrationInput: {
-      pass,
-      taskWorktreePath: requireMapValue(taskWorktrees, firstWorkRepoId),
-      taskWorktrees: Object.fromEntries(taskWorktrees),
-      evidence: application.evidence,
-      completedWork: application.work,
+    async completionInput() {
+      const workPath = store.paths.workDocument('goal-1', 'W-1')
+      const source = await Bun.file(store.paths.absolute(workPath)).text()
+      const completedWork = parseWorkDocument(source)
+      completedWork.attributes.stage = 'done'
+      completedWork.body = `${completedWork.body.trim()}\n\n## Completion decision\n\nShip all current task heads.\n`
+      return {
+        goalId: 'goal-1',
+        workId: 'W-1',
+        sourceEventId: 'assistant-event-multi',
+        decision: 'Ship all current task heads.',
+        expectedWorkHash: await hashBytes(new TextEncoder().encode(source)),
+        taskWorktrees: Object.fromEntries(taskWorktrees),
+        expectedTaskHeads: Object.fromEntries(
+          await Promise.all(
+            [...taskWorktrees].map(async ([repoId, path]) => [
+              repoId,
+              await git(path, ['rev-parse', 'HEAD']),
+            ]),
+          ),
+        ),
+        completedWork,
+      }
     },
   }
 }

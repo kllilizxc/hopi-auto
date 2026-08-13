@@ -1,14 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
-import {
-  PASS_RESULTS,
-  type PassResultKind,
-  RUN_TERMINATIONS,
-  type ResponsibilitySession,
-  type RoleExecutionIdentity,
-  type RunTermination,
-} from '../agent/RoleRunner'
+import type { RoleExecutionIdentity } from '../agent/RoleRunner'
 import {
   AGENT_TRANSCRIPT_ENTRY_KINDS,
   AGENT_TRANSCRIPT_TRANSPORTS,
@@ -23,45 +16,32 @@ import {
   reportInvalidRuntimeRecord,
 } from '../storage/jsonLines'
 import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
-import { cleanupRunScratch, readRunArtifactManifest } from './runArtifacts'
+import { cleanupRunScratch } from './runArtifacts'
 import { type RunAttemptDiagnostics, readRunAttemptDiagnostics } from './runAttemptDiagnostics'
-import { type RunChangeSet, createRunChangeSetStore } from './runChangeSet'
-import {
-  RUN_PROTOCOLS,
-  RUN_WORKSPACE_MODES,
-  type RunDirective,
-  defaultLegacyRunDirective,
-  runDirectiveSchema,
-} from './runDirective'
 import { runStoragePath, runStorageRoot } from './runPaths'
+import {
+  RUN_TERMINATIONS,
+  RUN_WORKSPACE_MODES,
+  type RunRequest,
+  type RunTermination,
+  runRequestSchema,
+} from './runRequest'
 
-export const RUN_ATTEMPT_STATUSES = ['queued', 'running', 'finished', 'interrupted'] as const
+export const RUN_ATTEMPT_STATUSES = ['queued', 'running', 'settled'] as const
 export type RunAttemptStatus = (typeof RUN_ATTEMPT_STATUSES)[number]
 
-const nullableResultSchema = z.enum(PASS_RESULTS).nullable()
 const roleExecutionIdentitySchema = z
   .object({
     transport: z.enum(AGENT_TRANSCRIPT_TRANSPORTS),
-    provider: z.enum(AGENT_TRANSCRIPT_TRANSPORTS).optional(),
     model: z.string().min(1).nullable(),
     reasoningEffort: codingReasoningEffortSchema.nullable(),
-    permissionBoundary: z.enum(['bounded', 'unrestricted']).optional(),
   })
   .strict()
-  .transform((execution) => ({
-    ...execution,
-    provider: execution.provider ?? execution.transport,
-    permissionBoundary: execution.permissionBoundary ?? ('bounded' as const),
-  }))
-const sessionEpochSchema = z
+const candidateCommitSchema = z
   .object({
-    epoch: z.number().int().positive(),
-    transport: z.enum(['codex', 'claude', 'opencode']),
-    sessionId: z.string().trim().min(1),
-    startedAt: z.string().datetime(),
-    endedAt: z.string().datetime().nullable().default(null),
-    closeReason: z.string().trim().min(1).nullable().default(null),
-    handoffMarkdown: z.string().trim().min(1).nullable().default(null),
+    repoId: stableIdSchema,
+    baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
+    resultCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
   })
   .strict()
 const attemptManifestSchema = z
@@ -71,42 +51,34 @@ const attemptManifestSchema = z
     workId: stableIdSchema,
     runId: stableIdSchema,
     responsibility: z.enum(RESPONSIBILITIES),
-    protocol: z.enum(RUN_PROTOCOLS).optional(),
-    profile: z.enum(RESPONSIBILITIES).optional(),
-    workspaceMode: z.enum(RUN_WORKSPACE_MODES).optional(),
-    instructionMarkdown: z.string().trim().min(1).max(64_000).optional(),
-    inputRefs: z.array(z.string().trim().min(1).max(1_000)).max(128).optional(),
-    baseChangeSetId: stableIdSchema.nullable().optional(),
-    workHash: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .nullable(),
-    requestedExecution: roleExecutionIdentitySchema.nullable().default(null),
+    workspaceMode: z.enum(RUN_WORKSPACE_MODES),
+    instructionMarkdown: z.string().trim().min(1).max(64_000),
+    refs: z.array(z.string().trim().min(1).max(1_000)).max(128),
+    workHash: z.string().regex(/^[a-f0-9]{64}$/),
     execution: roleExecutionIdentitySchema.nullable(),
-    sessionEpochs: z.array(sessionEpochSchema).default([]),
     requestedAt: z.string().datetime(),
     startedAt: z.string().datetime().nullable(),
     endedAt: z.string().datetime().nullable(),
     status: z.enum(RUN_ATTEMPT_STATUSES),
-    termination: z.enum(RUN_TERMINATIONS).nullable().default(null),
-    result: nullableResultSchema,
-    summary: z.string().nullable(),
-    reportMarkdown: z.string().nullable().default(null),
+    termination: z.enum(RUN_TERMINATIONS).nullable(),
+    reportMarkdown: z.string().trim().min(1).nullable(),
     exitCode: z.number().int().nullable(),
-    application: z.string().nullable(),
-    changeSetId: stableIdSchema.nullable().default(null),
+    candidateCommits: z.array(candidateCommitSchema),
   })
   .strict()
-  .transform((attempt) => {
-    const legacy = defaultLegacyRunDirective(attempt.responsibility)
-    return {
-      ...attempt,
-      protocol: attempt.protocol ?? legacy.protocol,
-      profile: attempt.profile ?? attempt.responsibility,
-      workspaceMode: attempt.workspaceMode ?? legacy.workspaceMode,
-      instructionMarkdown: attempt.instructionMarkdown ?? legacy.instructionMarkdown,
-      inputRefs: attempt.inputRefs ?? [],
-      baseChangeSetId: attempt.baseChangeSetId ?? null,
+  .superRefine((attempt, context) => {
+    const settled = attempt.status === 'settled'
+    if (settled && (!attempt.termination || !attempt.reportMarkdown || !attempt.endedAt)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A settled Attempt requires termination, Report, and endedAt',
+      })
+    }
+    if (!settled && (attempt.termination || attempt.reportMarkdown || attempt.endedAt)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A non-settled Attempt cannot contain settlement facts',
+      })
     }
   })
 const storedMessageEventSchema = z
@@ -162,22 +134,15 @@ const storedEventSchema = z.discriminatedUnion('kind', [
   storedPlanEventSchema,
 ])
 export type RunAttemptSummary = z.infer<typeof attemptManifestSchema>
+export type RunCandidateCommit = z.infer<typeof candidateCommitSchema>
 export type StoredRunAttemptEvent = z.infer<typeof storedEventSchema>
-export interface RunAttemptDetail extends RunAttemptMetadata {
+export interface RunAttemptDetail extends RunAttemptSummary {
   events: StoredRunAttemptEvent[]
+  runPrompt: string | null
 }
 
 export interface RunAttemptMetadata extends RunAttemptSummary {
   runPrompt: string | null
-  changeSet: RunChangeSet | null
-  artifacts: {
-    preserved: Array<{
-      reference: string
-      kind: 'file' | 'directory'
-      sizeBytes: number
-    }>
-    unavailable: Array<{ reference: string; reason: string }>
-  }
 }
 
 export interface StartRunAttemptInput {
@@ -187,7 +152,7 @@ export interface StartRunAttemptInput {
   runId: string
   responsibility: Responsibility
   runRoot: string
-  workHash?: string | null
+  workHash?: string
 }
 
 export interface ReserveRunAttemptInput {
@@ -195,32 +160,22 @@ export interface ReserveRunAttemptInput {
   goalId: string
   workId: string
   runId: string
-  responsibility: Responsibility
   workHash: string
-  allowSuccessor?: boolean
-  directive?: RunDirective
+  request: RunRequest
 }
 
-export interface FinishRunAttemptInput {
-  outcome: {
-    result: PassResultKind | null
-    summary: string
-    exitCode: number | null
-    termination?: RunTermination
-    reportMarkdown?: string
-  }
-  application: string
-  workHash?: string | null
+export interface SettleRunAttemptInput {
+  termination: RunTermination
+  reportMarkdown: string
+  exitCode: number | null
+  candidateCommits?: readonly RunCandidateCommit[]
+  workHash?: string
 }
 
 export interface RunAttemptRecorder {
   record(event: AgentRuntimeEvent): Promise<void>
   setExecution(execution: RoleExecutionIdentity): Promise<void>
-  recordSession(session: ResponsibilitySession): Promise<void>
-  rotateSession(input: { reason: string; handoffMarkdown: string }): Promise<void>
-  setChangeSet(changeSetId: string): Promise<void>
-  finish(input: FinishRunAttemptInput): Promise<void>
-  interrupt(error: unknown): Promise<void>
+  settle(input: SettleRunAttemptInput): Promise<void>
 }
 
 export interface RunAttemptSnapshot {
@@ -241,6 +196,7 @@ export interface RunAttemptStore {
     goalId?: string
     workId?: string
     reason?: string
+    termination?: Extract<RunTermination, 'cancelled' | 'interrupted'>
   }): Promise<number>
   generation(): number
   snapshot(): Promise<RunAttemptSnapshot>
@@ -270,20 +226,9 @@ export interface RunAttemptStore {
     workId: string,
     runId: string,
   ): Promise<RunAttemptDiagnostics | null>
-  interruptRunningAttempts(): Promise<number>
-}
-
-export function deriveRunSchedulingFacts(attempts: readonly RunAttemptSummary[]) {
-  return {
-    requestedRunProfiles: new Map(
-      attempts
-        .filter((attempt) => attempt.status === 'queued')
-        .map((attempt) => [attempt.workId, attempt.profile] as const),
-    ),
-    supervisorManagedWorkIds: new Set(
-      attempts.filter((attempt) => attempt.protocol === 'report').map((attempt) => attempt.workId),
-    ),
-  }
+  interruptRunningAttempts(
+    checkpoint?: (attempt: RunAttemptSummary) => Promise<readonly RunCandidateCommit[]>,
+  ): Promise<number>
 }
 
 interface SharedAttemptIndex {
@@ -312,7 +257,6 @@ export function createRunAttemptStore(
   const attemptsRoot = runStorageRoot(homeRoot)
   const now = options.now ?? (() => new Date())
   const finishedDiagnostics = new Map<string, RunAttemptDiagnostics>()
-  const changeSets = createRunChangeSetStore(homeRoot)
   const index = sharedAttemptIndex(attemptsRoot)
   const generationBase = index.generation
 
@@ -338,6 +282,7 @@ export function createRunAttemptStore(
   return {
     async reserve(input) {
       assertIds(input.projectId, input.goalId, input.workId, input.runId)
+      const request = runRequestSchema.parse(input.request)
       return withIndexLock(async () => {
         const attempts = sortAttempts(
           (await readAllAttemptSummaries(attemptsRoot)).filter(
@@ -348,20 +293,15 @@ export function createRunAttemptStore(
           ),
         )
         const active = attempts.find(
-          (attempt) =>
-            attempt.responsibility === input.responsibility &&
-            (attempt.status === 'queued' || attempt.status === 'running'),
+          (attempt) => attempt.status === 'queued' || attempt.status === 'running',
         )
-        if (active?.status === 'running' && !input.allowSuccessor) {
+        if (active?.status === 'running') {
           return { runId: active.runId, disposition: 'already_active' as const }
         }
-        const directive = input.directive
-          ? runDirectiveSchema.parse(input.directive)
-          : defaultLegacyRunDirective(input.responsibility)
         if (
           active?.status === 'queued' &&
           active.workHash === input.workHash &&
-          sameRunDirective(active, directive)
+          sameRunRequest(active, request)
         ) {
           return { runId: active.runId, disposition: 'already_scheduled' as const }
         }
@@ -369,8 +309,9 @@ export function createRunAttemptStore(
           await interruptQueuedManifest(
             homeRoot,
             stale,
-            'Queued Attempt was superseded by a newer continuation.',
+            'Queued Attempt was superseded by a newer explicit Run request.',
             now(),
+            'interrupted',
           )
         }
 
@@ -380,28 +321,20 @@ export function createRunAttemptStore(
           goalId: input.goalId,
           workId: input.workId,
           runId: input.runId,
-          responsibility: input.responsibility,
-          protocol: directive.protocol,
-          profile: directive.profile,
-          workspaceMode: directive.workspaceMode,
-          instructionMarkdown: directive.instructionMarkdown,
-          inputRefs: directive.refs,
-          baseChangeSetId: directive.baseChangeSetId,
-          workHash: input.workHash ?? null,
-          requestedExecution: null,
+          responsibility: request.profile,
+          workspaceMode: request.workspaceMode,
+          instructionMarkdown: request.instructionMarkdown,
+          refs: request.refs,
+          workHash: input.workHash,
           execution: null,
-          sessionEpochs: [],
           requestedAt: requestedAt.toISOString(),
           startedAt: null,
           endedAt: null,
           status: 'queued',
           termination: null,
-          result: null,
-          summary: null,
           reportMarkdown: null,
           exitCode: null,
-          application: null,
-          changeSetId: null,
+          candidateCommits: [],
         }
         const root = runStoragePath(homeRoot, input.runId)
         await mkdir(root, { recursive: true })
@@ -414,7 +347,7 @@ export function createRunAttemptStore(
                 kind: 'message',
                 level: 'info',
                 role: 'coordinator',
-                content: `${input.responsibility} Attempt queued.`,
+                content: `${request.profile} Attempt queued.`,
               },
               requestedAt,
             ),
@@ -436,57 +369,26 @@ export function createRunAttemptStore(
       const eventsPath = join(expectedRoot, 'events.jsonl')
       let manifest = await withIndexLock(async () => {
         const existing = await readStoredManifest(manifestPath)
+        if (!existing) throw new Error(`Queued Attempt not found: ${input.runId}`)
         if (
-          existing &&
-          (existing.projectId !== input.projectId ||
-            existing.goalId !== input.goalId ||
-            existing.workId !== input.workId ||
-            existing.runId !== input.runId ||
-            existing.responsibility !== input.responsibility ||
-            existing.status !== 'queued')
+          existing.projectId !== input.projectId ||
+          existing.goalId !== input.goalId ||
+          existing.workId !== input.workId ||
+          existing.runId !== input.runId ||
+          existing.responsibility !== input.responsibility ||
+          existing.status !== 'queued'
         ) {
           throw new Error(`Attempt cannot start from ${existing.status}: ${input.runId}`)
         }
         const startedAt = now()
-        const defaultDirective = defaultLegacyRunDirective(input.responsibility)
-        const claimed: RunAttemptSummary = existing
-          ? {
-              ...existing,
-              workHash: input.workHash ?? existing.workHash,
-              startedAt: startedAt.toISOString(),
-              status: 'running',
-            }
-          : {
-              projectId: input.projectId,
-              goalId: input.goalId,
-              workId: input.workId,
-              runId: input.runId,
-              responsibility: input.responsibility,
-              protocol: defaultDirective.protocol,
-              profile: defaultDirective.profile,
-              workspaceMode: defaultDirective.workspaceMode,
-              instructionMarkdown: defaultDirective.instructionMarkdown,
-              inputRefs: defaultDirective.refs,
-              baseChangeSetId: defaultDirective.baseChangeSetId,
-              workHash: input.workHash ?? null,
-              requestedExecution: null,
-              execution: null,
-              sessionEpochs: [],
-              requestedAt: startedAt.toISOString(),
-              startedAt: startedAt.toISOString(),
-              endedAt: null,
-              status: 'running',
-              termination: null,
-              result: null,
-              summary: null,
-              reportMarkdown: null,
-              exitCode: null,
-              application: null,
-              changeSetId: null,
-            }
+        const claimed: RunAttemptSummary = {
+          ...existing,
+          workHash: input.workHash ?? existing.workHash,
+          startedAt: startedAt.toISOString(),
+          status: 'running',
+        }
         await mkdir(expectedRoot, { recursive: true })
         await writeManifest(manifestPath, claimed)
-        if (!existing) await Bun.write(eventsPath, '')
         index.generation += 1
         return claimed
       })
@@ -504,9 +406,8 @@ export function createRunAttemptStore(
       }
       const close = async (next: RunAttemptSummary, event: AgentRuntimeEvent) => {
         if (closed) return
-        const finalEventWrite = enqueue(event)
+        await enqueue(event)
         closed = true
-        await finalEventWrite
         await writeTail
         await writeManifest(manifestPath, next)
         manifest = next
@@ -524,127 +425,30 @@ export function createRunAttemptStore(
         record: enqueue,
         async setExecution(execution) {
           if (closed) return
-          manifest = {
-            ...manifest,
-            requestedExecution: manifest.requestedExecution ?? execution,
-            execution,
-          }
+          manifest = { ...manifest, execution }
           await writeManifest(manifestPath, manifest)
           await recordIndexedAttempt(manifest)
         },
-        async recordSession(session) {
-          if (closed) return
-          const current = manifest.sessionEpochs.at(-1)
-          if (
-            current?.endedAt === null &&
-            current.transport === session.transport &&
-            current.sessionId === session.sessionId
-          ) {
-            return
-          }
-          const observedAt = now().toISOString()
-          const priorEpochs = closeOpenSessionEpoch(
-            manifest.sessionEpochs,
-            observedAt,
-            'provider_rotated',
-            '# Session Epoch handoff\n\nThe provider reported a replacement Session identity in the same Run.',
-          )
-          manifest = {
-            ...manifest,
-            sessionEpochs: [
-              ...priorEpochs,
-              {
-                epoch: priorEpochs.length + 1,
-                transport: session.transport,
-                sessionId: session.sessionId,
-                startedAt: observedAt,
-                endedAt: null,
-                closeReason: null,
-                handoffMarkdown: null,
-              },
-            ],
-          }
-          await writeManifest(manifestPath, manifest)
-          await recordIndexedAttempt(manifest)
-        },
-        async rotateSession(rotation) {
-          if (closed) return
-          const observedAt = now().toISOString()
-          const nextEpochs = closeOpenSessionEpoch(
-            manifest.sessionEpochs,
-            observedAt,
-            rotation.reason.trim(),
-            normalizeEpochHandoff(rotation.handoffMarkdown),
-          )
-          if (nextEpochs === manifest.sessionEpochs) return
-          manifest = { ...manifest, sessionEpochs: nextEpochs }
-          await writeManifest(manifestPath, manifest)
-          await recordIndexedAttempt(manifest)
-        },
-        async setChangeSet(changeSetId) {
-          if (closed) return
-          const validated = stableIdSchema.parse(changeSetId)
-          if (manifest.changeSetId && manifest.changeSetId !== validated) {
-            throw new Error(`Attempt already references another ChangeSet: ${manifest.changeSetId}`)
-          }
-          if (manifest.changeSetId === validated) return
-          manifest = { ...manifest, changeSetId: validated }
-          await writeManifest(manifestPath, manifest)
-          await recordIndexedAttempt(manifest)
-        },
-        async finish({ outcome, application, workHash }) {
+        async settle({ termination, reportMarkdown, exitCode, candidateCommits, workHash }) {
           const endedAt = now().toISOString()
-          const termination = outcome.termination ?? defaultTermination(application)
+          const normalizedReport = reportMarkdown.trim()
+          if (!normalizedReport) throw new Error('A settled Attempt requires a Report')
           await close(
             {
               ...manifest,
               endedAt,
-              status: 'finished',
+              status: 'settled',
               termination,
-              result: outcome.result,
-              summary: outcome.summary,
-              reportMarkdown: normalizeReport(outcome.reportMarkdown, outcome.summary),
-              exitCode: outcome.exitCode,
-              application,
+              reportMarkdown: normalizedReport,
+              exitCode,
+              candidateCommits: [...(candidateCommits ?? [])],
               workHash: workHash ?? manifest.workHash,
-              sessionEpochs: closeOpenSessionEpoch(
-                manifest.sessionEpochs,
-                endedAt,
-                termination,
-                null,
-              ),
             },
             {
               kind: 'message',
-              level: outcome.result === 'fail' ? 'error' : 'info',
+              level: termination === 'normal' ? 'info' : 'error',
               role: 'coordinator',
-              content: `${input.responsibility} Attempt finished${outcome.result ? ` with ${outcome.result}` : ''}: ${outcome.summary}`,
-            },
-          )
-        },
-        async interrupt(error) {
-          const summary = errorMessage(error)
-          const endedAt = now().toISOString()
-          await close(
-            {
-              ...manifest,
-              endedAt,
-              status: 'interrupted',
-              termination: 'interrupted',
-              summary,
-              reportMarkdown: normalizeReport(null, summary),
-              sessionEpochs: closeOpenSessionEpoch(
-                manifest.sessionEpochs,
-                endedAt,
-                'interrupted',
-                null,
-              ),
-            },
-            {
-              kind: 'message',
-              level: 'error',
-              role: 'coordinator',
-              content: `Attempt interrupted: ${summary}`,
+              content: `${input.responsibility} Attempt settled with ${termination}.`,
             },
           )
         },
@@ -666,6 +470,7 @@ export function createRunAttemptStore(
             attempt,
             input.reason ?? 'Queued Attempt was interrupted before dispatch.',
             now(),
+            input.termination ?? 'interrupted',
           )
         }
         if (queued.length > 0) index.generation += 1
@@ -713,20 +518,9 @@ export function createRunAttemptStore(
       if (!root) return null
       const summary = await readSummary(root, projectId, goalId, workId, runId)
       if (!summary) return null
-      const artifactManifest = await readRunArtifactManifest(root)
       return {
         ...summary,
         runPrompt: await readOptionalText(join(root, 'prompt.md')),
-        changeSet: await changeSets.read(runId),
-        artifacts: {
-          preserved:
-            artifactManifest?.artifacts.map(({ reference, kind, sizeBytes }) => ({
-              reference,
-              kind,
-              sizeBytes,
-            })) ?? [],
-          unavailable: artifactManifest?.unavailable ?? [],
-        },
       }
     },
 
@@ -754,7 +548,7 @@ export function createRunAttemptStore(
       return diagnostics
     },
 
-    interruptRunningAttempts() {
+    interruptRunningAttempts(checkpoint) {
       return withIndexLock(async () => {
         await mkdir(attemptsRoot, { recursive: true })
         let count = 0
@@ -769,7 +563,25 @@ export function createRunAttemptStore(
           const manifest = await readStoredManifest(path)
           if (!manifest || manifest.status !== 'running') continue
           const endedAt = now().toISOString()
-          const summary = 'Coordinator stopped before recording an Attempt outcome.'
+          let termination: RunTermination = 'interrupted'
+          let candidateCommits: readonly RunCandidateCommit[] = []
+          let detail = 'Coordinator stopped before the running Attempt settled.'
+          if (manifest.workspaceMode === 'isolated_write' && checkpoint) {
+            try {
+              candidateCommits = await checkpoint(manifest)
+            } catch (error) {
+              termination = 'crashed'
+              detail += `\n\nSource checkpoint failed during recovery: ${errorMessage(error)}`
+            }
+          }
+          const reportMarkdown = [
+            '# Run report',
+            '',
+            `- Termination: ${termination}`,
+            '- Exit code: unavailable',
+            '',
+            detail,
+          ].join('\n')
           const eventsPath = join(resolve(path, '..'), 'events.jsonl')
           await repairDurableJsonLineTail(eventsPath)
           await appendFile(
@@ -780,7 +592,7 @@ export function createRunAttemptStore(
                   kind: 'message',
                   level: 'error',
                   role: 'coordinator',
-                  content: summary,
+                  content: `Running Attempt settled as ${termination} during Coordinator recovery.`,
                 },
                 new Date(endedAt),
               ),
@@ -789,16 +601,10 @@ export function createRunAttemptStore(
           await writeManifest(path, {
             ...manifest,
             endedAt,
-            status: 'interrupted',
-            termination: 'interrupted',
-            summary,
-            reportMarkdown: normalizeReport(null, summary),
-            sessionEpochs: closeOpenSessionEpoch(
-              manifest.sessionEpochs,
-              endedAt,
-              'interrupted',
-              null,
-            ),
+            status: 'settled',
+            termination,
+            reportMarkdown,
+            candidateCommits: [...candidateCommits],
           })
           await cleanupRunScratch(join(resolve(path, '..'), 'scratch')).catch(() => undefined)
           count += 1
@@ -992,8 +798,9 @@ function sortAttempts(attempts: RunAttemptSummary[]) {
 async function interruptQueuedManifest(
   homeRoot: string,
   attempt: RunAttemptSummary,
-  summary: string,
+  detail: string,
   endedAt: Date,
+  termination: Extract<RunTermination, 'cancelled' | 'interrupted'>,
 ) {
   const root = runStoragePath(homeRoot, attempt.runId)
   const eventsPath = join(root, 'events.jsonl')
@@ -1006,7 +813,7 @@ async function interruptQueuedManifest(
           kind: 'message',
           level: 'error',
           role: 'coordinator',
-          content: summary,
+          content: detail,
         },
         endedAt,
       ),
@@ -1015,58 +822,26 @@ async function interruptQueuedManifest(
   await writeManifest(join(root, 'attempt.json'), {
     ...attempt,
     endedAt: endedAt.toISOString(),
-    status: 'interrupted',
-    termination: 'cancelled',
-    summary,
-    reportMarkdown: normalizeReport(null, summary),
+    status: 'settled',
+    termination,
+    reportMarkdown: [
+      '# Run report',
+      '',
+      `- Termination: ${termination}`,
+      '- Exit code: unavailable',
+      '',
+      detail,
+    ].join('\n'),
   })
 }
 
-function defaultTermination(application: string): RunTermination {
-  return application === 'operational_failure' ? 'crashed' : 'normal'
-}
-
-function sameRunDirective(attempt: RunAttemptSummary, directive: RunDirective) {
+function sameRunRequest(attempt: RunAttemptSummary, request: RunRequest) {
   return (
-    attempt.protocol === directive.protocol &&
-    attempt.profile === directive.profile &&
-    attempt.workspaceMode === directive.workspaceMode &&
-    attempt.instructionMarkdown === directive.instructionMarkdown &&
-    JSON.stringify(attempt.inputRefs) === JSON.stringify(directive.refs) &&
-    attempt.baseChangeSetId === directive.baseChangeSetId
+    attempt.responsibility === request.profile &&
+    attempt.workspaceMode === request.workspaceMode &&
+    attempt.instructionMarkdown === request.instructionMarkdown &&
+    JSON.stringify(attempt.refs) === JSON.stringify(request.refs)
   )
-}
-
-function normalizeReport(report: string | null | undefined, summary: string) {
-  const source = report?.trim()
-  return source ? `${source}\n` : `# Run Report\n\n${summary.trim()}\n`
-}
-
-function closeOpenSessionEpoch(
-  epochs: RunAttemptSummary['sessionEpochs'],
-  endedAt: string,
-  closeReason: string,
-  handoffMarkdown: string | null,
-) {
-  const last = epochs.at(-1)
-  if (!last || last.endedAt !== null) return epochs
-  return [
-    ...epochs.slice(0, -1),
-    {
-      ...last,
-      endedAt,
-      closeReason,
-      handoffMarkdown,
-    },
-  ]
-}
-
-function normalizeEpochHandoff(value: string) {
-  const normalized = value.trim()
-  if (!normalized) throw new Error('Session Epoch handoff cannot be empty')
-  return normalized.length <= 16_000
-    ? normalized
-    : `${normalized.slice(0, 16_000)}\n\n[handoff truncated]`
 }
 
 function errorCode(error: unknown) {

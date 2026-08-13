@@ -3,7 +3,7 @@ import { chmod, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentRuntimeEvent } from '../src/agent/runtimeEvents'
 import type { AssistantTransport } from '../src/agent/vendorAssistantOutput'
-import { assistantThreadScopeForEvent } from '../src/assistant/assistantConversationScope'
+import { HOME_ASSISTANT_CONVERSATION_SCOPE } from '../src/assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 import {
   type AssistantStateReader,
@@ -20,9 +20,7 @@ import {
   workspaceAssistantContextDigest,
   workspaceAssistantRuntimeDigest,
 } from '../src/assistant/workspaceAssistant'
-import type { InboxEventDocument } from '../src/domain/assistantWorkspaceDocuments'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
-import { inboxEventReference } from '../src/domain/inboxEventReference'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import {
   browserEnvironmentRoot,
@@ -31,6 +29,7 @@ import {
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
+import type { ProjectReconciler } from '../src/scheduler/projectReconciler'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
@@ -177,7 +176,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).toContain('--dangerously-skip-permissions')
     const systemPrompt = args[args.indexOf('--append-system-prompt') + 1]
     expect(systemPrompt).toContain('Role: HOPI Project owner')
-    expect(systemPrompt).toContain('isolated writes produce an immutable ChangeSet')
+    expect(systemPrompt).toContain(
+      'every Planner, Generator, or Reviewer Run is an explicit hopi_control_work run request',
+    )
     expect(systemPrompt).toContain('do not create or replace Goal or Engineering Work delivery')
     expect(args).not.toContain('--allowedTools')
     expect(settings).toEqual({ sandbox: { enabled: false } })
@@ -571,7 +572,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(config.instructions).toEqual([join(cwd, 'hopi-assistant-instructions.md')])
     const opencodeInstructions = await Bun.file(config.instructions[0]).text()
     expect(opencodeInstructions).toContain('Role: HOPI Project owner')
-    expect(opencodeInstructions).toContain('isolated writes produce an immutable ChangeSet')
+    expect(opencodeInstructions).toContain(
+      'every Planner, Generator, or Reviewer Run is an explicit hopi_control_work run request',
+    )
     expect(opencodeInstructions).toContain(
       'do not create or replace Goal or Engineering Work delivery',
     )
@@ -889,7 +892,9 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).not.toContain('include_collaboration_mode_instructions=false')
     const developerInstructions = args.find((arg) => arg.startsWith('developer_instructions='))
     expect(developerInstructions).toContain('Role: HOPI Project owner')
-    expect(developerInstructions).toContain('isolated writes produce an immutable ChangeSet')
+    expect(developerInstructions).toContain(
+      'every Planner, Generator, or Reviewer Run is an explicit hopi_control_work run request',
+    )
     expect(developerInstructions).toContain(
       'do not create or replace Goal or Engineering Work delivery',
     )
@@ -1004,12 +1009,33 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('EV-accepted.md')
     expect(seen[0]?.prompt).not.toContain('Role: HOPI Project owner')
     expect(seen[0]?.prompt).not.toContain('Each Engineering Work receives every Repo binding')
-    expect(seen[0]?.prompt).toContain('explicit replies alone continue that Thread')
     expect(seen[0]?.prompt).toContain(
-      'A Work requested in this turn can start only after the turn settles',
+      'holds new responsibility dispatch for that Project until this turn settles',
     )
-    expect(seen[0]?.prompt).toContain('Inspect proposed Work bodies, not only dependency shape')
-    expect(seen[0]?.prompt).toContain('request a planning Run and name the mixed boundaries')
+    expect(seen[0]?.prompt).toContain(
+      'A Run requested in this turn can start only after the turn settles',
+    )
+    expect(seen[0]?.prompt).toContain(
+      'Wayfinding is about finding the way, not charging at the destination',
+    )
+    expect(seen[0]?.prompt).toContain('shared low-resolution map—an index, not a store')
+    expect(seen[0]?.prompt).toContain(
+      'fog-or-ticket test is whether you can state the question precisely now, not whether you can answer it now',
+    )
+    expect(seen[0]?.prompt).toContain('refer to tickets by name')
+    expect(seen[0]?.prompt).toContain(
+      'research uses an AFK Planner Run; prototype and grilling are HITL',
+    )
+    expect(seen[0]?.prompt).toContain('task is AFK or HITL and only unblocks a decision')
+    expect(seen[0]?.prompt).toContain(
+      'HITL stays with the operator through conversation or Attention',
+    )
+    expect(seen[0]?.prompt).toContain("At the map's edge, hand off actionable Engineering Work")
+    expect(seen[0]?.prompt).toContain('dependsOn links only execution commitments')
+    expect(seen[0]?.prompt).toContain('Inspect proposed Work bodies, not only DAG shape')
+    expect(seen[0]?.prompt).toContain(
+      'request same-contract Planning and name the mixed boundaries',
+    )
     expect(seen[0]?.prompt).toContain(
       'A named test suite, browser harness, adapter, or application is a proof container',
     )
@@ -1042,24 +1068,20 @@ describe('WorkspaceAssistant conversation', () => {
       'A user-initiated Preview Start already requests a working Preview',
     )
     expect(seen[0]?.prompt).toContain('read only the session status and bounded log summary')
-    expect(seen[0]?.prompt).toContain(
-      'do not inspect source, reproduce services, or find the root cause in Assistant',
-    )
-    expect(seen[0]?.prompt).toContain('immediately create the smallest experience-oriented Goal')
-    expect(seen[0]?.prompt).toContain(
-      'isolated-write Run owns exploration, reproduction, runbook maintenance',
-    )
-    expect(seen[0]?.prompt).toContain('Do not wait for a second repair message')
+    expect(seen[0]?.prompt).toContain('Assistant does not inspect source or diagnose')
+    expect(seen[0]?.prompt).toContain('create the smallest experience-oriented Goal')
+    expect(seen[0]?.prompt).toContain('request a writable Generator Run')
+    expect(seen[0]?.prompt).toContain('never wait for another message or duplicate Work')
     expect(seen[0]?.prompt).toContain('A Preview failure is only evidence')
-    expect(seen[0]?.prompt).toContain('does not define the Goal around the failing service')
+    expect(seen[0]?.prompt).toContain('not authority for the failed service topology')
     expect(seen[0]?.prompt).toContain(
       'Create Preview Goal and Work contracts in experience terms only',
     )
-    expect(seen[0]?.prompt).toContain('do not prescribe services, root causes, live authentication')
-    expect(seen[0]?.prompt).toContain('do not prohibit mock authentication or local sample data')
     expect(seen[0]?.prompt).toContain(
-      'Old runbook and adapter implementation restrictions are revisable technical history',
+      'prescribe neither services, root causes, live authentication',
     )
+    expect(seen[0]?.prompt).toContain('do not prohibit mock authentication or local sample data')
+    expect(seen[0]?.prompt).toContain('Runbook and adapter restrictions are revisable history')
     expect(seen[0]?.prompt).toContain('runbook and source first, then relevant knowledge')
     expect(seen[0]?.prompt).toContain(
       'one short question only when a necessary fact remains unavailable',
@@ -1069,7 +1091,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('browser-checks before broad builds or test suites')
     expect(seen[0]?.prompt).toContain('page opens with useful data and one basic interaction works')
     expect(seen[0]?.prompt).toContain('Do not expand it to unrelated services')
-    expect(seen[0]?.prompt).toContain('transport reachability alone cannot pass')
+    expect(seen[0]?.prompt).toContain('transport reachability alone is insufficient')
     expect(seen[0]?.prompt).toContain('do not add a database approval gate')
     expect(seen[0]?.prompt).not.toContain(
       'must not replace a missing fact with exhaustive discovery',
@@ -1114,7 +1136,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(JSON.stringify(stateResult)).toContain('"eventId":"EV-observe"')
   })
 
-  test('resumes a provider Session only for an explicit reply in the same Thread', async () => {
+  test('resumes one persistent vendor session for later turns', async () => {
     const sessionIds: Array<string | null> = []
     const prompts: string[] = []
     const fixture = await setup(() => ({
@@ -1125,20 +1147,16 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: `reply-${sessionIds.length}`, session: codexSession('thread-1') }
       },
     }))
-    const first = await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'First' })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'First' })
     await fixture.assistant.process('EV-1')
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    const second = await fixture.workspace.receiveEvent({
-      eventId: 'EV-2',
-      content: 'Second',
-      context: { replyTo: inboxEventReference(homeId, first.attributes.id) },
-    })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-2', content: 'Second' })
     await fixture.assistant.process('EV-2')
 
     expect(sessionIds).toEqual([null, 'thread-1'])
-    expect(second.attributes.threadId).toBe(first.attributes.threadId)
     expect(prompts[0]).not.toContain('Role: HOPI Project owner')
-    expect(prompts[0]).toContain('explicit replies alone continue that Thread')
+    expect(prompts[0]).toContain(
+      'holds new responsibility dispatch for that Project until this turn settles',
+    )
     expect(prompts[1]).not.toContain('# HOPI Workspace Assistant')
     expect(prompts[1]).not.toContain('[Operator-facing reply contract]')
     expect(prompts[1]).not.toContain('[Current durable cross-Project user preferences]')
@@ -1146,9 +1164,10 @@ describe('WorkspaceAssistant conversation', () => {
     expect((await fixture.workspace.readEvent('EV-2'))?.attributes.reply).toBe('reply-2')
   })
 
-  test('isolates sibling Threads on one Project and resumes only the selected Thread', async () => {
+  test('keeps Home and Project provider sessions and rebuild history isolated by page scope', async () => {
     const calls: Array<{
       eventId: string
+      projectId?: string
       sessionId: string | null
       prompt: string
     }> = []
@@ -1156,14 +1175,11 @@ describe('WorkspaceAssistant conversation', () => {
       async run(input, observer) {
         calls.push({
           eventId: input.eventId,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
           sessionId: input.session?.sessionId ?? null,
           prompt: input.prompt,
         })
-        const session = codexSession(
-          input.eventId === 'EV-project-first' || input.eventId === 'EV-project-reply'
-            ? 'session-first'
-            : 'session-sibling',
-        )
+        const session = codexSession(input.projectId ? 'thread-project-1' : 'thread-home')
         await observer?.onSession?.(session)
         return { reply: `Handled ${input.eventId}.`, session }
       },
@@ -1174,33 +1190,33 @@ describe('WorkspaceAssistant conversation', () => {
       context: { projectId: 'P-1' },
     })
     await fixture.assistant.process('EV-project-first')
-    const sibling = await fixture.workspace.receiveEvent({
-      eventId: 'EV-project-sibling',
-      content: 'SIBLING_ONLY_MARKER',
+    await fixture.workspace.receiveEvent({ eventId: 'EV-home', content: 'HOME_ONLY_MARKER' })
+    await fixture.assistant.process('EV-home')
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-project-resume',
+      content: 'Continue this Project.',
       context: { projectId: 'P-1' },
     })
-    await fixture.assistant.process(sibling.attributes.id)
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-project-reply',
-      content: 'Continue the first request.',
-      context: {
-        projectId: 'P-1',
-        replyTo: inboxEventReference(homeId, 'EV-project-first'),
-      },
-    })
-    await fixture.assistant.process('EV-project-reply')
+    await fixture.assistant.process('EV-project-resume')
 
-    expect(calls.map(({ sessionId }) => sessionId)).toEqual([null, null, 'session-first'])
-    expect((await fixture.workspace.readEvent('EV-project-first'))?.attributes.threadId).not.toBe(
-      sibling.attributes.threadId,
+    expect(calls.map(({ sessionId }) => sessionId)).toEqual([null, null, 'thread-project-1'])
+    expect(await fixture.conversation.readSession({ kind: 'project', projectId: 'P-1' })).toEqual(
+      codexSession('thread-project-1'),
     )
-    expect((await fixture.workspace.readEvent('EV-project-reply'))?.attributes.threadId).toBe(
-      (await fixture.workspace.readEvent('EV-project-first'))?.attributes.threadId,
+    expect(await fixture.conversation.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE)).toEqual(
+      codexSession('thread-home'),
     )
-    expect(await fixture.conversation.readSession(assistantThreadScopeForEvent(sibling))).toEqual(
-      codexSession('session-sibling'),
-    )
+
+    await fixture.conversation.clearSession({ kind: 'project', projectId: 'P-1' })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-project-rebuild',
+      content: 'Rebuild this Project.',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.assistant.process('EV-project-rebuild')
+
+    expect(calls.at(-1)?.prompt).toContain('PROJECT_ONLY_MARKER')
+    expect(calls.at(-1)?.prompt).not.toContain('HOME_ONLY_MARKER')
   })
 
   test('rebuilds a persisted session when the initial Assistant contract changes', async () => {
@@ -1212,16 +1228,12 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: 'Current contract applied.', session: codexSession('thread-current') }
       },
     }))
-    const event = await fixture.workspace.receiveEvent({
-      eventId: 'EV-contract',
-      content: 'Continue.',
-    })
-    await registerEventThread(fixture, event)
     await fixture.conversation.writeSession(
-      assistantThreadScopeForEvent(event),
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('thread-old'),
       'stale-contract',
     )
+    await fixture.workspace.receiveEvent({ eventId: 'EV-contract', content: 'Continue.' })
 
     await fixture.assistant.process('EV-contract')
 
@@ -1233,13 +1245,10 @@ describe('WorkspaceAssistant conversation', () => {
     ])
     expect(
       await fixture.conversation.readSession(
-        assistantThreadScopeForEvent(event),
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
         await currentAssistantContextDigest(fixture.workspace),
       ),
     ).toEqual(codexSession('thread-current'))
-    expect(
-      (await fixture.conversation.readThread(assistantThreadScopeForEvent(event)))?.epochs[0],
-    ).toMatchObject({ closeReason: 'contract_changed' })
   })
 
   test('puts preferences in session bootstrap and rebuilds after they change', async () => {
@@ -1266,9 +1275,8 @@ describe('WorkspaceAssistant conversation', () => {
             expectedDigest: digest,
           })
         }
-        const session = input.session ?? codexSession(`session-${input.eventId}`)
-        await observer?.onSession?.(session)
-        return { reply: 'Preference handled.', session }
+        await observer?.onSession?.(codexSession('thread-preference'))
+        return { reply: 'Preference handled.', session: codexSession('thread-preference') }
       },
     }))
     await fixture.workspace.receiveEvent({
@@ -1277,27 +1285,15 @@ describe('WorkspaceAssistant conversation', () => {
     })
     await fixture.assistant.process('EV-preference')
 
-    const next = await fixture.workspace.receiveEvent({
-      eventId: 'EV-next',
-      content: 'What is next?',
-    })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-next', content: 'What is next?' })
     await fixture.assistant.process('EV-next')
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    const resumed = await fixture.workspace.receiveEvent({
-      eventId: 'EV-resume',
-      content: 'Continue.',
-      context: { replyTo: inboxEventReference(homeId, next.attributes.id) },
-    })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-resume', content: 'Continue.' })
     await fixture.assistant.process('EV-resume')
-    await fixture.conversation.clearSession(assistantThreadScopeForEvent(next))
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-rebuild',
-      content: 'Continue.',
-      context: { replyTo: inboxEventReference(homeId, resumed.attributes.id) },
-    })
+    await fixture.conversation.clearSession(HOME_ASSISTANT_CONVERSATION_SCOPE)
+    await fixture.workspace.receiveEvent({ eventId: 'EV-rebuild', content: 'Continue.' })
     await fixture.assistant.process('EV-rebuild')
 
-    expect(seen.map(({ sessionId }) => sessionId)).toEqual([null, null, 'session-EV-next', null])
+    expect(seen.map(({ sessionId }) => sessionId)).toEqual([null, null, 'thread-preference', null])
     expect(seen[0]?.prompt).toContain(
       'Preferences are defaults below the current turn and explicit Project or Goal authority',
     )
@@ -1347,24 +1343,18 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: 'Recovered.', session: codexSession('thread-rebuilt') }
       },
     }))
-    const old = await fixture.workspace.receiveEvent({ eventId: 'EV-old', content: 'Old turn' })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-old', content: 'Old turn' })
     await fixture.workspace.handleEvent('EV-old', {
       reply: 'Old reply',
       disposition: 'answered',
     })
-    await registerEventThread(fixture, old)
     await fixture.conversation.writeSession(
-      assistantThreadScopeForEvent(old),
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('missing-thread'),
       await currentAssistantContextDigest(fixture.workspace),
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
     )
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    const current = await fixture.workspace.receiveEvent({
-      eventId: 'EV-1',
-      content: 'Continue',
-      context: { replyTo: inboxEventReference(homeId, old.attributes.id) },
-    })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
 
     await fixture.assistant.process('EV-1')
 
@@ -1373,16 +1363,10 @@ describe('WorkspaceAssistant conversation', () => {
     expect(calls[1]?.prompt).toContain('Assistant: Old reply')
     expect(
       await fixture.conversation.readSession(
-        assistantThreadScopeForEvent(current),
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
         await currentAssistantContextDigest(fixture.workspace),
       ),
     ).toEqual(codexSession('thread-rebuilt'))
-    expect(
-      (await fixture.conversation.readThread(assistantThreadScopeForEvent(current)))?.epochs,
-    ).toMatchObject([
-      { sessionId: 'missing-thread', closeReason: 'session_unavailable' },
-      { sessionId: 'thread-rebuilt', endedAt: null },
-    ])
   })
 
   test('rebuilds a context-exhausted vendor session once from bounded history', async () => {
@@ -1402,27 +1386,18 @@ describe('WorkspaceAssistant conversation', () => {
         }
       },
     }))
-    const old = await fixture.workspace.receiveEvent({
-      eventId: 'EV-old',
-      content: 'Earlier request',
-    })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-old', content: 'Earlier request' })
     await fixture.workspace.handleEvent('EV-old', {
       reply: 'Earlier answer',
       disposition: 'answered',
     })
-    await registerEventThread(fixture, old)
     await fixture.conversation.writeSession(
-      assistantThreadScopeForEvent(old),
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('thread-context-exhausted'),
       await currentAssistantContextDigest(fixture.workspace),
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
     )
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    const current = await fixture.workspace.receiveEvent({
-      eventId: 'EV-context',
-      content: 'Continue',
-      context: { replyTo: inboxEventReference(homeId, old.attributes.id) },
-    })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-context', content: 'Continue' })
 
     await fixture.assistant.process('EV-context')
 
@@ -1431,7 +1406,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(calls[1]?.prompt).toContain('Assistant: Earlier answer')
     expect(
       await fixture.conversation.readSession(
-        assistantThreadScopeForEvent(current),
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
         await currentAssistantContextDigest(fixture.workspace),
       ),
     ).toEqual(codexSession('thread-after-context-rebuild'))
@@ -1445,14 +1420,13 @@ describe('WorkspaceAssistant conversation', () => {
         throw new WorkspaceAssistantError('Daily provider allocation exceeded.')
       },
     }))
-    const event = await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
-    await registerEventThread(fixture, event)
     await fixture.conversation.writeSession(
-      assistantThreadScopeForEvent(event),
+      HOME_ASSISTANT_CONVERSATION_SCOPE,
       codexSession('thread-existing'),
       await currentAssistantContextDigest(fixture.workspace),
       workspaceAssistantRuntimeDigest(fixture.homeRoot),
     )
+    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Continue' })
 
     await expect(fixture.assistant.process('EV-1')).rejects.toThrow(
       'Daily provider allocation exceeded.',
@@ -1461,7 +1435,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(calls).toEqual(['thread-existing'])
     expect(
       await fixture.conversation.readSession(
-        assistantThreadScopeForEvent(event),
+        HOME_ASSISTANT_CONVERSATION_SCOPE,
         await currentAssistantContextDigest(fixture.workspace),
       ),
     ).toEqual(codexSession('thread-existing'))
@@ -1481,7 +1455,7 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: 'Current reply.', session: codexSession('thread-bounded') }
       },
     }))
-    const old = await fixture.workspace.receiveEvent({
+    await fixture.workspace.receiveEvent({
       eventId: 'EV-old',
       content: `OLD-HISTORY-${'x'.repeat(10_000)}`,
     })
@@ -1489,11 +1463,9 @@ describe('WorkspaceAssistant conversation', () => {
       reply: 'Old reply.',
       disposition: 'answered',
     })
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    const recent = await fixture.workspace.receiveEvent({
+    await fixture.workspace.receiveEvent({
       eventId: 'EV-new',
       content: `NEW-HISTORY-${'y'.repeat(10_000)}`,
-      context: { replyTo: inboxEventReference(homeId, old.attributes.id) },
     })
     await fixture.workspace.handleEvent('EV-new', {
       reply: 'New reply.',
@@ -1507,11 +1479,7 @@ describe('WorkspaceAssistant conversation', () => {
       reply: 'Hidden outcome.',
       disposition: 'answered',
     })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-current',
-      content: 'Current turn.',
-      context: { replyTo: inboxEventReference(homeId, recent.attributes.id) },
-    })
+    await fixture.workspace.receiveEvent({ eventId: 'EV-current', content: 'Current turn.' })
 
     await fixture.assistant.process('EV-current')
 
@@ -1584,7 +1552,7 @@ describe('WorkspaceAssistant conversation', () => {
     })
   })
 
-  test('processes a system event in its own Thread without treating it as user speech', async () => {
+  test('processes a system event in the Project session without treating it as user speech', async () => {
     const prompts: string[] = []
     const fixture = await setup(() => ({
       async run(input, observer) {
@@ -1720,18 +1688,29 @@ describe('WorkspaceAssistant conversation', () => {
                 },
                 {
                   attributes: { id: 'W-z-failed', stage: 'review' },
-                  body: '',
                   path: '/canonical/G-1/works/W-z-failed.md',
-                  projection: { failedPredicates: ['failed_attempt'] },
+                  projection: { failedPredicates: ['no_queued_run'] },
                   runtime: {
                     activeResponsibility: null,
                     latestAttempt: {
+                      projectId: 'P-1',
+                      goalId: 'G-1',
+                      workId: 'W-z-failed',
                       runId: 'R-failed',
                       responsibility: 'reviewer',
-                      status: 'finished',
-                      result: 'fail',
-                      application: 'operational_failure',
-                      summary: 'stream disconnected before completion',
+                      workspaceMode: 'read_only',
+                      instructionMarkdown: 'Review the current candidate.',
+                      refs: [],
+                      workHash: 'a'.repeat(64),
+                      execution: null,
+                      requestedAt: '2026-08-13T00:00:00Z',
+                      startedAt: '2026-08-13T00:00:00Z',
+                      endedAt: '2026-08-13T00:01:00Z',
+                      status: 'settled',
+                      termination: 'crashed',
+                      reportMarkdown: 'stream disconnected before completion',
+                      exitCode: 1,
+                      candidateCommits: [],
                     },
                     attemptCount: 1,
                     recentAttempts: [],
@@ -1782,12 +1761,12 @@ describe('WorkspaceAssistant conversation', () => {
     )
     expect(current.projects[0].goals[0].works[1]).toMatchObject({
       path: '/canonical/G-1/works/W-z-failed.md',
-      projection: { failedPredicates: ['failed_attempt'] },
+      projection: { failedPredicates: ['no_queued_run'] },
       runtime: {
         latestAttempt: {
           runId: 'R-failed',
-          result: 'fail',
-          application: 'operational_failure',
+          termination: 'crashed',
+          reportMarkdown: 'stream disconnected before completion',
         },
       },
     })
@@ -1796,7 +1775,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(prompts[0]).not.toContain('... truncated')
   })
 
-  test('accepts a transient continuation-only internal handoff without a second model call', async () => {
+  test('accepts an explicit retry Run handoff without a second model call', async () => {
     let calls = 0
     const fixture = await setup((tools) => ({
       async run(input) {
@@ -1805,7 +1784,13 @@ describe('WorkspaceAssistant conversation', () => {
           projectId: 'P-1',
           goalId: 'G-1',
           workId: 'plan-initial',
-          action: { kind: 'continue' },
+          action: {
+            kind: 'run',
+            profile: 'planner',
+            workspaceMode: 'none',
+            instructionMarkdown: 'Retry the planning Work after the transient interruption.',
+            refs: [],
+          },
         })
         return { reply: '', session: codexSession('thread-atomic-retry') }
       },
@@ -1841,7 +1826,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(current?.attributes.resolvedAt).toBeNull()
   })
 
-  test('runs system supervision in a sibling Thread and delivers only a bounded receipt', async () => {
+  test('keeps supervision on a native branch and delivers only its action receipt to speaking', async () => {
     const seen: Array<{
       eventId: string
       invocation: string | undefined
@@ -1856,16 +1841,17 @@ describe('WorkspaceAssistant conversation', () => {
           sessionId: input.session?.sessionId ?? null,
           prompt: input.prompt,
         })
-        const session = codexSession(`session-${input.eventId}`)
-        await observer?.onSession?.(session)
+        if (input.invocation === 'supervision') {
+          await observer?.onSession?.(codexSession('thread-branch'))
+          return {
+            reply: 'Adjusted the Work contract.',
+            session: codexSession('thread-branch'),
+          }
+        }
+        await observer?.onSession?.(codexSession('thread-parent'))
         return {
-          reply:
-            input.eventId === 'EV-user-1'
-              ? 'Started.'
-              : input.eventId === 'EV-wake-1'
-                ? 'Adjusted the Work contract.'
-                : 'Current state is aligned.',
-          session,
+          reply: input.eventId === 'EV-user-1' ? 'Started.' : 'Current state is aligned.',
+          session: codexSession('thread-parent'),
         }
       },
     }))
@@ -1884,6 +1870,9 @@ describe('WorkspaceAssistant conversation', () => {
     })
     await fixture.assistant.process('EV-wake-1')
 
+    expect(await fixture.conversation.readSession({ kind: 'project', projectId: 'P-1' })).toEqual(
+      codexSession('thread-parent'),
+    )
     expect(await fixture.conversation.readPendingActionReceipts(scope)).toMatchObject([
       {
         eventId: 'EV-wake-1',
@@ -1901,23 +1890,15 @@ describe('WorkspaceAssistant conversation', () => {
 
     expect(seen).toMatchObject([
       { eventId: 'EV-user-1', invocation: 'speaking', sessionId: null },
-      { eventId: 'EV-wake-1', invocation: 'speaking', sessionId: null },
-      { eventId: 'EV-user-2', invocation: 'speaking', sessionId: null },
+      { eventId: 'EV-wake-1', invocation: 'supervision', sessionId: 'thread-parent' },
+      { eventId: 'EV-user-2', invocation: 'speaking', sessionId: 'thread-parent' },
     ])
-    expect(seen[2]?.prompt).toContain('Confirmed actions completed by other Assistant Threads')
+    expect(seen[2]?.prompt).toContain('Confirmed actions completed by supervision forks')
     expect(seen[2]?.prompt).toContain('Adjusted the Work contract.')
     expect(await fixture.conversation.readPendingActionReceipts(scope)).toEqual([])
-    const workspace = await fixture.workspace.readWorkspace()
-    expect(
-      new Set(
-        ['EV-user-1', 'EV-wake-1', 'EV-user-2'].map(
-          (id) => workspace.events.get(id)?.attributes.threadId,
-        ),
-      ).size,
-    ).toBe(3)
   })
 
-  test('gives independent internal and user top-level events fresh Thread Sessions', async () => {
+  test('bootstraps the scoped speaking session from the first internal event', async () => {
     const seen: Array<{
       eventId: string
       invocation: string | undefined
@@ -1930,31 +1911,38 @@ describe('WorkspaceAssistant conversation', () => {
           invocation: input.invocation,
           sessionId: input.session?.sessionId ?? null,
         })
-        const session = codexSession(`session-${input.eventId}`)
-        await observer?.onSession?.(session)
+        if (input.invocation === 'supervision') {
+          await observer?.onSession?.(codexSession('thread-branch'))
+          return { reply: '', session: codexSession('thread-branch') }
+        }
+        await observer?.onSession?.(codexSession('thread-parent'))
         return {
           reply: input.eventId === 'EV-user' ? 'Current state.' : '',
-          session,
+          session: codexSession('thread-parent'),
         }
       },
     }))
     const context = { projectId: 'P-1' }
-    const bootstrap = await fixture.workspace.receiveSystemEvent({
+    const scope = { kind: 'project', projectId: 'P-1' } as const
+    await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-bootstrap',
       content: 'The first Project runtime event.',
       context,
     })
     await fixture.assistant.process('EV-bootstrap')
-    expect(await fixture.conversation.readSession(assistantThreadScopeForEvent(bootstrap))).toEqual(
-      codexSession('session-EV-bootstrap'),
-    )
+    expect(await fixture.conversation.readSession(scope)).toEqual(codexSession('thread-parent'))
     const bootstrapTurn = await fixture.conversation.readTurn('EV-bootstrap')
+    expect(bootstrapTurn?.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'message',
+        role: 'coordinator',
+        content:
+          'Established native codex speaking Session thread-parent from the internal bootstrap.',
+      }),
+    )
     expect(
       bootstrapTurn?.events.some(
-        (event) =>
-          event.kind === 'message' &&
-          (event.content.startsWith('Forked speaking Session') ||
-            event.content.startsWith('Established native')),
+        (event) => event.kind === 'message' && event.content.startsWith('Forked speaking Session'),
       ),
     ).toBe(false)
     expect((await fixture.workspace.readEvent('EV-bootstrap'))?.attributes).toMatchObject({
@@ -1978,12 +1966,12 @@ describe('WorkspaceAssistant conversation', () => {
 
     expect(seen).toEqual([
       { eventId: 'EV-bootstrap', invocation: 'speaking', sessionId: null },
-      { eventId: 'EV-follow-up', invocation: 'speaking', sessionId: null },
-      { eventId: 'EV-user', invocation: 'speaking', sessionId: null },
+      { eventId: 'EV-follow-up', invocation: 'supervision', sessionId: 'thread-parent' },
+      { eventId: 'EV-user', invocation: 'speaking', sessionId: 'thread-parent' },
     ])
   })
 
-  test('rotates an internal Thread Session after its contract is invalidated', async () => {
+  test('bootstraps from an internal event after the cached session contract is invalidated', async () => {
     const seen: Array<{
       invocation: string | undefined
       sessionId: string | null
@@ -1998,27 +1986,23 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: '', session: codexSession('thread-rebuilt') }
       },
     }))
-    const event = await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-contract-change',
-      content: 'A material Project fact arrived after the Assistant contract changed.',
-      context: { projectId: 'P-1' },
-    })
-    const scope = assistantThreadScopeForEvent(event)
-    await registerEventThread(fixture, event)
+    const scope = { kind: 'project', projectId: 'P-1' } as const
     await fixture.conversation.writeSession(
       scope,
       codexSession('thread-stale'),
       'stale-contract-digest',
       'stale-runtime-digest',
     )
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-contract-change',
+      content: 'A material Project fact arrived after the Assistant contract changed.',
+      context: { projectId: 'P-1' },
+    })
+
     await fixture.assistant.process('EV-contract-change')
 
     expect(seen).toEqual([{ invocation: 'speaking', sessionId: null }])
     expect(await fixture.conversation.readSession(scope)).toEqual(codexSession('thread-rebuilt'))
-    expect((await fixture.conversation.readThread(scope))?.epochs).toMatchObject([
-      { sessionId: 'thread-stale', closeReason: 'contract_changed' },
-      { sessionId: 'thread-rebuilt', endedAt: null },
-    ])
     expect((await fixture.workspace.readEvent('EV-contract-change'))?.attributes).toMatchObject({
       source: 'system',
       visibility: 'internal',
@@ -2075,37 +2059,25 @@ async function setup(
           async decisionWhenEligible() {
             return { kind: 'wait' as const, reasons: [] }
           },
-          async settledFailureWorkIds() {
-            return new Set<string>()
-          },
-          async requestWorkRun(goalId: string, workId: string) {
+          async requestWorkRun(
+            goalId: string,
+            workId: string,
+            request: Parameters<ProjectReconciler['requestWorkRun']>[2],
+          ) {
             return attempts.reserve({
               projectId: 'P-1',
               goalId,
               workId,
               runId: 'R-transient-retry',
-              responsibility: 'planner',
               workHash: 'a'.repeat(64),
+              request,
             })
           },
-          completeWork: (
-            goalId: string,
-            workId: string,
-            input: { sourceEventId: string; decision: string },
-          ) => controller.completeWork(goalId, workId, input),
-          completeGoal: (goalId: string, input: { decision: string }) =>
-            controller.completeGoal(goalId, input),
-          async proposeOperation() {
-            throw new Error('Unexpected Operation proposal')
+          async completeWork() {
+            throw new Error('Unexpected Work completion in Workspace Assistant fixture')
           },
-          async executeOperation() {
-            throw new Error('Unexpected Operation execution')
-          },
-          async cancelOperation() {
-            throw new Error('Unexpected Operation cancellation')
-          },
-          async listGoalOperations() {
-            return []
+          async completeGoal() {
+            throw new Error('Unexpected Goal completion in Workspace Assistant fixture')
           },
         },
       },
@@ -2151,23 +2123,6 @@ async function currentAssistantContextDigest(
   workspace: ReturnType<typeof createAssistantWorkspaceStore>,
 ) {
   return workspaceAssistantContextDigest((await workspace.readWorkspace()).preference.digest)
-}
-
-async function registerEventThread(
-  fixture: { conversation: ReturnType<typeof createAssistantConversationStore> },
-  event: InboxEventDocument,
-) {
-  const scope = assistantThreadScopeForEvent(event)
-  await fixture.conversation.ensureThread({
-    threadId: scope.threadId,
-    createdAt: event.attributes.receivedAt,
-    origin: {
-      eventId: event.attributes.id,
-      projectId: event.attributes.context?.projectId ?? null,
-      goalId: event.attributes.context?.goalId ?? null,
-    },
-    eventIds: [event.attributes.id],
-  })
 }
 
 async function finishInitialPlanning(

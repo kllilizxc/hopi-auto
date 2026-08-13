@@ -45,7 +45,6 @@ import {
 } from '../components/ui'
 import {
   type AgentPlanSnapshot,
-  type DeliveryOperationView,
   type GoalControl,
   type KanbanColumn,
   type RunAttemptDetail,
@@ -587,13 +586,11 @@ export function BoardView() {
           <p>{focus?.projection.primaryBadge ?? 'No pending Work'}</p>
         </div>
         <div>
-          <small>Goal decision</small>
-          <strong>{goal.goal.lifecycle}</strong>
-          <p>
-            {goal.attentions.length > 0
-              ? `${goal.attentions.length} open decision${goal.attentions.length === 1 ? '' : 's'}`
-              : 'No open decisions'}
-          </p>
+          <small>Progress</small>
+          <strong>
+            {goal.works.filter((work) => work.stage === 'done').length} of {goal.works.length}
+          </strong>
+          <p>Work complete</p>
         </div>
       </section>
 
@@ -637,36 +634,6 @@ export function BoardView() {
           </div>
         )}
       </AppDisclosure>
-
-      {goal.operations.length > 0 && (
-        <AppDisclosure
-          className="goal-execution-cost"
-          summary={
-            <>
-              <span>
-                <strong>Delivery operations</strong>
-                <small>Typed external effects</small>
-              </span>
-              <span>{operationStatusHeadline(goal.operations)}</span>
-            </>
-          }
-        >
-          <div className="goal-execution-cost__roles">
-            {goal.operations.map((operation) => (
-              <div key={operation.id}>
-                <small>
-                  {operation.intent.kind}
-                  {operation.requiredForGoal ? ' · required' : ' · optional'}
-                </small>
-                <strong>{operation.status}</strong>
-                <span>{operation.intent.changeSetId}</span>
-                <span>{operationResultHeadline(operation)}</span>
-                <span>{operation.id}</span>
-              </div>
-            ))}
-          </div>
-        </AppDisclosure>
-      )}
 
       <AppScrollShadow
         className="kanban-scroll"
@@ -1120,20 +1087,6 @@ function WorkDetail({
                   <small>Not before</small>
                   <strong>{work.notBefore ?? 'now'}</strong>
                 </span>
-                <span title={selectedAttempt?.runId}>
-                  <small>Run</small>
-                  <strong>{selectedAttempt?.runId ?? 'not started'}</strong>
-                  {selectedAttempt && (
-                    <em>
-                      {selectedAttempt.profile} · {selectedAttempt.protocol}
-                    </em>
-                  )}
-                </span>
-                <span title={latestEpochTitle(selectedAttempt)}>
-                  <small>Session Epochs</small>
-                  <strong>{selectedAttempt?.sessionEpochs.length ?? 0}</strong>
-                  {selectedAttempt && <em>{latestEpochLabel(selectedAttempt)}</em>}
-                </span>
                 <AttemptDiagnosticFacts
                   summary={attemptsQuery.data?.summary ?? null}
                   diagnostics={selectedAttempt?.diagnostics ?? null}
@@ -1250,13 +1203,6 @@ function WorkContract({
           </div>
         </section>
       )}
-      {selectedAttempt && (
-        <RunFacts
-          attempt={selectedAttempt}
-          detail={selectedDetail}
-          detailLoading={loading && !selectedDetail}
-        />
-      )}
       <section>
         <h2>Evidence</h2>
         <div className="chip-list">
@@ -1342,189 +1288,13 @@ function WorkContract({
   )
 }
 
-function RunFacts({
-  attempt,
-  detail,
-  detailLoading,
-}: {
-  attempt: RunAttemptSummary
-  detail: RunAttemptDetail | null
-  detailLoading: boolean
-}) {
-  return (
-    <section className="run-facts-section work-system-prompt-section">
-      <div className="work-system-prompt-heading">
-        <div>
-          <h2>Run facts</h2>
-          <p>Durable execution facts; Work stage and Goal acceptance remain separate decisions.</p>
-        </div>
-        <code>{attempt.runId}</code>
-      </div>
-      <div className="fact-grid run-fact-grid">
-        <span>
-          <small>Profile</small>
-          <strong>{attempt.profile}</strong>
-        </span>
-        <span>
-          <small>Protocol</small>
-          <strong>{attempt.protocol}</strong>
-        </span>
-        <span>
-          <small>Workspace</small>
-          <strong>{attempt.workspaceMode}</strong>
-        </span>
-        <span>
-          <small>Termination</small>
-          <strong>
-            {attempt.termination ?? (attempt.status === 'running' ? 'running' : 'pending')}
-          </strong>
-        </span>
-        <span>
-          <small>Exit code</small>
-          <strong>{attempt.exitCode ?? 'not recorded'}</strong>
-        </span>
-        <span>
-          <small>Application</small>
-          <strong>{attempt.application ?? 'none'}</strong>
-        </span>
-      </div>
-
-      <div className="run-fact-block">
-        <h3>Session Epochs</h3>
-        {attempt.sessionEpochs.length > 0 ? (
-          <ol className="run-epoch-list work-run-prompt">
-            {attempt.sessionEpochs.map((epoch) => (
-              <li key={`${epoch.epoch}:${epoch.sessionId}`}>
-                <div className="work-system-prompt-meta">
-                  <StatusChip size="sm" variant="soft">
-                    Epoch {epoch.epoch}
-                  </StatusChip>
-                  <strong>{epoch.transport}</strong>
-                  <code title={epoch.sessionId}>{epoch.sessionId}</code>
-                  <small>
-                    {epoch.closeReason ?? 'active'} · {formatAttemptTime(epoch.startedAt)}
-                  </small>
-                </div>
-                {epoch.handoffMarkdown && (
-                  <AppDisclosure summary="Bounded handoff">
-                    <pre>{epoch.handoffMarkdown}</pre>
-                  </AppDisclosure>
-                )}
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="work-system-prompt-empty">No provider Session Epoch was recorded.</p>
-        )}
-      </div>
-
-      <div className="run-fact-block">
-        <h3>Report</h3>
-        {attempt.reportMarkdown ? (
-          <pre className="run-report">{attempt.reportMarkdown}</pre>
-        ) : (
-          <p className="work-system-prompt-empty">
-            {attempt.status === 'running' ? 'The Run has not settled yet.' : 'No Report was recorded.'}
-          </p>
-        )}
-      </div>
-
-      <div className="run-fact-block">
-        <h3>ChangeSet</h3>
-        {detailLoading ? (
-          <p className="work-system-prompt-empty">
-            <AppBreathingIndicator /> Loading ChangeSet facts
-          </p>
-        ) : detail?.changeSet ? (
-          <div className="work-run-prompt">
-            <div className="work-system-prompt-meta">
-              <StatusChip size="sm" variant="soft">
-                {detail.changeSet.disposition}
-              </StatusChip>
-              <code>{detail.changeSet.id}</code>
-            </div>
-            <pre>{formatChangeSet(detail.changeSet)}</pre>
-          </div>
-        ) : (
-          <p className="work-system-prompt-empty">No source delta was frozen for this Run.</p>
-        )}
-      </div>
-
-      <div className="run-fact-block">
-        <h3>Artifacts</h3>
-        {detailLoading ? (
-          <p className="work-system-prompt-empty">
-            <AppBreathingIndicator /> Loading artifact facts
-          </p>
-        ) : detail &&
-          (detail.artifacts.preserved.length > 0 || detail.artifacts.unavailable.length > 0) ? (
-          <pre>{formatArtifacts(detail.artifacts)}</pre>
-        ) : (
-          <p className="work-system-prompt-empty">No artifacts were declared for this Run.</p>
-        )}
-      </div>
-
-      <small className="run-transcript-note">Transcript entries remain in the Activity tab.</small>
-    </section>
-  )
-}
-
-function shortRevision(value: string) {
-  return value.slice(0, 10)
-}
-
-function formatChangeSet(changeSet: NonNullable<RunAttemptDetail['changeSet']>) {
-  return changeSet.repos
-    .map(
-      (repo) =>
-        `${repo.repoId}\nbase   ${shortRevision(repo.baseCommit)}\nresult ${shortRevision(repo.resultCommit)}\npatch  ${shortRevision(repo.contentHash)}`,
-    )
-    .join('\n\n')
-}
-
-function formatArtifacts(artifacts: RunAttemptDetail['artifacts']) {
-  return [
-    ...artifacts.preserved.map(
-      (artifact) =>
-        `${artifact.reference}\n${artifact.kind} · ${formatBytes(artifact.sizeBytes)}`,
-    ),
-    ...artifacts.unavailable.map(
-      (artifact) => `${artifact.reference}\nunavailable · ${artifact.reason}`,
-    ),
-  ].join('\n\n')
-}
-
-function formatBytes(value: number) {
-  if (value < 1_000) return `${value} B`
-  if (value < 1_000_000) return `${(value / 1_000).toFixed(1)} KB`
-  return `${(value / 1_000_000).toFixed(1)} MB`
-}
-
 function RunPromptView({ prompt }: { prompt: string }) {
-  if (!prompt.includes('## Current Assignment')) {
-    return (
-      <div className="work-run-prompt">
-        <div>
-          <strong>Run instructions</strong>
-          <pre className="work-system-prompt">{prompt}</pre>
-        </div>
-      </div>
-    )
-  }
-  const boundary = prompt.indexOf('\n## Canonical Boundary')
-  const assignment = boundary === -1 ? prompt : prompt.slice(0, boundary)
-  const protocol = boundary === -1 ? '' : prompt.slice(boundary + 1)
   return (
     <div className="work-run-prompt">
       <div>
-        <strong>Current assignment</strong>
-        <pre className="work-system-prompt">{assignment}</pre>
+        <strong>Run instructions</strong>
+        <pre className="work-system-prompt">{prompt}</pre>
       </div>
-      {protocol && (
-        <AppDisclosure summary="Canonical boundary, role protocol, and result contract">
-          <pre className="work-system-prompt">{protocol}</pre>
-        </AppDisclosure>
-      )}
     </div>
   )
 }
@@ -1648,20 +1418,24 @@ function AttemptHistory({
                 <strong>{selectedAttempt.responsibility}</strong>
                 <small>{selectedAttempt.runId}</small>
               </div>
-              <span>{selectedAttempt.application ?? 'responsibility process'}</span>
+              <span>
+                {selectedAttempt.termination
+                  ? `Termination: ${selectedAttempt.termination}`
+                  : 'responsibility process'}
+              </span>
             </header>
-            {selectedAttempt.summary && (
+            {selectedAttempt.reportMarkdown && (
               <AppDisclosure
                 className="attempt-summary"
                 bodyClassName="attempt-summary__body"
                 summary={
                   <span className="attempt-summary__heading">
-                    <strong>Result summary</strong>
-                    <small>{selectedAttempt.summary}</small>
+                    <strong>Report</strong>
+                    <small>{excerpt(selectedAttempt.reportMarkdown, 140)}</small>
                   </span>
                 }
               >
-                <p>{selectedAttempt.summary}</p>
+                <p>{selectedAttempt.reportMarkdown}</p>
               </AppDisclosure>
             )}
             <Suspense fallback={<MessageFeedSkeleton density="compact" />}>
@@ -1745,8 +1519,7 @@ function AttemptDiagnosticFacts({
 
 export function attemptStatus(attempt: RunAttemptSummary) {
   if (attempt.status === 'running') return 'working'
-  if (attempt.application === 'stale') return 'stale'
-  return attempt.result ?? attempt.status
+  return attempt.termination ?? attempt.status
 }
 
 export function attemptModelLabel(attempt: RunAttemptSummary | null) {
@@ -1758,43 +1531,38 @@ export function attemptModelLabel(attempt: RunAttemptSummary | null) {
     : model
 }
 
-export function latestEpochLabel(attempt: RunAttemptSummary | null) {
-  const epoch = attempt?.sessionEpochs.at(-1)
-  if (!epoch) return 'not recorded'
-  return `${epoch.transport} · ${epoch.closeReason ?? 'active'}`
-}
-
-function latestEpochTitle(attempt: RunAttemptSummary | null) {
-  const epoch = attempt?.sessionEpochs.at(-1)
-  return epoch ? `Latest Session: ${epoch.sessionId}` : undefined
-}
-
 export function attemptOutcomeBreakdown(attempts: RunAttemptSummary[]) {
-  let rejected = 0
-  let preparationFailed = 0
-  let failed = 0
+  let normal = 0
+  let cancelled = 0
   let interrupted = 0
+  let crashed = 0
+  let timedOut = 0
 
   for (const attempt of attempts) {
-    if (attempt.status === 'interrupted') interrupted += 1
-    else if (attempt.application === 'candidate_preparation_failed') preparationFailed += 1
-    else if (attempt.result === 'reject') rejected += 1
-    else if (attempt.result === 'fail') failed += 1
+    if (attempt.termination === 'normal') normal += 1
+    else if (attempt.termination === 'cancelled') cancelled += 1
+    else if (attempt.termination === 'interrupted') interrupted += 1
+    else if (attempt.termination === 'crashed') crashed += 1
+    else if (attempt.termination === 'timed_out') timedOut += 1
   }
 
-  return { rejected, preparationFailed, failed, interrupted }
+  return { normal, cancelled, interrupted, crashed, timedOut }
 }
 
 export function attemptOutcomeSummary(attempts: RunAttemptSummary[]) {
   const counts = attemptOutcomeBreakdown(attempts)
   const parts = [
-    counts.rejected > 0 ? `${counts.rejected} rejected` : null,
-    counts.preparationFailed > 0 ? `${counts.preparationFailed} candidate preflight failed` : null,
-    counts.failed > 0 ? `${counts.failed} failed` : null,
+    counts.cancelled > 0 ? `${counts.cancelled} cancelled` : null,
     counts.interrupted > 0 ? `${counts.interrupted} interrupted` : null,
+    counts.crashed > 0 ? `${counts.crashed} crashed` : null,
+    counts.timedOut > 0 ? `${counts.timedOut} timed out` : null,
   ].filter((part): part is string => part !== null)
 
-  return parts.length > 0 ? parts.join(' · ') : 'Messages and tool activity'
+  return parts.length > 0
+    ? parts.join(' · ')
+    : counts.normal > 0
+      ? `${counts.normal} normal`
+      : 'Messages and tool activity'
 }
 
 export function executionCostHeadline(summary: RunCostSummary) {
@@ -1802,25 +1570,6 @@ export function executionCostHeadline(summary: RunCostSummary) {
     ? `${summary.reportedTurns} turns`
     : `${summary.modelMessages} model messages`
   return `${summary.runs} Runs · ${modelActivity} · ${summary.toolCalls} tools · ${formatDuration(summary.elapsedMs)}`
-}
-
-export function operationStatusHeadline(operations: readonly DeliveryOperationView[]) {
-  const succeeded = operations.filter((operation) => operation.status === 'succeeded').length
-  const requiredPending = operations.filter(
-    (operation) => operation.requiredForGoal && operation.status !== 'succeeded',
-  ).length
-  return `${succeeded} / ${operations.length} succeeded${requiredPending ? ` · ${requiredPending} required pending` : ''}`
-}
-
-function operationResultHeadline(operation: DeliveryOperationView) {
-  if (!operation.result) return 'No observed result yet'
-  if (operation.result.kind === 'archive_created') {
-    return `${operation.result.kind} · ${formatBytes(operation.result.size)}`
-  }
-  if (operation.result.kind === 'baseline_integrated') {
-    return `${operation.result.kind} · ${operation.result.repos.length} Repo${operation.result.repos.length === 1 ? '' : 's'}`
-  }
-  return operation.result.summary
 }
 
 function formatTokenCoverage(summary: RunCostSummary) {
@@ -1831,15 +1580,12 @@ function formatTokenCoverage(summary: RunCostSummary) {
 
 function formatRunOutcomes(summary: RunCostSummary) {
   const parts = [
-    summary.outcomes.rejected ? `${summary.outcomes.rejected} rejected` : null,
-    summary.outcomes.preparationFailed
-      ? `${summary.outcomes.preparationFailed} candidate preflight failed`
-      : null,
-    summary.outcomes.failed ? `${summary.outcomes.failed} failed` : null,
+    summary.outcomes.cancelled ? `${summary.outcomes.cancelled} cancelled` : null,
     summary.outcomes.interrupted ? `${summary.outcomes.interrupted} interrupted` : null,
-    summary.outcomes.stale ? `${summary.outcomes.stale} stale` : null,
+    summary.outcomes.crashed ? `${summary.outcomes.crashed} crashed` : null,
+    summary.outcomes.timedOut ? `${summary.outcomes.timedOut} timed out` : null,
   ].filter((part): part is string => Boolean(part))
-  return parts.length ? parts.join(' · ') : `${summary.outcomes.success} successful`
+  return parts.length ? parts.join(' · ') : `${summary.outcomes.normal} normal`
 }
 
 function formatCompactNumber(value: number) {
@@ -1857,7 +1603,7 @@ function formatDuration(milliseconds: number) {
 }
 
 function attemptStatusTone(attempt: RunAttemptSummary) {
-  return attempt.application === 'stale' ? 'stale' : attempt.status
+  return attempt.termination ?? attempt.status
 }
 
 function formatAttemptTime(timestamp: string) {

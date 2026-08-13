@@ -227,7 +227,7 @@ describe('Assistant wake trigger', () => {
 
     const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
     expect(event?.attributes.context?.projectId).toBe('P-1')
-    expect(event?.body).toContain('attempt:P-1:G-1:planning:R-plan-1:success:published')
+    expect(event?.body).toContain('attempt:P-1:G-1:planning:R-plan-1:normal')
   })
 
   test('publishes a state edge without requiring a cached speaking Session', async () => {
@@ -264,7 +264,7 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
-  test('does not create another wake when only the repair Generator changes after one reject', async () => {
+  test('wakes again when the repair Generator has another settled interruption', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
 
@@ -282,8 +282,8 @@ describe('Assistant wake trigger', () => {
     expect(await fixture.wake.observe({ settled: false })).toBe('started')
     await fixture.wake.waitForIdle()
 
-    expect((await fixture.workspace.readWorkspace()).events.size).toBe(1)
-    expect(await fixture.wake.listRuns()).toHaveLength(1)
+    expect((await fixture.workspace.readWorkspace()).events.size).toBe(2)
+    expect(await fixture.wake.listRuns()).toHaveLength(2)
   })
 
   test('acknowledges the current Assistant effect without consuming a later state edge', async () => {
@@ -514,13 +514,24 @@ function reviewerRejectSnapshot(
                   dependsOn: [],
                   contractRevision: 1,
                 },
-                body: 'Work',
                 path: '/tmp/G-1/works/W-1.md',
                 projection: null,
                 runtime: runtime([
                   attempt(generatorRunId, 'generator', 'running', null, null),
-                  attempt(`${generatorRunId}-interrupted`, 'generator', 'interrupted', null, null),
-                  attempt(reviewerRunId, 'reviewer', 'finished', 'reject', 'published'),
+                  attempt(
+                    `${generatorRunId}-interrupted`,
+                    'generator',
+                    'settled',
+                    'interrupted',
+                    'The Generator Run was interrupted.',
+                  ),
+                  attempt(
+                    reviewerRunId,
+                    'reviewer',
+                    'settled',
+                    'normal',
+                    'Reviewer found changes that need another Build Run.',
+                  ),
                 ]),
               },
             ],
@@ -555,10 +566,15 @@ function planningOutcomeSnapshot(): AssistantStateSnapshot {
                 dependsOn: [],
                 contractRevision: 1,
               },
-              body: 'Planning outcome',
               path: '/tmp/G-1/works/plan-initial.md',
               runtime: runtime([
-                attempt('R-plan-1', 'planner', 'finished', 'success', 'published'),
+                attempt(
+                  'R-plan-1',
+                  'planner',
+                  'settled',
+                  'normal',
+                  'Planner reported the recommended Work boundary.',
+                ),
               ]),
               evidence: {
                 count: 1,
@@ -582,18 +598,17 @@ function attempt(
   runId: string,
   responsibility: AssistantStateRecentAttempt['responsibility'],
   status: AssistantStateRecentAttempt['status'],
-  result: AssistantStateRecentAttempt['result'],
-  application: string | null,
+  termination: AssistantStateRecentAttempt['termination'],
+  reportMarkdown: string | null,
 ): AssistantStateRecentAttempt {
   return {
     runId,
     responsibility,
     status,
-    result,
-    application,
+    termination,
     startedAt: '2026-07-25T00:00:00.000Z',
     endedAt: status === 'running' ? null : '2026-07-25T00:01:00.000Z',
-    summary: null,
+    reportMarkdown,
     artifactPreservation: null,
   }
 }

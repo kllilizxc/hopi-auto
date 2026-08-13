@@ -115,7 +115,6 @@ export function requireGoalBoardDetail(value: unknown): GoalBoardDetail {
     !isRecord(value.goal) ||
     !Array.isArray(value.works) ||
     !Array.isArray(value.attentions) ||
-    !Array.isArray(value.operations) ||
     (value.projectAttention !== null && !isRecord(value.projectAttention))
   ) {
     throw new Error('Goal board projection is incomplete. Waiting for a fresh backend response.')

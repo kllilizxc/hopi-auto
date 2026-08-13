@@ -7,7 +7,7 @@ import {
   parseInboxEventDocument,
   parseWorkspaceAttentionDocument,
 } from '../domain/assistantWorkspaceDocuments'
-import { projectReleaseRef } from '../domain/project'
+import { PROJECT_RESET_TRAILER_KEY, projectReleaseRef } from '../domain/project'
 import { assertStableId } from '../domain/stableId'
 import { acquireCoordinatorInstanceLock } from '../publication/instanceLock'
 import { PublicationCoordinator } from '../publication/publisher'
@@ -386,16 +386,32 @@ async function inspectRuntimeState(
 
 async function removeGoalHistoryFromRelease(plan: ProjectResetPlan) {
   const goalsRoot = join(plan.primaryIntegrationRoot, ...GOALS_ROOT.split('/'))
-  await rm(goalsRoot, { recursive: true, force: true })
-  if (plan.goals.trackedFiles.length === 0) return null
-
   const parent = (await git(plan.primaryIntegrationRoot, ['rev-parse', plan.releaseRef])).stdout
+  const parentMessage = (
+    await git(plan.primaryIntegrationRoot, ['show', '-s', '--format=%B', parent])
+  ).rawStdout
+  await rm(goalsRoot, { recursive: true, force: true })
+  if (
+    plan.goals.ids.length === 0 &&
+    trailerValue(parentMessage, PROJECT_RESET_TRAILER_KEY) === plan.projectId
+  ) {
+    return null
+  }
+
   const previousIndexTree = (await git(plan.primaryIntegrationRoot, ['write-tree'])).stdout
   let releaseAdvanced = false
   try {
-    await git(plan.primaryIntegrationRoot, ['add', '-u', '--', GOALS_ROOT])
+    if (plan.goals.trackedFiles.length > 0) {
+      await git(plan.primaryIntegrationRoot, ['add', '-u', '--', GOALS_ROOT])
+    }
     const tree = (await git(plan.primaryIntegrationRoot, ['write-tree'])).stdout
-    const message = `chore(hopi): reset ${plan.projectId} goals\n\nGeneration-Mode: AI-Pure\n`
+    const message = [
+      `chore(hopi): reset ${plan.projectId}`,
+      '',
+      `${PROJECT_RESET_TRAILER_KEY}: ${plan.projectId}`,
+      'Generation-Mode: AI-Pure',
+      '',
+    ].join('\n')
     const commit = (
       await git(plan.primaryIntegrationRoot, ['commit-tree', tree, '-p', parent], false, message)
     ).stdout
@@ -620,4 +636,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function trailerValue(message: string, key: string) {
+  const prefix = `${key}: `
+  return message
+    .split(/\r?\n/)
+    .find((line) => line.startsWith(prefix))
+    ?.slice(prefix.length)
+    .trim()
 }

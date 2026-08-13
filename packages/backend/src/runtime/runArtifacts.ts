@@ -1,6 +1,5 @@
 import { copyFile, cp, mkdir, rename, rm, stat } from 'node:fs/promises'
-import { basename, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
-import { z } from 'zod'
+import { basename, isAbsolute, join, posix, resolve } from 'node:path'
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const PORTABLE_ARTIFACT_PATTERN = /^artifact:([A-Za-z0-9][A-Za-z0-9._-]*)\/(.+)$/
@@ -18,35 +17,7 @@ export interface PreserveRunArtifactsResult {
   preserved: readonly PreservedRunArtifact[]
   unavailable: readonly { reference: string; reason: string }[]
   replacements: ReadonlyMap<string, string>
-  ignoredProposalPaths: readonly string[]
 }
-
-const runArtifactManifestSchema = z
-  .object({
-    runId: z.string().min(1),
-    artifacts: z.array(
-      z
-        .object({
-          reference: z.string().min(1),
-          path: z.string().min(1),
-          source: z.string().min(1),
-          kind: z.enum(['file', 'directory']),
-          sizeBytes: z.number().int().nonnegative(),
-        })
-        .strict(),
-    ),
-    unavailable: z.array(
-      z
-        .object({
-          reference: z.string().min(1),
-          reason: z.string().min(1),
-        })
-        .strict(),
-    ),
-  })
-  .strict()
-
-export type RunArtifactManifest = z.infer<typeof runArtifactManifestSchema>
 
 class RunArtifactError extends Error {}
 
@@ -56,8 +27,6 @@ export async function preserveRunArtifacts(input: {
   artifacts: readonly string[]
   sourceRoots?: readonly string[]
   portableRoots?: readonly string[]
-  proposalRoots?: readonly string[]
-  resultFile?: string
 }): Promise<PreserveRunArtifactsResult> {
   assertStableId(input.runId)
   const runRoot = resolve(input.runRoot)
@@ -74,16 +43,11 @@ export async function preserveRunArtifacts(input: {
   const replacements = new Map<string, string>()
   const preservedSources = new Map<string, string>()
   const unavailable: Array<{ reference: string; reason: string }> = []
-  const ignoredProposalPaths: string[] = []
 
   for (const [index, artifact] of input.artifacts.entries()) {
     const portable = parsePortableArtifactReference(artifact)
     if (portable) {
       addReference(artifact)
-      continue
-    }
-    if (await isProposalPath(artifact, input.proposalRoots)) {
-      ignoredProposalPaths.push(artifact)
       continue
     }
     if (await isPortableProjectArtifact(artifact, runRoot, input.portableRoots)) {
@@ -158,21 +122,12 @@ export async function preserveRunArtifacts(input: {
   }
 
   if (preserved.length > 0 || unavailable.length > 0) {
-    const manifest = runArtifactManifestSchema.parse({
-      runId: input.runId,
-      artifacts: preserved,
-      unavailable,
-    })
-    await Bun.write(join(runRoot, 'artifacts.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+    await Bun.write(
+      join(runRoot, 'artifacts.json'),
+      `${JSON.stringify({ runId: input.runId, artifacts: preserved, unavailable }, null, 2)}\n`,
+    )
   }
-  if (input.resultFile) await rewriteResultArtifacts(input.resultFile, references)
-  return { references, preserved, unavailable, replacements, ignoredProposalPaths }
-}
-
-export async function readRunArtifactManifest(runRoot: string) {
-  const file = Bun.file(join(resolve(runRoot), 'artifacts.json'))
-  if (!(await file.exists())) return null
-  return runArtifactManifestSchema.parse(await file.json())
+  return { references, preserved, unavailable, replacements }
 }
 
 export async function discoverRunArtifactPaths(root: string) {
@@ -237,27 +192,6 @@ async function isPortableProjectArtifact(
   return false
 }
 
-async function isProposalPath(artifact: string, proposalRoots: readonly string[] | undefined) {
-  for (const root of proposalRoots ?? []) {
-    if (isAbsolute(artifact)) {
-      if (
-        containedRelativePath(root, artifact) !== null &&
-        (await stat(resolve(artifact)).catch(() => null))?.isFile()
-      ) {
-        return true
-      }
-      continue
-    }
-    if (
-      isSafeRelativePath(artifact) &&
-      (await stat(resolve(root, artifact)).catch(() => null))?.isFile()
-    ) {
-      return true
-    }
-  }
-  return false
-}
-
 function isSafeRelativePath(path: string) {
   if (!path || isAbsolute(path) || path.includes('\\')) return false
   const normalized = posix.normalize(path)
@@ -267,14 +201,6 @@ function isSafeRelativePath(path: string) {
     normalized !== '..' &&
     !normalized.startsWith('../')
   )
-}
-
-function containedRelativePath(root: string, path: string) {
-  const value = relative(resolve(root), resolve(path))
-  if (value === '' || value === '..' || value.startsWith(`..${sep}`)) {
-    return null
-  }
-  return value
 }
 
 function safeArtifactName(value: string) {
@@ -304,20 +230,6 @@ async function directorySize(root: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
-}
-
-async function rewriteResultArtifacts(path: string, artifacts: readonly string[]) {
-  const file = Bun.file(path)
-  if (!(await file.exists())) return
-  const source = await file.text()
-  if (!source.trim()) return
-  try {
-    const value = JSON.parse(source)
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return
-    await Bun.write(path, `${JSON.stringify({ ...value, artifacts }, null, 2)}\n`)
-  } catch {
-    // RoleRunner already recorded invalid output; artifact retention must not replace that evidence.
-  }
 }
 
 function assertStableId(runId: string) {

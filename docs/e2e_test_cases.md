@@ -1,8 +1,5 @@
 # HOPI E2E Test Cases
 
-Status: historical Work-pipeline coverage. Current acceptance lives in
-`mvp_evolution_acceptance.md`.
-
 Status: executable runbook and coverage catalog
 Last updated: 2026-07-17
 
@@ -425,14 +422,17 @@ variant of `022`, and dependency Evidence handoff; earlier terminal evidence rem
 | `HOPI-E2E-033` | Dependency Evidence and artifact handoff                  | P0       | Contract                   | Covered; production Coordinator handoff passed                    |
 | `HOPI-E2E-034` | Idempotent retry during Prepare and edge-triggered idle   | P0       | Contract                    | Covered; production race and deadline wakes passed                |
 | `HOPI-E2E-035` | Durable Attention continuation and NeedsYou presentation  | P0       | Contract                    | Covered; revision-idempotent continuation and Work deferral pass  |
+| `HOPI-E2E-036` | Progressive Wayfinding and frontier handoff               | P0     | Contract and focused Live   | Contract covered; focused Live judgment canary pending            |
 
 `bun run e2e:contract` executes the deterministic regressions below; each uses production
 orchestration, durable documents, or real Git/process boundaries rather than a scenario DSL. They
 support the scenario designs but are not themselves implementations of the catalogued Browser or Live
 scenarios. Dedicated commands exist for the independent Browser and Live boundaries selected by the
 completion audit; composed rows deliberately reuse the listed evidence instead of adding a model
-call whose output cannot affect the asserted boundary. All designed cases are now covered; OpenCode
-is the only intentional execution exclusion.
+call whose output cannot affect the asserted boundary. All cases before `036` retain their prior
+coverage. `036` adds a new semantic judgment boundary; its deterministic prompt contracts are
+covered while one focused configured-provider canary remains pending. OpenCode remains the only
+intentional execution exclusion for the earlier vendor matrix.
 
 | ID             | Deterministic scenario binding                                                                                               |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -462,6 +462,7 @@ is the only intentional execution exclusion.
 | `HOPI-E2E-033` | `tests/contract/dependencyEvidenceHandoff.test.ts`, `tests/roleContextStager.test.ts`                                      |
 | `HOPI-E2E-034` | `tests/projectReconciler.test.ts`, `tests/coordinatorReconciler.test.ts`, `tests/assistantTools.test.ts`                       |
 | `HOPI-E2E-035` | `tests/assistantWake.test.ts`, `tests/assistantAttentionE2E.test.ts`, `tests/coordinatorReconciler.test.ts`                   |
+| `HOPI-E2E-036` | `tests/workspaceAssistant.test.ts`, `tests/roleContextStager.test.ts`                                                        |
 
 ## Detailed Cases
 
@@ -1488,6 +1489,43 @@ Pass conditions:
   still wake supervision.
 - Restart or repeated reconciliation cannot duplicate the current revision's continuation.
 - `waitForIdle()` includes wake work queued by a completing Wake record.
+
+### HOPI-E2E-036: Progressive Wayfinding And Frontier Handoff
+
+| Field   | Value                                                                                               |
+| ------- | --------------------------------------------------------------------------------------------------- |
+| Risk    | Assistant pre-charts fog as a speculative DAG, confuses a decision ticket with build work, or speaks for HITL. |
+| Reality | Production Assistant and Planner prompts plus one focused configured-provider judgment canary.             |
+| Fixture | One clear Goal and one foggy Goal containing an AFK ticket, a HITL ticket, and an unclear downstream area.   |
+| Cost    | Contract is zero-provider; Live uses one Assistant turn and one bounded Planner Run.                         |
+
+Actions:
+
+1. Give the clear Goal one stable Engineering outcome. Give the foggy Goal a destination, one precise
+   AFK decision ticket, one HITL ticket, and one downstream area not yet precise enough to ticket.
+2. Let Assistant skip the map for the clear Goal and work only the AFK frontier ticket for the foggy
+   Goal.
+3. Return a resolution that clears some fog, invalidates one route, and exposes two actionable,
+   independent Engineering handoffs.
+4. Let Assistant index the resolution, keep the HITL ticket with the operator, update the fog, and
+   materialize only the exposed handoffs.
+
+Pass conditions:
+
+- a small clear route needs no map, while the foggy Goal names its destination and loads only the
+  low-resolution map;
+- the fog/ticket test is whether a precise question can be stated now, not whether it can be answered;
+- Planner resolves one frontier decision ticket, produces decisions rather than deliverables, and
+  leaves HITL unresolved until the operator speaks;
+- `Decisions so far` indexes the resolution without duplicating its detail, and newly visible fog or
+  tickets update the route;
+- Assistant hands off only actionable Engineering Work, using `dependsOn` only between execution
+  commitments;
+- no map, ticket, fog, or frontier field and no second graph appears in storage, API, Scheduler, or UI.
+
+Current contract implementation:
+`packages/backend/tests/workspaceAssistant.test.ts` and
+`packages/backend/tests/roleContextStager.test.ts`. Focused Live judgment remains pending.
 
 ## Harness Self-Verification
 

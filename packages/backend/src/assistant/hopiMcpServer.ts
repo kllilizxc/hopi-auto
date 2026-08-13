@@ -52,7 +52,7 @@ server.registerTool(
   'hopi_create_goal',
   {
     description:
-      'Create one Goal from the current Inbox turn and atomically create its first visible Work. Choose Planning for unresolved meaning or Engineering for an already concrete unit; later execution uses explicit Run instructions, profiles, and workspace modes rather than a mandatory role pipeline.',
+      'Create one Goal from the current Inbox turn and atomically create its first Work. Creation does not execute the Work; request each Planner, Generator, or Reviewer Run explicitly with hopi_control_work.',
     inputSchema: assistantMcpToolSchemas.hopi_create_goal,
   },
   (args) => callTool('hopi_create_goal', args),
@@ -62,7 +62,7 @@ server.registerTool(
   'hopi_create_work',
   {
     description:
-      'Create one visible Work in an active Goal. Planning records a normalized contract change; Engineering records a concrete objective, acceptance meaning, and optional dependencies. Creation does not imply a mandatory Generator/Reviewer sequence.',
+      'Create one Work in an active Goal. Planning records an explicit normalized contract change; Engineering records a complete Work contract and dependencies. Creation does not queue a Run.',
     inputSchema: assistantMcpToolSchemas.hopi_create_work,
   },
   (args) => callTool('hopi_create_work', args),
@@ -82,7 +82,7 @@ server.registerTool(
   'hopi_control_goal',
   {
     description:
-      'Explicitly complete a Goal from current acceptance meaning, change its lifecycle or priority, or reopen it. Completion is a semantic decision and is blocked by nonterminal Work or active Runs; it is never inferred from a Work count.',
+      'Complete, pause, resume, cancel, reopen, or reprioritize one Goal. Completion requires every Work terminal and no queued or active Run.',
     inputSchema: assistantMcpToolSchemas.hopi_control_goal,
   },
   (args) => callTool('hopi_control_goal', args),
@@ -92,20 +92,10 @@ server.registerTool(
   'hopi_control_work',
   {
     description:
-      'Run explicit instructions for one Work with an independently selected execution profile and workspace mode, explicitly complete it, continue its legacy compatibility flow, change dependencies, or cancel it. A run produces a durable natural-language Report and never implies Work completion or a fixed Planner/Generator/Reviewer transition. isolated_write source is frozen as an unaccepted ChangeSet.',
+      'Explicitly queue one fresh Run with a profile, workspace mode, instruction, and optional references; complete one Work with a decision; change dependencies; or cancel. Run settlement only records termination and Report and never changes Work automatically.',
     inputSchema: assistantMcpToolSchemas.hopi_control_work,
   },
   (args) => callTool('hopi_control_work', args),
-)
-
-server.registerTool(
-  'hopi_control_operation',
-  {
-    description:
-      'Propose, execute, or cancel one typed delivery Operation. baseline_integration validates the ChangeSet base and preserves candidate Git ancestry; archive creates a durable ZIP. requiredForGoal is explicit per Operation—optional delivery never becomes a hidden completion gate.',
-    inputSchema: assistantMcpToolSchemas.hopi_control_operation,
-  },
-  (args) => callTool('hopi_control_operation', args),
 )
 
 server.registerTool(

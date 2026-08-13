@@ -1,7 +1,6 @@
 import { chmod, cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { dirname, join, posix, resolve } from 'node:path'
 import type { TransportContextBundle } from '../agent/vendorTransport'
-import { assistantDecisionPromptSchema } from '../domain/assistantDecisionPrompt'
 import { ASSISTANT_PREFERENCE_PATH, readAssistantPreference } from '../domain/assistantPreference'
 import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
 import {
@@ -28,37 +27,12 @@ import {
 } from './browserEnvironment'
 import { renderContextManifest, renderResponsibilityPrompt } from './roleContextRendering'
 import { parsePortableArtifactReference } from './runArtifacts'
-import type { RunDirective } from './runDirective'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
+import type { RunWorkspaceMode } from './runRequest'
 import { type SourceMergePreflightResult, inspectSourceMerge } from './sourceMergePreflight'
 
 export const RESPONSIBILITIES = ['planner', 'generator', 'reviewer'] as const
 export type Responsibility = (typeof RESPONSIBILITIES)[number]
-
-const DECISION_PROMPT_CAPABILITY_EXAMPLE = assistantDecisionPromptSchema.parse({
-  questions: [
-    {
-      id: 'scope',
-      header: 'Scope',
-      question: 'Which scope should the implementation use?',
-      options: [
-        {
-          id: 'recommended',
-          label: 'Recommended scope',
-          description: 'Explain why this scope best fits current authority.',
-          recommended: true,
-          detailPrompt: 'Add any constraints that affect this choice.',
-        },
-        {
-          id: 'alternative',
-          label: 'Alternative scope',
-          description: 'Explain its material tradeoff.',
-        },
-      ],
-      allowOther: true,
-    },
-  ],
-})
 
 export interface PrepareRoleContextInput {
   projectRoot: string
@@ -68,7 +42,9 @@ export interface PrepareRoleContextInput {
   workId: string
   runId: string
   responsibility: Responsibility
-  directive?: RunDirective
+  workspaceMode: RunWorkspaceMode
+  instructionMarkdown: string
+  refs: readonly string[]
   primaryRepoId: string
   repoRoots: readonly RoleRepoRoot[]
   apiOrigin?: string
@@ -76,9 +52,8 @@ export interface PrepareRoleContextInput {
   previousAttempt?: {
     runId: string
     responsibility: Responsibility
-    result: string | null
-    application: string | null
-    summary: string | null
+    termination: string
+    reportMarkdown: string
   }
 }
 
@@ -92,13 +67,9 @@ export interface RoleContextBundle extends TransportContextBundle {
   runRoot: string
   contextRoot: string
   authorityRoot: string
-  proposalRoot: string
-  attentionProposalDir: string
   artifactOutputDir: string
-  proposalCapabilitiesFile: string
-  resultSchemaFile: string
   primaryRepoRoot: string
-  resultFile: string
+  reportFile: string
   releaseHead: string
   repoReleaseHeads: Readonly<Record<string, string>>
   repoProjectionHeads: Readonly<Record<string, string>>
@@ -135,27 +106,20 @@ export function createRoleContextStager(
       assertStableId(input.runId, 'runId')
 
       const projectRoot = resolve(input.projectRoot)
-      const reportRun = input.directive?.protocol === 'report'
-      const workspaceMode =
-        input.directive?.workspaceMode ??
-        (input.responsibility === 'generator' ? 'isolated_write' : 'read_only')
       const apiOrigin = input.apiOrigin ? normalizeApiOrigin(input.apiOrigin) : undefined
       const primaryRepoId = input.primaryRepoId
       assertStableId(primaryRepoId, 'primaryRepoId')
       const repoRoots = normalizeRepoRoots(input.repoRoots, primaryRepoId)
-      const repoGuidance = workspaceMode === 'none' ? [] : await discoverRepoGuidance(repoRoots)
+      const repoGuidance = await discoverRepoGuidance(repoRoots)
       const paths = createGoalPackagePaths(projectRoot, input.projectId, input.projectPath)
       const runRoot = runStoragePath(absoluteHomeRoot, input.runId)
       const contextRoot = join(runRoot, 'context')
       const authorityRoot = join(contextRoot, 'authority')
-      const proposalRoot = join(runRoot, 'proposal')
       const artifactOutputDir = join(runRoot, 'output-artifacts')
-      const resultFile = join(runRoot, 'result.json')
+      const reportFile = join(runRoot, 'report.md')
       const contextFile = join(runRoot, 'context.md')
       const promptFile = join(runRoot, 'prompt.md')
       const reposFile = join(runRoot, 'repos.json')
-      const proposalCapabilitiesFile = join(contextRoot, 'proposal-capabilities.json')
-      const resultSchemaFile = join(contextRoot, 'result-schema.json')
       const browserHarnessArtifactDir = join(runRoot, 'browser-harness')
       const browserHarnessBackendCommand = resolveBrowserHarnessBackendCommand()
       const browserHarnessCommand =
@@ -172,9 +136,8 @@ export function createRoleContextStager(
       await Promise.all(
         [
           contextRoot,
-          proposalRoot,
           artifactOutputDir,
-          resultFile,
+          reportFile,
           contextFile,
           promptFile,
           reposFile,
@@ -182,7 +145,6 @@ export function createRoleContextStager(
         ].map((path) => rm(path, { recursive: true, force: true })),
       )
       await mkdir(authorityRoot, { recursive: true })
-      await mkdir(proposalRoot, { recursive: true })
       await mkdir(artifactOutputDir, { recursive: true })
       await mkdir(runtimeScratchDir, { recursive: true })
       await mkdir(runtimeCacheDir, { recursive: true })
@@ -210,10 +172,7 @@ export function createRoleContextStager(
           ]),
         ),
       )
-      const repoProjection =
-        workspaceMode === 'none' || (!input.directive && input.responsibility === 'planner')
-          ? 'release'
-          : 'candidate'
+      const repoProjection = input.workspaceMode === 'none' ? 'release' : 'candidate'
       const repoProjectionHeads = Object.fromEntries(
         await Promise.all(
           repoRoots.map(async (repo) => [
@@ -233,7 +192,7 @@ export function createRoleContextStager(
           `Work path ${workPath} owns ${parsedWork.attributes.id}, expected ${input.workId}`,
         )
       }
-      if (!reportRun && input.responsibility !== 'planner') {
+      if (input.responsibility !== 'planner') {
         if (!isEngineeringWork(parsedWork.attributes)) {
           throw new RoleContextStagingError(
             `${input.responsibility} requires Engineering Work ${input.workId}`,
@@ -294,7 +253,7 @@ export function createRoleContextStager(
           ? join(contextRoot, 'evidence-artifacts.json')
           : undefined
       const repairView =
-        workspaceMode === 'isolated_write'
+        input.workspaceMode === 'isolated_write'
           ? {
               candidate: await inspectCurrentCandidate(repoRoots, releaseRef, runtimeScratchDir),
             }
@@ -310,7 +269,7 @@ export function createRoleContextStager(
         repairView,
       )
       const operatorPreference =
-        !reportRun && input.responsibility === 'planner'
+        input.responsibility === 'planner'
           ? await snapshotOperatorPreference(publisher, absoluteHomeRoot)
           : undefined
       const operatorPreferenceFile = operatorPreference
@@ -334,22 +293,13 @@ export function createRoleContextStager(
         )
         await chmod(artifactManifestFile, 0o444)
       }
-      await Bun.write(
-        proposalCapabilitiesFile,
-        `${JSON.stringify(proposalCapabilities(input, paths), null, 2)}\n`,
-      )
-      await Bun.write(
-        resultSchemaFile,
-        `${JSON.stringify(resultSchema(input.responsibility), null, 2)}\n`,
-      )
-      await Promise.all([chmod(proposalCapabilitiesFile, 0o444), chmod(resultSchemaFile, 0o444)])
       const imageFiles = [...availableReferencedImages].map((imagePath) =>
         join(authorityRoot, ...imagePath.split('/')),
       )
 
       const agentsFile = snapshot.files.find((file) => file.path === paths.agentsPath)
       let bootstrapSourceRoot: string | undefined
-      if (!reportRun && input.responsibility === 'planner' && agentsFile?.content === null) {
+      if (input.responsibility === 'planner' && agentsFile?.content === null) {
         bootstrapSourceRoot = join(contextRoot, 'source')
         await stageTrackedSource(projectRoot, releaseHead, bootstrapSourceRoot, paths.projectPath)
       }
@@ -376,10 +326,7 @@ export function createRoleContextStager(
         contextFile,
         renderContextManifest(input, {
           authorityRoot,
-          proposalRoot,
           artifactOutputDir,
-          proposalCapabilitiesFile,
-          resultSchemaFile,
           runtimeScratchDir,
           runtimeCacheDir,
           releaseHead,
@@ -408,46 +355,29 @@ export function createRoleContextStager(
         renderResponsibilityPrompt(
           input,
           {
-            runRoot,
             contextFile,
             artifactManifestFile,
-            authorityRoot,
-            proposalRoot,
-            artifactOutputDir,
-            proposalCapabilitiesFile,
-            resultSchemaFile,
-            resultFile,
-            bootstrapSourceRoot,
             agentsPath: paths.agentsPath,
-            attentionRoot: paths.attentionRoot(input.goalId),
             primaryRepoId,
-            repoRoots,
             repoGuidance,
-            reposFile,
             apiOrigin,
             operatorPreferenceFile,
             browserTargetsFile,
-            hasImages: imageFiles.length > 0,
           },
           assignment,
         ),
       )
-      await Bun.write(resultFile, '')
+      await Bun.write(reportFile, '')
 
       return {
-        outcomeMode: reportRun ? 'freeform' : 'structured',
         runtimeScratchDir,
         runtimeCacheDir,
         runRoot,
         contextRoot,
         authorityRoot,
-        proposalRoot,
-        attentionProposalDir: join(proposalRoot, ...paths.attentionRoot(input.goalId).split('/')),
         artifactOutputDir,
-        proposalCapabilitiesFile,
-        resultSchemaFile,
         primaryRepoRoot: requiredPrimaryRepoRoot(repoRoots, primaryRepoId),
-        resultFile,
+        reportFile,
         releaseHead,
         repoReleaseHeads,
         repoProjectionHeads,
@@ -468,8 +398,7 @@ export function createRoleContextStager(
         apiOrigin,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
-        extraReadableRoots:
-          workspaceMode === 'none' ? [] : [...new Set(repoRoots.map((repo) => repo.path))],
+        extraReadableRoots: [...new Set(repoRoots.map((repo) => repo.path))],
         extraWritableRoots: [
           ...new Set([
             runRoot,
@@ -477,14 +406,12 @@ export function createRoleContextStager(
             runtimeScratchDir,
             runtimeCacheDir,
             ...(browserHarnessCommand ? [browserEnvironmentRoot(absoluteHomeRoot)] : []),
-            ...(workspaceMode === 'isolated_write' ? repoRoots.map((repo) => repo.path) : []),
+            ...(input.workspaceMode === 'isolated_write' ? repoRoots.map((repo) => repo.path) : []),
           ]),
         ],
         contextFile,
         artifactManifestFile,
         promptFile,
-        outcomeFile: resultFile,
-        canonicalOutcomeFile: resultFile,
         browserHarnessDir: 'scripts/hopi/browser-harness',
         browserHarnessCommand,
         browserHarnessBackendCommand: browserHarnessCommand
@@ -1048,98 +975,6 @@ function createRunAssignment(
     unavailableArtifacts,
     repairView,
     previousAttempt: input.previousAttempt ?? null,
-  }
-}
-
-function proposalCapabilities(
-  input: PrepareRoleContextInput,
-  paths: ReturnType<typeof createGoalPackagePaths>,
-) {
-  const attention = {
-    directory: paths.attentionRoot(input.goalId),
-    pathPattern: `${paths.attentionRoot(input.goalId)}/{id}.md`,
-    target: workAttentionTarget(input.projectId, input.goalId, input.workId),
-    fields: {
-      id: '{id}',
-      target: 'exact target above',
-      createdAt: '1970-01-01T00:00:00.000Z',
-      resolvedAt: null,
-      summary: 'short operator-facing explanation of the condition',
-      decisionPrompt: DECISION_PROMPT_CAPABILITY_EXAMPLE,
-    },
-    fieldConstraints: {
-      decisionPrompt: 'optional or null; 1-8 questions; 2-3 options per question',
-    },
-  }
-  if (input.directive?.protocol === 'report') {
-    return {
-      proposalRoot: '$HOPI_PROPOSAL_ROOT',
-      writable: [],
-    }
-  }
-  if (input.responsibility !== 'planner') {
-    return {
-      proposalRoot: '$HOPI_PROPOSAL_ROOT',
-      writable: [{ type: 'targeted-attention', ...attention }],
-    }
-  }
-  return {
-    proposalRoot: '$HOPI_PROPOSAL_ROOT',
-    writable: [
-      { type: 'design', path: `${paths.designRoot(input.goalId)}/**` },
-      {
-        type: 'engineering-work',
-        directory: paths.workRoot(input.goalId),
-        pathPattern: `${paths.workRoot(input.goalId)}/{id}.md`,
-        fields: {
-          id: '{id}',
-          title: 'string',
-          notBefore: 'ISO timestamp or null',
-          dependsOn: ['{engineering-work-id}'],
-          contractRevision: 'current Goal contractRevision',
-          evidenceRefs: [],
-          contextRefs: [{ path: 'current Goal file path', purpose: 'caller-authored purpose' }],
-          ownerMessages: [],
-          kind: 'engineering',
-          stage: 'generate',
-        },
-      },
-      { type: 'targeted-attention', ...attention },
-      {
-        type: 'project-repo-context',
-        path: '.hopi/docs/repos.md',
-        purpose: 'Repo ownership, important commands, shared contracts, and combined runtime shape',
-      },
-      { type: 'missing-project-guidance-bootstrap', path: 'AGENTS.md' },
-    ],
-  }
-}
-
-function resultSchema(responsibility: Responsibility) {
-  const results =
-    responsibility === 'reviewer' ? ['success', 'reject', 'fail'] : ['success', 'fail']
-  const summary =
-    responsibility === 'planner'
-      ? {
-          type: 'string',
-          minLength: 1,
-          maxLength: 600,
-        }
-      : { type: 'string', minLength: 1 }
-  return {
-    $schema: 'https://json-schema.org/draft/2020-12/schema',
-    type: 'object',
-    additionalProperties: false,
-    required: ['result', 'summary'],
-    properties: {
-      result: { enum: results },
-      summary,
-      artifacts: {
-        type: 'array',
-        items: { type: 'string', minLength: 1 },
-        default: [],
-      },
-    },
   }
 }
 

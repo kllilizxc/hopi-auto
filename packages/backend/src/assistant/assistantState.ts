@@ -33,14 +33,12 @@ import {
   resolveEvidenceArtifact,
 } from '../runtime/evidenceArtifacts'
 import type { Responsibility } from '../runtime/roleContextStager'
-import {
-  type RunAttemptSnapshot,
-  type RunAttemptStore,
-  type RunAttemptSummary,
-  deriveRunSchedulingFacts,
+import type {
+  RunAttemptSnapshot,
+  RunAttemptStore,
+  RunAttemptSummary,
 } from '../runtime/runAttemptStore'
 import { runStoragePath } from '../runtime/runPaths'
-import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
 import { SOFTWARE_DELIVERY_CONCURRENCY } from '../runtime/softwareDelivery'
 import { inspectSourceMerge } from '../runtime/sourceMergePreflight'
 import { createStableWorktreeManager } from '../runtime/stableWorktreeManager'
@@ -113,7 +111,6 @@ export interface AssistantStateDelegation {
   targetWorkId: string
   work: {
     attributes: AssistantStateWorkAttributes
-    body: string
     path: string
     runtime: AssistantStateRuntime
   }
@@ -137,7 +134,7 @@ export interface AssistantStateRuntime {
   worktree: { path: string; exists: boolean }
   paths: Partial<
     Record<
-      'root' | 'attempt' | 'events' | 'transcript' | 'context' | 'prompt' | 'result' | 'artifacts',
+      'root' | 'attempt' | 'events' | 'transcript' | 'context' | 'prompt' | 'report' | 'artifacts',
       string
     >
   >
@@ -160,7 +157,6 @@ export interface AssistantStateWorkAttributes {
 
 export interface AssistantStateWorkSnapshot {
   attributes: AssistantStateWorkAttributes
-  body: string
   path: string
   candidateIntegration?: AssistantStateCandidateIntegration
   projection: WorkProjection | null
@@ -170,7 +166,6 @@ export interface AssistantStateWorkSnapshot {
 
 export interface AssistantStatePlanningOutcome {
   attributes: AssistantStateWorkAttributes
-  body: string
   path: string
   runtime: AssistantStateRuntime
   evidence: AssistantStateEvidenceSummary
@@ -308,20 +303,12 @@ export function createAssistantStateReader(options: {
                   )
                   .map((attempt) => attempt.workId),
               )
-              const queuedWorkIds = new Set(
-                attemptSnapshot
-                  .queued()
-                  .filter(
-                    (attempt) =>
-                      attempt.projectId === project.projectId && attempt.goalId === goalId,
-                  )
-                  .map((attempt) => attempt.workId),
-              )
-              const failedWorkIds = await settledFailureWorkIds(
-                goalPackage,
-                attemptSnapshot.listGoal(project.projectId, goalId),
-                queuedWorkIds,
-              )
+              const queuedAttempts = attemptSnapshot
+                .queued()
+                .filter(
+                  (attempt) => attempt.projectId === project.projectId && attempt.goalId === goalId,
+                )
+              const attemptsByWork = attemptSnapshot.listGoal(project.projectId, goalId)
               const projections = deriveGoalWorkProjections(
                 project.projectId,
                 goalId,
@@ -329,15 +316,23 @@ export function createAssistantStateReader(options: {
                 {
                   projectEligible: true,
                   liveRunWorkIds: liveWorkIds,
-                  settledFailureWorkIds: failedWorkIds,
-                  passCapacity: {
+                  queuedRunProfiles: new Map(
+                    queuedAttempts.map(
+                      (attempt) => [attempt.workId, attempt.responsibility] as const,
+                    ),
+                  ),
+                  settledRunWorkIds: new Set(
+                    [...attemptsByWork]
+                      .filter(([, attempts]) =>
+                        attempts.some((attempt) => attempt.status === 'settled'),
+                      )
+                      .map(([workId]) => workId),
+                  ),
+                  runCapacity: {
                     planner: activeCounts.planner < SOFTWARE_DELIVERY_CONCURRENCY.planner,
                     generator: activeCounts.generator < SOFTWARE_DELIVERY_CONCURRENCY.generator,
                     reviewer: activeCounts.reviewer < SOFTWARE_DELIVERY_CONCURRENCY.reviewer,
                   },
-                  ...deriveRunSchedulingFacts(
-                    [...attemptSnapshot.listGoal(project.projectId, goalId).values()].flat(),
-                  ),
                   now: observedAt,
                 },
               )
@@ -406,7 +401,6 @@ export function createAssistantStateReader(options: {
                       attributes: input.includeEvidence
                         ? work.attributes
                         : compactWorkAttributes(work),
-                      body: boundedText(work.body, input.includeEvidence ? 4_000 : 1_200),
                       path: project.store.paths.absolute(
                         project.store.paths.workDocument(goalId, work.attributes.id),
                       ),
@@ -420,7 +414,6 @@ export function createAssistantStateReader(options: {
               const latestPlanningOutcome = latestPlanning
                 ? {
                     attributes: compactWorkAttributes(latestPlanning),
-                    body: boundedText(latestPlanning.body, input.includeEvidence ? 4_000 : 1_200),
                     path: project.store.paths.absolute(
                       project.store.paths.workDocument(goalId, latestPlanning.attributes.id),
                     ),
@@ -831,7 +824,7 @@ async function existingRunPaths(runRoot: string) {
     transcript: join(runRoot, 'transcript.log'),
     context: join(runRoot, 'context.md'),
     prompt: join(runRoot, 'prompt.md'),
-    result: join(runRoot, 'result.json'),
+    report: join(runRoot, 'report.md'),
     artifacts: join(runRoot, 'artifacts.json'),
   }
   const entries = await Promise.all(
@@ -951,10 +944,10 @@ async function latestActivity(
 function boundedAttempt(attempt: RunAttemptSummary) {
   return {
     ...attempt,
-    summary:
-      attempt.summary && attempt.summary.length > 4_000
-        ? `${attempt.summary.slice(0, 4_000)}...`
-        : attempt.summary,
+    reportMarkdown:
+      attempt.reportMarkdown && attempt.reportMarkdown.length > 4_000
+        ? `${attempt.reportMarkdown.slice(0, 4_000)}...`
+        : attempt.reportMarkdown,
   }
 }
 
@@ -963,14 +956,13 @@ function compactAttemptIndex(attempt: RunAttemptSummary) {
     runId: attempt.runId,
     responsibility: attempt.responsibility,
     status: attempt.status,
-    result: attempt.result,
-    application: attempt.application,
+    termination: attempt.termination,
     startedAt: attempt.startedAt,
     endedAt: attempt.endedAt,
-    summary:
-      attempt.summary && attempt.summary.length > 1_000
-        ? `${attempt.summary.slice(0, 1_000)}...`
-        : attempt.summary,
+    reportMarkdown:
+      attempt.reportMarkdown && attempt.reportMarkdown.length > 1_000
+        ? `${attempt.reportMarkdown.slice(0, 1_000)}...`
+        : attempt.reportMarkdown,
   }
 }
 
@@ -1055,7 +1047,6 @@ async function readCrossProjectDelegations(input: {
                   targetWorkId: work.attributes.id,
                   work: {
                     attributes: compactWorkAttributes(work),
-                    body: boundedText(work.body, 1_200),
                     path: targetProject.store.paths.absolute(
                       targetProject.store.paths.workDocument(goalId, work.attributes.id),
                     ),
@@ -1168,14 +1159,13 @@ function presentActiveAttempt(
 
 function latestTerminalAttempt(runtime: AssistantStateRuntime) {
   if (runtime.latestAttempt?.status !== 'running') return runtime.latestAttempt
-  const settled = runtime.recentAttempts.find((attempt) => attempt.status !== 'running')
+  const settled = runtime.recentAttempts.find((attempt) => attempt.status === 'settled')
   if (!settled) return null
   return {
     runId: settled.runId,
     responsibility: settled.responsibility,
     status: settled.status,
-    result: settled.result,
-    application: settled.application,
+    termination: settled.termination,
   }
 }
 

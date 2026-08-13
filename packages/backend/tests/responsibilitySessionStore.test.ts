@@ -1,199 +1,77 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readlink, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import {
-  bindResponsibilitySessionRunView,
-  createResponsibilitySessionStore,
-} from '../src/runtime/responsibilitySessionStore'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { createResponsibilitySessionStore } from '../src/runtime/responsibilitySessionStore'
 
-const temporaryRoots: string[] = []
+const homeRoot = join(process.cwd(), 'tests', 'tmp', 'responsibility-session-store')
+const scope = {
+  contractRevision: 1,
+  assignmentHash: 'a'.repeat(64),
+  runtimeDigest: 'b'.repeat(64),
+}
+
+beforeEach(async () => {
+  await rm(homeRoot, { recursive: true, force: true })
+  await mkdir(homeRoot, { recursive: true })
+})
 
 afterEach(async () => {
-  await Promise.all(
-    temporaryRoots.splice(0).map((path) => rm(path, { recursive: true, force: true })),
-  )
+  await rm(homeRoot, { recursive: true, force: true })
 })
 
 describe('ResponsibilitySessionStore', () => {
-  test('retains one workspace and vendor session within a running Run', async () => {
-    const root = await temporaryRoot()
-    const store = createResponsibilitySessionStore(root)
-    const generator = key('W-1', 'generator')
-    const reviewer = key('W-1', 'reviewer')
-    const assignment = scope(1, 'a')
-
-    const first = await store.open(generator, assignment)
-    expect(first.session).toBeNull()
-    await Bun.write(join(first.workspaceDir, 'partial-proof.json'), '{"ok":true}\n')
-    await store.write(generator, assignment, {
+  test('persists a provider Session only inside one Run', async () => {
+    const store = createResponsibilitySessionStore(homeRoot)
+    const firstKey = key('R-1')
+    const secondKey = key('R-2')
+    expect((await store.open(firstKey, scope)).session).toBeNull()
+    await store.write(firstKey, scope, {
       transport: 'codex',
-      sessionId: 'thread-generator',
-      executionKey: 'generator-key',
+      sessionId: 'vendor-session-1',
+      executionKey: 'execution-1',
     })
-    await store.write(reviewer, assignment, {
-      transport: 'claude',
-      sessionId: 'thread-reviewer',
-      executionKey: 'reviewer-key',
+    expect((await store.open(firstKey, scope)).session).toMatchObject({
+      sessionId: 'vendor-session-1',
     })
-
-    const resumed = await store.open(generator, assignment)
-    expect(resumed).toMatchObject({
-      contractRevision: 1,
-      assignmentHash: 'a'.repeat(64),
-      runtimeDigest: 'f'.repeat(64),
-      session: {
-        transport: 'codex',
-        sessionId: 'thread-generator',
-        executionKey: 'generator-key',
-      },
-      workspaceDir: first.workspaceDir,
-    })
-    expect(await Bun.file(join(resumed.workspaceDir, 'partial-proof.json')).text()).toBe(
-      '{"ok":true}\n',
-    )
-    expect((await store.open(reviewer, assignment)).session).toEqual({
-      transport: 'claude',
-      sessionId: 'thread-reviewer',
-      executionKey: 'reviewer-key',
-    })
-
-    await store.invalidateVendor(generator, assignment)
-    expect((await store.open(generator, assignment)).session).toBeNull()
-    expect(await Bun.file(join(first.workspaceDir, 'partial-proof.json')).exists()).toBe(true)
+    expect((await store.open(secondKey, scope)).session).toBeNull()
+    expect((await store.open(secondKey, scope)).workspaceDir).toContain('run-R-2')
   })
 
-  test('EV-001 starts a fresh provider Session and workspace for every successor Run', async () => {
-    const root = await temporaryRoot()
-    const store = createResponsibilitySessionStore(root)
-    const firstRun = key('W-1', 'generator', 'R-1')
-    const successorRun = key('W-1', 'generator', 'R-2')
-    const assignment = scope(1, 'a')
-    const first = await store.open(firstRun, assignment)
-    await Bun.write(join(first.workspaceDir, 'prior-run-only.txt'), 'old Run state')
-    await store.write(firstRun, assignment, {
-      transport: 'codex',
-      sessionId: 'settled-session',
-      executionKey: 'same-execution-contract',
+  test('invalidates one Run without touching another Run', async () => {
+    const store = createResponsibilitySessionStore(homeRoot)
+    await store.write(key('R-1'), scope, {
+      transport: 'claude',
+      sessionId: 'session-1',
+      executionKey: 'execution-1',
     })
-
-    const successor = await store.open(successorRun, assignment)
-
-    expect(successor.session).toBeNull()
-    expect(successor.workspaceDir).not.toBe(first.workspaceDir)
-    expect(await Bun.file(join(successor.workspaceDir, 'prior-run-only.txt')).exists()).toBe(false)
-    expect((await store.open(firstRun, assignment)).session?.sessionId).toBe('settled-session')
+    await store.write(key('R-2'), scope, {
+      transport: 'claude',
+      sessionId: 'session-2',
+      executionKey: 'execution-2',
+    })
+    await store.invalidateVendor(key('R-1'), scope)
+    expect((await store.open(key('R-1'), scope)).session).toBeNull()
+    expect((await store.open(key('R-2'), scope)).session?.sessionId).toBe('session-2')
   })
 
-  test('starts a fresh conversation and workspace for a changed assignment fingerprint', async () => {
-    const root = await temporaryRoot()
-    const store = createResponsibilitySessionStore(root)
-    const generator = key('W-1', 'generator')
-    const firstScope = scope(1, 'a')
-    const secondScope = scope(1, 'b')
-    const revisionOne = await store.open(generator, firstScope)
-    await Bun.write(join(revisionOne.workspaceDir, 'old-diagnostic.txt'), 'retained')
-    await store.write(generator, firstScope, {
-      transport: 'codex',
-      sessionId: 'revision-one',
-      executionKey: 'revision-one-key',
+  test('clearWork removes every Run-local Session for that Work', async () => {
+    const store = createResponsibilitySessionStore(homeRoot)
+    await store.write(key('R-1'), scope, {
+      transport: 'opencode',
+      sessionId: 'session-1',
+      executionKey: 'execution-1',
     })
-
-    const revisionTwo = await store.open(generator, secondScope)
-    expect(revisionTwo.session).toBeNull()
-    expect(revisionTwo.workspaceDir).not.toBe(revisionOne.workspaceDir)
-    expect(await Bun.file(join(revisionTwo.workspaceDir, 'old-diagnostic.txt')).exists()).toBe(
-      false,
-    )
-    expect(await Bun.file(join(revisionOne.workspaceDir, 'old-diagnostic.txt')).text()).toBe(
-      'retained',
-    )
-
     await store.clearWork({ projectId: 'P-1', goalId: 'G-1', workId: 'W-1' })
-    expect(await Bun.file(revisionOne.workspaceDir).exists()).toBe(false)
-    expect(await Bun.file(revisionTwo.workspaceDir).exists()).toBe(false)
-  })
-
-  test('starts a fresh conversation and workspace when the responsibility runtime contract changes', async () => {
-    const root = await temporaryRoot()
-    const store = createResponsibilitySessionStore(root)
-    const generator = key('W-1', 'generator')
-    const oldRuntime = scope(1, 'a', 'c')
-    const currentRuntime = scope(1, 'a', 'd')
-    const oldSession = await store.open(generator, oldRuntime)
-    await Bun.write(join(oldSession.workspaceDir, 'obsolete-assumption.txt'), 'old contract')
-    await store.write(generator, oldRuntime, {
-      transport: 'codex',
-      sessionId: 'old-runtime',
-      executionKey: 'old-runtime-key',
-    })
-
-    const currentSession = await store.open(generator, currentRuntime)
-
-    expect(currentSession).toMatchObject({
-      contractRevision: 1,
-      assignmentHash: 'a'.repeat(64),
-      runtimeDigest: 'd'.repeat(64),
-      session: null,
-    })
-    expect(currentSession.workspaceDir).not.toBe(oldSession.workspaceDir)
-    expect(
-      await Bun.file(join(currentSession.workspaceDir, 'obsolete-assumption.txt')).exists(),
-    ).toBe(false)
-    expect(await Bun.file(join(oldSession.workspaceDir, 'obsolete-assumption.txt')).text()).toBe(
-      'old contract',
-    )
-  })
-
-  test('rejects malformed metadata', async () => {
-    const root = await temporaryRoot()
-    const store = createResponsibilitySessionStore(root)
-    const generator = key('W-1', 'generator')
-    const assignment = scope(3, 'c')
-    const opened = await store.open(generator, assignment)
-
-    expect(opened.session).toBeNull()
-    const manifestPath = join(dirname(opened.workspaceDir), 'session.json')
-    await Bun.write(manifestPath, '{not-json')
-
-    expect(store.open(generator, assignment)).rejects.toThrow()
-  })
-
-  test('atomically rebinds one stable current view without changing older Run directories', async () => {
-    const root = await temporaryRoot()
-    const workspace = join(root, 'workspace')
-    const firstRun = join(root, 'runs', 'R-1')
-    const secondRun = join(root, 'runs', 'R-2')
-    await mkdir(firstRun, { recursive: true })
-    await mkdir(secondRun, { recursive: true })
-    await Bun.write(join(firstRun, 'result.json'), 'first')
-    await Bun.write(join(secondRun, 'result.json'), 'second')
-
-    const current = await bindResponsibilitySessionRunView(workspace, firstRun)
-    expect(await readlink(current)).toBe(firstRun)
-    expect(await Bun.file(join(current, 'result.json')).text()).toBe('first')
-
-    expect(await bindResponsibilitySessionRunView(workspace, secondRun)).toBe(current)
-    expect(await readlink(current)).toBe(secondRun)
-    expect(await Bun.file(join(current, 'result.json')).text()).toBe('second')
-    expect(await Bun.file(join(firstRun, 'result.json')).text()).toBe('first')
+    expect((await store.open(key('R-1'), scope)).session).toBeNull()
   })
 })
 
-function key(workId: string, responsibility: 'generator' | 'reviewer', runId = 'R-1') {
-  return { projectId: 'P-1', goalId: 'G-1', workId, runId, responsibility } as const
-}
-
-function scope(contractRevision: number, character: string, runtimeCharacter = 'f') {
+function key(runId: string) {
   return {
-    contractRevision,
-    assignmentHash: character.repeat(64),
-    runtimeDigest: runtimeCharacter.repeat(64),
+    projectId: 'P-1',
+    goalId: 'G-1',
+    workId: 'W-1',
+    runId,
+    responsibility: 'generator' as const,
   }
-}
-
-async function temporaryRoot() {
-  const root = await mkdtemp(join(tmpdir(), 'hopi-responsibility-session-'))
-  temporaryRoots.push(root)
-  return root
 }

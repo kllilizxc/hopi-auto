@@ -1,8 +1,5 @@
 # HOPI MVP Multi-Repo Design
 
-Status: C1 implementation baseline; not current product authority. Target lineage and Operation
-behavior lives in `mvp_design.md`.
-
 Status: implemented MVP protocol
 Last updated: 2026-07-23
 

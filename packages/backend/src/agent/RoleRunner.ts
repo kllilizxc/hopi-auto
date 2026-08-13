@@ -1,12 +1,11 @@
 import { appendFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { z } from 'zod'
 import type { ProjectCodingReasoningEffort } from '../domain/projectCodingDefaults'
 import { BoundedLineTail } from '../runtime/boundedLineTail'
 import { ensureManagedBrowser } from '../runtime/browserEnvironment'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
 import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
-import type { RunProtocol, RunWorkspaceMode } from '../runtime/runDirective'
+import type { RunTermination, RunWorkspaceMode } from '../runtime/runRequest'
 import { createEnvironmentSecretRedactor } from './environmentSecretRedactor'
 import {
   type PersistentProcessTranscriptNormalizer,
@@ -25,32 +24,9 @@ import {
   withNativeCompactionEnabled,
 } from './vendorTransport'
 
-export const PASS_RESULTS = ['success', 'reject', 'fail'] as const
-export type PassResultKind = (typeof PASS_RESULTS)[number]
-export const RUN_TERMINATIONS = [
-  'normal',
-  'cancelled',
-  'interrupted',
-  'crashed',
-  'timed_out',
-] as const
-export type RunTermination = (typeof RUN_TERMINATIONS)[number]
-
 export interface ResponsibilitySession extends VendorSession {
   executionKey: string
 }
-
-const roleResultSchema = z
-  .object({
-    result: z.enum(PASS_RESULTS),
-    summary: z.string().trim().min(1),
-    artifacts: z.array(z.string().min(1)).default([]),
-  })
-  .strict()
-
-const plannerResultSchema = roleResultSchema.extend({
-  summary: z.string().trim().min(1).max(600),
-})
 
 export interface RoleRunInput {
   projectId: string
@@ -58,8 +34,7 @@ export interface RoleRunInput {
   workId: string
   runId: string
   responsibility: Responsibility
-  protocol?: RunProtocol
-  workspaceMode?: RunWorkspaceMode
+  workspaceMode: RunWorkspaceMode
   cwd: string
   sourceRoots?: readonly string[]
   context: RoleContextBundle
@@ -69,21 +44,16 @@ export interface RoleRunInput {
 }
 
 export interface RoleRunResult {
-  result: PassResultKind
-  summary: string
+  reportMarkdown: string
   artifacts: readonly string[]
   exitCode: number | null
-  failureKind?: 'operational'
-  termination?: RunTermination
-  reportMarkdown?: string
+  termination: RunTermination
 }
 
 export interface RoleExecutionIdentity {
   transport: AgentTranscriptTransport
-  provider: AgentTranscriptTransport
   model: string | null
   reasoningEffort: ProjectCodingReasoningEffort | null
-  permissionBoundary: 'bounded' | 'unrestricted'
 }
 
 export interface RoleRunObserver {
@@ -92,11 +62,6 @@ export interface RoleRunObserver {
   onHeartbeat?(): Promise<void> | void
   onSession?(session: ResponsibilitySession): Promise<void> | void
   onSessionInvalid?(): Promise<void> | void
-  onSessionRotate?(rotation: {
-    reason: 'context_boundary' | 'session_unavailable'
-    previousSession: ResponsibilitySession
-    handoffMarkdown: string
-  }): Promise<void> | void
 }
 
 export interface RoleRunner {
@@ -127,18 +92,18 @@ export class ConfiguredRoleRunner implements RoleRunner {
 
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     const config = await this.resolveConfig(input)
-    const fullAccess = input.protocol === 'report' ? false : await this.fullAccess(input)
-    await observer?.onExecution?.(roleExecutionIdentity(config, fullAccess))
+    const fullAccess = input.workspaceMode === 'isolated_write' && (await this.fullAccess(input))
+    await observer?.onExecution?.(roleExecutionIdentity(config))
     if (input.context.browserHarnessCommand && input.context.browserHome) {
       try {
         await this.prepareManagedBrowser(input.context.browserHome)
       } catch (error) {
-        return failedResult(`Managed browser preflight failed: ${errorMessage(error)}`)
+        return factualResult('crashed', `Managed browser preflight failed: ${errorMessage(error)}`)
       }
     }
     const transport = resumableTransport(config)
     const executionKey = roleSessionExecutionKey(config, fullAccess, input.cwd)
-    let session =
+    const session =
       transport &&
       input.session?.transport === transport &&
       input.session.executionKey === executionKey
@@ -157,18 +122,14 @@ export class ConfiguredRoleRunner implements RoleRunner {
 
     const workflowBefore = await workflowDocumentStatus(input)
     const sourceRoots = input.sourceRoots?.length ? input.sourceRoots : [input.cwd]
-    const reviewerBefore =
-      input.workspaceMode === 'read_only' ||
-      (input.workspaceMode === undefined && input.responsibility === 'reviewer')
-        ? await sourceRootsFingerprint(sourceRoots)
-        : null
-    await Bun.write(input.context.resultFile, '')
+    const readOnlyBefore =
+      input.workspaceMode === 'read_only' ? await sourceRootsFingerprint(sourceRoots) : null
+    await Bun.write(input.context.reportFile, '')
     const transcriptFile = join(input.context.runRoot, 'transcript.log')
     await Bun.write(transcriptFile, '')
 
     const execute = async (continuationPrompt?: string) => {
-      let toolCallObserved = false
-      await Bun.write(input.context.resultFile, '')
+      await Bun.write(input.context.reportFile, '')
       const command = await resolveConfiguredTransportCommand({
         config,
         bundle: input.context,
@@ -185,25 +146,17 @@ export class ConfiguredRoleRunner implements RoleRunner {
         runtimeWorkspace: input.cwd,
         continuationPrompt,
         refreshAssignment: input.refreshAssignment,
+        workspaceMode: input.workspaceMode,
       })
-      const execution = await executeProcess(
+      return executeProcess(
         command,
         input,
-        {
-          ...observer,
-          onEvent: async (event) => {
-            if (event.kind === 'transcript' && event.entryKind === 'tool_call') {
-              toolCallObserved = true
-            }
-            await observer?.onEvent?.(event)
-          },
-        },
+        observer,
         this.heartbeatMs,
         transcriptFile,
         session,
         executionKey,
       )
-      return { ...execution, toolCallObserved }
     }
 
     if (session) {
@@ -220,99 +173,53 @@ export class ConfiguredRoleRunner implements RoleRunner {
       execution = await execute()
       if (execution.sessionInvalid) {
         await observer?.onSessionInvalid?.()
-        const previousSession = execution.session ?? session
-        if (previousSession && !execution.toolCallObserved && !input.signal?.aborted) {
-          const reason = sessionEpochCloseReason(execution.terminalError)
-          const handoffMarkdown = runSessionEpochHandoff(input, execution, reason)
-          await observer?.onSessionRotate?.({ reason, previousSession, handoffMarkdown })
-          await observer?.onEvent?.({
-            kind: 'message',
-            level: 'info',
-            role: 'coordinator',
-            content: `Rotating ${input.runId} to a new provider Session Epoch while retaining the same Run and workspace.`,
-          })
-          session = null
-          execution = await execute(
-            await sessionEpochContinuationPrompt(input.context.promptFile, handoffMarkdown),
-          )
-          if (execution.sessionInvalid) await observer?.onSessionInvalid?.()
-        }
       }
     } catch (error) {
-      return failedResult(`Unable to run ${input.responsibility}: ${errorMessage(error)}`)
+      return factualResult(
+        'crashed',
+        `Unable to run ${input.responsibility}: ${errorMessage(error)}`,
+      )
     }
     const processFailure = executionFailure(input, execution)
     if (processFailure) return processFailure
 
     const workflowAfter = await workflowDocumentStatus(input)
     if (workflowBefore !== workflowAfter || workflowAfter !== '') {
-      return failedResult(
+      return factualResult(
+        'crashed',
         `${input.responsibility} modified canonical .hopi content in its task worktree`,
         execution.exitCode,
-        { termination: 'normal', finalText: execution.finalText },
       )
     }
-    if (reviewerBefore !== null && reviewerBefore !== (await sourceRootsFingerprint(sourceRoots))) {
-      return failedResult(
-        input.protocol === 'report'
-          ? 'read-only Run modified a task worktree'
-          : 'reviewer modified a task worktree',
+    if (readOnlyBefore !== null && readOnlyBefore !== (await sourceRootsFingerprint(sourceRoots))) {
+      return factualResult('crashed', 'read-only Run modified a task worktree', execution.exitCode)
+    }
+    const reportFile = Bun.file(input.context.reportFile)
+    const reportFromFile = (await reportFile.exists()) ? (await reportFile.text()).trim() : ''
+    const reportMarkdown =
+      execution.finalText?.trim() ||
+      reportFromFile ||
+      factualReport(
+        'normal',
+        `${input.responsibility} exited normally without a final natural-language response.`,
         execution.exitCode,
-        {
-          termination: 'normal',
-          finalText: execution.finalText,
-        },
       )
-    }
-
-    if (input.protocol === 'report') {
-      return await freeformReportResult(input.context.resultFile, execution)
-    }
-
-    const parsed = await readResult(input.context.resultFile, execution, input.responsibility)
-
-    if (!parsed.success) {
-      return failedResult(parsed.error, execution.exitCode, {
-        termination: 'normal',
-        finalText: execution.finalText,
-      })
-    }
-    if (!resultAllowed(input.responsibility, parsed.value.result)) {
-      return failedResult(
-        `${input.responsibility} cannot return ${parsed.value.result}`,
-        execution.exitCode,
-        { termination: 'normal', finalText: execution.finalText },
-      )
-    }
+    await Bun.write(input.context.reportFile, `${reportMarkdown.trim()}\n`)
     return {
-      ...parsed.value,
+      reportMarkdown,
+      artifacts: [],
       exitCode: execution.exitCode,
       termination: 'normal',
-      reportMarkdown: reportMarkdown(parsed.value.summary, execution.finalText),
     }
   }
 }
 
-function roleExecutionIdentity(
-  config: RoleTransportConfig,
-  fullAccess: boolean,
-): RoleExecutionIdentity {
-  const permissionBoundary = fullAccess ? ('unrestricted' as const) : ('bounded' as const)
-  if ('cmd' in config) {
-    return {
-      transport: 'process',
-      provider: 'process',
-      model: null,
-      reasoningEffort: null,
-      permissionBoundary,
-    }
-  }
+function roleExecutionIdentity(config: RoleTransportConfig): RoleExecutionIdentity {
+  if ('cmd' in config) return { transport: 'process', model: null, reasoningEffort: null }
   return {
     transport: config.transport,
-    provider: config.transport,
     model: config.model ?? null,
     reasoningEffort: config.transport === 'codex' ? (config.reasoningEffort ?? null) : null,
-    permissionBoundary,
   }
 }
 
@@ -372,164 +279,36 @@ export function roleSessionExecutionKey(
   })
 }
 
-function resultAllowed(responsibility: Responsibility, result: PassResultKind) {
-  if (responsibility === 'planner') return result === 'success' || result === 'fail'
-  if (responsibility === 'generator') return result !== 'reject'
-  return true
-}
-
 type ProcessExecution = Awaited<ReturnType<typeof executeProcess>>
 
 function executionFailure(input: RoleRunInput, execution: ProcessExecution): RoleRunResult | null {
   if (input.signal?.aborted) {
-    const timedOut = isTimeoutReason(input.signal.reason)
-    return failedResult(
-      `${input.responsibility} Run was ${timedOut ? 'timed out' : 'interrupted'}`,
+    const termination = abortedTermination(input.signal)
+    return factualResult(
+      termination,
+      `${input.responsibility} Run was ${termination}.`,
       execution.exitCode,
-      {
-        termination: timedOut ? 'timed_out' : 'interrupted',
-        finalText: execution.finalText,
-      },
     )
   }
   if (execution.terminalError) {
-    return failedResult(execution.terminalError, execution.exitCode, {
-      finalText: execution.finalText,
-    })
+    return factualResult(
+      timeoutTermination(execution.terminalError),
+      execution.terminalError,
+      execution.exitCode,
+    )
   }
   if (execution.exitCode !== 0) {
-    return failedResult(
-      execution.stderr.at(-1)
-        ? `process exited with code ${execution.exitCode}: ${execution.stderr.at(-1)}`
-        : `process exited with code ${execution.exitCode}`,
-      execution.exitCode,
-      { finalText: execution.finalText },
-    )
+    const detail = execution.stderr.at(-1)
+      ? `process exited with code ${execution.exitCode}: ${execution.stderr.at(-1)}`
+      : `process exited with code ${execution.exitCode}`
+    return factualResult(timeoutTermination(detail), detail, execution.exitCode)
   }
   return null
 }
 
-function sessionEpochCloseReason(error: string | null) {
-  return error && /context|token|maximum length/i.test(error)
-    ? ('context_boundary' as const)
-    : ('session_unavailable' as const)
-}
-
-function runSessionEpochHandoff(
-  input: RoleRunInput,
-  execution: { terminalError: string | null; finalText: string | null },
-  reason: 'context_boundary' | 'session_unavailable',
-) {
-  const narrative = execution.finalText?.trim()
-  const source = [
-    '# Run Session Epoch handoff',
-    '',
-    `- Run: ${input.runId}`,
-    `- Work: ${input.workId}`,
-    `- Close reason: ${reason}`,
-    '- Workspace: retained; continue from its current files and Git state.',
-    '- Assignment: unchanged; do not repeat actions already reflected in the workspace.',
-    ...(execution.terminalError
-      ? ['', '## Provider observation', '', execution.terminalError]
-      : []),
-    ...(narrative ? ['', '## Last model narrative', '', narrative] : []),
-  ].join('\n')
-  return source.length <= 12_000 ? source : `${source.slice(0, 12_000)}\n\n[handoff truncated]`
-}
-
-async function sessionEpochContinuationPrompt(promptFile: string, handoffMarkdown: string) {
-  const assignment = (await Bun.file(promptFile).text()).trimEnd()
-  return [
-    assignment,
-    '',
-    handoffMarkdown,
-    '',
-    'Continue the same logical Run from the retained workspace and produce its final Report.',
-  ].join('\n')
-}
-
-async function readResult(
-  path: string,
-  execution: ProcessExecution,
-  responsibility: Responsibility,
-) {
-  const candidateFailures: string[] = []
-  if (execution.structuredOutcome !== undefined) {
-    const parsed = parseResultCandidate(
-      execution.structuredOutcome,
-      'structured vendor outcome',
-      responsibility,
-    )
-    if (parsed.success) {
-      await persistResult(path, parsed.value)
-      return parsed
-    }
-    candidateFailures.push(parsed.error)
-  }
-
-  const file = Bun.file(path)
-  if (await file.exists()) {
-    const source = await file.text()
-    if (source.trim()) {
-      const parsed = parseResultCandidate(source, 'result.json', responsibility)
-      if (parsed.success) return parsed
-      candidateFailures.push(parsed.error)
-    }
-  }
-
-  if (execution.finalText?.trim()) {
-    const parsed = parseResultCandidate(
-      execution.finalText,
-      'vendor final response',
-      responsibility,
-    )
-    if (parsed.success) {
-      await persistResult(path, parsed.value)
-      return parsed
-    }
-    candidateFailures.push(parsed.error)
-  }
-
-  return {
-    success: false as const,
-    error:
-      candidateFailures[0] ??
-      ((await file.exists())
-        ? 'Run exited without a structured responsibility outcome.'
-        : 'Run result storage was unavailable at settlement.'),
-  }
-}
-
-function parseResultCandidate(candidate: unknown, source: string, responsibility: Responsibility) {
-  try {
-    const value = typeof candidate === 'string' ? JSON.parse(candidate) : candidate
-    const parsed = (
-      responsibility === 'planner' ? plannerResultSchema : roleResultSchema
-    ).safeParse(value)
-    if (!parsed.success) {
-      return {
-        success: false as const,
-        error: `invalid ${source}: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ')}`,
-      }
-    }
-    return { success: true as const, value: parsed.data }
-  } catch (error) {
-    return { success: false as const, error: `invalid ${source}: ${errorMessage(error)}` }
-  }
-}
-
-async function persistResult(path: string, result: z.infer<typeof roleResultSchema>) {
-  await Bun.write(path, `${JSON.stringify(result, null, 2)}\n`)
-}
-
 async function workflowDocumentStatus(input: RoleRunInput) {
-  if (input.protocol !== 'report' && input.responsibility === 'planner') return ''
-  const roots = input.sourceRoots?.length
-    ? input.sourceRoots
-    : input.protocol === 'report'
-      ? []
-      : [input.cwd]
-  if (roots.length === 0) return ''
+  if (input.responsibility === 'planner') return ''
+  const roots = input.sourceRoots?.length ? input.sourceRoots : [input.cwd]
   const statuses = await Promise.all(
     roots.map(async (root) => {
       const status = await gitOutput(root, [
@@ -543,35 +322,6 @@ async function workflowDocumentStatus(input: RoleRunInput) {
     }),
   )
   return statuses.filter(Boolean).join('\n')
-}
-
-async function freeformReportResult(
-  path: string,
-  execution: ProcessExecution,
-): Promise<RoleRunResult> {
-  let narrative = execution.finalText?.trim() ?? ''
-  if (!narrative && typeof execution.structuredOutcome === 'string') {
-    narrative = execution.structuredOutcome.trim()
-  }
-  if (!narrative) {
-    const file = Bun.file(path)
-    if (await file.exists()) narrative = (await file.text()).trim()
-  }
-  const report = narrative
-    ? `${boundedReportText(narrative)}\n`
-    : '# Run Report\n\nRun settled normally without a final narrative.\n'
-  const firstContentLine = report
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^#{1,6}\s+/, '').trim())
-    .find(Boolean)
-  return {
-    result: 'success',
-    summary: (firstContentLine ?? 'Run settled normally.').slice(0, 600),
-    artifacts: [],
-    exitCode: execution.exitCode,
-    termination: 'normal',
-    reportMarkdown: report,
-  }
 }
 
 async function sourceRootsFingerprint(roots: readonly string[]) {
@@ -746,7 +496,6 @@ async function executeProcessWithTempDir(
   let observedSessionId = session?.sessionId ?? null
   let sessionInvalid = false
   let terminalError: string | null = null
-  let structuredOutcome: unknown
   let finalText: string | null = null
   let transcriptTail: Promise<void> = Promise.resolve()
   const recordLine = (stream: 'stdout' | 'stderr', line: string) => {
@@ -787,9 +536,6 @@ async function executeProcessWithTempDir(
             terminalError = output.terminalError.message
             sessionInvalid ||= output.terminalError.sessionInvalid
           }
-          if (output.structuredOutput !== undefined) {
-            structuredOutcome = output.structuredOutput
-          }
           if (output.finalText) finalText = output.finalText
           if (output.assistantText) finalText = output.assistantText
         }
@@ -804,15 +550,9 @@ async function executeProcessWithTempDir(
       }),
     ])
     await transcriptTail
-    if (structuredOutcome === undefined && command.structuredOutcomeFile) {
-      const candidate = await Bun.file(command.structuredOutcomeFile).text()
-      if (candidate.trim()) {
-        try {
-          structuredOutcome = JSON.parse(candidate)
-        } catch {
-          finalText = candidate
-        }
-      }
+    if (!finalText && command.finalOutputFile) {
+      const candidate = await Bun.file(command.finalOutputFile).text()
+      if (candidate.trim()) finalText = candidate
     }
     if (
       exitCode === 0 &&
@@ -838,7 +578,6 @@ async function executeProcessWithTempDir(
               executionKey: requireExecutionKey(executionKey),
             }
           : null,
-      structuredOutcome,
       finalText,
     }
   } finally {
@@ -866,47 +605,45 @@ async function emitLine(
   }
 }
 
-function failedResult(
-  summary: string,
+function factualResult(
+  termination: RunTermination,
+  detail: string,
   exitCode: number | null = null,
-  options: { termination?: RunTermination; finalText?: string | null } = {},
 ): RoleRunResult {
   return {
-    result: 'fail',
-    summary,
+    reportMarkdown: factualReport(termination, detail, exitCode),
     artifacts: [],
     exitCode,
-    failureKind: 'operational',
-    termination: options.termination ?? 'crashed',
-    reportMarkdown: reportMarkdown(summary, options.finalText),
+    termination,
   }
 }
 
-function reportMarkdown(summary: string, finalText?: string | null) {
-  const narrative = finalText?.trim()
-  if (!narrative || isJsonObject(narrative)) return `# Run Report\n\n${summary.trim()}\n`
-  return `# Run Report\n\n${boundedReportText(narrative)}\n\n## Runtime observation\n\n${summary.trim()}\n`
+function factualReport(termination: RunTermination, detail: string, exitCode: number | null) {
+  return [
+    '# Run report',
+    '',
+    `- Termination: ${termination}`,
+    `- Exit code: ${exitCode ?? 'unavailable'}`,
+    '',
+    detail.trim() || 'The Run ended without an additional diagnostic.',
+  ].join('\n')
 }
 
-function boundedReportText(value: string) {
-  const limit = 16_000
-  return value.length <= limit ? value : `${value.slice(0, limit)}\n\n[final response truncated]`
-}
-
-function isJsonObject(value: string) {
-  try {
-    const parsed = JSON.parse(value)
-    return typeof parsed === 'object' && parsed !== null
-  } catch {
-    return false
+function abortedTermination(signal: AbortSignal): RunTermination {
+  const reason = signal.reason
+  if (
+    typeof reason === 'object' &&
+    reason !== null &&
+    'termination' in reason &&
+    ['cancelled', 'interrupted', 'timed_out'].includes(String(reason.termination))
+  ) {
+    return reason.termination as RunTermination
   }
+  return 'interrupted'
 }
 
-function isTimeoutReason(reason: unknown) {
-  return (
-    (reason instanceof DOMException && reason.name === 'TimeoutError') ||
-    (reason instanceof Error && reason.name === 'TimeoutError')
-  )
+function timeoutTermination(detail: string): RunTermination {
+  return /tim(?:e|ed)[ -]?out|timeout/i.test(detail) ? 'timed_out' : 'crashed'
 }
 
 function errorMessage(error: unknown) {

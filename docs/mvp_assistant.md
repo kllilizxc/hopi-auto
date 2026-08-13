@@ -1,7 +1,5 @@
 # HOPI MVP Assistant
 
-Status: Work-based implementation baseline; not current product authority. See `mvp_design.md`.
-
 Status: forward Assistant authority
 Last updated: 2026-07-30
 

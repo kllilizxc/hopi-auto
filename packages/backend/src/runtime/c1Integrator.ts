@@ -1,17 +1,19 @@
 import { chmod, cp, lstat, mkdir, mkdtemp, rename, rm, symlink } from 'node:fs/promises'
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
-import { workAttentionTarget } from '../domain/attentionTarget'
+import { parseWorkAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
 import {
-  type EvidenceDocument,
   type WorkDocument,
   isEngineeringWork,
-  parseEvidenceDocument,
+  isWorkTerminal,
   parseWorkDocument,
-  renderEvidenceDocument,
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import { validateGoalPackageTransition } from '../domain/goalPackage'
-import { type ProjectDocument, projectReleaseRef } from '../domain/project'
+import {
+  PROJECT_RESET_TRAILER_KEY,
+  type ProjectDocument,
+  projectReleaseRef,
+} from '../domain/project'
 import {
   parseProjectDocument,
   renderProjectDocument,
@@ -19,23 +21,24 @@ import {
   withRepoRelease,
 } from '../domain/projectDocument'
 import { normalizeProjectPath } from '../domain/projectPath'
-import type { PublicationCoordinator } from '../publication/publisher'
+import { type PublicationCoordinator, hashBytes } from '../publication/publisher'
 import { publicationCandidateFromSnapshot } from '../publication/snapshotCandidate'
 import type { PublicationSnapshot, PublicationWrite } from '../publication/types'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
-import type { ApplyPassOutcomeInput } from './passOutcomeCoordinator'
-import { validatePassSemanticGuard } from './passOutcomeCoordinator'
 import { stageSourceMerge } from './sourceMergePreflight'
 
-export interface C1IntegrationInput {
-  pass: ApplyPassOutcomeInput
-  taskWorktreePath: string
-  taskWorktrees?: Readonly<Record<string, string>>
-  evidence: EvidenceDocument
+export interface C1CompletionInput {
+  goalId: string
+  workId: string
+  sourceEventId: string
+  decision: string
+  expectedWorkHash: string
+  taskWorktrees: Readonly<Record<string, string>>
+  expectedTaskHeads: Readonly<Record<string, string>>
   completedWork: WorkDocument
 }
 
-export type C1IntegrationResult =
+export type C1CompletionResult =
   | {
       kind: 'integrated'
       commit: string
@@ -75,7 +78,7 @@ export interface C1ProjectLayout {
 }
 
 export interface C1Integrator {
-  integrate(input: C1IntegrationInput, faultHooks?: C1FaultHooks): Promise<C1IntegrationResult>
+  complete(input: C1CompletionInput, faultHooks?: C1FaultHooks): Promise<C1CompletionResult>
 }
 
 export class C1IntegrationError extends Error {}
@@ -93,11 +96,11 @@ export function createC1Integrator(
   const releaseRef = projectReleaseRef(projectLayout.projectId)
 
   return {
-    async integrate(input, faultHooks = {}) {
+    async complete(input, faultHooks = {}) {
       validateInput(store, input)
       const projectRepos = engineeringProjectRepos(projectLayout, input.completedWork)
       const taskWorktrees = resolveTaskWorktrees(projectLayout, projectRepos, input)
-      const workReference = workRef(store, input.pass.goalId, input.pass.workId)
+      const workReference = workRef(store, input.goalId, input.workId)
       const existing = await findIntegrationCommits(
         store.paths.projectRoot,
         releaseRef,
@@ -142,12 +145,10 @@ export function createC1Integrator(
             currentCandidate,
             currentCandidate,
             store.paths,
-            input.pass.goalId,
+            input.goalId,
           )
-          await validatePassSemanticGuard(store, input.pass, currentPackage, [], {
-            allowReleaseHeadChange: true,
-            currentAuthority: currentCandidate,
-          })
+          validateCurrentCompletionAuthority(snapshot, currentPackage, store, input)
+          await verifyTaskHeads(projectRepos, taskWorktrees, input.expectedTaskHeads)
 
           const projectFile = snapshot.files.find((file) => file.path === '.hopi/project.yml')
           if (!projectFile?.content || !projectFile.hash) {
@@ -196,7 +197,7 @@ export function createC1Integrator(
             currentCandidate,
             candidate,
             store.paths,
-            input.pass.goalId,
+            input.goalId,
           )
           validateIntegrationDocumentDelta(input, currentPackage, nextPackage)
 
@@ -209,6 +210,7 @@ export function createC1Integrator(
             repo: primary,
             oldTarget,
             taskWorktreePath: requireTaskWorktree(taskWorktrees, projectLayout.primaryRepoId),
+            expectedTaskHead: requireTaskHead(input.expectedTaskHeads, projectLayout.primaryRepoId),
             env: gitEnv,
           })
           if (primarySource.kind === 'rejected') return primarySource
@@ -247,6 +249,17 @@ export function createC1Integrator(
                 kind: 'blocked',
                 reason: `Repo ${repoId} release changed before primary C1 (${expected} -> ${actual})`,
               }
+            }
+          }
+          const changedTaskHead = await firstChangedTaskHead(
+            projectRepos,
+            taskWorktrees,
+            input.expectedTaskHeads,
+          )
+          if (changedTaskHead) {
+            return {
+              kind: 'rejected',
+              reason: `Repo ${changedTaskHead.repoId} task branch changed before C1 (${changedTaskHead.expected} -> ${changedTaskHead.actual})`,
             }
           }
           let recoveredUncertainUpdate = false
@@ -350,19 +363,9 @@ function requireLayoutRepo(layout: C1ProjectLayout, repoId: string) {
 function resolveTaskWorktrees(
   layout: C1ProjectLayout,
   projectRepos: readonly C1ProjectRepo[],
-  input: C1IntegrationInput,
+  input: C1CompletionInput,
 ) {
-  let entries: ReadonlyArray<readonly [string, string]>
-  if (input.taskWorktrees) {
-    entries = Object.entries(input.taskWorktrees)
-  } else if (projectRepos.length === 1) {
-    const repo = projectRepos[0]
-    if (!repo) throw new C1IntegrationError('C1 Work has no Project Repo')
-    entries = [[repo.repoId, input.taskWorktreePath]]
-  } else {
-    entries = []
-  }
-  const worktrees = new Map(entries)
+  const worktrees = new Map(Object.entries(input.taskWorktrees))
   for (const repo of projectRepos) {
     if (!worktrees.get(repo.repoId)) {
       throw new C1IntegrationError(`C1 is missing task worktree for Repo ${repo.repoId}`)
@@ -376,6 +379,12 @@ function requireTaskWorktree(worktrees: ReadonlyMap<string, string>, repoId: str
   const path = worktrees.get(repoId)
   if (!path) throw new C1IntegrationError(`C1 is missing task worktree for Repo ${repoId}`)
   return path
+}
+
+function requireTaskHead(taskHeads: Readonly<Record<string, string>>, repoId: string) {
+  const head = taskHeads[repoId]
+  if (!head) throw new C1IntegrationError(`C1 is missing task head for Repo ${repoId}`)
+  return head
 }
 
 function validateProjectLayoutDocument(layout: C1ProjectLayout, document: ProjectDocument) {
@@ -397,6 +406,7 @@ async function buildSourceCandidate(input: {
   repo: C1ProjectRepo
   oldTarget: string
   taskWorktreePath: string
+  expectedTaskHead: string
   env: Record<string, string> & { GIT_INDEX_FILE: string }
 }): Promise<SourceCandidateResult> {
   const taskStatus = await git(input.taskWorktreePath, [
@@ -411,6 +421,12 @@ async function buildSourceCandidate(input: {
     }
   }
   const taskHead = await git(input.taskWorktreePath, ['rev-parse', 'HEAD'])
+  if (taskHead !== input.expectedTaskHead) {
+    return {
+      kind: 'rejected',
+      reason: `Repo ${input.repo.repoId} task branch changed before C1 (${input.expectedTaskHead} -> ${taskHead})`,
+    }
+  }
   const mergeBase = await git(input.repo.integrationRoot, ['merge-base', input.oldTarget, taskHead])
   const projectPath = normalizeProjectPath(input.repo.projectPath)
   if (projectPath !== '.') {
@@ -464,7 +480,7 @@ async function buildComponentCandidate(input: {
   taskWorktreePath: string
   indexPath: string
   store: GoalPackageStore
-  input: C1IntegrationInput
+  input: C1CompletionInput
   timestamp: Date
 }): Promise<{ kind: 'ready'; commit: string } | { kind: 'rejected'; reason: string }> {
   const env = { GIT_INDEX_FILE: input.indexPath }
@@ -472,6 +488,7 @@ async function buildComponentCandidate(input: {
     repo: input.repo,
     oldTarget: input.oldTarget,
     taskWorktreePath: input.taskWorktreePath,
+    expectedTaskHead: requireTaskHead(input.input.expectedTaskHeads, input.repo.repoId),
     env,
   })
   if (source.kind === 'rejected') return source
@@ -514,25 +531,28 @@ async function createComponentCommit(
   oldTarget: string,
   repoId: string,
   store: GoalPackageStore,
-  input: C1IntegrationInput,
+  input: C1CompletionInput,
   timestamp: Date,
 ) {
-  const workReference = workRef(store, input.pass.goalId, input.pass.workId)
+  const decisionDigest = await completionDecisionDigest(input.decision)
   const message = [
-    `hopi: component ${repoId} for ${input.pass.goalId}/${input.pass.workId}`,
+    `hopi: component ${repoId} for ${input.goalId}/${input.workId}`,
     '',
     `HOPI-Project: ${store.paths.projectId}`,
-    `HOPI-Goal: ${input.pass.goalId}`,
-    `HOPI-Work: ${input.pass.workId}`,
+    `HOPI-Goal: ${input.goalId}`,
+    `HOPI-Work: ${input.workId}`,
     `HOPI-Repo: ${repoId}`,
-    `HOPI-Producer-Run: ${workReference}/run:${input.pass.runId}`,
+    `HOPI-Assistant-Event: ${input.sourceEventId}`,
+    `HOPI-Completion-Decision: ${decisionDigest}`,
+    `HOPI-Repo-Commit: ${repoId}=${requireTaskHead(input.expectedTaskHeads, repoId)}`,
+    'Generation-Mode: AI-Pure',
     '',
   ].join('\n')
   return durableGit(
     repoRoot,
     ['commit-tree', tree, '-p', oldTarget],
     {
-      GIT_AUTHOR_NAME: 'HOPI Reviewer',
+      GIT_AUTHOR_NAME: 'HOPI Assistant',
       GIT_AUTHOR_EMAIL: 'hopi@local',
       GIT_COMMITTER_NAME: 'HOPI Coordinator',
       GIT_COMMITTER_EMAIL: 'hopi@local',
@@ -787,26 +807,31 @@ async function createIntegrationCommit(
   tree: string,
   oldTarget: string,
   store: GoalPackageStore,
-  input: C1IntegrationInput,
+  input: C1CompletionInput,
   timestamp: Date,
 ) {
-  const workReference = workRef(store, input.pass.goalId, input.pass.workId)
-  const producerRun = `${workReference}/run:${input.pass.runId}`
+  const workReference = workRef(store, input.goalId, input.workId)
+  const decisionDigest = await completionDecisionDigest(input.decision)
   const message = [
-    `hopi: integrate ${input.pass.goalId}/${input.pass.workId}`,
+    `hopi: complete ${input.goalId}/${input.workId}`,
     '',
     `HOPI-Project: ${store.paths.projectId}`,
-    `HOPI-Goal: ${input.pass.goalId}`,
-    `HOPI-Work: ${input.pass.workId}`,
+    `HOPI-Goal: ${input.goalId}`,
+    `HOPI-Work: ${input.workId}`,
     `HOPI-Work-Ref: ${workReference}`,
-    `HOPI-Producer-Run: ${producerRun}`,
+    `HOPI-Assistant-Event: ${input.sourceEventId}`,
+    `HOPI-Completion-Decision: ${decisionDigest}`,
+    ...Object.entries(input.expectedTaskHeads)
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([repoId, commit]) => `HOPI-Repo-Commit: ${repoId}=${commit}`),
+    'Generation-Mode: AI-Pure',
     '',
   ].join('\n')
   return durableGit(
     projectRoot,
     ['commit-tree', tree, '-p', oldTarget],
     {
-      GIT_AUTHOR_NAME: 'HOPI Reviewer',
+      GIT_AUTHOR_NAME: 'HOPI Assistant',
       GIT_AUTHOR_EMAIL: 'hopi@local',
       GIT_COMMITTER_NAME: 'HOPI Coordinator',
       GIT_COMMITTER_EMAIL: 'hopi@local',
@@ -836,7 +861,7 @@ async function durabilitySync(projectRoot: string) {
   }
 }
 
-export async function materializeCommit(projectRoot: string, oldTarget: string, commit: string) {
+async function materializeCommit(projectRoot: string, oldTarget: string, commit: string) {
   const changes = (
     await gitBytes(projectRoot, ['diff', '--name-status', '--no-renames', '-z', oldTarget, commit])
   )
@@ -1108,7 +1133,7 @@ async function safeProjectPath(projectRoot: string, path: string) {
 
 function integrationDocumentWrites(
   store: GoalPackageStore,
-  input: C1IntegrationInput,
+  input: C1CompletionInput,
   projectDocumentHash: string,
   projectDocument: ProjectDocument,
 ) {
@@ -1119,40 +1144,33 @@ function integrationDocumentWrites(
       content: renderProjectDocument(projectDocument),
     },
     {
-      path: store.paths.evidenceDocument(input.pass.goalId, input.evidence.attributes.id),
-      expectedHash: null,
-      content: renderEvidenceDocument(input.evidence),
-    },
-    {
-      path: store.paths.workDocument(input.pass.goalId, input.completedWork.attributes.id),
-      expectedHash: input.pass.context.workHash,
+      path: store.paths.workDocument(input.goalId, input.completedWork.attributes.id),
+      expectedHash: input.expectedWorkHash,
       content: renderWorkDocument(input.completedWork),
     },
   ] satisfies PublicationWrite[]
 }
 
 function validateIntegrationDocumentDelta(
-  input: C1IntegrationInput,
+  input: C1CompletionInput,
   current: Awaited<ReturnType<typeof validateGoalPackageTransition>>,
   candidate: Awaited<ReturnType<typeof validateGoalPackageTransition>>,
 ) {
-  const currentWork = current.works.get(input.pass.workId)
-  const nextWork = candidate.works.get(input.pass.workId)
-  const evidence = candidate.evidence.get(input.evidence.attributes.id)
+  const currentWork = current.works.get(input.workId)
+  const nextWork = candidate.works.get(input.workId)
   if (
     !currentWork ||
     !isEngineeringWork(currentWork.attributes) ||
-    currentWork.attributes.stage !== 'review' ||
+    currentWork.attributes.stage === 'done' ||
+    currentWork.attributes.stage === 'cancelled' ||
     !nextWork ||
-    JSON.stringify(nextWork) !== JSON.stringify(input.completedWork) ||
-    !evidence ||
-    JSON.stringify(evidence) !== JSON.stringify(input.evidence)
+    JSON.stringify(nextWork) !== JSON.stringify(input.completedWork)
   ) {
-    throw new C1IntegrationError('C1 documents do not express the reviewed Work result')
+    throw new C1IntegrationError('C1 documents do not express the explicit Work completion')
   }
   for (const [workId, work] of current.works) {
     if (
-      workId !== input.pass.workId &&
+      workId !== input.workId &&
       JSON.stringify(work) !== JSON.stringify(candidate.works.get(workId))
     ) {
       throw new C1IntegrationError(`C1 unexpectedly changes Work ${workId}`)
@@ -1160,18 +1178,76 @@ function validateIntegrationDocumentDelta(
   }
 }
 
-function validateInput(store: GoalPackageStore, input: C1IntegrationInput) {
+function validateCurrentCompletionAuthority(
+  snapshot: PublicationSnapshot,
+  current: Awaited<ReturnType<typeof validateGoalPackageTransition>>,
+  store: GoalPackageStore,
+  input: C1CompletionInput,
+) {
+  if (current.goal.attributes.lifecycle !== 'active') {
+    throw new C1IntegrationError(
+      `Cannot complete Work in ${current.goal.attributes.lifecycle} Goal ${input.goalId}`,
+    )
+  }
+  const work = current.works.get(input.workId)
+  if (!work || !isEngineeringWork(work.attributes) || isWorkTerminal(work.attributes)) {
+    throw new C1IntegrationError(`Engineering Work is missing or terminal: ${input.workId}`)
+  }
+  const incompleteDependency = work.attributes.dependsOn.find(
+    (dependencyId) => current.works.get(dependencyId)?.attributes.stage !== 'done',
+  )
+  if (incompleteDependency) {
+    throw new C1IntegrationError(`Dependency is not done: ${incompleteDependency}`)
+  }
+  const path = store.paths.workDocument(input.goalId, input.workId)
+  const file = snapshot.files.find((candidate) => candidate.path === path)
+  if (!file?.content || file.hash !== input.expectedWorkHash) {
+    throw new C1IntegrationError(`Work authority changed before C1: ${input.workId}`)
+  }
+}
+
+async function verifyTaskHeads(
+  repos: readonly C1ProjectRepo[],
+  taskWorktrees: ReadonlyMap<string, string>,
+  expectedTaskHeads: Readonly<Record<string, string>>,
+) {
+  const changed = await firstChangedTaskHead(repos, taskWorktrees, expectedTaskHeads)
+  if (changed) {
+    throw new C1IntegrationError(
+      `Repo ${changed.repoId} task branch changed before C1 (${changed.expected} -> ${changed.actual})`,
+    )
+  }
+}
+
+async function firstChangedTaskHead(
+  repos: readonly C1ProjectRepo[],
+  taskWorktrees: ReadonlyMap<string, string>,
+  expectedTaskHeads: Readonly<Record<string, string>>,
+) {
+  for (const repo of repos) {
+    const expected = requireTaskHead(expectedTaskHeads, repo.repoId)
+    const actual = await git(requireTaskWorktree(taskWorktrees, repo.repoId), ['rev-parse', 'HEAD'])
+    if (actual !== expected) return { repoId: repo.repoId, expected, actual }
+  }
+  return null
+}
+
+async function completionDecisionDigest(decision: string) {
+  return `sha256:${await hashBytes(new TextEncoder().encode(decision.trim()))}`
+}
+
+function validateInput(_store: GoalPackageStore, input: C1CompletionInput) {
   if (
-    input.pass.responsibility !== 'reviewer' ||
-    input.pass.outcome.result !== 'success' ||
-    input.pass.workId !== input.completedWork.attributes.id ||
+    input.workId !== input.completedWork.attributes.id ||
     !isEngineeringWork(input.completedWork.attributes) ||
     input.completedWork.attributes.stage !== 'done' ||
-    input.evidence.attributes.producerRun !==
-      `${workRef(store, input.pass.goalId, input.pass.workId)}/run:${input.pass.runId}`
+    !input.sourceEventId.trim() ||
+    !input.decision.trim()
   ) {
-    throw new C1IntegrationError('C1 requires one valid Reviewer success result')
+    throw new C1IntegrationError('C1 requires one explicit Engineering Work completion')
   }
+  for (const repoId of Object.keys(input.taskWorktrees))
+    requireTaskHead(input.expectedTaskHeads, repoId)
 }
 
 export async function findIntegrationCommits(
@@ -1179,7 +1255,9 @@ export async function findIntegrationCommits(
   target: string,
   workReference: string,
 ) {
-  return (await listIntegrationRecords(projectRoot, target))
+  const identity = parseWorkAttentionTarget(workReference)
+  if (!identity) return []
+  return (await listIntegrationRecords(projectRoot, target, identity.projectId))
     .filter((record) => record.workReference === workReference)
     .map((record) => record.commit)
 }
@@ -1187,22 +1265,38 @@ export async function findIntegrationCommits(
 export interface IntegrationRecord {
   commit: string
   workReference: string
-  producerRun: string | null
+  assistantEventId: string | null
+  completionDecision: string | null
+  repoCommits: Readonly<Record<string, string>>
 }
 
-export async function listIntegrationRecords(projectRoot: string, target: string) {
+export async function listIntegrationRecords(
+  projectRoot: string,
+  target: string,
+  projectId: string,
+) {
   const bytes = await gitBytes(projectRoot, ['log', target, '--format=%H%x00%B%x00'])
   const fields = bytes.toString().split('\0')
   const records: IntegrationRecord[] = []
   for (let index = 0; index + 1 < fields.length; index += 2) {
     const commit = fields[index]?.trim()
     const message = fields[index + 1] ?? ''
+    if (trailerValue(message, PROJECT_RESET_TRAILER_KEY) === projectId) break
     const workReference = trailerValue(message, 'HOPI-Work-Ref')
     if (!commit || !workReference) continue
     records.push({
       commit,
       workReference,
-      producerRun: trailerValue(message, 'HOPI-Producer-Run') ?? null,
+      assistantEventId: trailerValue(message, 'HOPI-Assistant-Event') ?? null,
+      completionDecision: trailerValue(message, 'HOPI-Completion-Decision') ?? null,
+      repoCommits: Object.fromEntries(
+        trailerValues(message, 'HOPI-Repo-Commit').map((value) => {
+          const separator = value.indexOf('=')
+          return separator > 0
+            ? [value.slice(0, separator), value.slice(separator + 1)]
+            : [value, '']
+        }),
+      ),
     })
   }
   return records
@@ -1210,25 +1304,31 @@ export async function listIntegrationRecords(projectRoot: string, target: string
 
 async function validateIntegratedCommit(
   store: GoalPackageStore,
-  input: C1IntegrationInput,
+  input: C1CompletionInput,
   commit: string,
 ) {
-  const workPath = store.paths.workDocument(input.pass.goalId, input.pass.workId)
-  const evidencePath = store.paths.evidenceDocument(input.pass.goalId, input.evidence.attributes.id)
-  const [workBytes, evidenceBytes] = await Promise.all([
-    gitBytes(store.paths.projectRoot, ['show', `${commit}:${workPath}`]),
-    gitBytes(store.paths.projectRoot, ['show', `${commit}:${evidencePath}`]),
-  ])
+  const workPath = store.paths.workDocument(input.goalId, input.workId)
+  const workBytes = await gitBytes(store.paths.projectRoot, ['show', `${commit}:${workPath}`])
   const workSource = new TextDecoder().decode(workBytes)
-  const evidenceSource = new TextDecoder().decode(evidenceBytes)
   const workMatches =
     renderWorkDocument(parseWorkDocument(workSource)) === renderWorkDocument(input.completedWork)
-  const evidenceMatches =
-    renderEvidenceDocument(parseEvidenceDocument(evidenceSource)) ===
-    renderEvidenceDocument(input.evidence)
-  if (!workMatches || !evidenceMatches) {
+  const message = await git(store.paths.projectRoot, ['show', '-s', '--format=%B', commit])
+  const eventMatches = trailerValue(message, 'HOPI-Assistant-Event') === input.sourceEventId
+  const decisionMatches =
+    trailerValue(message, 'HOPI-Completion-Decision') ===
+    (await completionDecisionDigest(input.decision))
+  const repoCommits = new Map(
+    trailerValues(message, 'HOPI-Repo-Commit').map((value) => {
+      const separator = value.indexOf('=')
+      return [value.slice(0, separator), value.slice(separator + 1)] as const
+    }),
+  )
+  const reposMatch = Object.entries(input.expectedTaskHeads).every(
+    ([repoId, taskHead]) => repoCommits.get(repoId) === taskHead,
+  )
+  if (!workMatches || !eventMatches || !decisionMatches || !reposMatch) {
     throw new C1IntegrationError(
-      `Existing C1 ${commit} does not match its qualified result (work=${workMatches}, evidence=${evidenceMatches})`,
+      `Existing C1 ${commit} does not match the completion request (work=${workMatches}, event=${eventMatches}, decision=${decisionMatches}, repos=${reposMatch})`,
     )
   }
 }
@@ -1316,4 +1416,12 @@ function trailerValue(message: string, key: string) {
     .find((line) => line.startsWith(prefix))
     ?.slice(prefix.length)
     .trim()
+}
+
+function trailerValues(message: string, key: string) {
+  const prefix = `${key}: `
+  return message
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length).trim())
 }

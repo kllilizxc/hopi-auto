@@ -1,7 +1,5 @@
 # Project Owner And Attention
 
-Status: Work-based implementation baseline; not current product authority. See `mvp_design.md`.
-
 Status: authoritative MVP design
 Last updated: 2026-07-28
 
@@ -65,6 +63,60 @@ removes an outcome removes it from current design, nonterminal Work, acceptance,
 assessment. Deferred concerns may remain as historical context or become a later Goal; they do not
 remain active as blocking Attention. Planner may replace and shrink prior nonterminal plans whenever
 current authority no longer supports them.
+
+## Progressive Wayfinding
+
+A loose Goal may be too large for one session and wrapped in fog: the route from current facts to the
+destination is not visible yet. Wayfinding finds that route rather than charging at the destination.
+If the whole route is already clear and small, Assistant skips Wayfinding and creates actionable
+Engineering Work directly. Naming the destination is the first act of charting because it fixes what
+is in scope.
+
+HOPI preserves the Wayfinder model without reproducing its issue-tracker implementation:
+
+| Wayfinder term | HOPI expression |
+| --- | --- |
+| destination | the current Goal and its acceptance boundary |
+| shared map | Goal-local `design/index.md`, loaded at low resolution |
+| decision ticket | a named, precise question carried by current Planning authority and one explicit Planner Run |
+| fog of war | consequential in-scope uncertainty under `Not yet specified` that cannot yet be phrased as a ticket |
+| frontier | the takeable decision ticket at the edge of what is currently known |
+| resolution | the settled Report and retained design evidence that answer the ticket |
+
+The map is an index, not a store. `Decisions so far` gives a one-line gist and points to the Report or
+topic document that owns the detail. Fog is deliberately coarse: the test for a decision ticket is
+whether its question can be stated precisely now, not whether it can be answered now. Resolving one
+ticket may graduate fog into new tickets, reveal that no ticket is needed, or invalidate part of the
+route. Do not chart what cannot yet be seen. Scope, rather than sharpness, places something in `Out
+of scope`, where it never graduates unless the destination is redrawn.
+
+Decision tickets keep the Wayfinder types and HITL/AFK distinction:
+
+- **Research** (AFK) reads external or local knowledge needed by a decision.
+- **Prototype** (HITL) makes a cheap, rough artifact so the operator can react at higher fidelity.
+- **Grilling** (HITL) works through the decision with the operator one question at a time.
+- **Task** (AFK or HITL) performs prerequisite work solely to unblock a decision, not to deliver the
+  destination.
+
+Maps and tickets are referred to by their human-readable names in narration and `Decisions so far`;
+stable identifiers remain references rather than replacing those names.
+
+Project Assistant works one frontier ticket at a time. An AFK question answerable from source,
+documentation, or experiment uses a bounded `none` or `read_only` Planner Run. A HITL grilling or
+prototype ticket remains unresolved until the operator speaks for themselves; Assistant uses the
+current conversation or durable Attention and never supplies the human side. A prototype may be a
+Run Artifact used to raise discussion fidelity, but product source belongs to Engineering Work.
+
+Wayfinding is planning: when a decision ticket starts turning into implementation, Assistant has
+reached the edge of the map and hands off actionable Engineering Work. `dependsOn` then connects
+current execution commitments only. New ticket resolutions or operator instructions may revise or
+cancel nonterminal Work whose route was invalidated. Goal completion follows current acceptance,
+not ticket count or map shape. Wayfinding itself is done when the way is clear and nothing remains to
+decide before execution; the Goal may then continue through Engineering.
+
+Destination, map, ticket, fog, and frontier are shared planning language, not parsed fields or a
+second workflow. Existing Project serialization and the Work DAG remain the only control
+structures; cross-Project and independent-Work concurrency is unchanged.
 
 ## Speaking Session And Supervision Fork
 
@@ -382,3 +434,8 @@ Prompts do not prescribe recovery playbooks, attempt thresholds, recommended cho
 structured final output. Documents and tools carry authority; model prose is not parsed into hidden
 workflow state. Planner is not asked for a globally complete roadmap, and Reviewer is not asked to
 promote future or deferred concerns into the current contract.
+
+Wayfinding instructions constrain scope, not Report format. Planner works one named frontier ticket,
+records its answer and evidence, preserves remaining fog, and identifies the handoff exposed at the
+edge of the map. Assistant alone turns that resolution into map, Work, Attention, or completion
+effects.

@@ -19,7 +19,6 @@ import {
   renderInboxEventDocument,
   renderWorkspaceAttentionDocument,
 } from '../domain/assistantWorkspaceDocuments'
-import { parseInboxEventReference } from '../domain/inboxEventReference'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { hashBytes } from '../publication/publisher'
 import { publicationCandidateFromSnapshot } from '../publication/snapshotCandidate'
@@ -159,8 +158,6 @@ export function createAssistantWorkspaceStore(
       return resolveAssistantImage(homeRoot, paths.attachmentRoot, reference)
     },
     async receiveEvent(input) {
-      const eventId = input.eventId ?? `EV-${crypto.randomUUID()}`
-      const threadId = await resolveReceivedThreadId(this, eventId, input.context)
       const prepared = await prepareAssistantImages(
         homeRoot,
         paths.attachmentRoot,
@@ -170,28 +167,15 @@ export function createAssistantWorkspaceStore(
         root,
         paths,
         publisher,
-        { ...input, eventId },
+        input,
         'user',
         'public',
         [...(input.attachments ?? []), ...prepared.attachments.map(({ reference }) => reference)],
         prepared.writes,
-        threadId,
       )
     },
     async receiveSystemEvent(input) {
-      const eventId = input.eventId ?? `EV-${crypto.randomUUID()}`
-      const threadId = await resolveReceivedThreadId(this, eventId, input.context)
-      return receiveEvent(
-        root,
-        paths,
-        publisher,
-        { ...input, eventId },
-        'system',
-        'internal',
-        [],
-        [],
-        threadId,
-      )
+      return receiveEvent(root, paths, publisher, input, 'system', 'internal', [], [])
     },
     async exposeEvent(eventId) {
       const { source, event } = await requireEvent(this, homeRoot, eventId)
@@ -308,14 +292,12 @@ async function receiveEvent(
   visibility: 'public' | 'internal',
   attachments: string[],
   supportingWrites: PublicationWrite[],
-  threadId: string,
 ) {
   const eventId = input.eventId ?? `EV-${crypto.randomUUID()}`
   const body = normalizeReceivedContent(input.content)
   const event: InboxEventDocument = {
     attributes: {
       id: eventId,
-      threadId,
       receivedAt: (input.receivedAt ?? new Date()).toISOString(),
       status: 'pending',
       source,
@@ -343,20 +325,6 @@ async function receiveEvent(
       validateAssistantWorkspaceTransition(current, candidate, paths).then(() => undefined),
   })
   return event
-}
-
-async function resolveReceivedThreadId(
-  store: AssistantWorkspaceStore,
-  eventId: string,
-  context: InboxContext | undefined,
-) {
-  if (!context?.replyTo) return `T-${eventId}`
-  const reference = parseInboxEventReference(context.replyTo)
-  const parent = reference ? await store.readEvent(reference.eventId) : null
-  if (!parent) {
-    throw new AssistantWorkspaceStoreError(`Inbox reply target not found: ${context.replyTo}`)
-  }
-  return parent.attributes.threadId ?? `T-${parent.attributes.id}`
 }
 
 async function publishEvent(

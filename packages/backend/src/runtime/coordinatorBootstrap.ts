@@ -13,10 +13,7 @@ import {
   reconcileManagedIntegrationSource,
   reconcileProjectReleaseProjection,
 } from './c1Integrator'
-import {
-  type RunManagedCompletionFacts,
-  createCompletionStructureVerifier,
-} from './completionVerifier'
+import { createCompletionStructureVerifier } from './completionVerifier'
 
 export interface CoordinatorBootstrapProject {
   projectId: string
@@ -24,7 +21,6 @@ export interface CoordinatorBootstrapProject {
   primaryRepoId: string
   repos: readonly C1ProjectRepo[]
   store: GoalPackageStore
-  runManagedCompletion?: RunManagedCompletionFacts
 }
 
 export interface CoordinatorBootstrapResult {
@@ -175,19 +171,19 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
     const goalPackage = await project.store.readPackage(goalId)
     packages.set(goalId, goalPackage)
     if (
-      !(await createCompletionStructureVerifier(
-        project.store,
-        completionLayout,
-        project.runManagedCompletion,
-      ).verify(goalId, goalPackage))
+      !(await createCompletionStructureVerifier(project.store, completionLayout).verify(
+        goalId,
+        goalPackage,
+      ))
     ) {
-      throw new Error(`Goal ${goalId} has invalid completion delivery history`)
+      throw new Error(`Goal ${goalId} has invalid qualified C1 history`)
     }
   }
 
   const records = await listIntegrationRecords(
     project.projectRoot,
     projectReleaseRef(project.projectId),
+    project.projectId,
   )
   const uniqueWork = new Set<string>()
   for (const record of records) {

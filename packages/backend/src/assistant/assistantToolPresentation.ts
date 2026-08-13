@@ -184,10 +184,9 @@ function compactRuntimeStateIndex(value: AssistantStateRuntime, includeSummary: 
         runId: value.latestAttempt.runId,
         responsibility: value.latestAttempt.responsibility,
         status: value.latestAttempt.status,
-        result: value.latestAttempt.result,
-        application: value.latestAttempt.application,
-        ...(includeSummary && value.latestAttempt.summary
-          ? { summary: boundedStateText(value.latestAttempt.summary, 500) }
+        termination: value.latestAttempt.termination,
+        ...(includeSummary && value.latestAttempt.reportMarkdown
+          ? { reportMarkdown: boundedStateText(value.latestAttempt.reportMarkdown, 500) }
           : {}),
       }
     : null
@@ -199,12 +198,11 @@ function compactRuntimeStateIndex(value: AssistantStateRuntime, includeSummary: 
       runId: attempt.runId,
       responsibility: attempt.responsibility,
       status: attempt.status,
-      result: attempt.result,
-      application: attempt.application,
+      termination: attempt.termination,
       startedAt: attempt.startedAt,
       endedAt: attempt.endedAt,
-      ...(includeSummary && attempt.summary
-        ? { summary: boundedStateText(attempt.summary, 240) }
+      ...(includeSummary && attempt.reportMarkdown
+        ? { reportMarkdown: boundedStateText(attempt.reportMarkdown, 240) }
         : {}),
       artifactPreservation: attempt.artifactPreservation,
     })),

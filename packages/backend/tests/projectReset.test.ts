@@ -11,6 +11,7 @@ import {
 } from '../src/domain/assistantWorkspaceDocuments'
 import { ASSISTANT_HOME_SCHEMA_EPOCH } from '../src/domain/project'
 import { acquireCoordinatorInstanceLock } from '../src/publication/instanceLock'
+import { listIntegrationRecords } from '../src/runtime/c1Integrator'
 import { managedRepoWorktreePaths } from '../src/runtime/managedWorktreePaths'
 import { ProjectResetError, applyProjectReset, planProjectReset } from '../src/runtime/projectReset'
 
@@ -59,8 +60,20 @@ describe('Project reset maintenance', () => {
     })
 
     expect(result.kind).toBe('reset')
-    expect(result.releaseCommit).not.toBeNull()
-    expect(result.releaseCommit).not.toBe(releaseBefore)
+    const releaseCommit = result.releaseCommit
+    expect(releaseCommit).not.toBeNull()
+    if (!releaseCommit) throw new Error('Expected Project reset release boundary')
+    expect(releaseCommit).not.toBe(releaseBefore)
+    expect(
+      (await git(fixture.integrationRoot, ['show', '-s', '--format=%B', releaseCommit])).stdout,
+    ).toContain('HOPI-Project-Reset: P-1')
+    expect(
+      await listIntegrationRecords(
+        fixture.integrationRoot,
+        'refs/heads/hopi/project/P-1/release',
+        'P-1',
+      ),
+    ).toEqual([])
     expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(userBefore)
     expect(await Bun.file(join(fixture.integrationRoot, 'app.txt')).text()).toBe('source\n')
     expect(await Bun.file(fixture.goalPath).exists()).toBe(false)
@@ -68,7 +81,7 @@ describe('Project reset maintenance', () => {
       (
         await git(
           fixture.integrationRoot,
-          ['show', `${result.releaseCommit}:.hopi/docs/goals/G-1/goal.md`],
+          ['show', `${releaseCommit}:.hopi/docs/goals/G-1/goal.md`],
           true,
         )
       ).exitCode,
@@ -128,6 +141,64 @@ describe('Project reset maintenance', () => {
       streamId: repeated.conversationStreamId,
       removedFeedEntryIds: ['event:EV-P1'],
     })
+  })
+
+  test('cuts off reachable C1 history when current Goal files are only ignored residue', async () => {
+    const fixture = await createFixture()
+    roots.push(fixture.root)
+    await git(fixture.integrationRoot, ['rm', '-r', '--cached', '--', '.hopi/docs/goals'])
+    await git(fixture.integrationRoot, ['commit', '-m', 'remove tracked Goal projection'])
+
+    const plan = await planProjectReset({
+      homeRoot: fixture.homeRoot,
+      projectId: 'P-1',
+    })
+    expect(plan.goals.ids).toEqual(['G-1'])
+    expect(plan.goals.trackedFiles).toEqual([])
+    expect(
+      await listIntegrationRecords(
+        fixture.integrationRoot,
+        'refs/heads/hopi/project/P-1/release',
+        'P-1',
+      ),
+    ).toHaveLength(1)
+
+    const result = await applyProjectReset({
+      homeRoot: fixture.homeRoot,
+      projectId: 'P-1',
+      confirm: 'P-1',
+    })
+
+    const releaseCommit = result.releaseCommit
+    expect(releaseCommit).not.toBeNull()
+    if (!releaseCommit) throw new Error('Expected Project reset release boundary')
+    expect(await exists(fixture.goalPath)).toBe(false)
+    expect(
+      (
+        await git(fixture.integrationRoot, [
+          'diff-tree',
+          '--no-commit-id',
+          '--name-only',
+          '-r',
+          `${releaseCommit}^`,
+          releaseCommit,
+        ])
+      ).stdout,
+    ).toBe('')
+    expect(
+      await listIntegrationRecords(
+        fixture.integrationRoot,
+        'refs/heads/hopi/project/P-1/release',
+        'P-1',
+      ),
+    ).toEqual([])
+
+    const repeated = await applyProjectReset({
+      homeRoot: fixture.homeRoot,
+      projectId: 'P-1',
+      confirm: 'P-1',
+    })
+    expect(repeated.releaseCommit).toBeNull()
   })
 
   test('blocks an Attention that belongs to more than one Project before mutation', async () => {
@@ -207,7 +278,16 @@ async function createFixture() {
   await mkdir(join(goalPath, '..'), { recursive: true })
   await Bun.write(goalPath, '# Goal\n')
   await git(managed.integration, ['add', '-f', '.hopi/docs/goals'])
-  await git(managed.integration, ['commit', '-m', 'goal state'])
+  await git(managed.integration, [
+    'commit',
+    '-m',
+    [
+      'goal state',
+      '',
+      'HOPI-Work-Ref: project:P-1/goal:G-1/work:W-1',
+      'HOPI-Producer-Run: project:P-1/goal:G-1/work:W-1/run:R-1',
+    ].join('\n'),
+  ])
 
   const workBranch = 'hopi/work/P-1/G-1/W-1'
   const taskRoot = join(managed.work, 'G-1', 'W-1')

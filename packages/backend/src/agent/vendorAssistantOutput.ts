@@ -15,7 +15,6 @@ export interface VendorAssistantOutput {
   messageId?: string
   assistantText?: string
   finalText?: string
-  structuredOutput?: unknown
   terminalError?: VendorAssistantTerminalError
 }
 
@@ -78,9 +77,6 @@ export function parseVendorAssistantOutput(
       return {
         sessionId,
         finalText: text.visibleText,
-        ...(parsed.structured_output !== undefined
-          ? { structuredOutput: parsed.structured_output }
-          : {}),
       }
     }
     if (eventType !== 'assistant') return { sessionId }

@@ -1,352 +1,203 @@
 # HOPI MVP Design
 
-Status: current product authority
-
+Status: current product and architecture authority
 Last updated: 2026-08-13
 
-Migration baseline: `0fe89334e30f76c45da00ada4f8b75378f5dab8d`
+This document defines the implemented MVP boundary. Supporting documents may explain storage,
+publication, Project runtime, Assistant, or multi-Repo mechanics, but they must not introduce another
+product workflow.
 
-HOPI evolves from the existing Work-based product. This document replaces both the fixed
-`Planner -> Generator -> Reviewer -> C1` product model and the clean-slate proposal that removed
-Work entirely.
+Production supports the current schema only. After an incompatible schema change, reset the Project
+before use. Runtime readers do not infer or migrate superseded Attempt formats.
 
-The migration changes the boundaries that caused real failures while preserving the product and
-runtime capabilities that already work: Project linking, Goal and Work documents, the Board,
-Assistant feed, stable worktrees, multi-Repo execution, Preview, provider adapters, artifacts, and
-the publication coordinator.
+## Current authority
 
-## Product outcome
+The MVP proves exactly five product properties:
 
-HOPI is one user-facing assistant that turns conversations into durable Goals, visible Work, and
-bounded execution. The operator must be able to answer these questions without inspecting SQLite,
-temporary worktrees, provider transcripts, or Coordinator processes:
+1. A Run is requested explicitly.
+2. Every Run has an independent provider Session and bounded workspace.
+3. Review is optional.
+4. Every Run settles reliably with a Report and termination fact.
+5. Engineering Work becomes Done only after an explicit completion decision and successful C1
+   delivery.
 
-- What outcome is this Goal trying to achieve?
-- What Work is currently understood and why does it exist?
-- What actually ran, with which provider/model/reasoning configuration?
-- Did a Run finish, fail, crash, time out, or get interrupted?
-- Was provider context reused or rotated?
-- What source change was produced and from which base?
-- Was that change integrated, archived, deployed, or otherwise delivered?
-- What decision or external fact is still needed?
+These properties are intentionally implemented on the existing Project, Goal, Work, Attempt, stable
+task branch, and C1 architecture.
 
-## Product topology
+## Product model
 
-HOPI has three independent continuity planes:
+The operator-facing concepts remain:
 
-```text
-conversation: Thread -> Session Epochs
-goal meaning: Goal -> Goal Document revisions -> visible Work
-execution:    Work -> Run -> Report / ChangeSet -> Operation
-```
+- **Assistant**: the conversation and semantic decision surface.
+- **Project**: stable repository bindings, Project guidance, Preview, and Goals.
+- **Goal**: the accepted outcome.
+- **Work**: a visible unit of work in the existing four-lane Board.
 
-These planes may reference one another but do not substitute for one another:
+The runtime adds only the facts required to execute Work:
 
-- a provider Session is not durable conversation truth;
-- a Work stage is not evidence that a Run succeeded;
-- a ChangeSet is not proof that the Goal is accepted or deployed;
-- a Work count is not Goal progress.
+- **Run / Attempt**: one immutable, bounded execution request and its lifecycle.
+- **Report**: the Run's natural-language outcome.
+- **C1**: the deterministic publication boundary that delivers current task branch heads and the
+  Work completion document together.
 
-## Durable concepts
+Run and Attempt are two names for the same stored runtime object. There is no second Run store.
 
-| Concept | Owns | Does not own |
-| --- | --- | --- |
-| Project | Repo membership, permissions, Prepare/Preview, execution boundary | conversation history or one global execution queue |
-| Thread | one user-visible conversation and its Epoch chain | Goal binding or execution state |
-| Goal | one acceptable outcome, lifecycle, and current Goal Document | numeric progress or a mandatory task graph |
-| Work | one operator-visible unit of currently understood work | a mandatory Generator/Reviewer pipeline |
-| Run | one immutable, bounded execution assignment for a Work | Work meaning or a reusable settled Session |
-| ChangeSet | immutable multi-Repo source delta and lineage | review, acceptance, integration, or deployment meaning |
-| Attention | one unresolved user or external fact | a hidden Work stage or automatic pause rule |
-| Operation | one typed, idempotent external side effect | arbitrary model-authored JSON execution |
-
-Document Revision, Session Epoch, Artifact, Event, transcript, and runtime diagnostics are
-inspectable infrastructure records. They need not be primary Board objects.
-
-## Goal and Work
-
-### Goal authority
-
-Each Goal owns one current Markdown Goal Document containing the desired outcome, acceptance
-meaning, current understanding, current state, open questions, and stable references. Headings are
-writing conventions, not a parsed workflow schema.
-
-After creation, one logical Goal Supervisor is the only semantic writer of that document. User
-messages become durable directives or references. A Goal Document update uses revision
-compare-and-swap so two concurrent judgments cannot silently overwrite one another.
-
-Goal lifecycle remains deliberately small:
+## Explicit execution loop
 
 ```text
-active <-> paused
-active | paused -> done | cancelled
-done | cancelled -> active
+Assistant or API
+  -> explicitly request Run
+  -> queued Attempt
+  -> Scheduler starts that Attempt
+  -> fresh provider Session and selected workspace
+  -> settle once with termination + Report + candidate repo commits
+  -> publish the facts and wake Assistant
+  -> Assistant decides the next explicit action
 ```
 
-`done` is an explicit semantic decision based on the current acceptance meaning and observed
-facts. It is never derived from `completed Work / total Work`.
+A settled Run never changes Work semantics by itself. The runtime does not automatically create a
+Planner, Generator, or Reviewer Run, enter Review, retry, or complete Work.
 
-### Work remains a product concept
+The Project Assistant is the logical supervisor. It reads current facts and may create Goal/Work,
+request another Run, update Work authority, complete Work, cancel Work, or ask the operator. This is
+ordinary Assistant judgment through existing tools, not a separate Goal Supervisor service or store.
 
-Work is retained because it gives the operator a stable planning and intervention surface. It is
-created only when a unit of work is understood well enough to name and inspect. Unknown downstream
-work remains prose in the Goal Document until evidence makes it actionable.
+## Progressive wayfinding
 
-Existing Work kinds, IDs, Markdown bodies, dependency references, and Board lanes remain readable
-during migration. Their meaning is narrowed:
+When the route to a Goal's destination is wrapped in fog, Wayfinding finds the way rather than
+charging at the destination. Goal-local `design/index.md` is the shared low-resolution map; precise
+questions become decision tickets, while what cannot yet be phrased precisely stays in `Not yet
+specified`. Assistant works one current-frontier ticket at a time and hands off actionable
+Engineering Work when it reaches the edge of the map.
 
-- dependencies are optional ordering constraints, not a requirement to model a complete DAG;
-- `Plan`, `Build`, `Review`, and `Done` are visible focus/lifecycle lanes;
-- `Review` is optional and may be entered, skipped, or revisited;
-- changing a lane does not itself schedule a provider role;
-- cancelled Work is excluded from progress because numeric Work progress does not exist;
-- a Goal may complete after the Supervisor explicitly settles or archives remaining Work, but it
-  cannot complete while an active Run or required Operation is still executing.
+The Work DAG contains execution commitments, not decision tickets or a speculative roadmap. The
+authoritative HOPI mapping is in
+[`mvp_project_owner.md`](./mvp_project_owner.md#progressive-wayfinding).
 
-During compatibility migration the stored `planning | engineering` kind and
-`plan | generate | review | done | cancelled` stage may remain. They must stop selecting a fixed
-responsibility in the scheduler. A later schema may simplify those enums only after UI and data
-migration prove that doing so removes more complexity than it adds.
+## Work lanes
 
-## Run and Session lifecycle
+The existing Board lanes remain `Plan`, `Build`, `Review`, and `Done`.
 
-A Run is one execution attempt with immutable input:
+Lanes are presentation and lifecycle facts, not a scheduler program:
 
-```text
-Work identity
-instruction Markdown
-source Event/directive and stable references
-Goal Document revision
-base ChangeSet or base Repo refs
-workspace mode: none | read_only | isolated_write
-requested execution profile
-```
+- requesting a Generator Run projects Engineering Work to `Build`;
+- requesting a Reviewer Run projects Engineering Work to `Review`;
+- no lane ever creates a Run;
+- Review may be skipped, entered, or revisited.
 
-Its lifecycle is mechanical:
-
-```text
-queued -> running -> settled
-queued ------------> settled
-```
-
-Settlement stores a separate termination fact:
-
-```text
-normal | cancelled | interrupted | crashed | timed_out
-```
-
-Semantic success, rejection, findings, and recommended next steps live in the Report. Runtime must
-settle every exit path even when the model emits no terminal JSON or no final text. In that case it
-generates a minimal factual Report from timing, exit status, diagnostics, transcript tail, and
-workspace observations.
-
-Every new Run starts a fresh provider Session. A still-running Run may rotate through Session
-Epochs when context pressure or provider compatibility requires it:
-
-```text
-Run R1 -> Epoch 1 -> checkpoint/handoff -> Epoch 2
-```
-
-Epoch rotation preserves the Run ID and workspace. A settled Run is never resumed. Review feedback,
-repair, or retry creates a new Run with explicit references to the previous Report and ChangeSet.
-
-The runtime records requested and actual provider, model, reasoning effort, permission boundary,
-Session/Epoch identity, timestamps, termination, exit code, diagnostics, transcript, artifacts,
-and workspace observations. Actual execution facts take precedence over requested configuration.
-
-## Review and execution profiles
-
-Planning, implementation, investigation, reproduction, review, repair, and verification all use
-the same Run mechanism. Natural-language instruction defines the purpose. `workspaceMode` defines
-the machine-enforced source permission.
-
-Existing `planner`, `generator`, and `reviewer` settings may remain temporarily as named model
-profiles so operators do not lose configuration. They are not business roles and the scheduler
-must not infer a mandatory workflow from them. The UI must state which profile was requested and
-which execution configuration actually ran.
-
-The Goal Supervisor decides whether evidence warrants an independent review. A Work may therefore
-follow any evidence-backed path, including:
+Valid Engineering paths include:
 
 ```text
 Build -> Done
 Build -> Review -> Done
 Build -> Review -> Build -> Done
-Plan -> Build
 ```
 
-Those are choices, not one global state machine.
+Planning Work remains available but Planner execution is also explicit.
 
-## Conversation and supervision
+## Run contract
 
-The existing Assistant panel and feed remain the user surface. Internally:
-
-- every top-level message creates a Thread root;
-- an explicit reply continues that Thread;
-- Project/Goal page location contributes origin references, not permanent routing authority;
-- sibling Threads do not share a provider Session;
-- a Thread may discuss zero, one, or several Goals;
-- long Threads rotate Session Epochs using a bounded handoff;
-- an Attention reply retains exact Thread, Goal, and Attention references.
-
-The user-side Assistant answers conversation and emits explicit Goal directives. A logical Goal
-Supervisor reacts to Goal facts using a bounded packet and a fresh invocation. It may update the
-Goal Document, create or adjust Work, start/cancel Runs, create/resolve Attention, propose an
-Operation, or change Goal lifecycle. It never edits Project source directly.
-
-The first migration may preserve the existing Feed HTTP contract and React stream components. The
-storage and session boundary may change without forcing a simultaneous frontend rewrite.
-
-## ChangeSet and Operation
-
-An `isolated_write` Run freezes any surviving source delta into an immutable ChangeSet on every
-termination path, including interruption and crash. At minimum each Repo entry records:
+A Run request contains only:
 
 ```text
-producer Run
-Repo ID
-base commit
-result commit or immutable patch
-content hash
-created time
+profile: planner | generator | reviewer
+workspaceMode: none | read_only | isolated_write
+instructionMarkdown: non-empty Markdown
+refs?: string[]
 ```
 
-A ChangeSet means only that a source delta exists. It does not mean reviewed, accepted, integrated,
-or delivered.
+There is no protocol selector, base ChangeSet, legacy semantic outcome, or implicit continuation
+command.
 
-Git ref movement, baseline integration, archive creation, pull requests, and deployment cross the
-database boundary and therefore use typed Operations:
+Attempt lifecycle is:
 
 ```text
-proposed -> approved? -> executing -> succeeded | failed | cancelled
+queued -> running -> settled
 ```
 
-Each Operation kind owns a validated intent and result. Every Operation stores an idempotency key,
-authorization facts, expected external state, observed result, timing, and recovery information.
-
-Baseline integration compares every current Repo ref with the ChangeSet expected base. A valid
-fast-forward preserves candidate ancestry. A conflict becomes an observed result for the
-Supervisor; the runtime does not fabricate a merge policy or replace ancestry with a synthetic
-tree-only commit.
-
-ZIP, PR, deployment, and baseline integration block Goal completion only when the current Goal
-acceptance meaning requires them.
-
-## Deterministic kernel and model judgment
-
-The runtime, not a model, enforces:
-
-- append-only durable input and exact recipient/reference facts;
-- Goal Document compare-and-swap and single-writer capability;
-- idempotent tool and Operation effects;
-- immutable Run input and terminal settlement;
-- workspace permission, leases, capacity, timeout, and configured cost limits;
-- content-addressed artifacts and immutable ChangeSets;
-- expected-base checks for external state changes;
-- process-group cleanup and managed-worktree ownership;
-- bounded default Thread, Goal, and Run context.
-
-Models decide meaning:
-
-- what the user intends;
-- what Work is currently useful;
-- which Run instruction should execute next;
-- whether review is warranted;
-- whether evidence satisfies Work or Goal acceptance;
-- whether an Attention is actually resolved;
-- how to respond to a conflict or failed Operation.
-
-Runtime limits and failures produce facts. They do not invent semantic recovery policy.
-
-## Fact priority
-
-When descriptions conflict:
+Every settled Attempt has one termination:
 
 ```text
-external observation and physical database/Git state
-  > immutable ChangeSet / Artifact / Run / Operation result
-  > current Goal and Work documents
-  > Thread messages, old Reports, and transcripts
+normal | cancelled | interrupted | crashed | timed_out
 ```
 
-Physical facts cannot decide whether the operator's desired outcome is acceptable. Conversely,
-prose cannot override a failed deployment or a Git ref that did not move.
+Every settled Attempt has a non-empty `reportMarkdown`. The model's final natural-language response
+is the Report. If the process ends without final language, the runtime writes a concise factual
+fallback from the observed termination and diagnostics. Runtime never fabricates semantic success.
 
-## Product surface invariants
+Actual transport, model, and reasoning configuration are recorded when execution starts.
 
-The migration preserves the current frontend structure:
+## Session and workspace isolation
 
-- `/projects` Project home;
-- `/projects/:projectId` scoped Assistant;
-- `/projects/:projectId/board/:goalId` four-lane Work Board;
-- `/projects/:projectId/docs/:goalId` three-pane document view;
-- the current Layout, project/Goal switchers, Assistant drawer, card grid, Work detail modal, and
-  document panes.
+Every Run uses a Session/workspace identity containing its Run ID. A settled provider Session is not
+reused by another Run.
 
-The content evolves without a layout rewrite:
+`isolated_write` Runs use the existing stable task branch for the owning Work. Their disposable
+Run workspace may be rebuilt, but the task branch remains source truth. On normal exit,
+cancellation, interruption, crash, or timeout, runtime checkpoints each bound Repo and records the
+resulting candidate commit in the Attempt manifest. It does not copy a patch into another store.
 
-- Goal headers show lifecycle and natural-language semantic status, never Work-count progress;
-- Work cards remain real Work cards;
-- Work detail presents its Run history;
-- Run detail presents actual model configuration, Epoch/handoff, termination, Report, ChangeSet,
-  artifacts, and a transcript audit entry;
-- the Board may show optional Review but must not imply that it is mandatory;
-- Assistant, Project, and Goal activity reuse the existing feed surface while Thread isolation is
-  introduced behind it.
+Context exhaustion or provider Session failure settles the current Run. The Assistant may request a
+new Run with explicit references. Session Epoch rotation is not part of this MVP.
 
-## Persistence and migration
+## Explicit completion and C1
 
-This is an incremental migration, not a permanent compatibility architecture:
+Completing Engineering Work is an Assistant/API decision, not a Run result.
 
-1. Start from the last Work-based implementation with its complete test suite.
-2. Add new durable Run/Epoch/ChangeSet/Operation facts alongside existing Work documents.
-3. Switch one writer and one reader at a time behind contract tests.
-4. Migrate existing Home data once, with a verified backup and rollback path.
-5. Stop writing the superseded Attempt/result fields.
-6. Remove compatibility readers only after the new path and frontend have passed the take-home
-   replay and restart tests.
+Before completion, runtime verifies:
 
-Do not assign a persisted schema/epoch number until the migration spike determines whether any
-already-created experimental database must be retained. One version number must never describe two
-different layouts.
+- the Work is nonterminal;
+- all dependencies are done;
+- the Goal is active;
+- no Attempt for that Work is queued or running.
 
-The clean-slate implementation that removed Work remains a reference source for Session Epoch,
-Run settlement, ChangeSet, and Operation code. It is not the product model and is not switched into
-production as a whole.
+The completion operation snapshots the current Project release refs and current stable task branch
+heads. C1 then:
 
-## Explicit non-goals
+1. validates those expected refs;
+2. integrates the selected task heads for every bound Repo;
+3. writes the Work Done document into the same logical release;
+4. advances the primary release ref with compare-and-swap;
+5. materializes secondary projections.
 
-The MVP does not:
+Only successful C1 makes the Work Done. A release or task-head change, merge conflict, failed
+projection precondition, or restart uncertainty leaves Work nonterminal, records the failure fact,
+and wakes the Assistant. A Work with no source delta still uses canonical-only C1.
 
-- model a complete Work DAG before evidence exists;
-- require every Work to pass a Reviewer;
-- infer Goal progress from Work counts;
-- depend on model-authored terminal JSON for settlement;
-- resume a settled Run or hide a retry inside an old Session;
-- treat a provider Session or temporary worktree as unique truth;
-- build an untyped arbitrary-JSON Operation executor;
-- add full event sourcing or a vector database without measured need;
-- rewrite the frontend layout as part of the backend migration;
-- maintain indefinite dual writes between old and new execution records.
+The audit record contains the Assistant event ID, completion decision, final primary C1 commit, and
+the actual repo commits integrated. It does not require an evidence Run ID.
 
-## Implementation order
+A Goal may become Done only through an explicit decision after every Work is terminal and no Run is
+queued or active. Work count remains a display summary and is not completion authority.
 
-1. Establish a green Work-based baseline and preserve the clean-slate workspace as reference.
-2. Freeze this document and the evolution acceptance contract.
-3. Add Run settlement and actual execution facts.
-4. Add Session Epoch rotation without changing Run identity.
-5. Separate scheduler mechanics from fixed responsibility selection.
-6. Add ChangeSet lineage and typed Operations.
-7. Introduce Thread isolation behind the existing feed contract.
-8. Adapt the existing Board and detail surfaces.
-9. Run migration, restart, multi-Repo, browser, and take-home replay gates.
-10. Remove superseded fixed-pipeline code and compatibility storage.
+Unresolved text is not independently a completion gate. If current Goal acceptance is satisfied,
+remaining possibilities are either explicitly outside this Goal or become a new Goal; they do not
+force placeholder Work merely to empty the map.
 
-Each step must leave the application startable and its previously accepted behavior testable. API,
-storage, scheduler, and frontend are not switched simultaneously.
+## UI compatibility
 
-## Acceptance authority
+Projects, Board, four lanes, progress summary, Assistant docking, and the Work modal retain the
+pre-evolution structure and wording. The modal keeps the existing Model display and adds only a
+collapsed Report plus termination. Operation, ChangeSet, Session Epoch, and new dashboard sections
+are not exposed.
 
-[`mvp_evolution_acceptance.md`](./mvp_evolution_acceptance.md) defines the required regression
-trajectories and implementation gates. Existing test cases remain useful historical coverage, but
-they cannot require a fixed responsibility pipeline when they conflict with this document.
+## Deferred capabilities
+
+The following are legitimate future capabilities, not current requirements:
+
+- first-class Thread isolation;
+- Session Epoch handoff;
+- a standalone Goal Supervisor;
+- a generic immutable ChangeSet store;
+- typed Delivery Operations;
+- workflow expressions or lane-driven scheduling.
+
+They require a separate design decision and must not appear as compatibility scaffolding in current
+production code.
+
+## Reset boundary
+
+The current feAgent-Message Project was reset and is the schema cutover boundary: it contains only
+its two Repo bindings and no Goal or Attempt history. Other Homes created with a superseded Attempt
+schema must be reset before use. The Project Reset epoch prevents old C1 history from being
+reconstructed as current Project state.

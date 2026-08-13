@@ -40,25 +40,6 @@ describe('parseVendorAssistantOutput', () => {
     ).toEqual({ sessionId: 'session-1', finalText: text })
   })
 
-  test('extracts Claude structured responsibility outcomes', () => {
-    const outcome = { result: 'success', summary: 'verified', artifacts: [] }
-    expect(
-      parseVendorAssistantOutput(
-        'claude',
-        JSON.stringify({
-          type: 'result',
-          session_id: 'session-1',
-          result: JSON.stringify(outcome),
-          structured_output: outcome,
-        }),
-      ),
-    ).toEqual({
-      sessionId: 'session-1',
-      finalText: JSON.stringify(outcome),
-      structuredOutput: outcome,
-    })
-  })
-
   test('removes a complete Claude thought envelope from the final reply', () => {
     expect(
       parseVendorAssistantOutput(

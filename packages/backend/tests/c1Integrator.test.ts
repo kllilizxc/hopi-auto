@@ -7,15 +7,13 @@ import { projectReleaseRef } from '../src/domain/project'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createC1Integrator, findIntegrationCommits } from '../src/runtime/c1Integrator'
 import { createCompletionStructureVerifier } from '../src/runtime/completionVerifier'
-import { createPassOutcomeCoordinator } from '../src/runtime/passOutcomeCoordinator'
-import { createRoleContextStager } from '../src/runtime/roleContextStager'
 import { createStableWorktreeManager } from '../src/runtime/stableWorktreeManager'
 import { checkpointTaskWorktree } from '../src/runtime/taskCheckpoint'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoots: string[] = []
-const HOPI_RELEASE_REF = projectReleaseRef('project-1')
+const releaseRef = projectReleaseRef('project-1')
 
 setDefaultTimeout(20_000)
 
@@ -26,139 +24,124 @@ afterEach(async () => {
 })
 
 describe('C1Integrator', () => {
-  test('moves the Project release, materializes C1, and leaves the selected checkout unchanged', async () => {
+  test('atomically publishes current task source and explicit Work completion with audit trailers', async () => {
     const fixture = await createFixture()
     const beforeUser = await checkoutSnapshot(fixture.repoRoot)
-    const prepared = await fixture.prepareReviewer('run-review')
+    const input = await fixture.completionInput()
 
-    const integrated = await fixture.integrator.integrate(prepared.integrationInput)
-    const goalPackage = await fixture.store.readPackage('goal-1')
+    const result = await fixture.integrator.complete(input)
 
-    expect(integrated.kind).toBe('integrated')
-    if (integrated.kind !== 'integrated') throw new Error('Expected C1 integration')
-    expect(await git(fixture.projectRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(integrated.commit)
+    expect(result.kind).toBe('integrated')
+    if (result.kind !== 'integrated') throw new Error('Expected C1 integration')
+    expect(await git(fixture.projectRoot, ['rev-parse', releaseRef])).toBe(result.commit)
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
-    expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('done')
-    expect(goalPackage.evidence.has('E-run-review')).toBe(true)
-    expect(
-      await createCompletionStructureVerifier(fixture.store).verify('goal-1', goalPackage),
-    ).toBe(true)
-    expect(await git(fixture.projectRoot, ['show', '-s', '--format=%P', integrated.commit])).toBe(
-      fixture.releaseBeforeTask,
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+      'done',
     )
     expect(
-      await git(fixture.projectRoot, ['show', '-s', '--format=%B', integrated.commit]),
-    ).toContain('HOPI-Work-Ref: project:project-1/goal:goal-1/work:W-1')
-    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(beforeUser)
-
-    const repeated = await fixture.integrator.integrate(prepared.integrationInput)
-    expect(repeated).toEqual({
-      kind: 'already_integrated',
-      commit: integrated.commit,
-    })
-  })
-
-  test('matches qualified Work trailers exactly when one Work ID prefixes another', async () => {
-    const fixture = await createFixture()
-    const prepared = await fixture.prepareReviewer('run-review')
-    const integrated = await fixture.integrator.integrate(prepared.integrationInput)
-    if (integrated.kind !== 'integrated') throw new Error('Expected C1 integration')
-    await Bun.write(join(fixture.projectRoot, 'README.md'), '# Prefix Work\n')
-    await git(fixture.projectRoot, ['add', 'README.md'])
-    await git(fixture.projectRoot, [
-      'commit',
-      '-m',
-      ['prefix work', '', 'HOPI-Work-Ref: project:project-1/goal:goal-1/work:W-1-extra'].join('\n'),
-    ])
-
-    expect(
-      await findIntegrationCommits(
-        fixture.projectRoot,
-        HOPI_RELEASE_REF,
-        'project:project-1/goal:goal-1/work:W-1',
-      ),
-    ).toEqual([integrated.commit])
-    expect(
-      await createCompletionStructureVerifier(fixture.store).verify(
+      await createCompletionStructureVerifier(fixture.store, fixture.layout).verify(
         'goal-1',
         await fixture.store.readPackage('goal-1'),
       ),
     ).toBe(true)
+
+    const message = await git(fixture.projectRoot, ['show', '-s', '--format=%B', result.commit])
+    expect(message).toContain('HOPI-Assistant-Event: assistant-event-1')
+    expect(message).toContain(`HOPI-Repo-Commit: primary=${input.expectedTaskHeads.primary}`)
+    expect(message).toContain('HOPI-Completion-Decision: sha256:')
+    expect(message).not.toContain('HOPI-Evidence-Run')
+    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(beforeUser)
+
+    expect(await fixture.integrator.complete(input)).toEqual({
+      kind: 'already_integrated',
+      commit: result.commit,
+    })
   })
 
-  test('integrates a task-side deletion when the release left the file unchanged', async () => {
-    const fixture = await createFixture()
-    await rm(join(fixture.taskWorktreePath, 'README.md'))
+  test('integrates task-side deletions and supports canonical-only completion', async () => {
+    const deletion = await createFixture()
+    await rm(join(deletion.taskWorktreePath, 'README.md'))
     await checkpointTaskWorktree({
-      worktreePath: fixture.taskWorktreePath,
+      worktreePath: deletion.taskWorktreePath,
       projectId: 'project-1',
       goalId: 'goal-1',
       workId: 'W-1',
       runId: 'run-delete',
     })
-    const prepared = await fixture.prepareReviewer('run-review-delete')
+    expect((await deletion.integrator.complete(await deletion.completionInput())).kind).toBe(
+      'integrated',
+    )
+    expect(await Bun.file(join(deletion.projectRoot, 'README.md')).exists()).toBe(false)
 
-    const result = await fixture.integrator.integrate(prepared.integrationInput)
-
+    const canonicalOnly = await createFixture({ sourceChange: false })
+    const before = await git(canonicalOnly.projectRoot, ['rev-parse', releaseRef])
+    const result = await canonicalOnly.integrator.complete(await canonicalOnly.completionInput())
     expect(result.kind).toBe('integrated')
-    expect(await Bun.file(join(fixture.projectRoot, 'README.md')).exists()).toBe(false)
-  })
-
-  test('rejects a pre-boundary source conflict without moving the release ref', async () => {
-    const fixture = await createFixture()
-    await Bun.write(join(fixture.projectRoot, 'src', 'feature.ts'), 'export const feature = 3\n')
-    await git(fixture.projectRoot, ['add', 'src/feature.ts'])
-    await git(fixture.projectRoot, ['commit', '-m', 'concurrent integration'])
-    const currentTarget = await git(fixture.projectRoot, ['rev-parse', HOPI_RELEASE_REF])
-    const prepared = await fixture.prepareReviewer('run-conflict')
-
-    const result = await fixture.integrator.integrate(prepared.integrationInput)
-
-    expect(result).toMatchObject({ kind: 'rejected' })
-    expect(await git(fixture.projectRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(currentTarget)
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'review',
+    if (result.kind !== 'integrated') throw new Error('Expected canonical-only C1')
+    expect(result.commit).not.toBe(before)
+    expect(await Bun.file(join(canonicalOnly.projectRoot, 'src', 'feature.ts')).text()).toContain(
+      '1',
     )
   })
 
-  test('rebuilds C1 on a clean target change after Reviewer staging', async () => {
-    const fixture = await createFixture()
-    const prepared = await fixture.prepareReviewer('run-stale-target')
-    await Bun.write(join(fixture.projectRoot, 'README.md'), '# New target\n')
-    await git(fixture.projectRoot, ['add', 'README.md'])
-    await git(fixture.projectRoot, ['commit', '-m', 'advance release'])
-    const currentTarget = await git(fixture.projectRoot, ['rev-parse', HOPI_RELEASE_REF])
+  test('rejects source conflicts and stale task heads before moving the release', async () => {
+    const conflict = await createFixture()
+    await Bun.write(join(conflict.projectRoot, 'src', 'feature.ts'), 'export const feature = 3\n')
+    await git(conflict.projectRoot, ['add', 'src/feature.ts'])
+    await git(conflict.projectRoot, ['commit', '-m', 'concurrent release change'])
+    const currentRelease = await git(conflict.projectRoot, ['rev-parse', releaseRef])
 
-    const result = await fixture.integrator.integrate(prepared.integrationInput)
-
-    expect(result.kind).toBe('integrated')
-    if (result.kind !== 'integrated') throw new Error('Expected rebuilt C1 integration')
-    expect(await git(fixture.projectRoot, ['show', '-s', '--format=%P', result.commit])).toBe(
-      currentTarget,
+    expect(await conflict.integrator.complete(await conflict.completionInput())).toMatchObject({
+      kind: 'rejected',
+    })
+    expect(await git(conflict.projectRoot, ['rev-parse', releaseRef])).toBe(currentRelease)
+    expect((await conflict.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+      'generate',
     )
-    expect(await Bun.file(join(fixture.projectRoot, 'README.md')).text()).toBe('# New target\n')
-    expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
+
+    const stale = await createFixture()
+    const staleInput = await stale.completionInput()
+    await Bun.write(join(stale.taskWorktreePath, 'src', 'later.ts'), 'export const later = true\n')
+    await checkpointTaskWorktree({
+      worktreePath: stale.taskWorktreePath,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-later',
+    })
+    await expect(stale.integrator.complete(staleInput)).rejects.toThrow(
+      'task branch changed before C1',
+    )
   })
 
-  test('rereads an uncertain ref update and completes when the ref is already C1', async () => {
-    const fixture = await createFixture()
-    const prepared = await fixture.prepareReviewer('run-uncertain')
+  test('rebuilds on a clean release advance and recovers an uncertain ref acknowledgement', async () => {
+    const advanced = await createFixture()
+    const input = await advanced.completionInput()
+    await Bun.write(join(advanced.projectRoot, 'README.md'), '# New release target\n')
+    await git(advanced.projectRoot, ['add', 'README.md'])
+    await git(advanced.projectRoot, ['commit', '-m', 'advance release'])
+    const currentRelease = await git(advanced.projectRoot, ['rev-parse', releaseRef])
 
-    const result = await fixture.integrator.integrate(prepared.integrationInput, {
+    const rebuilt = await advanced.integrator.complete(input)
+    expect(rebuilt.kind).toBe('integrated')
+    if (rebuilt.kind !== 'integrated') throw new Error('Expected rebuilt C1')
+    expect(await git(advanced.projectRoot, ['show', '-s', '--format=%P', rebuilt.commit])).toBe(
+      currentRelease,
+    )
+
+    const uncertain = await createFixture()
+    const recovered = await uncertain.integrator.complete(await uncertain.completionInput(), {
       async updateRef({ move }) {
         await move()
-        throw new Error('simulated lost update-ref acknowledgement')
+        throw new Error('lost update-ref acknowledgement')
       },
     })
-
-    expect(result).toMatchObject({ kind: 'integrated', recoveredUncertainUpdate: true })
+    expect(recovered).toMatchObject({ kind: 'integrated', recoveredUncertainUpdate: true })
   })
 
-  test('never rolls back C1 when materialization fails after the ref boundary', async () => {
+  test('does not roll C1 back after the release ref boundary', async () => {
     const fixture = await createFixture()
-    const prepared = await fixture.prepareReviewer('run-post-ref')
-
-    const result = await fixture.integrator.integrate(prepared.integrationInput, {
+    const result = await fixture.integrator.complete(await fixture.completionInput(), {
       beforeMaterialization() {
         throw new Error('simulated materialization stop')
       },
@@ -166,68 +149,32 @@ describe('C1Integrator', () => {
 
     expect(result.kind).toBe('blocked_after_boundary')
     if (result.kind !== 'blocked_after_boundary') throw new Error('Expected blocked C1')
-    expect(await git(fixture.projectRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(result.commit)
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'review',
-    )
+    expect(await git(fixture.projectRoot, ['rev-parse', releaseRef])).toBe(result.commit)
   })
 
-  test('never changes a dirty selected checkout', async () => {
+  test('finds only the exact qualified Work trailer', async () => {
     const fixture = await createFixture()
-    const prepared = await fixture.prepareReviewer('run-dirty-delivery')
-    await Bun.write(join(fixture.repoRoot, 'local.txt'), 'local work\n')
-    const before = await checkoutSnapshot(fixture.repoRoot)
+    const result = await fixture.integrator.complete(await fixture.completionInput())
+    if (result.kind !== 'integrated') throw new Error('Expected C1 integration')
+    await Bun.write(join(fixture.projectRoot, 'prefix.txt'), 'prefix\n')
+    await git(fixture.projectRoot, ['add', 'prefix.txt'])
+    await git(fixture.projectRoot, [
+      'commit',
+      '-m',
+      ['prefix', '', 'HOPI-Work-Ref: project:project-1/goal:goal-1/work:W-1-extra'].join('\n'),
+    ])
 
-    const integrated = await fixture.integrator.integrate(prepared.integrationInput)
-
-    expect(integrated.kind).toBe('integrated')
-    if (integrated.kind !== 'integrated') throw new Error('Expected integrated C1')
-    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(before)
-    expect(await git(fixture.projectRoot, ['rev-parse', HOPI_RELEASE_REF])).toBe(integrated.commit)
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'done',
-    )
-
-    const recovered = await fixture.integrator.integrate(prepared.integrationInput)
-
-    expect(recovered).toEqual({
-      kind: 'already_integrated',
-      commit: integrated.commit,
-    })
-    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(before)
-  })
-
-  test('never changes detached selected checkout index or working-tree bytes', async () => {
-    const fixture = await createFixture()
-    const prepared = await fixture.prepareReviewer('run-switched-delivery')
-    await git(fixture.repoRoot, ['switch', '--detach'])
-    await Bun.write(join(fixture.repoRoot, 'README.md'), '# Staged locally\n')
-    await git(fixture.repoRoot, ['add', 'README.md'])
-    await Bun.write(join(fixture.repoRoot, 'README.md'), '# Working tree locally\n')
-    const localBytes = Uint8Array.from([0, 255, 1, 254, 2])
-    await Bun.write(join(fixture.repoRoot, 'local.bin'), localBytes)
-    const before = await checkoutSnapshot(fixture.repoRoot)
-    const stagedBefore = await git(fixture.repoRoot, ['show', ':README.md'])
-    const workingBefore = new Uint8Array(
-      await Bun.file(join(fixture.repoRoot, 'README.md')).arrayBuffer(),
-    )
-
-    const result = await fixture.integrator.integrate(prepared.integrationInput)
-
-    expect(result.kind).toBe('integrated')
-    if (result.kind !== 'integrated') throw new Error('Expected integrated C1')
-    expect(await checkoutSnapshot(fixture.repoRoot)).toEqual(before)
-    expect(await git(fixture.repoRoot, ['show', ':README.md'])).toBe(stagedBefore)
     expect(
-      new Uint8Array(await Bun.file(join(fixture.repoRoot, 'README.md')).arrayBuffer()),
-    ).toEqual(workingBefore)
-    expect(
-      new Uint8Array(await Bun.file(join(fixture.repoRoot, 'local.bin')).arrayBuffer()),
-    ).toEqual(localBytes)
+      await findIntegrationCommits(
+        fixture.projectRoot,
+        releaseRef,
+        'project:project-1/goal:goal-1/work:W-1',
+      ),
+    ).toEqual([result.commit])
   })
 })
 
-async function createFixture() {
+async function createFixture(options: { sourceChange?: boolean } = {}) {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-c1-'))
   temporaryRoots.push(temporaryRoot)
   const repoRoot = join(temporaryRoot, 'repo')
@@ -260,7 +207,7 @@ async function createFixture() {
             id: 'W-1',
             title: 'Build feature 2',
             kind: 'engineering',
-            stage: 'review',
+            stage: 'generate',
             notBefore: null,
             dependsOn: [],
             contractRevision: 1,
@@ -279,7 +226,6 @@ async function createFixture() {
     },
   })
 
-  const releaseBeforeTask = await git(linked.integrationRoot, ['rev-parse', HOPI_RELEASE_REF])
   const stable = await createStableWorktreeManager().prepare({
     projectRoot: linked.integrationRoot,
     projectId: 'project-1',
@@ -288,34 +234,33 @@ async function createFixture() {
     repoId: linked.primaryRepoId,
     primaryRepoId: linked.primaryRepoId,
   })
-  await Bun.write(join(stable.path, 'src', 'feature.ts'), 'export const feature = 2\n')
-  await checkpointTaskWorktree({
-    worktreePath: stable.path,
-    projectId: 'project-1',
-    goalId: 'goal-1',
-    workId: 'W-1',
-    runId: 'run-generator',
-  })
+  if (options.sourceChange !== false) {
+    await Bun.write(join(stable.path, 'src', 'feature.ts'), 'export const feature = 2\n')
+    await checkpointTaskWorktree({
+      worktreePath: stable.path,
+      projectId: 'project-1',
+      goalId: 'goal-1',
+      workId: 'W-1',
+      runId: 'run-generator',
+    })
+  }
 
-  const stager = createRoleContextStager(homeRoot, publisher)
-  const outcomes = createPassOutcomeCoordinator(store, publisher, {
-    now: () => new Date('2026-07-11T00:00:00Z'),
-  })
+  const layout = {
+    projectId: linked.projectId,
+    primaryRepoId: linked.primaryRepoId,
+    repos: linked.repos.map((repo) => ({
+      repoId: repo.repoId,
+      integrationRoot: repo.integrationRoot,
+      projectPath: repo.projectPath,
+      primary: repo.primary,
+    })),
+  }
   const integrator = createC1Integrator(
     homeRoot,
     store,
     publisher,
-    () => new Date('2026-07-11T00:00:00Z'),
-    {
-      projectId: linked.projectId,
-      primaryRepoId: linked.primaryRepoId,
-      repos: linked.repos.map((repo) => ({
-        repoId: repo.repoId,
-        integrationRoot: repo.integrationRoot,
-        projectPath: repo.projectPath,
-        primary: repo.primary,
-      })),
-    },
+    () => new Date('2026-08-13T00:00:00Z'),
+    layout,
   )
 
   return {
@@ -323,44 +268,23 @@ async function createFixture() {
     projectRoot: linked.integrationRoot,
     taskWorktreePath: stable.path,
     store,
-    releaseBeforeTask,
+    layout,
     integrator,
-    async prepareReviewer(runId: string) {
-      const context = await stager.prepare({
-        projectRoot: linked.integrationRoot,
-        primaryRepoId: 'primary',
-        repoRoots: [{ repoId: 'primary', path: linked.integrationRoot, primary: true }],
-        projectId: 'project-1',
-        goalId: 'goal-1',
-        workId: 'W-1',
-        runId,
-        responsibility: 'reviewer',
-      })
-      const pass = {
-        goalId: 'goal-1',
-        workId: 'W-1',
-        runId,
-        responsibility: 'reviewer' as const,
-        context,
-        outcome: {
-          result: 'success' as const,
-          summary: 'Reviewer verified feature 2.',
-          artifacts: [],
-          exitCode: 0,
-        },
-      }
-      const application = await outcomes.apply(pass)
-      if (application.kind !== 'integration_required') {
-        throw new Error(`Expected integration_required, got ${application.kind}`)
-      }
+    async completionInput() {
+      const workPath = store.paths.workDocument('goal-1', 'W-1')
+      const source = await Bun.file(store.paths.absolute(workPath)).text()
+      const completedWork = parseWorkDocument(source)
+      completedWork.attributes.stage = 'done'
+      completedWork.body = `${completedWork.body.trim()}\n\n## Completion decision\n\nShip the current task branch.\n`
       return {
-        context,
-        integrationInput: {
-          pass,
-          taskWorktreePath: stable.path,
-          evidence: application.evidence,
-          completedWork: application.work,
-        },
+        goalId: 'goal-1',
+        workId: 'W-1',
+        sourceEventId: 'assistant-event-1',
+        decision: 'Ship the current task branch.',
+        expectedWorkHash: await hashBytes(new TextEncoder().encode(source)),
+        taskWorktrees: { primary: stable.path },
+        expectedTaskHeads: { primary: await git(stable.path, ['rev-parse', 'HEAD']) },
+        completedWork,
       }
     },
   }

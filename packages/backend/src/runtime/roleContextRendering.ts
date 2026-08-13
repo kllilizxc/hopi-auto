@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
 import { EXECUTION_ENVELOPE_MARKER } from '../agent/executionEnvelope'
-import { projectReleaseRef } from '../domain/project'
 import type { PublicationSnapshot } from '../publication/types'
 import type {
   PrepareRoleContextInput,
@@ -9,29 +8,15 @@ import type {
   RunAssignment,
 } from './roleContextStager'
 
-const RESPONSIBILITY_RUNTIME_BOUNDARY_REVISION = 1
+const RESPONSIBILITY_RUNTIME_BOUNDARY_REVISION = 2
 
 export function responsibilityRuntimeDigest(responsibility: Responsibility) {
-  const roleContract =
-    responsibility === 'planner'
-      ? plannerPrompt({
-          runRoot: '<run-root>',
-          proposalRoot: '<proposal-root>',
-          bootstrapSourceRoot: '<bootstrap-source-root>',
-          agentsPath: '<agents-path>',
-          attentionRoot: '<attention-root>',
-          apiOrigin: '<api-origin>',
-          operatorPreferenceFile: '<operator-preference-file>',
-        })
-      : responsibility === 'generator'
-        ? generatorPrompt()
-        : reviewerPrompt('runtime-contract')
   return createHash('sha256')
     .update(
       JSON.stringify({
         boundaryRevision: RESPONSIBILITY_RUNTIME_BOUNDARY_REVISION,
         responsibility,
-        roleContract,
+        contract: profileContract(responsibility),
       }),
     )
     .digest('hex')
@@ -41,10 +26,7 @@ export function renderContextManifest(
   input: PrepareRoleContextInput,
   context: {
     authorityRoot: string
-    proposalRoot: string
     artifactOutputDir: string
-    proposalCapabilitiesFile: string
-    resultSchemaFile: string
     runtimeScratchDir: string
     runtimeCacheDir: string
     releaseHead: string
@@ -66,35 +48,24 @@ export function renderContextManifest(
     operatorPreference?: { path: string; digest: string }
   },
 ) {
-  const reportRun = input.directive?.protocol === 'report'
   return [
-    reportRun ? '# HOPI Run Context' : '# HOPI Responsibility Context',
+    '# HOPI Run Context',
     '',
     `- Project: ${input.projectId}`,
     `- Goal: ${input.goalId}`,
     `- Work: ${input.workId}`,
     `- Run: ${input.runId}`,
-    ...(reportRun
-      ? [
-          `- Protocol: ${input.directive?.protocol}`,
-          `- Execution profile: ${input.directive?.profile}`,
-          `- Workspace mode: ${input.directive?.workspaceMode}`,
-          `- Base ChangeSet: ${input.directive?.baseChangeSetId ?? 'none'}`,
-        ]
-      : [`- Responsibility: ${input.responsibility}`]),
-    `- Primary authority release snapshot: ${context.releaseHead}`,
+    `- Profile: ${input.responsibility}`,
+    `- Authority release snapshot: ${context.releaseHead}`,
     '- Immutable authority root: $HOPI_AUTHORITY_ROOT',
-    '- Writable proposal root: $HOPI_PROPOSAL_ROOT',
-    '- Writable Run artifact output: $HOPI_ARTIFACT_DIR',
-    '- Proposal capabilities: $HOPI_PROPOSAL_CAPABILITIES_FILE',
-    ...(reportRun ? [] : ['- Terminal result schema: $HOPI_RESULT_SCHEMA_FILE']),
-    '- Responsibility session workspace: $HOPI_SESSION_WORKSPACE',
-    '- Reusable runtime cache: $HOPI_CACHE_DIR',
-    `- Project primary Repo: ${context.primaryRepoId}`,
+    '- Run artifact output: $HOPI_ARTIFACT_DIR',
+    '- Run-local workspace: $HOPI_SESSION_WORKSPACE',
+    '- Shared runtime cache: $HOPI_CACHE_DIR',
+    `- Primary Repo: ${context.primaryRepoId}`,
     `- Project source scope: ${context.projectPath}`,
     '- Repo workspace manifest: $HOPI_REPOS_FILE',
     `- Repo workspace projection: ${context.repoProjection}`,
-    `- Project release ref in each Repo: ${context.releaseRef}`,
+    `- Project release ref: ${context.releaseRef}`,
     ...(context.artifactManifestFile
       ? ['- Evidence artifact manifest: $HOPI_EVIDENCE_ARTIFACTS_FILE']
       : []),
@@ -118,25 +89,21 @@ export function renderContextManifest(
       ? ['- Read-only bootstrap source snapshot: $HOPI_BOOTSTRAP_SOURCE_ROOT']
       : []),
     '',
-    '## Authority Files',
+    '## Explicit references',
     '',
-    ...context.snapshot.map((file) => `- ${file.path}: ${file.hash ?? 'missing at snapshot time'}`),
+    ...(input.refs.length > 0 ? input.refs.map((reference) => `- ${reference}`) : ['- None']),
+    '',
+    '## Authority files',
+    '',
+    ...context.snapshot.map((file) => `- ${file.path}: ${file.hash ?? 'missing'}`),
     ...(context.imagePaths.length > 0
-      ? ['', '## Attached Reference Images', '', ...context.imagePaths.map((path) => `- ${path}`)]
+      ? ['', '## Attached reference images', '', ...context.imagePaths.map((path) => `- ${path}`)]
       : []),
     ...(context.evidencePaths.length > 0
-      ? ['', '## Selected Evidence', '', ...context.evidencePaths.map((path) => `- ${path}`)]
+      ? ['', '## Selected evidence', '', ...context.evidencePaths.map((path) => `- ${path}`)]
       : []),
     '',
-    'Files under the authority root are immutable inputs.',
-    ...(reportRun
-      ? [
-          'This Run cannot mutate canonical Goal documents. Its durable semantic output is a natural-language Report.',
-        ]
-      : [
-          'The proposal is never canonical until the Coordinator validates and publishes it.',
-          'The proposal root is an initially empty sparse overlay. Copy in only a document you intend to add or replace; an absent authority path means unchanged, never deleted.',
-        ]),
+    'Authority files are immutable inputs. A Run may change source only when its selected workspace is writable.',
     '',
   ].join('\n')
 }
@@ -144,52 +111,36 @@ export function renderContextManifest(
 export function renderResponsibilityPrompt(
   input: PrepareRoleContextInput,
   paths: {
-    runRoot: string
     contextFile: string
     artifactManifestFile?: string
-    authorityRoot: string
-    proposalRoot: string
-    artifactOutputDir: string
-    proposalCapabilitiesFile: string
-    resultSchemaFile: string
-    resultFile: string
-    bootstrapSourceRoot?: string
     agentsPath: string
-    attentionRoot: string
     primaryRepoId: string
-    repoRoots: readonly RoleRepoRoot[]
     repoGuidance: readonly { repoId: string; path: string }[]
-    reposFile: string
-    apiOrigin?: string
-    operatorPreferenceFile?: string
     browserTargetsFile?: string
-    hasImages: boolean
+    operatorPreferenceFile?: string
+    apiOrigin?: string
   },
   assignment: RunAssignment,
 ) {
-  if (input.directive?.protocol === 'report') {
-    return renderReportRunPrompt(input, paths, assignment)
-  }
-  const boundary = [
-    '## Execution Boundary',
+  const assignmentFacts = renderAssignment(assignment)
+  return [
+    '# HOPI Run',
     '',
-    'Current execution environment:',
+    '## Explicit instruction',
+    '',
+    input.instructionMarkdown.trim(),
+    '',
+    '## Execution boundary',
+    '',
     EXECUTION_ENVELOPE_MARKER,
     '',
-    `Working directory: ${input.responsibility === 'generator' ? '$HOPI_PRIMARY_REPO_ROOT' : '$HOPI_SESSION_WORKSPACE'}`,
+    `Profile: ${input.responsibility}`,
+    `Context manifest: ${paths.contextFile}`,
     'Authority root: $HOPI_AUTHORITY_ROOT',
-    'Proposal root: $HOPI_PROPOSAL_ROOT',
-    'Proposal capabilities: $HOPI_PROPOSAL_CAPABILITIES_FILE',
-    'Context manifest: $HOPI_CONTEXT_FILE',
-    'Terminal result: $HOPI_OUTCOME_FILE',
-    'Terminal result schema: $HOPI_RESULT_SCHEMA_FILE',
     'Run artifact output: $HOPI_ARTIFACT_DIR',
     'Repo roots and release heads: $HOPI_REPOS_FILE',
     'Run scratch: $HOPI_RUN_SCRATCH',
     'Shared cache: $HOPI_CACHE_DIR',
-    'Task worktrees are disposable source projections; ignored or uncommitted runtime data may disappear when they are rematerialized.',
-    '$HOPI_CACHE_DIR persists across responsibility Attempts and task-worktree replacement.',
-    'A detached shell descendant is not an independent Work Attempt and has no durable HOPI result owner.',
     ...(paths.artifactManifestFile ? ['Evidence artifacts: $HOPI_EVIDENCE_ARTIFACTS_FILE'] : []),
     `Primary Project guidance: ${paths.agentsPath}`,
     ...paths.repoGuidance.map(
@@ -199,437 +150,95 @@ export function renderResponsibilityPrompt(
     'Primary Repo root: $HOPI_PRIMARY_REPO_ROOT',
     'Browser harness, when installed: $HOPI_BROWSER_HARNESS_COMMAND',
     ...(paths.browserTargetsFile ? ['Browser targets: $HOPI_BROWSER_TARGETS_FILE'] : []),
-    'Browser artifacts: $HOPI_BROWSER_HARNESS_ARTIFACT_DIR',
     ...(paths.operatorPreferenceFile
       ? ['Operator preferences: $HOPI_OPERATOR_PREFERENCE_FILE']
       : []),
     ...(paths.apiOrigin ? ['HOPI API: $HOPI_API_ORIGIN'] : []),
     '',
-    'Authority and evidence are immutable. Proposal is a sparse overlay: an absent path is unchanged; deletion is unsupported.',
-    'Only paths and exact control-field values declared by $HOPI_PROPOSAL_CAPABILITIES_FILE can be published; any other proposal is rejected.',
-    'Coordinator alone changes canonical control state, Evidence, HOPI-managed Git metadata, checkpoints, and integration refs.',
-    '$HOPI_REPOS_FILE is the complete Project root map. Read only its roots; never scan parents/siblings. They may contain source or knowledge.',
-    'A shell invocation remains one invocation; it ends on completion, failure, termination, or its selected timeout, and any returned live Session represents that same invocation.',
-    ...(paths.hasImages
-      ? ['Attached images are Goal assets with their authority-defined purpose.']
-      : []),
-    'Non-Preview external effects require explicit Work or operator authority.',
+    'Never modify canonical .hopi documents or HOPI-managed Git refs.',
+    'Read only the Repo roots listed in $HOPI_REPOS_FILE; do not scan their parents or siblings.',
+    'A settled Run is never resumed. Do not assume that your Report changes Work state.',
     '',
-  ]
-  const responsibility =
-    input.responsibility === 'planner'
-      ? plannerPrompt(paths)
-      : input.responsibility === 'generator'
-        ? generatorPrompt()
-        : reviewerPrompt(input.projectId)
-  const current = renderCurrentAssignment(input.responsibility, assignment)
-  return [
-    '# HOPI Responsibility Run',
+    ...profileContract(input.responsibility),
     '',
-    ...assignmentSection('primary-task', current.primary),
-    ...assignmentSection('execution-boundary', boundary),
-    ...assignmentSection('responsibility', responsibility),
-    ...assignmentSection('supporting-authority', [
-      ...current.supporting,
-      ...previousAttemptFacts(assignment.previousAttempt),
-    ]),
-    ...assignmentSection('required-result', [
-      '## Result',
-      '',
-      'Write one object matching $HOPI_RESULT_SCHEMA_FILE to $HOPI_OUTCOME_FILE.',
-      '',
-    ]),
+    ...assignmentFacts,
+    '',
+    '## Required Report',
+    '',
+    'Finish with one clear natural-language Report describing what you observed or changed, checks run, limitations, and the next decision if one is needed.',
+    'Do not return a terminal JSON result, Operation, ChangeSet, or workflow command.',
+    'For a process adapter that cannot emit a final assistant response, write the same Markdown Report to $HOPI_REPORT_FILE.',
+    '',
   ].join('\n')
 }
 
-function renderReportRunPrompt(
-  input: PrepareRoleContextInput,
-  paths: {
-    runRoot: string
-    contextFile: string
-    artifactManifestFile?: string
-    authorityRoot: string
-    proposalRoot: string
-    artifactOutputDir: string
-    proposalCapabilitiesFile: string
-    resultSchemaFile: string
-    resultFile: string
-    bootstrapSourceRoot?: string
-    agentsPath: string
-    attentionRoot: string
-    primaryRepoId: string
-    repoRoots: readonly RoleRepoRoot[]
-    repoGuidance: readonly { repoId: string; path: string }[]
-    reposFile: string
-    apiOrigin?: string
-    operatorPreferenceFile?: string
-    browserTargetsFile?: string
-    hasImages: boolean
-  },
-  assignment: RunAssignment,
-) {
-  const directive = input.directive
-  if (!directive || directive.protocol !== 'report') {
-    throw new Error('A Report Run prompt requires an explicit report directive')
+function profileContract(responsibility: Responsibility) {
+  if (responsibility === 'planner') {
+    return [
+      '## Planner profile',
+      '',
+      'Work only the requested decision ticket—the current frontier. Wayfinding finds the route rather than charging at the destination: resolve one decision with evidence, record remaining fog and newly visible tickets, then stop at the Engineering handoff. Produce decisions, not deliverables. Research is AFK; prototype and grilling are HITL; a task only unblocks a decision. HITL stays open until the operator speaks, and product source remains unchanged.',
+    ]
   }
-  const ownerMessages =
-    assignment.work.ownerMessages.length > 0
-      ? [
-          '### Project Owner Messages',
-          '',
-          ...assignment.work.ownerMessages.flatMap((message) => [
-            `${message.recordedAt} · source ${message.sourceEventId}`,
-            '',
-            message.content,
-            '',
-          ]),
-        ]
-      : []
-  const workspacePolicy =
-    directive.workspaceMode === 'isolated_write'
-      ? [
-          'You may inspect and modify only the supplied isolated Repo worktrees.',
-          'Source changes remain an unaccepted ChangeSet until a later explicit Operation accepts them.',
-        ]
-      : directive.workspaceMode === 'read_only'
-        ? ['You may inspect the supplied Repo projection, but must not modify Project source.']
-        : [
-            'Project source is outside this Run boundary. Work only from staged authority and Run data.',
-          ]
-  const supporting = renderCurrentAssignment('generator', assignment).supporting
+  if (responsibility === 'generator') {
+    return [
+      '## Generator profile',
+      '',
+      'Implement the explicit instruction in the provided writable source workspace. Keep changes scoped and leave the workspace checkpoint-ready.',
+    ]
+  }
   return [
-    '# HOPI Run',
+    '## Reviewer profile',
     '',
-    ...assignmentSection('primary-task', [
-      '## Run Instruction',
-      '',
-      directive.instructionMarkdown.trim(),
-      '',
-      `Execution profile: ${directive.profile}`,
-      'The profile selects model/runtime configuration only. It does not assign a fixed business role or state transition.',
-      `Workspace mode: ${directive.workspaceMode}`,
-      ...workspacePolicy,
-      ...(directive.refs.length > 0
-        ? [
-            '',
-            'Caller-supplied references:',
-            ...directive.refs.map((reference) => `- ${reference}`),
-          ]
-        : []),
-      ...(directive.baseChangeSetId ? ['', `Base ChangeSet: ${directive.baseChangeSetId}`] : []),
-      '',
-      `## Work: ${assignment.work.title}`,
-      `Source: $HOPI_AUTHORITY_ROOT/${assignment.work.path}`,
-      `Kind and compatibility stage: ${assignment.work.kind} / ${assignment.work.stage}`,
-      '',
-      '<work>',
-      assignment.work.body.trim(),
-      '</work>',
-      '',
-      `## Goal: ${assignment.goal.title}`,
-      `Source: $HOPI_AUTHORITY_ROOT/${assignment.goal.path}`,
-      '',
-      '<goal>',
-      assignment.goal.body.trim(),
-      '</goal>',
-      '',
-      ...ownerMessages,
-    ]),
-    ...assignmentSection('execution-boundary', [
-      '## Execution Boundary',
-      '',
-      'Current execution environment:',
-      EXECUTION_ENVELOPE_MARKER,
-      '',
-      `Working directory: ${directive.workspaceMode === 'isolated_write' ? '$HOPI_PRIMARY_REPO_ROOT' : '$HOPI_SESSION_WORKSPACE'}`,
-      'Authority root: $HOPI_AUTHORITY_ROOT',
-      'Context manifest: $HOPI_CONTEXT_FILE',
-      'Run artifact output: $HOPI_ARTIFACT_DIR',
-      'Repo manifest: $HOPI_REPOS_FILE',
-      'Run scratch: $HOPI_RUN_SCRATCH',
-      'Shared cache: $HOPI_CACHE_DIR',
-      ...(paths.artifactManifestFile ? ['Evidence artifacts: $HOPI_EVIDENCE_ARTIFACTS_FILE'] : []),
-      ...paths.repoGuidance.map(
-        (guidance) => `Applicable Repo guidance ${guidance.repoId}: ${guidance.path}`,
-      ),
-      '',
-      'Canonical .hopi content and HOPI-managed Git metadata are immutable.',
-      'Do not write Goal proposals or infer a stage transition from the execution profile.',
-      '$HOPI_REPOS_FILE is the complete Project root map. Never scan parent or sibling directories.',
-      'Non-Preview external effects require explicit Work or operator authority.',
-      '',
-    ]),
-    ...assignmentSection('supporting-authority', [
-      ...supporting,
-      ...previousAttemptFacts(assignment.previousAttempt),
-    ]),
-    ...assignmentSection('required-result', [
-      '## Report',
-      '',
-      'Finish with a concise natural-language Markdown Report describing what you did, observed, changed, and recommend next.',
-      'Do not emit terminal JSON. The final response itself is the durable Run Report.',
-      '',
-    ]),
-  ].join('\n')
-}
-
-function assignmentSection(id: string, content: readonly string[]) {
-  return [
-    `<!-- HOPI_ASSIGNMENT_SECTION_BEGIN:${id} -->`,
-    ...content,
-    `<!-- HOPI_ASSIGNMENT_SECTION_END:${id} -->`,
+    'Inspect the explicit instruction, authority, candidate source, and relevant checks independently. Do not modify product source; report findings and uncertainty.',
   ]
 }
 
-function renderCurrentAssignment(responsibility: Responsibility, assignment: RunAssignment) {
-  const ownerMessages =
-    assignment.work.ownerMessages.length > 0
-      ? [
-          '### Project Owner Messages',
-          '',
-          ...assignment.work.ownerMessages.flatMap((message) => [
-            `${message.recordedAt} · source ${message.sourceEventId}`,
-            '',
-            message.content,
-            '',
-          ]),
-        ]
-      : []
-  const primary =
-    responsibility === 'planner'
-      ? [
-          '## Primary Task',
-          '',
-          `### Goal Contract: ${assignment.goal.title}`,
-          `Source: $HOPI_AUTHORITY_ROOT/${assignment.goal.path}`,
-          `Contract revision: ${assignment.goal.contractRevision}`,
-          '',
-          '<goal-contract>',
-          assignment.goal.body.trim(),
-          '</goal-contract>',
-          '',
-          `### Planning Work: ${assignment.work.title}`,
-          `Source: $HOPI_AUTHORITY_ROOT/${assignment.work.path}`,
-          `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
-          '',
-          '<planning-work>',
-          assignment.work.body.trim(),
-          '</planning-work>',
-          '',
-          ...ownerMessages,
-          ...(assignment.acceptedInputs.length > 0
-            ? [
-                '### Accepted Inputs (Planning Work order)',
-                '',
-                ...assignment.acceptedInputs.flatMap((acceptedInput, index) => [
-                  `#### Input ${index + 1}`,
-                  `Source: $HOPI_AUTHORITY_ROOT/${acceptedInput.path}`,
-                  '<accepted-input>',
-                  acceptedInput.body.trim(),
-                  '</accepted-input>',
-                  '',
-                ]),
-              ]
-            : []),
-        ]
-      : [
-          '## Primary Task',
-          '',
-          `### Engineering Work: ${assignment.work.title}`,
-          `Source: $HOPI_AUTHORITY_ROOT/${assignment.work.path}`,
-          `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
-          '',
-          '<engineering-work>',
-          assignment.work.body.trim(),
-          '</engineering-work>',
-          '',
-          ...ownerMessages,
-        ]
-  const supporting = [
-    ...(responsibility === 'planner'
-      ? []
-      : [
-          '## Supporting Authority',
-          '',
-          `Goal: ${assignment.goal.title}`,
-          `Goal source: $HOPI_AUTHORITY_ROOT/${assignment.goal.path}`,
-          `Goal contract revision: ${assignment.goal.contractRevision}`,
-        ]),
+function renderAssignment(assignment: RunAssignment) {
+  const ownerMessages = assignment.work.ownerMessages.flatMap((message) => [
+    `- ${message.recordedAt} · source ${message.sourceEventId}`,
+    `  ${message.content}`,
+  ])
+  return [
+    '## Current Work authority',
+    '',
+    `Goal: ${assignment.goal.title}`,
+    `Goal source: $HOPI_AUTHORITY_ROOT/${assignment.goal.path}`,
+    `Contract revision: ${assignment.goal.contractRevision}`,
+    '',
+    '<goal>',
+    assignment.goal.body.trim(),
+    '</goal>',
+    '',
+    `Work: ${assignment.work.title}`,
+    `Work source: $HOPI_AUTHORITY_ROOT/${assignment.work.path}`,
+    `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
+    '',
+    '<work>',
+    assignment.work.body.trim(),
+    '</work>',
+    ...(ownerMessages.length > 0 ? ['', '### Owner messages', '', ...ownerMessages] : []),
     ...(assignment.work.contextRefs.length > 0
       ? [
-          ...(responsibility === 'planner' ? ['## Supporting Authority', ''] : []),
           '',
-          '### Selected Work Context',
+          '### Selected context',
+          '',
           ...assignment.work.contextRefs.map(
             (reference) => `- $HOPI_AUTHORITY_ROOT/${reference.path} — ${reference.purpose}`,
           ),
         ]
       : []),
-    ...(assignment.latestEvidence
-      ? [
-          ...(responsibility === 'planner' ? ['## Supporting Authority', ''] : []),
-          '',
-          '### Latest Owning Work Evidence (Historical Run Result)',
-          `Source: $HOPI_AUTHORITY_ROOT/${assignment.latestEvidence.path}`,
-          'This records the producing Run; current candidate and release state are reported separately below.',
-          '',
-          '<latest-evidence>',
-          assignment.latestEvidence.body.trim(),
-          '</latest-evidence>',
-          ...(assignment.latestEvidence.artifacts.length > 0
-            ? [
-                '',
-                '#### Current Reproducer Artifacts',
-                '',
-                'Current-Run copies of referenced artifacts:',
-                ...assignment.latestEvidence.artifacts.map(
-                  (artifact) => `- ${artifact.reference} -> ${artifact.path}`,
-                ),
-              ]
-            : []),
-        ]
-      : []),
-    ...(assignment.unavailableArtifacts.length > 0
+    ...(assignment.previousAttempt
       ? [
           '',
-          '### Unavailable Referenced Material',
+          '### Previous Run',
           '',
-          'These are supporting-material diagnostics, not a Coordinator verdict. Decide whether they matter for the current responsibility.',
-          ...assignment.unavailableArtifacts.map(
-            (artifact) =>
-              `- ${artifact.reference} (from ${artifact.evidence.join(', ')}): ${artifact.reason}`,
-          ),
+          `- Run: ${assignment.previousAttempt.runId}`,
+          `- Profile: ${assignment.previousAttempt.responsibility}`,
+          `- Termination: ${assignment.previousAttempt.termination}`,
+          '',
+          assignment.previousAttempt.reportMarkdown,
         ]
       : []),
-    ...renderRepairView(assignment.repairView),
-    '',
-  ]
-  return { primary, supporting }
-}
-
-function renderRepairView(repairView: RunAssignment['repairView']) {
-  if (!repairView) return []
-  if (
-    repairView.candidate.files.length === 0 &&
-    repairView.candidate.unavailable.length === 0 &&
-    repairView.candidate.integrations.length === 0
-  ) {
-    return []
-  }
-  return [
-    '',
-    '### Current Repair View (Diagnostics, Not Authority)',
-    '',
-    'Current candidate integration preflight:',
-    ...repairView.candidate.integrations.flatMap((integration) => [
-      `- Repo ${integration.repoId}`,
-      `  - Release head: ${integration.releaseHead}`,
-      `  - Task head: ${integration.taskHead}`,
-      `  - Merge base: ${integration.mergeBase}`,
-      ...(integration.result.kind === 'ready'
-        ? ['  - Result: ready']
-        : integration.result.kind === 'conflict'
-          ? [
-              '  - Result: conflict',
-              ...integration.result.paths.map((path) => `  - Conflict path: ${path}`),
-            ]
-          : ['  - Result: failed', `  - Diagnostic: ${integration.result.detail}`]),
-    ]),
-    ...(repairView.candidate.integrations.length === 0
-      ? ['- No Repo integration preflight available.']
-      : []),
-    '',
-    'Changed files relative to the current release base:',
-    ...(repairView.candidate.files.length > 0
-      ? repairView.candidate.files.map((path) => `- ${path}`)
-      : ['- No candidate changes observed.']),
-    ...(repairView.candidate.omitted > 0
-      ? [`- … ${repairView.candidate.omitted} additional changed files omitted.`]
-      : []),
-    ...(repairView.candidate.unavailable.length > 0
-      ? [
-          'Candidate inspection diagnostics:',
-          ...repairView.candidate.unavailable.map((diagnostic) => `- ${diagnostic}`),
-        ]
-      : []),
-  ]
-}
-
-function plannerPrompt(paths: {
-  runRoot: string
-  proposalRoot: string
-  bootstrapSourceRoot?: string
-  agentsPath: string
-  attentionRoot: string
-  apiOrigin?: string
-  operatorPreferenceFile?: string
-}) {
-  return [
-    '## Planner',
-    '',
-    'Own durable design and only the Engineering Work required to reach the current Goal boundary.',
-    'Goal authority and source are read-only.',
-    ...(paths.operatorPreferenceFile
-      ? ['Preferences rank below current Input and Project/Goal authority.']
-      : []),
-    'Run proof may bind content, never the future checkpoint identity; Coordinator Evidence owns it.',
-    'The proposal owns the nonterminal dependsOn DAG; leave it acyclic. Terminal Work is immutable.',
-    'Plan the smallest real delivery supported by current source and toolchain facts; verify mechanisms from source.',
-    'Each Engineering Work owns one coherent durable candidate and one primary verification strategy, split at a stable contract, artifact, or proof boundary—not a product label.',
-    'Rehearse every proposed Work through one Generator/Reviewer cycle. Split independent flows, state machines, operation families, consumer migrations, and proof environments; keep each accepted intermediate release buildable. State the durable candidate, deliberately deferred behavior, and focused proof. Use judgment, not quotas or prescribed headings.',
-    'A named test suite is only a container, not a proof boundary; so are packages, adapters, apps, and browser harnesses. One aggregate suite cannot make independently failing or acceptable scenarios one Work; split where an earlier buildable candidate can be accepted.',
-    'Do not turn a one-time deliverable into a general parser, linter, schema, or policy unless the Goal or an existing boundary requires it; then define a finite accepted input grammar and material invariants.',
-    'Owned Project Repo context: .hopi/docs/repos.md records Repo responsibilities, important commands, shared contracts, and combined runtime topology.',
-    'For Preview, preserve that baseline and runbook boundary in design and Repo context.',
-    'If source conflicts or missing authority can materially change the plan, record verified facts, reuse or update the smallest Attention, and propose no Work in the same result.',
-    ...(paths.bootstrapSourceRoot
-      ? ['Read-only bootstrap source: $HOPI_BOOTSTRAP_SOURCE_ROOT']
-      : []),
-    '',
-  ]
-}
-
-function generatorPrompt() {
-  return [
-    '## Generator',
-    '',
-    'Implement Engineering Work. HOPI-managed Git metadata are Coordinator-owned.',
-    'Preview goal: get the normal user entry running quickly with mockable authentication and visible useful data. Prefer local data; fall back to DEV.',
-    'Read or create docs/hopi/preview/runbook.md. Explore current source first, then relevant knowledge, then ask one short question only if a necessary fact remains unavailable. Choose the shortest working launch path; failed adapter topology and old runbook implementation restrictions are revisable history, not requirements.',
-    'Mock authentication and local sample data are valid Preview choices. Start and browser-check before broad builds or test suites; fix only blockers to the page, data, and one basic interaction. Check from fresh browser state; required user/session state must come from Preview, not manual test-browser seeding. Once the normal entry, authentication, useful data, and one basic interaction are observed, stop product exploration and finish focused checks and cleanup; do not open or repair extra routes or features.',
-    'Keep edits small and coherent. If a patch fails, inspect and retry only that file; never resend one large multi-file patch.',
-    'Adapter: optional scripts/hopi/prepare; foreground scripts/hopi/preview emits HOPI_PREVIEW_SURFACES=<nonempty JSON array of {id,label,url}> after the Preview is usable and stays alive until Stop. Entries are normal user routes, never docs/logs/health.',
-    'Stop and verify process/port/resource cleanup; never await natural exit.',
-    '',
-  ]
-}
-
-function reviewerPrompt(projectId: string) {
-  const releaseRef = projectReleaseRef(projectId)
-  return [
-    '## Reviewer',
-    '',
-    'Owned outcome: independently determine whether the received candidate satisfies the current Goal, intended-experience authority, and Engineering Work contract.',
-    `Candidate source is the cumulative delta from git merge-base ${releaseRef} HEAD to HEAD.`,
-    'Source, Project docs, canonical .hopi state, and Git metadata are read-only.',
-    'Public Preview observes integrated release, not this candidate.',
-    'Preview: compare the runbook and surfaces with accepted authority, then start and browser-use every surface. Pass when the intended product entry opens, authentication works including by mock, useful data is visible, and one basic interaction works. Prefer local data; DEV data is acceptable.',
-    'Do not require production-equivalent infrastructure, live authentication, or every product capability. HTTP/process/port evidence alone cannot pass; reject a blank, broken, or data-empty experience. Start from fresh browser state; reject manual test-browser seeding. Once the required entry, authentication, data, and one interaction are observed, stop product exploration; do not inspect additional routes or features.',
-    'Stop and verify process/port/resource cleanup; never await natural exit. Reject if browser-based experience verification is unavailable.',
-    '',
-  ]
-}
-
-function previousAttemptFacts(previous: RunAssignment['previousAttempt']) {
-  if (!previous) return []
-  return [
-    '### Previous Application',
-    '',
-    `- Run: ${previous.runId}`,
-    `- Responsibility: ${previous.responsibility}`,
-    `- Role outcome: ${previous.result ?? 'none'}`,
-    `- Application: ${previous.application ?? 'none'}`,
-    `- Observed result: ${previous.summary ?? 'No summary recorded.'}`,
-    '',
   ]
 }

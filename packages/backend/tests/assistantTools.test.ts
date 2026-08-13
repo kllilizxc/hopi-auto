@@ -17,7 +17,6 @@ import {
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
-import { createDeliveryOperationStore } from '../src/runtime/deliveryOperationStore'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
 import { type RunAttemptStore, createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -1078,122 +1077,7 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(1)
   })
 
-  test('requests free-form Runs and applies explicit Work and Goal completion decisions', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-supervisor',
-      content: 'Inspect, then accept the current result.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-
-    const requested = await fixture.tools.executeForEvent('EV-supervisor', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      action: {
-        kind: 'run',
-        profile: 'reviewer',
-        workspaceMode: 'read_only',
-        instructionMarkdown: 'Inspect current authority and report whether it is sufficient.',
-        refs: ['goal://G-1'],
-      },
-    })
-    expect(requested.value).toMatchObject({
-      effect: {
-        kind: 'work_run_requested',
-        runId: 'R-requested-1',
-        runDisposition: 'scheduled',
-      },
-    })
-    expect(fixture.requestedRunOptions).toEqual([
-      {
-        allowSuccessor: true,
-        directive: {
-          protocol: 'report',
-          profile: 'reviewer',
-          workspaceMode: 'read_only',
-          instructionMarkdown: 'Inspect current authority and report whether it is sufficient.',
-          refs: ['goal://G-1'],
-          baseChangeSetId: null,
-        },
-      },
-    ])
-
-    await fixture.tools.executeForEvent('EV-supervisor', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      action: { kind: 'complete', decision: 'The current planning objective is fully resolved.' },
-    })
-    const completed = await fixture.tools.executeForEvent('EV-supervisor', 'hopi_control_goal', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      action: { kind: 'complete', decision: 'The current Goal acceptance meaning is satisfied.' },
-    })
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('done')
-    expect(goalPackage.goal.attributes.lifecycle).toBe('done')
-    expect(goalPackage.goal.body).toContain('The current Goal acceptance meaning is satisfied.')
-    expect(completed.value).toMatchObject({
-      effect: { kind: 'goal_complete' },
-      lifecycle: 'done',
-    })
-  })
-
-  test('proposes a typed Operation idempotently from the durable Inbox event', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-operation',
-      content: 'The Goal explicitly requires a delivery archive.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-    const request = {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      action: {
-        kind: 'propose' as const,
-        workId: 'plan-initial',
-        idempotencyKey: 'goal-delivery-archive',
-        requiredForGoal: true,
-        intent: {
-          kind: 'archive' as const,
-          changeSetId: 'CS-R-1',
-          outputName: 'delivery.zip',
-        },
-      },
-    }
-
-    const first = await fixture.tools.executeForEvent(
-      'EV-operation',
-      'hopi_control_operation',
-      request,
-    )
-    const repeated = await fixture.tools.executeForEvent(
-      'EV-operation',
-      'hopi_control_operation',
-      request,
-    )
-
-    expect(first).toMatchObject({
-      changed: true,
-      value: {
-        effect: {
-          kind: 'operation_proposed',
-          operationId: expect.stringMatching(/^OP-[a-f0-9]{24}$/),
-        },
-        operation: {
-          status: 'proposed',
-          requiredForGoal: true,
-          proposedByEventId: 'EV-operation',
-        },
-      },
-    })
-    expect(repeated).toMatchObject({ changed: false, value: first.value })
-  })
-
-  test('requests one Work continuation without mutating Attention', async () => {
+  test('requests one explicit Work Run without mutating Attention', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
@@ -1216,11 +1100,17 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'plan-initial',
-      action: { kind: 'continue' },
+      action: {
+        kind: 'run',
+        profile: 'planner',
+        workspaceMode: 'none',
+        instructionMarkdown: 'Retry this Planning Work and report the current facts.',
+        refs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+      },
     })
     expect(retried.value).toMatchObject({
       effect: {
-        kind: 'work_continue_requested',
+        kind: 'work_run_requested',
         workId: 'plan-initial',
         stage: 'plan',
         runId: 'R-requested-1',
@@ -1234,7 +1124,7 @@ describe('Assistant HOPI tools', () => {
     expect(pendingPackage.inputs).toHaveLength(0)
   })
 
-  test('reserves operational continuation without changing Work fields', async () => {
+  test('reserves an explicit retry Run without changing Work fields', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const attention = await publishTestWorkAttention(
@@ -1261,13 +1151,19 @@ describe('Assistant HOPI tools', () => {
         projectId: 'P-1',
         goalId: 'G-1',
         workId: 'plan-initial',
-        action: { kind: 'continue' },
+        action: {
+          kind: 'run',
+          profile: 'planner',
+          workspaceMode: 'none',
+          instructionMarkdown: 'Retry after connectivity recovery and report what happens.',
+          refs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+        },
       },
     )
 
     expect(retried.value).toMatchObject({
       effect: {
-        kind: 'work_continue_requested',
+        kind: 'work_run_requested',
         workId: 'plan-initial',
         stage: 'plan',
         runId: 'R-requested-1',
@@ -1282,7 +1178,7 @@ describe('Assistant HOPI tools', () => {
     expect(goalPackage.inputs).toHaveLength(0)
   })
 
-  test('does not route a continuation turn into the controlled Goal as accepted Input', async () => {
+  test('does not route an explicit Run request into the controlled Goal as accepted Input', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({
       goalId: 'G-target',
@@ -1307,7 +1203,13 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       goalId: 'G-target',
       workId: 'plan-initial',
-      action: { kind: 'continue' },
+      action: {
+        kind: 'run',
+        profile: 'planner',
+        workspaceMode: 'none',
+        instructionMarkdown: 'Run the unrelated target Work.',
+        refs: [],
+      },
     })
 
     const target = await fixture.goalStore.readPackage('G-target')
@@ -1400,12 +1302,12 @@ describe('Assistant HOPI tools', () => {
     expect(fixture.interruptedWorkTargets).toEqual([{ goalId: 'G-1', workId: 'plan-initial' }])
   })
 
-  test('returns canonical nonterminal state after deferring Planning Work', async () => {
+  test('keeps canonical scheduling fields unchanged when requesting a Run', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await fixture.workspace.receiveEvent({
       eventId: 'EV-defer-planning',
-      content: 'Defer Planning until next year.',
+      content: 'Run Planning explicitly.',
       context: { projectId: 'P-1', goalId: 'G-1' },
     })
 
@@ -1413,23 +1315,29 @@ describe('Assistant HOPI tools', () => {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'plan-initial',
-      action: { kind: 'continue', at: '2099-01-01T00:00:00.000Z' },
+      action: {
+        kind: 'run',
+        profile: 'planner',
+        workspaceMode: 'none',
+        instructionMarkdown: 'Assess the current Goal now.',
+        refs: [],
+      },
     })
 
     expect(deferred.value).toMatchObject({
       effect: {
         stage: 'plan',
-        notBefore: '2099-01-01T00:00:00.000Z',
+        notBefore: null,
       },
       settledAttentionRefs: [],
     })
     expect(
       (await fixture.goalStore.readPackage('G-1')).works.get('plan-initial')?.attributes,
-    ).toMatchObject({ stage: 'plan', notBefore: '2099-01-01T00:00:00.000Z' })
+    ).toMatchObject({ stage: 'plan', notBefore: null })
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
   })
 
-  test('changes Work dependencies and delivers a message through the same lineage', async () => {
+  test('changes Work dependencies and requests a Run without mutating Work prose', async () => {
     const fixture = await setup({ trackInterrupts: true })
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
@@ -1452,8 +1360,11 @@ describe('Assistant HOPI tools', () => {
       goalId: 'G-1',
       workId: 'W-owner',
       action: {
-        kind: 'continue',
-        message: 'Use the verified API command recorded in the Project design.',
+        kind: 'run',
+        profile: 'generator',
+        workspaceMode: 'isolated_write',
+        instructionMarkdown: 'Use the verified API command recorded in the Project design.',
+        refs: [],
       },
     })
 
@@ -1471,24 +1382,15 @@ describe('Assistant HOPI tools', () => {
       changed: true,
       value: {
         effect: {
-          kind: 'work_continue_requested',
+          kind: 'work_run_requested',
           workId: 'W-owner',
         },
       },
     })
     const work = (await fixture.goalStore.readPackage('G-1')).works.get('W-owner')
     expect(work?.attributes.dependsOn).toEqual(['W-base'])
-    expect(work?.attributes.ownerMessages).toEqual([
-      {
-        recordedAt: expect.any(String),
-        sourceEventId: 'EV-supervise',
-        content: 'Use the verified API command recorded in the Project design.',
-      },
-    ])
-    expect(fixture.interruptedWorkTargets).toEqual([
-      { goalId: 'G-1', workId: 'W-owner' },
-      { goalId: 'G-1', workId: 'W-owner' },
-    ])
+    expect(work?.attributes.ownerMessages).toEqual([])
+    expect(fixture.interruptedWorkTargets).toEqual([{ goalId: 'G-1', workId: 'W-owner' }])
   })
 
   test('starting Planning preserves attached Attention', async () => {
@@ -1995,7 +1897,6 @@ describe('Assistant HOPI tools', () => {
       'P-2',
       fixture.publisher,
     )
-    const delegatedController = createGoalController(delegatedStore, {})
     fixture.projects.set('P-2', {
       projectId: 'P-2',
       primaryRepoId: delegatedLink.primaryRepoId,
@@ -2003,7 +1904,7 @@ describe('Assistant HOPI tools', () => {
       projectRoot: delegatedLink.integrationRoot,
       sourceRoot: delegatedLink.integrationRoot,
       store: delegatedStore,
-      controller: delegatedController,
+      controller: createGoalController(delegatedStore, {}),
       reconciler: {
         interruptRuns() {},
         async interruptQueuedRuns() {
@@ -2015,26 +1916,14 @@ describe('Assistant HOPI tools', () => {
         async decisionWhenEligible() {
           return { kind: 'wait' as const, reasons: [] }
         },
-        async settledFailureWorkIds() {
-          return new Set<string>()
-        },
         async requestWorkRun() {
           return { runId: 'R-requested-delegation', disposition: 'scheduled' as const }
         },
-        completeWork: (goalId, workId, input) =>
-          delegatedController.completeWork(goalId, workId, input),
-        completeGoal: (goalId, input) => delegatedController.completeGoal(goalId, input),
-        async proposeOperation() {
-          throw new Error('Unexpected delegated Operation proposal')
+        async completeWork() {
+          throw new Error('Unexpected delegated Work completion')
         },
-        async executeOperation() {
-          throw new Error('Unexpected delegated Operation execution')
-        },
-        async cancelOperation() {
-          throw new Error('Unexpected delegated Operation cancellation')
-        },
-        async listGoalOperations() {
-          return []
+        async completeGoal() {
+          throw new Error('Unexpected delegated Goal completion')
         },
       },
     })
@@ -2060,7 +1949,7 @@ describe('Assistant HOPI tools', () => {
       },
     })
     const workId = (created.value as { effect: { workId: string } }).effect.workId
-    await fixture.attempts.start({
+    await reserveAndStartAttempt(fixture.attempts, {
       projectId: 'P-2',
       goalId: 'G-runtime',
       workId,
@@ -2266,8 +2155,13 @@ describe('Assistant HOPI tools', () => {
       goalId: 'G-1',
       workId: 'plan-initial',
       runId: 'R-live',
-      responsibility: 'planner',
       workHash: 'a'.repeat(64),
+      request: {
+        profile: 'planner',
+        workspaceMode: 'none',
+        instructionMarkdown: 'Inspect current control state.',
+        refs: [],
+      },
     })
     expect((await fixture.state.read({ projectId: 'P-1', goalId: 'G-1' })).activeRuns).toEqual([
       expect.objectContaining({
@@ -2292,7 +2186,7 @@ describe('Assistant HOPI tools', () => {
       title: 'Other Goal',
       objective: 'Run independently.',
     })
-    const otherAttempt = await fixture.attempts.start({
+    const otherAttempt = await reserveAndStartAttempt(fixture.attempts, {
       projectId: 'P-1',
       goalId: 'G-2',
       workId: 'plan-initial',
@@ -2365,7 +2259,11 @@ describe('Assistant HOPI tools', () => {
     ])
     expect(current.projects[0]?.goals[0]).not.toHaveProperty('evidence')
 
-    await attempt.interrupt(new Error('test interruption'))
+    await attempt.settle({
+      termination: 'interrupted',
+      reportMarkdown: 'Interrupted during the test.',
+      exitCode: null,
+    })
     await finishInitialPlanning(fixture.goalStore, 'G-1')
     const after = (
       await fixture.tools.executeForEvent('EV-read', 'hopi_read_state', {
@@ -2388,9 +2286,13 @@ describe('Assistant HOPI tools', () => {
     expect(after.projects[0]?.goals[0]?.works).toEqual([])
     expect(after.projects[0]?.goals[0]?.latestPlanningOutcome).toMatchObject({
       attributes: { id: 'plan-initial', stage: 'done' },
-      runtime: { latestAttempt: { status: 'interrupted' } },
+      runtime: { latestAttempt: { status: 'settled', termination: 'interrupted' } },
     })
-    await otherAttempt.interrupt(new Error('test cleanup'))
+    await otherAttempt.settle({
+      termination: 'interrupted',
+      reportMarkdown: 'Interrupted during test cleanup.',
+      exitCode: null,
+    })
   })
 
   test('projects complete canonical references for every open Attention', async () => {
@@ -2687,7 +2589,7 @@ describe('Assistant HOPI tools', () => {
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
     const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-1')
     await mkdir(runRoot, { recursive: true })
-    const attempt = await fixture.attempts.start({
+    const attempt = await reserveAndStartAttempt(fixture.attempts, {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'plan-initial',
@@ -2697,7 +2599,7 @@ describe('Assistant HOPI tools', () => {
     })
     await Bun.write(join(runRoot, 'context.md'), '# Context\n')
     await Bun.write(join(runRoot, 'prompt.md'), '# Prompt\n')
-    await Bun.write(join(runRoot, 'result.json'), '{}\n')
+    await Bun.write(join(runRoot, 'report.md'), 'Planner runtime failed.\n')
     await Bun.write(join(runRoot, 'transcript.log'), 'stdout: full raw detail\n')
     await Bun.write(
       join(runRoot, 'artifacts.json'),
@@ -2712,9 +2614,10 @@ describe('Assistant HOPI tools', () => {
         ],
       })}\n`,
     )
-    await attempt.finish({
-      outcome: { result: 'fail', summary: 'Planner failed.', exitCode: 1 },
-      application: 'failed',
+    await attempt.settle({
+      termination: 'crashed',
+      reportMarkdown: 'Planner failed.',
+      exitCode: 1,
     })
     await fixture.workspace.receiveEvent({ eventId: 'EV-read', content: 'Inspect current state.' })
 
@@ -2732,7 +2635,8 @@ describe('Assistant HOPI tools', () => {
               attemptCount: number
               recentAttempts: Array<{
                 runId: string
-                result: string | null
+                termination: string | null
+                reportMarkdown: string | null
                 artifactPreservation: {
                   path: string
                   unavailable: Array<{ reference: string; reason: string }>
@@ -2747,12 +2651,17 @@ describe('Assistant HOPI tools', () => {
     const runtime = snapshot.projects.at(0)?.goals.at(0)?.works.at(0)?.runtime
     if (!runtime) throw new Error('Expected Work runtime diagnostics')
     expect(snapshot.stateDigest).toMatch(/^[a-f0-9]{64}$/)
-    expect(runtime.latestAttempt).toMatchObject({ runId: 'R-1', status: 'finished' })
+    expect(runtime.latestAttempt).toMatchObject({
+      runId: 'R-1',
+      status: 'settled',
+      termination: 'crashed',
+    })
     expect(runtime.attemptCount).toBe(1)
     expect(runtime.recentAttempts).toEqual([
       expect.objectContaining({
         runId: 'R-1',
-        result: 'fail',
+        termination: 'crashed',
+        reportMarkdown: 'Planner failed.',
         artifactPreservation: expect.objectContaining({
           path: join(runRoot, 'artifacts.json'),
           unavailable: [
@@ -2787,7 +2696,7 @@ describe('Assistant HOPI tools', () => {
     const startAttempt = async (runId: string, responsibility: 'generator' | 'reviewer') => {
       const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', runId)
       await mkdir(runRoot, { recursive: true })
-      return fixture.attempts.start({
+      return reserveAndStartAttempt(fixture.attempts, {
         projectId: 'P-1',
         goalId: 'G-1',
         workId: 'W-1',
@@ -2798,24 +2707,27 @@ describe('Assistant HOPI tools', () => {
     }
 
     const firstReview = await startAttempt('R-review-1', 'reviewer')
-    await firstReview.finish({
-      outcome: { result: 'reject', summary: 'Missing required report.', exitCode: 0 },
-      application: 'published',
+    await firstReview.settle({
+      termination: 'normal',
+      reportMarkdown: 'Reviewer found a missing required report.',
+      exitCode: 0,
     })
     await Bun.sleep(2)
     const firstRepair = await startAttempt('R-generator-2', 'generator')
     const first = await fixture.state.readForWake()
     if (!first) throw new Error('Expected first Assistant state')
 
-    await firstRepair.finish({
-      outcome: { result: 'success', summary: 'Added the report.', exitCode: 0 },
-      application: 'published',
+    await firstRepair.settle({
+      termination: 'normal',
+      reportMarkdown: 'Generator added the report.',
+      exitCode: 0,
     })
     await Bun.sleep(2)
     const secondReview = await startAttempt('R-review-2', 'reviewer')
-    await secondReview.finish({
-      outcome: { result: 'reject', summary: 'Report is incomplete.', exitCode: 0 },
-      application: 'published',
+    await secondReview.settle({
+      termination: 'normal',
+      reportMarkdown: 'Reviewer found the report incomplete.',
+      exitCode: 0,
     })
     await Bun.sleep(2)
     await startAttempt('R-generator-3', 'generator')
@@ -2842,7 +2754,7 @@ describe('Assistant HOPI tools', () => {
     expect(second).toBe(first)
     expect(fixture.attemptReads).toEqual({ snapshots: 1, lists: 0, eventReads: 0 })
 
-    await fixture.attempts.start({
+    await reserveAndStartAttempt(fixture.attempts, {
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'plan-initial',
@@ -2872,7 +2784,6 @@ async function setup(
   await git(repoRoot, ['add', '.'])
   await git(repoRoot, ['commit', '-m', 'initial'])
   const homeRoot = join(temporaryRoot, 'home')
-  const deliveryOperations = createDeliveryOperationStore(homeRoot)
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(homeRoot, publisher)
   const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
@@ -2886,7 +2797,6 @@ async function setup(
   const goalEffects: Array<{ eventId: string; projectId: string; goalId: string }> = []
   const projectDispatchEffects: Array<{ eventId: string; projectId: string }> = []
   let requestedRunSequence = 0
-  const requestedRunOptions: unknown[] = []
   const projects = new Map([
     [
       'P-1',
@@ -2913,41 +2823,19 @@ async function setup(
           async decisionWhenEligible() {
             return { kind: 'wait' as const, reasons: [] }
           },
-          async settledFailureWorkIds() {
-            return new Set<string>()
-          },
-          async requestWorkRun(_goalId: string, _workId: string, requestOptions?: unknown) {
-            requestedRunOptions.push(requestOptions)
+          async requestWorkRun() {
             requestedRunSequence += 1
             return {
               runId: `R-requested-${requestedRunSequence}`,
               disposition: 'scheduled' as const,
             }
           },
-          completeWork: (
-            goalId: string,
-            workId: string,
-            input: { sourceEventId: string; decision: string },
-          ) => controller.completeWork(goalId, workId, input),
-          completeGoal: (goalId: string, input: { decision: string }) =>
-            controller.completeGoal(goalId, input),
-          proposeOperation: (
-            goalId: string,
-            input: Parameters<typeof deliveryOperations.propose>[0] & {
-              proposedByEventId: string
-            },
-          ) =>
-            deliveryOperations.propose({
-              ...input,
-              projectId: 'P-1',
-              goalId,
-            }),
-          async executeOperation() {
-            throw new Error('Operation execution is not configured in Assistant tool fixture')
+          async completeWork() {
+            throw new Error('Unexpected Work completion in Assistant tools fixture')
           },
-          cancelOperation: (_goalId: string, operationId: string, eventId: string) =>
-            deliveryOperations.cancel(operationId, eventId),
-          listGoalOperations: (goalId: string) => deliveryOperations.listGoal('P-1', goalId),
+          async completeGoal() {
+            throw new Error('Unexpected Goal completion in Assistant tools fixture')
+          },
         },
       },
     ],
@@ -3019,7 +2907,6 @@ async function setup(
     topologyChangedEventIds,
     goalEffects,
     projectDispatchEffects,
-    requestedRunOptions,
     projects,
     publisher,
   }
@@ -3041,6 +2928,32 @@ async function finishInitialPlanning(
       content: renderWorkDocument(work),
     },
   })
+}
+
+async function reserveAndStartAttempt(
+  attempts: RunAttemptStore,
+  input: Parameters<RunAttemptStore['start']>[0],
+) {
+  const workspaceMode =
+    input.responsibility === 'generator'
+      ? ('isolated_write' as const)
+      : input.responsibility === 'reviewer'
+        ? ('read_only' as const)
+        : ('none' as const)
+  await attempts.reserve({
+    projectId: input.projectId,
+    goalId: input.goalId,
+    workId: input.workId,
+    runId: input.runId,
+    workHash: input.workHash ?? 'a'.repeat(64),
+    request: {
+      profile: input.responsibility,
+      workspaceMode,
+      instructionMarkdown: `Exercise ${input.responsibility} Attempt ${input.runId}.`,
+      refs: [],
+    },
+  })
+  return attempts.start(input)
 }
 
 async function publishEngineeringWork(

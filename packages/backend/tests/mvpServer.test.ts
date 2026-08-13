@@ -21,13 +21,11 @@ import {
   deriveGoalSummaries,
   deriveWorkCompletedAt,
   latestAgentPlan,
-  presentAttempt,
 } from '../src/mvpServer'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { HostDirectoryPickerError } from '../src/runtime/hostDirectoryPicker'
 import { type RunAttemptSummary, createRunAttemptStore } from '../src/runtime/runAttemptStore'
-import { createRunChangeSetStore, readGitHead } from '../src/runtime/runChangeSet'
 import { runStoragePath } from '../src/runtime/runPaths'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -100,8 +98,13 @@ describe('MVP server', () => {
       goalId: 'G-1',
       workId: 'plan-initial',
       runId: 'R-live',
-      responsibility: 'planner',
       workHash: 'a'.repeat(64),
+      request: {
+        profile: 'planner',
+        workspaceMode: 'none',
+        instructionMarkdown: 'Assess the current Goal.',
+        refs: [],
+      },
     })
     expect(await request(base, '/api/state')).toMatchObject({
       activeRuns: [
@@ -166,14 +169,15 @@ describe('MVP server', () => {
       ],
     })
 
-    await recorder.finish({
-      outcome: { result: 'success', summary: 'Finished before cleanup settles.', exitCode: 0 },
-      application: 'cleanup_pending',
+    await recorder.settle({
+      termination: 'normal',
+      reportMarkdown: 'Finished before the Assistant decides the next action.',
+      exitCode: 0,
     })
 
     expect(await request(base, '/api/state')).toMatchObject({ activeRuns: [] })
     expect(await request(base, '/api/projects/P-1/goals/G-1')).toMatchObject({
-      works: [{ projection: { primaryBadge: 'queued' } }],
+      works: [{ projection: { primaryBadge: 'Waiting for Assistant' } }],
     })
   })
 
@@ -227,6 +231,19 @@ describe('MVP server', () => {
     const recorders = []
     for (let index = 0; index < 5; index += 1) {
       const runId = `R-generator-${index}`
+      await attempts.reserve({
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: `W-running-${index}`,
+        runId,
+        workHash: 'a'.repeat(64),
+        request: {
+          profile: 'generator',
+          workspaceMode: 'isolated_write',
+          instructionMarkdown: `Run ${index}.`,
+          refs: [],
+        },
+      })
       recorders.push(
         await attempts.start({
           projectId: 'P-1',
@@ -243,8 +260,13 @@ describe('MVP server', () => {
       goalId: 'G-1',
       workId: 'W-capacity',
       runId: 'R-capacity',
-      responsibility: 'generator',
       workHash: 'b'.repeat(64),
+      request: {
+        profile: 'generator',
+        workspaceMode: 'isolated_write',
+        instructionMarkdown: 'Wait for capacity.',
+        refs: [],
+      },
     })
 
     const state = (await request(base, '/api/state')) as {
@@ -257,7 +279,15 @@ describe('MVP server', () => {
       }),
     )
 
-    await Promise.all(recorders.map((recorder) => recorder.interrupt(new Error('test cleanup'))))
+    await Promise.all(
+      recorders.map((recorder) =>
+        recorder.settle({
+          termination: 'interrupted',
+          reportMarkdown: 'Interrupted during test cleanup.',
+          exitCode: null,
+        }),
+      ),
+    )
   })
 
   test('projects one prioritized conversation activity from public and hidden model work', () => {
@@ -374,98 +404,26 @@ describe('MVP server', () => {
     })
   })
 
-  test('preserves an explicit stale Attempt diagnosis when Evidence is unconsumed', () => {
-    const producerRun = 'project:P-1/goal:G-1/work:W-1/run:R-1'
-    const goalPackage = {
-      goal: {
-        attributes: {
-          id: 'G-1',
-          title: 'Goal',
-          lifecycle: 'active',
-          priority: 0,
-          contractRevision: 1,
-        },
-        body: 'Goal.\n',
-      },
-      works: new Map([
-        [
-          'W-1',
-          {
-            attributes: {
-              id: 'W-1',
-              title: 'Work',
-              kind: 'engineering',
-              stage: 'review',
-              notBefore: null,
-              dependsOn: [],
-              contractRevision: 1,
-              evidenceRefs: [],
-              contextRefs: [],
-              ownerMessages: [],
-            },
-            body: 'Work.\n',
-          },
-        ],
-      ]),
-      attentions: new Map(),
-      evidence: new Map([
-        [
-          'E-1',
-          {
-            attributes: {
-              id: 'E-1',
-              createdAt: '2026-07-11T00:00:00Z',
-              producerRun,
-              coordinatorCheck: null,
-              owner: 'project:P-1/goal:G-1/work:W-1',
-              artifacts: [],
-            },
-            body: '## Responsibility Result\n\n- Result: reject\n\n## Summary\n\nRejected.\n',
-          },
-        ],
-      ]),
-      inputs: [],
-      design: new Map(),
-    } as GoalPackage
-    const attempt = {
-      runId: 'R-1',
-      workId: 'W-1',
-      result: 'reject',
-      summary: 'Rejected. Stale result: owning Work changed.',
-      application: 'stale',
-    }
-
-    expect(presentAttempt(attempt, goalPackage, 'P-1', 'G-1')).toEqual(attempt)
-  })
-
-  test('derives Done completion from the Attempt that applied the terminal transition', () => {
+  test('derives the old Done timestamp from the latest settled Attempt', () => {
     const attempt = (overrides: Partial<RunAttemptSummary> = {}): RunAttemptSummary => ({
       projectId: 'P-1',
       goalId: 'G-1',
       workId: 'W-1',
       runId: 'R-1',
       responsibility: 'reviewer',
-      protocol: 'legacy_outcome',
-      profile: 'reviewer',
       workspaceMode: 'read_only',
-      instructionMarkdown: 'Review the current Work candidate.',
-      inputRefs: [],
-      baseChangeSetId: null,
-      workHash: null,
-      requestedExecution: null,
+      instructionMarkdown: 'Review.',
+      refs: [],
+      workHash: 'a'.repeat(64),
       execution: null,
-      sessionEpochs: [],
       requestedAt: '2026-07-11T00:00:00Z',
       startedAt: '2026-07-11T00:00:00Z',
       endedAt: '2026-07-11T00:05:00Z',
-      status: 'finished',
+      status: 'settled',
       termination: 'normal',
-      result: 'success',
-      summary: 'Integrated.',
-      reportMarkdown: '# Run Report\n\nIntegrated.\n',
+      reportMarkdown: 'Reviewed.',
       exitCode: 0,
-      application: 'integrated',
-      changeSetId: null,
+      candidateCommits: [],
       ...overrides,
     })
 
@@ -475,22 +433,16 @@ describe('MVP server', () => {
           runId: 'R-generator',
           responsibility: 'generator',
           endedAt: '2026-07-11T00:04:00Z',
-          application: 'published',
         }),
         attempt({ runId: 'R-reviewer' }),
       ]),
     ).toBe('2026-07-11T00:05:00Z')
     expect(
       deriveWorkCompletedAt({ kind: 'planning', stage: 'done' }, [
-        attempt({ responsibility: 'planner', application: 'published' }),
+        attempt({ responsibility: 'planner' }),
       ]),
     ).toBe('2026-07-11T00:05:00Z')
     expect(deriveWorkCompletedAt({ kind: 'engineering', stage: 'review' }, [attempt()])).toBeNull()
-    expect(
-      deriveWorkCompletedAt({ kind: 'engineering', stage: 'done' }, [
-        attempt({ result: 'reject', application: 'published' }),
-      ]),
-    ).toBeNull()
   })
 
   test('serves the React product frontend at root and Goal routes', async () => {
@@ -805,11 +757,10 @@ describe('MVP server', () => {
       roleRunner: {
         async run() {
           return {
-            result: 'fail',
-            summary: 'Test runner does not execute newly scheduled Planning.',
+            termination: 'crashed',
+            reportMarkdown: 'Test runner does not execute explicitly requested Planning.',
             artifacts: [],
             exitCode: 1,
-            failureKind: 'operational',
           }
         },
       },
@@ -857,14 +808,10 @@ describe('MVP server', () => {
     expect(goalVisible).toBe(true)
     expect(speakingRuns).toBe(1)
     expect(
-      await createAssistantConversationStore(homeRoot).readThread({
-        kind: 'thread',
-        threadId: String(submitted.threadId),
-      }),
-    ).toMatchObject({
-      threadId: submitted.threadId,
-      epochs: [{ transport: 'codex', sessionId: 'session-after-project-change' }],
-    })
+      await Bun.file(
+        join(homeRoot, '.hopi', 'runtime', 'assistant', 'sessions', 'home.json'),
+      ).json(),
+    ).toMatchObject({ transport: 'codex', sessionId: 'session-after-project-change' })
   })
 
   test('shares one host directory chooser across concurrent requests', async () => {
@@ -1141,7 +1088,7 @@ describe('MVP server', () => {
     ).rejects.toThrow('400')
   })
 
-  test('keeps Preview system events and a user message in sibling Thread Sessions', async () => {
+  test('bootstraps a Project speaking session from its first Preview system event', async () => {
     const homeRoot = join(temporaryRoot, 'preview-bootstrap-home')
     const repoRoot = await createRepo(join(temporaryRoot, 'preview-bootstrap-repo'))
     const publisher = new PublicationCoordinator()
@@ -1164,7 +1111,7 @@ describe('MVP server', () => {
           reply: isPublic ? 'Continuing in the bootstrapped Project session.' : '',
           session: {
             transport: 'codex',
-            sessionId: input.session?.sessionId ?? `preview-bootstrap-session-${calls.length}`,
+            sessionId: input.session?.sessionId ?? 'preview-bootstrap-session',
           },
         }
       },
@@ -1201,7 +1148,16 @@ describe('MVP server', () => {
       sessionId: null,
       prompt: expect.stringContaining('Project Preview start failed.'),
     })
-    await waitForInboxHandled(homeRoot, publisher, calls[0]?.eventId ?? '')
+    const projectSessionPath = join(
+      homeRoot,
+      '.hopi',
+      'runtime',
+      'assistant',
+      'sessions',
+      'projects',
+      'P-preview-bootstrap.json',
+    )
+    await waitForFile(projectSessionPath)
 
     await request(base, '/api/projects/P-preview-bootstrap/preview/start', {
       method: 'POST',
@@ -1213,11 +1169,10 @@ describe('MVP server', () => {
       ),
     ).toBe(true)
     expect(calls[1]).toMatchObject({
-      invocation: 'speaking',
-      sessionId: null,
+      invocation: 'supervision',
+      sessionId: 'preview-bootstrap-session',
       prompt: expect.stringContaining('Project Preview start failed.'),
     })
-    await waitForInboxHandled(homeRoot, publisher, calls[1]?.eventId ?? '')
 
     const submitted = await request(base, '/api/inbox', {
       method: 'POST',
@@ -1232,7 +1187,11 @@ describe('MVP server', () => {
     expect(calls[2]).toMatchObject({
       eventId: submittedEventId,
       invocation: 'speaking',
-      sessionId: null,
+      sessionId: 'preview-bootstrap-session',
+    })
+    expect(await Bun.file(projectSessionPath).json()).toMatchObject({
+      scope: 'project:P-preview-bootstrap',
+      sessionId: 'preview-bootstrap-session',
     })
 
     const workspace = await createAssistantWorkspaceStore(homeRoot, publisher).readWorkspace()
@@ -1240,30 +1199,6 @@ describe('MVP server', () => {
       event.body.includes('Project Preview start failed.'),
     )
     expect(previewEvents).toHaveLength(2)
-    expect(
-      new Set([
-        ...previewEvents.map((event) => event.attributes.threadId),
-        workspace.events.get(submittedEventId)?.attributes.threadId,
-      ]).size,
-    ).toBe(3)
-    const conversation = createAssistantConversationStore(homeRoot)
-    const sessionIds = await Promise.all(
-      [...previewEvents, workspace.events.get(submittedEventId)].map(async (event) => {
-        if (!event?.attributes.threadId) throw new Error('Expected a durable Thread ID')
-        const thread = await conversation.readThread({
-          kind: 'thread',
-          threadId: event.attributes.threadId,
-        })
-        return thread?.epochs.at(-1)?.sessionId
-      }),
-    )
-    expect(new Set(sessionIds)).toEqual(
-      new Set([
-        'preview-bootstrap-session-1',
-        'preview-bootstrap-session-2',
-        'preview-bootstrap-session-3',
-      ]),
-    )
     expect(
       previewEvents.every(
         (event) =>
@@ -1374,7 +1309,7 @@ describe('MVP server', () => {
     ).toMatchObject({ goal: { id: 'G-优化整体前端样式' } })
   })
 
-  test('EV-005 exposes actual Run configuration through existing Work Attempt APIs', async () => {
+  test('exposes canonical product APIs and Work Attempt streams', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
     const before = await checkoutSnapshot(repoRoot)
@@ -1591,7 +1526,6 @@ describe('MVP server', () => {
     expect(boardProjection.evidence).toBeUndefined()
     expect((boardProjection.works as Array<Record<string, unknown>>)[0]?.body).toBeUndefined()
     expect(boardProjection.attentions).toMatchObject([{ id: 'A-board-routing' }])
-    expect(boardProjection.operations).toEqual([])
     expect(boardProjection.attentions).toHaveLength(1)
     expect((boardProjection.attentions as Array<Record<string, unknown>>)[0]?.body).toBeUndefined()
     const fullProjection = await request(base, '/api/projects/P-1/goals/G-1')
@@ -1622,6 +1556,19 @@ describe('MVP server', () => {
     expect(await request(base, '/api/state?view=shell')).toMatchObject({ attentions: [] })
     const removedAttentionEndpoint = await fetch(`${base}/api/assistant/attentions?projectId=P-1`)
     expect(removedAttentionEndpoint.status).toBe(404)
+    await attemptStore.reserve({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'plan-initial',
+      runId: 'R-1',
+      workHash: 'a'.repeat(64),
+      request: {
+        profile: 'planner',
+        workspaceMode: 'none',
+        instructionMarkdown: 'Create the Engineering Work DAG.',
+        refs: [],
+      },
+    })
     const attempt = await attemptStore.start({
       projectId: 'P-1',
       goalId: 'G-1',
@@ -1630,60 +1577,9 @@ describe('MVP server', () => {
       responsibility: 'planner',
       runRoot: join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1'),
     })
-    await attempt.setExecution({
-      transport: 'codex',
-      provider: 'codex',
-      model: 'gpt-5.6-sol',
-      reasoningEffort: 'xhigh',
-      permissionBoundary: 'bounded',
-    })
-    await attempt.recordSession({
-      transport: 'codex',
-      sessionId: 'thread-R-1',
-      executionKey: 'execution-R-1',
-    })
-    const changeSetRepo = await createRepo(join(temporaryRoot, 'attempt-change-set-repo'))
-    const changeSetBase = await readGitHead(changeSetRepo)
-    await Bun.write(join(changeSetRepo, 'REPORT.md'), 'durable source evidence\n')
-    await git(changeSetRepo, ['add', '.'])
-    await git(changeSetRepo, ['commit', '-m', 'candidate'])
-    const changeSet = await createRunChangeSetStore(homeRoot, {
-      now: () => new Date('2026-07-11T00:00:00Z'),
-    }).freeze({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      runId: 'R-1',
-      repos: [
-        {
-          repoId: 'primary',
-          worktreePath: changeSetRepo,
-          baseCommit: changeSetBase,
-          resultCommit: await readGitHead(changeSetRepo),
-        },
-      ],
-    })
-    if (!changeSet) throw new Error('Expected API fixture ChangeSet')
-    await attempt.setChangeSet(changeSet.id)
     await Bun.write(
       join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1', 'prompt.md'),
       '# Planner system prompt\n\nCreate the Engineering Work DAG.\n',
-    )
-    await Bun.write(
-      join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1', 'artifacts.json'),
-      `${JSON.stringify({
-        runId: 'R-1',
-        artifacts: [
-          {
-            reference: 'artifact:R-1/001-report.txt',
-            path: 'artifacts/001-report.txt',
-            source: '/private/runtime/report.txt',
-            kind: 'file',
-            sizeBytes: 42,
-          },
-        ],
-        unavailable: [{ reference: 'missing.log', reason: 'Artifact was not produced.' }],
-      })}\n`,
     )
     await attempt.record({
       kind: 'message',
@@ -1709,19 +1605,6 @@ describe('MVP server', () => {
         {
           runId: 'R-1',
           status: 'running',
-          requestedExecution: {
-            provider: 'codex',
-            model: 'gpt-5.6-sol',
-            reasoningEffort: 'xhigh',
-            permissionBoundary: 'bounded',
-          },
-          execution: {
-            provider: 'codex',
-            model: 'gpt-5.6-sol',
-            reasoningEffort: 'xhigh',
-            permissionBoundary: 'bounded',
-          },
-          changeSetId: 'CS-R-1',
           diagnostics: { tokenUsage: { inputTokens: 400, cachedInputTokens: 250 } },
         },
       ],
@@ -1746,20 +1629,7 @@ describe('MVP server', () => {
     expect(attemptDetail).toMatchObject({
       runId: 'R-1',
       runPrompt: '# Planner system prompt\n\nCreate the Engineering Work DAG.\n',
-      termination: null,
-      reportMarkdown: null,
-      sessionEpochs: [{ epoch: 1, sessionId: 'thread-R-1', endedAt: null }],
-      changeSet: {
-        id: 'CS-R-1',
-        disposition: 'unaccepted',
-        repos: [{ repoId: 'primary', baseCommit: changeSetBase }],
-      },
-      artifacts: {
-        preserved: [{ reference: 'artifact:R-1/001-report.txt', kind: 'file', sizeBytes: 42 }],
-        unavailable: [{ reference: 'missing.log', reason: 'Artifact was not produced.' }],
-      },
     })
-    expect(JSON.stringify(attemptDetail.artifacts)).not.toContain('/private/runtime/report.txt')
     expect(attemptDetail.events).toBeUndefined()
     const eventHead = await request(
       base,
@@ -1773,7 +1643,7 @@ describe('MVP server', () => {
           content: 'Planning the Engineering Work DAG.',
         },
       ],
-      pageInfo: { hasOlder: true, hasNewer: false, totalCount: 2 },
+      pageInfo: { hasOlder: true, hasNewer: false, totalCount: 3 },
     })
     const eventHeadInfo = eventHead.pageInfo as {
       oldestCursor: string
@@ -1785,7 +1655,7 @@ describe('MVP server', () => {
     )
     expect(olderEvents).toMatchObject({
       items: [{ kind: 'message', role: 'coordinator' }],
-      pageInfo: { hasOlder: false, hasNewer: true, totalCount: 2 },
+      pageInfo: { hasOlder: true, hasNewer: true, totalCount: 3 },
     })
     const olderInfo = olderEvents.pageInfo as { newestCursor: string }
     expect(
@@ -1823,35 +1693,15 @@ describe('MVP server', () => {
       items: [
         {},
         {},
+        {},
         {
           kind: 'plan',
           planId: 'planner-plan',
           status: 'active',
           items: [{ completed: true }, { completed: false }],
-          streamIndex: 3,
+          streamIndex: 4,
         },
       ],
-    })
-    await attempt.finish({
-      outcome: {
-        result: 'success',
-        summary: 'Planning evidence recorded.',
-        exitCode: 0,
-        termination: 'normal',
-        reportMarkdown: '# Run Report\n\nPlanning evidence recorded.',
-      },
-      application: 'published',
-    })
-    expect(
-      await request(base, '/api/projects/P-1/goals/G-1/works/plan-initial/attempts/R-1'),
-    ).toMatchObject({
-      status: 'finished',
-      termination: 'normal',
-      reportMarkdown: '# Run Report\n\nPlanning evidence recorded.\n',
-      sessionEpochs: [
-        { epoch: 1, sessionId: 'thread-R-1', endedAt: expect.any(String), closeReason: 'normal' },
-      ],
-      changeSet: { id: 'CS-R-1' },
     })
 
     const paused = await request(base, '/api/projects/P-1/goals/G-1/pause', {
@@ -2114,7 +1964,7 @@ describe('MVP server', () => {
     const goal = await request(base, '/api/projects/P-1/goals/G-1')
     expect(goal).toMatchObject({
       projectAttention: { refs: ['project:P-1'], resolvedAt: null },
-      works: [{ projection: { failedPredicates: [] } }],
+      works: [{ projection: { failedPredicates: ['no_queued_run'] } }],
     })
     expect((goal as { works: Array<{ blockedBy?: string }> }).works[0]?.blockedBy).not.toBe(
       'Project',
@@ -2214,7 +2064,7 @@ describe('MVP server', () => {
       works: [
         {
           projection: {
-            failedPredicates: [],
+            failedPredicates: ['no_queued_run'],
           },
         },
       ],
@@ -3065,6 +2915,15 @@ async function waitForAssistantCalls(calls: readonly unknown[], count: number) {
     await Bun.sleep(10)
   }
   throw new Error(`Assistant did not receive ${count} call(s)`)
+}
+
+async function waitForFile(path: string) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if (await Bun.file(path).exists()) return
+    await Bun.sleep(10)
+  }
+  throw new Error(`File was not created: ${path}`)
 }
 
 async function waitForInboxHandled(

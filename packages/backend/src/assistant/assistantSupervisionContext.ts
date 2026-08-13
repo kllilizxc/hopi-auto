@@ -71,11 +71,11 @@ function collectRuntimeWakeKeys(
 ) {
   if (!value) return
   const latestTerminal = value.runtime.recentAttempts.find(
-    (attempt) => attempt.status === 'finished' && attempt.result !== null,
+    (attempt) => attempt.status === 'settled' && attempt.termination !== null,
   )
   if (latestTerminal) {
     keys.push(
-      `attempt:${projectId}:${goalId}:${workId}:${latestTerminal.runId}:${latestTerminal.result ?? ''}:${latestTerminal.application ?? ''}`,
+      `attempt:${projectId}:${goalId}:${workId}:${latestTerminal.runId}:${latestTerminal.termination ?? ''}`,
     )
   }
   if (value.runtime.stale) {
@@ -114,7 +114,7 @@ function compactWork(
   return {
     attributes: value.attributes,
     path: value.path,
-    body: boundedText(value.body, 4_000),
+    body: boundedText('body' in value && typeof value.body === 'string' ? value.body : '', 4_000),
     ...('projection' in value && value.projection ? { projection: value.projection } : {}),
     ...('candidateIntegration' in value && value.candidateIntegration
       ? { candidateIntegration: value.candidateIntegration }

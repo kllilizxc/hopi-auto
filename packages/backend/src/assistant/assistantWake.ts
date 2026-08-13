@@ -575,10 +575,8 @@ function workspaceAttentionRevisionKey(attention: WorkspaceAttentionDocument) {
 }
 
 function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
-  if (snapshot.projects.some(projectHasPublishedPlanningOutcome)) return true
-  if (snapshot.projects.some(projectHasPublishedReviewerReject)) return true
+  if (snapshot.projects.some(projectHasSettledRun)) return true
   if (snapshot.projects.some(projectHasStaleRun)) return true
-  if (snapshot.projects.some(projectHasSettledFailure)) return true
   if (snapshot.activeRuns.length > 0) return false
   if (snapshot.workspaceAttentions.some((attention) => attention.resolvedAt === null)) return true
   return snapshot.projects.some((project) => {
@@ -589,33 +587,15 @@ function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
   })
 }
 
-function projectHasPublishedPlanningOutcome(project: AssistantStateSnapshot['projects'][number]) {
-  return project.goals.some((goal) => {
-    const latestPublished = goal.latestPlanningOutcome?.runtime.recentAttempts.find(
-      (attempt) => attempt.status === 'finished' && attempt.application === 'published',
-    )
-    return latestPublished?.responsibility === 'planner'
-  })
-}
-
-function projectHasSettledFailure(project: AssistantStateSnapshot['projects'][number]) {
-  return project.goals.some((goal) =>
-    goal.works.some((work) => work.projection?.failedPredicates.includes('failed_attempt')),
-  )
-}
-
-function projectHasPublishedReviewerReject(project: AssistantStateSnapshot['projects'][number]) {
-  return project.goals.some((goal) =>
-    goal.works.some((work) => {
-      const latestPublished = work.runtime.recentAttempts.find(
-        (attempt) => attempt.status === 'finished' && attempt.application === 'published',
-      )
-      return (
-        latestPublished !== undefined &&
-        latestPublished.responsibility === 'reviewer' &&
-        latestPublished.result === 'reject'
-      )
-    }),
+function projectHasSettledRun(project: AssistantStateSnapshot['projects'][number]) {
+  return project.goals.some(
+    (goal) =>
+      goal.latestPlanningOutcome?.runtime.recentAttempts.some(
+        (attempt) => attempt.status === 'settled',
+      ) === true ||
+      goal.works.some((work) =>
+        work.runtime.recentAttempts.some((attempt) => attempt.status === 'settled'),
+      ),
   )
 }
 

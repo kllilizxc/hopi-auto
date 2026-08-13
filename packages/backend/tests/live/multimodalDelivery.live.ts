@@ -63,9 +63,9 @@ interface AttemptView {
   workId: string
   runId: string
   responsibility: 'planner' | 'generator' | 'reviewer'
-  status: string
-  result: string | null
-  application: string | null
+  status: 'queued' | 'running' | 'settled'
+  termination: 'normal' | 'cancelled' | 'interrupted' | 'crashed' | 'timed_out' | null
+  candidateCommits: Array<{ repoId: string; baseCommit: string; resultCommit: string }>
 }
 
 let harness: LiveHarness | null = null
@@ -217,23 +217,13 @@ try {
     const matching = attempts.filter(
       (attempt) =>
         attempt.responsibility === responsibility &&
-        attempt.status === 'finished' &&
-        attempt.result === 'success',
+        attempt.status === 'settled' &&
+        attempt.termination === 'normal',
     )
     const contexts = await Promise.all(
       matching.map((attempt) =>
         Bun.file(
-          join(
-            harness?.homeRoot ?? '',
-            '.hopi',
-            'runtime',
-            'runs',
-            PROJECT_ID,
-            goalId,
-            attempt.workId,
-            attempt.runId,
-            'context.md',
-          ),
+          join(harness?.homeRoot ?? '', '.hopi', 'runtime', 'runs', attempt.runId, 'context.md'),
         ).text(),
       ),
     )
@@ -374,13 +364,17 @@ function assertRealDelivery(attempts: AttemptView[]) {
       attempts.some(
         (attempt) =>
           attempt.responsibility === responsibility &&
-          attempt.status === 'finished' &&
-          attempt.result === 'success',
+          attempt.status === 'settled' &&
+          attempt.termination === 'normal',
       ),
       `Expected one successful real ${responsibility}`,
     )
   }
-  assert.ok(attempts.some((attempt) => attempt.application === 'integrated'))
+  assert.ok(
+    attempts.some(
+      (attempt) => attempt.responsibility === 'generator' && attempt.candidateCommits.length > 0,
+    ),
+  )
 }
 
 async function filesUnder(root: string) {

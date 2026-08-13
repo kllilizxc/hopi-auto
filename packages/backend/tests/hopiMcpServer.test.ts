@@ -59,7 +59,6 @@ describe('HOPI MCP server', () => {
     expect(names).toEqual(
       [
         'hopi_control_goal',
-        'hopi_control_operation',
         'hopi_control_preview',
         'hopi_control_work',
         'hopi_create_goal',
@@ -88,13 +87,13 @@ describe('HOPI MCP server', () => {
       'sleeping or polling',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'explicit Run instructions',
+      'Creation does not execute the Work',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'rather than a mandatory role pipeline',
+      'request each Planner, Generator, or Reviewer Run explicitly',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
-      'Generator delivery',
+      'Choose planning',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.inputSchema).toMatchObject(
       {
@@ -105,7 +104,7 @@ describe('HOPI MCP server', () => {
       },
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'does not imply a mandatory Generator/Reviewer sequence',
+      'Creation does not queue a Run',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
       'normalized contract change',
@@ -123,25 +122,17 @@ describe('HOPI MCP server', () => {
       'Goal-local design Markdown',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'concrete objective',
+      'complete Work contract',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).not.toContain(
       'Use ',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.description).toContain(
-      'Completion is a semantic decision',
+      'Complete, pause, resume, cancel, reopen, or reprioritize one Goal',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
       'change dependencies',
     )
-    expect(
-      tools.tools.find((tool) => tool.name === 'hopi_control_operation')?.description,
-    ).toContain('requiredForGoal is explicit per Operation')
-    expect(
-      tools.tools.find((tool) => tool.name === 'hopi_control_operation')?.inputSchema,
-    ).toMatchObject({
-      required: ['projectId', 'goalId', 'action'],
-    })
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_manage_attention')?.description,
     ).toContain('Attention stores an operator summary, optional choices, complete Agent detail')
@@ -211,15 +202,9 @@ describe('HOPI MCP server', () => {
     expect(
       JSON.stringify(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.inputSchema),
     ).not.toContain('"repos"')
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'Creation does not imply a mandatory Generator/Reviewer sequence',
-    )
     expect(
       JSON.stringify(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.inputSchema),
     ).not.toContain('"repos"')
-    expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'later execution uses explicit Run instructions',
-    )
     expect(
       tools.tools.find((tool) => tool.name === 'hopi_control_goal')?.inputSchema,
     ).toMatchObject({
@@ -231,10 +216,10 @@ describe('HOPI MCP server', () => {
       properties: { action: expect.any(Object) },
     })
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
-      'durable natural-language Report',
+      'Explicitly queue one fresh Run',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
-      'never implies Work completion',
+      'termination and Report',
     )
     expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)
@@ -282,7 +267,6 @@ describe('HOPI MCP server', () => {
     expect(names.sort()).toEqual(
       [
         'hopi_control_goal',
-        'hopi_control_operation',
         'hopi_control_preview',
         'hopi_control_work',
         'hopi_create_goal',

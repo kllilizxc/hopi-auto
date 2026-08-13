@@ -2439,7 +2439,9 @@ button:disabled,
 }
 
 .attempt-status.interrupted,
-.attempt-status.stale {
+.attempt-status.cancelled,
+.attempt-status.crashed,
+.attempt-status.timed_out {
   background: color-mix(in srgb, var(--color-state-warning) 10%, transparent);
   color: var(--color-state-warning);
 }

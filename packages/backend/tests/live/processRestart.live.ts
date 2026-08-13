@@ -182,7 +182,7 @@ try {
     },
   })
 
-  const checkpoint = await waitForGeneratorCheckpoint(generatorFirst.origin)
+  const checkpoint = await waitForGeneratorCheckpoint(generatorFirst.origin, integrationRoot)
   const descendants = await descendantPids(generatorFirst.child.pid)
   assert.ok(descendants.length > 0, 'Coordinator boundary must contain a real child process')
   assert.equal(await Bun.file(checkpoint.sourcePath).text(), "export const protocol = 'v2'\n")
@@ -217,7 +217,7 @@ try {
   })
   await waitForValue(
     () => readAttempt(homeRoot, checkpoint.runId),
-    (attempt) => attempt?.status === 'interrupted',
+    (attempt) => attempt?.status === 'settled' && attempt.termination === 'interrupted',
     {
       timeoutMs: 60_000,
       description: 'old Generator Attempt to become interrupted',
@@ -266,30 +266,17 @@ try {
   )
   const attempts = await readGoalAttempts(replacement.origin, goal)
   const interrupted = attempts.find((attempt) => attempt.runId === checkpoint.runId)
-  assert.equal(interrupted?.status, 'interrupted')
+  assert.equal(interrupted?.status, 'settled')
+  assert.equal(interrupted?.termination, 'interrupted')
+  assert.ok(interrupted?.candidateCommits.length)
   assert.ok(
     attempts.some(
       (attempt) =>
-        attempt.responsibility === 'generator' &&
         attempt.runId !== checkpoint.runId &&
-        attempt.status === 'finished' &&
-        attempt.result === 'success' &&
-        attempt.application === 'published',
+        attempt.status === 'settled' &&
+        attempt.termination === 'normal',
     ),
-  )
-  assert.ok(
-    attempts.some(
-      (attempt) =>
-        attempt.responsibility === 'reviewer' &&
-        attempt.status === 'finished' &&
-        attempt.result === 'success' &&
-        attempt.application === 'integrated',
-    ),
-  )
-  assert.ok(
-    attempts.some(
-      (attempt) => attempt.responsibility === 'planner' && attempt.status === 'finished',
-    ),
+    'Assistant must explicitly request a normal follow-up Run before completion',
   )
   assert.equal(
     await gitOutput(integrationRoot, [
@@ -384,9 +371,10 @@ interface AttemptView {
   workId: string
   runId: string
   responsibility: string
-  status: string
-  result: string | null
-  application: string | null
+  status: 'queued' | 'running' | 'settled'
+  termination: 'normal' | 'cancelled' | 'interrupted' | 'crashed' | 'timed_out' | null
+  reportMarkdown: string | null
+  candidateCommits: Array<{ repoId: string; baseCommit: string; resultCommit: string }>
 }
 
 async function launchCoordinator(instance: string): Promise<CoordinatorBoundary> {
@@ -555,7 +543,7 @@ async function countGoalInputsForEvent(integrationRoot: string, goalId: string, 
   ).length
 }
 
-async function waitForGeneratorCheckpoint(origin: string) {
+async function waitForGeneratorCheckpoint(origin: string, integrationRoot: string) {
   return waitForValue(
     async () => {
       const state = await requestJson<LiveState>(origin, '/api/state')
@@ -569,26 +557,13 @@ async function waitForGeneratorCheckpoint(origin: string) {
       )
       const attempt = response.attempts.find((candidate) => candidate.status === 'running')
       if (!attempt) return null
-      const sourcePath = join(
-        homeRoot,
-        '.hopi',
-        'runtime',
-        'worktrees',
-        PROJECT_ID,
-        GOAL_ID,
-        workId,
-        'src',
-        'protocol.ts',
-      )
+      const sourcePath = join(integrationRoot, '..', 'work', GOAL_ID, workId, 'src', 'protocol.ts')
       const source = Bun.file(sourcePath)
       const transcriptPath = join(
         homeRoot,
         '.hopi',
         'runtime',
         'runs',
-        PROJECT_ID,
-        GOAL_ID,
-        workId,
         attempt.runId,
         'transcript.log',
       )

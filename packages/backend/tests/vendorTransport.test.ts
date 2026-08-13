@@ -17,8 +17,7 @@ const bundle = {
   designFile: '/tmp/design.md',
   contextFile: '/tmp/context.md',
   promptFile: '/tmp/prompt.md',
-  outcomeFile: '/tmp/outcome.json',
-  canonicalOutcomeFile: '/tmp/outcome.json',
+  reportFile: '/tmp/report.md',
   browserHarnessDir: 'scripts/hopi/browser-harness',
   browserHarnessCommand: '/usr/local/bin/hopi-browser-harness',
   browserHarnessBackendCommand: '/usr/local/bin/browser-harness',
@@ -91,11 +90,11 @@ describe('resolveConfiguredTransportCommand', () => {
       } satisfies RoleTransportConfig,
       bundle,
       input,
+      workspaceMode: 'isolated_write',
     })
 
     expect(command).toMatchObject({
       cwdMode: 'worktree',
-      outcomeFile: bundle.outcomeFile,
       browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       stdin: '# prompt for codex\n',
@@ -117,11 +116,11 @@ describe('resolveConfiguredTransportCommand', () => {
       'workspace-write',
       '-m',
       'gpt-5-codex',
-      ...codexOutcomeCaptureArgs(),
+      ...codexReportCaptureArgs(),
       '--json',
       '-',
     ])
-    expect(command.structuredOutcomeFile).toBe('/tmp/run/scratch/vendor-outcome.json')
+    expect(command.finalOutputFile).toBe('/tmp/run/scratch/vendor-report.md')
     expect(command.cmd).not.toContain('--output-schema')
     expect(await Bun.file('/tmp/run/scratch/role-outcome.schema.json').exists()).toBe(false)
   })
@@ -163,6 +162,7 @@ describe('resolveConfiguredTransportCommand', () => {
       input,
       fullAccess: true,
       runtimeWorkspace: '/tmp/project/worktree',
+      workspaceMode: 'isolated_write',
     })
     expect(unrestricted.stdin).toContain('"mode": "unrestricted"')
     expect(unrestricted.stdin).not.toContain('"mode": "bounded"')
@@ -184,6 +184,7 @@ describe('resolveConfiguredTransportCommand', () => {
         imageFiles: ['/tmp/screen-1.png', '/tmp/screen-2.webp'],
       },
       input,
+      workspaceMode: 'isolated_write',
     })
 
     expect(command.cmd).toEqual([
@@ -202,7 +203,7 @@ describe('resolveConfiguredTransportCommand', () => {
       '/tmp/screen-1.png',
       '-i',
       '/tmp/screen-2.webp',
-      ...codexOutcomeCaptureArgs(),
+      ...codexReportCaptureArgs(),
       '--json',
       '-',
     ])
@@ -223,6 +224,7 @@ describe('resolveConfiguredTransportCommand', () => {
       bundle,
       input,
       session: { transport: 'codex', sessionId: 'thread-generator' },
+      workspaceMode: 'isolated_write',
     })
 
     expect(command.cmd).toEqual([
@@ -240,7 +242,7 @@ describe('resolveConfiguredTransportCommand', () => {
       'resume',
       '--ignore-user-config',
       '--skip-git-repo-check',
-      ...codexOutcomeCaptureArgs(),
+      ...codexReportCaptureArgs(),
       '--json',
       'thread-generator',
       '-',
@@ -258,8 +260,7 @@ describe('resolveConfiguredTransportCommand', () => {
       ...bundle,
       runtimeScratchDir: root,
       promptFile: join(root, 'prompt.md'),
-      outcomeFile: join(root, 'outcome.json'),
-      canonicalOutcomeFile: join(root, 'outcome.json'),
+      reportFile: join(root, 'report.md'),
     }
     const section = (id: string, content: string) =>
       [
@@ -329,8 +330,7 @@ describe('resolveConfiguredTransportCommand', () => {
       ...bundle,
       runtimeScratchDir: root,
       promptFile: join(root, 'prompt.md'),
-      outcomeFile: join(root, 'outcome.json'),
-      canonicalOutcomeFile: join(root, 'outcome.json'),
+      reportFile: join(root, 'report.md'),
     }
     const section = (id: string, content: string) =>
       [
@@ -387,8 +387,7 @@ describe('resolveConfiguredTransportCommand', () => {
       runViewRoot,
       runtimeScratchDir: '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace',
       authorityRoot: `${runRoot}/context/authority`,
-      proposalRoot: `${runRoot}/proposal`,
-      attentionProposalDir: `${runRoot}/proposal/attention`,
+      reportFile: `${runRoot}/report.md`,
       primaryRepoRoot: '/tmp/project/worktree',
       extraReadableRoots: ['/tmp/project/worktree'],
       extraWritableRoots: [runRoot, '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace'],
@@ -412,8 +411,7 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.env).toMatchObject({
       HOPI_RUN_DIR: runViewRoot,
       HOPI_AUTHORITY_ROOT: `${runViewRoot}/context/authority`,
-      HOPI_PROPOSAL_ROOT: `${runViewRoot}/proposal`,
-      HOPI_ATTENTION_PROPOSAL_DIR: `${runViewRoot}/proposal/attention`,
+      HOPI_REPORT_FILE: `${runViewRoot}/report.md`,
       HOPI_PRIMARY_REPO_ROOT: scopedBundle.primaryRepoRoot,
     })
   })
@@ -459,7 +457,7 @@ describe('resolveConfiguredTransportCommand', () => {
     })
   })
 
-  test('does not turn Codex read-only Repo roots into writable add-dir roots', async () => {
+  test('exposes declared Repo roots while the Codex sandbox remains read-only', async () => {
     await Bun.write(bundle.promptFile, '# prompt for read-only repos\n')
 
     const command = await resolveConfiguredTransportCommand({
@@ -475,10 +473,12 @@ describe('resolveConfiguredTransportCommand', () => {
         extraWritableRoots: ['/tmp/run'],
       },
       input: { ...input, role: 'reviewer' },
+      workspaceMode: 'read_only',
     })
 
     expect(command.cmd).toContain('/tmp/run')
-    expect(command.cmd).not.toContain('/tmp/integration')
+    expect(command.cmd).toContain('/tmp/integration')
+    expect(command.cmd).toContain('read-only')
   })
 
   test('passes extra writable roots through codex --add-dir arguments', async () => {
@@ -500,6 +500,7 @@ describe('resolveConfiguredTransportCommand', () => {
         ...input,
         role: 'planner',
       },
+      workspaceMode: 'isolated_write',
     })
 
     expect(command.cmd).toEqual([
@@ -516,7 +517,7 @@ describe('resolveConfiguredTransportCommand', () => {
       'workspace-write',
       '--add-dir',
       '/tmp/project/.hopi/docs/goals/goal-1',
-      ...codexOutcomeCaptureArgs(),
+      ...codexReportCaptureArgs(),
       '--json',
       '-',
     ])
@@ -536,6 +537,7 @@ describe('resolveConfiguredTransportCommand', () => {
         } satisfies RoleTransportConfig,
         bundle: { ...bundle, apiOrigin: undefined },
         input: { ...input, role },
+        workspaceMode: 'isolated_write',
       })
 
       expect(command.cmd).toEqual([
@@ -550,7 +552,7 @@ describe('resolveConfiguredTransportCommand', () => {
         '--skip-git-repo-check',
         '-s',
         'workspace-write',
-        ...codexOutcomeCaptureArgs(),
+        ...codexReportCaptureArgs(),
         '--json',
         '-',
       ])
@@ -570,11 +572,11 @@ describe('resolveConfiguredTransportCommand', () => {
       } satisfies RoleTransportConfig,
       bundle,
       input,
+      workspaceMode: 'isolated_write',
     })
 
     expect(command).toMatchObject({
       cwdMode: 'worktree',
-      outcomeFile: bundle.outcomeFile,
       browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       stdin: '# prompt for claude\n',
@@ -590,7 +592,8 @@ describe('resolveConfiguredTransportCommand', () => {
       '/tmp/run/scratch/claude-settings.json',
       '--setting-sources',
       '',
-      ...claudeStructuredOutcomeArgs('generator'),
+      '--disallowed-tools',
+      'EnterPlanMode,ExitPlanMode,AskUserQuestion',
       '--dangerously-skip-permissions',
       '--model',
       'sonnet',
@@ -604,7 +607,7 @@ describe('resolveConfiguredTransportCommand', () => {
         filesystem: { allowWrite: [] },
       },
     })
-    expect(command.structuredOutcomeFile).toBeUndefined()
+    expect(command.finalOutputFile).toBeUndefined()
   })
 
   test('resumes a Claude responsibility session', async () => {
@@ -646,7 +649,6 @@ describe('resolveConfiguredTransportCommand', () => {
 
     expect(command).toMatchObject({
       cwdMode: 'root',
-      outcomeFile: bundle.outcomeFile,
       browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       transcriptFormat: 'opencode_json',
@@ -733,6 +735,7 @@ describe('resolveConfiguredTransportCommand', () => {
       },
       bundle,
       input,
+      workspaceMode: 'isolated_write',
     })
     expect(boundedCodex.cmd).toContain('workspace-write')
     expect(boundedCodex.cmd).not.toContain('danger-full-access')
@@ -791,6 +794,7 @@ describe('resolveConfiguredTransportCommand', () => {
       bundle: { ...bundle, extraWritableRoots: ['/tmp/run'] },
       input,
       fullAccess: true,
+      workspaceMode: 'isolated_write',
     })
     expect(codex.cmd).toContain('danger-full-access')
     expect(codex.cmd).not.toContain('--add-dir')
@@ -840,8 +844,6 @@ describe('resolveConfiguredTransportCommand', () => {
       cmd: ['bun', '-e', 'console.log("ok")'],
       cwdMode: 'root',
       baseRef: 'main',
-      outcomeFile: bundle.outcomeFile,
-      canonicalOutcomeFile: bundle.canonicalOutcomeFile,
       browserHarnessArtifactDir: bundle.browserHarnessArtifactDir,
       canonicalBrowserHarnessArtifactDir: bundle.canonicalBrowserHarnessArtifactDir,
       env: {
@@ -849,7 +851,7 @@ describe('resolveConfiguredTransportCommand', () => {
         HOPI_SESSION_WORKSPACE: bundle.runtimeScratchDir,
         HOPI_CACHE_DIR: bundle.runtimeCacheDir,
         HOPI_CONTEXT_FILE: bundle.contextFile,
-        HOPI_OUTCOME_FILE: bundle.outcomeFile,
+        HOPI_REPORT_FILE: bundle.reportFile,
         HOPI_GOAL_FILE: bundle.goalFile,
         HOPI_DESIGN_FILE: bundle.designFile,
         HOPI_PROMPT_FILE: bundle.promptFile,
@@ -879,33 +881,6 @@ function codexHttpsOnlyArgs() {
   return command
 }
 
-function codexOutcomeCaptureArgs() {
-  return ['--output-last-message', '/tmp/run/scratch/vendor-outcome.json']
-}
-
-function claudeStructuredOutcomeArgs(role: 'planner' | 'generator' | 'reviewer') {
-  const results = role === 'reviewer' ? ['success', 'reject', 'fail'] : ['success', 'fail']
-  const summary =
-    role === 'planner'
-      ? {
-          type: 'string',
-          minLength: 1,
-          maxLength: 600,
-        }
-      : { type: 'string', minLength: 1 }
-  return [
-    '--disallowed-tools',
-    'EnterPlanMode,ExitPlanMode,AskUserQuestion',
-    '--json-schema',
-    JSON.stringify({
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        result: { type: 'string', enum: results },
-        summary,
-        artifacts: { type: 'array', items: { type: 'string', minLength: 1 } },
-      },
-      required: ['result', 'summary', 'artifacts'],
-    }),
-  ]
+function codexReportCaptureArgs() {
+  return ['--output-last-message', '/tmp/run/scratch/vendor-report.md']
 }

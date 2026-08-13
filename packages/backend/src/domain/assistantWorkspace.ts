@@ -182,9 +182,6 @@ export async function validateAssistantWorkspaceTransition(
     if (event.attributes.status !== 'pending' || event.attributes.handledAt !== null) {
       throw invalid(`New Inbox event must be an unclaimed pending receipt: ${eventId}`)
     }
-    if (!event.attributes.threadId) {
-      throw invalid(`New Inbox event must record its Thread: ${eventId}`)
-    }
     if (
       (event.attributes.source === 'user' && event.attributes.visibility !== 'public') ||
       (isInternalInboxSource(event.attributes.source) && event.attributes.visibility !== 'internal')
@@ -209,7 +206,6 @@ function validateEventTransition(previous: InboxEventDocument, next: InboxEventD
   const after = next.attributes
   if (
     before.id !== after.id ||
-    before.threadId !== after.threadId ||
     before.receivedAt !== after.receivedAt ||
     before.source !== after.source ||
     before.sourceDigest !== after.sourceDigest ||
@@ -305,7 +301,7 @@ function validateReferences(
         !repliedEvent ||
         repliedEvent.attributes.visibility !== 'public' ||
         repliedEvent.attributes.status !== 'handled' ||
-        inboxThreadId(repliedEvent) !== inboxThreadId(event)
+        (repliedEvent.attributes.context?.projectId ?? null) !== (context.projectId ?? null)
       ) {
         throw invalid(`Inbox event ${event.attributes.id} replies to an invalid Assistant request`)
       }
@@ -332,10 +328,6 @@ function validateReferences(
       }
     }
   }
-}
-
-function inboxThreadId(event: InboxEventDocument) {
-  return event.attributes.threadId ?? `T-${event.attributes.id}`
 }
 
 function localMarkdownId(path: string, root: string) {

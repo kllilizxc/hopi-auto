@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import type { RunAttemptSummary } from '../lib/api'
 import {
   attemptModelLabel,
-  latestEpochLabel,
   attemptOutcomeBreakdown,
   attemptOutcomeSummary,
   attemptStatus,
@@ -17,36 +16,28 @@ const attempt: RunAttemptSummary = {
   workId: 'W-1',
   runId: 'R-1',
   responsibility: 'planner',
-  protocol: 'legacy_outcome',
-  profile: 'planner',
   workspaceMode: 'none',
-  instructionMarkdown: 'Plan the Work.',
-  inputRefs: [],
-  baseChangeSetId: null,
-  workHash: null,
-  requestedExecution: null,
+  instructionMarkdown: 'Inspect the current Goal and report the result.',
+  refs: [],
+  workHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   execution: null,
-  sessionEpochs: [],
-  requestedAt: '2026-07-15T23:59:00.000Z',
+  requestedAt: '2026-07-16T00:00:00.000Z',
   startedAt: '2026-07-16T00:00:00.000Z',
   endedAt: '2026-07-16T00:01:00.000Z',
-  status: 'finished',
+  status: 'settled',
   termination: 'normal',
-  result: 'success',
-  summary: 'The model completed, but its result was not applied.',
-  reportMarkdown: '# Run Report\n\nCompleted.',
+  reportMarkdown: 'The planning Run completed.',
   exitCode: 0,
-  application: 'stale',
-  changeSetId: null,
+  candidateCommits: [],
 }
 
 describe('Board Attempt status', () => {
-  test('shows unapplied stale authority instead of the model result', () => {
-    expect(attemptStatus(attempt)).toBe('stale')
+  test('shows the recorded termination for a settled Run', () => {
+    expect(attemptStatus(attempt)).toBe('normal')
   })
 
-  test('keeps the model result when its application is current', () => {
-    expect(attemptStatus({ ...attempt, application: 'published' })).toBe('success')
+  test('shows an abnormal termination without interpreting the Report', () => {
+    expect(attemptStatus({ ...attempt, termination: 'crashed' })).toBe('crashed')
   })
 
   test('keeps a live Attempt visibly working', () => {
@@ -54,93 +45,34 @@ describe('Board Attempt status', () => {
       attemptStatus({
         ...attempt,
         status: 'running',
-        result: null,
-        application: null,
+        termination: null,
+        reportMarkdown: null,
         endedAt: null,
       }),
     ).toBe('working')
   })
 
-  test('separates rejection, failure, and interruption in the diagnostic projection', () => {
+  test('separates each termination in the diagnostic projection', () => {
     const attempts = [
-      { ...attempt, runId: 'R-reject', result: 'reject', application: 'published' },
-      {
-        ...attempt,
-        runId: 'R-prepare',
-        result: 'fail',
-        application: 'candidate_preparation_failed',
-      },
-      { ...attempt, runId: 'R-fail', result: 'fail', application: 'operational_failure' },
-      {
-        ...attempt,
-        runId: 'R-interrupted',
-        status: 'interrupted',
-        result: null,
-        application: null,
-      },
-      { ...attempt, runId: 'R-success', application: 'integrated' },
+      { ...attempt, runId: 'R-normal' },
+      { ...attempt, runId: 'R-cancelled', termination: 'cancelled' },
+      { ...attempt, runId: 'R-interrupted', termination: 'interrupted' },
+      { ...attempt, runId: 'R-crashed', termination: 'crashed' },
+      { ...attempt, runId: 'R-timeout', termination: 'timed_out' },
     ] satisfies RunAttemptSummary[]
 
     expect(attemptOutcomeBreakdown(attempts)).toEqual({
-      rejected: 1,
-      preparationFailed: 1,
-      failed: 1,
+      normal: 1,
+      cancelled: 1,
       interrupted: 1,
+      crashed: 1,
+      timedOut: 1,
     })
     expect(attemptOutcomeSummary(attempts)).toBe(
-      '1 rejected · 1 candidate preflight failed · 1 failed · 1 interrupted',
+      '1 cancelled · 1 interrupted · 1 crashed · 1 timed out',
     )
-    expect(attemptOutcomeSummary([{ ...attempt, application: 'integrated' }])).toBe(
-      'Messages and tool activity',
-    )
+    expect(attemptOutcomeSummary([attempt])).toBe('1 normal')
   })
-})
-
-test('EV-011 keeps one logical Run label while exposing its latest Session Epoch', () => {
-  expect(
-    latestEpochLabel({
-      ...attempt,
-      sessionEpochs: [
-        {
-          epoch: 1,
-          transport: 'claude',
-          sessionId: 'session-1',
-          startedAt: '2026-07-16T00:00:00.000Z',
-          endedAt: '2026-07-16T00:00:30.000Z',
-          closeReason: 'context_boundary',
-          handoffMarkdown: '# Handoff',
-        },
-        {
-          epoch: 2,
-          transport: 'claude',
-          sessionId: 'session-2',
-          startedAt: '2026-07-16T00:00:30.000Z',
-          endedAt: '2026-07-16T00:01:00.000Z',
-          closeReason: 'normal',
-          handoffMarkdown: null,
-        },
-      ],
-    }),
-  ).toBe('claude · normal')
-})
-
-test('EV-011 preserves the old Board and Work modal while adding complete Run facts', async () => {
-  const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
-
-  expect(source).toContain("id: 'Plan'")
-  expect(source).toContain("id: 'Build'")
-  expect(source).toContain("id: 'Review'")
-  expect(source).toContain("id: 'Done'")
-  expect(source).toContain('<AppModal.Dialog className="work-detail-modal"')
-  expect(source).toContain('<AppTabs.Panel className="work-detail-tab-panel" id="activity">')
-  expect(source).toContain('<AppTabs.Panel className="work-detail-tab-panel" id="contract">')
-  expect(source).toContain('<h2>Run facts</h2>')
-  expect(source).toContain('<h3>Session Epochs</h3>')
-  expect(source).toContain('<h3>Report</h3>')
-  expect(source).toContain('<h3>ChangeSet</h3>')
-  expect(source).toContain('<h3>Artifacts</h3>')
-  expect(source).toContain('Transcript entries remain in the Activity tab.')
-  expect(source).not.toContain("goal.works.filter((work) => work.stage === 'done').length")
 })
 
 test('Work Attempt messages reuse the shared breathing tail activity', async () => {
@@ -152,12 +84,12 @@ test('Work Attempt messages reuse the shared breathing tail activity', async () 
   expect(source).not.toContain(':runtime-status')
 })
 
-test('Attempt result summary stays collapsed and bounded above the activity stream', async () => {
+test('Attempt Report stays collapsed and bounded above the activity stream', async () => {
   const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
   const styles = await Bun.file(new URL('../index.css', import.meta.url)).text()
 
   expect(source).toContain('className="attempt-summary"')
-  expect(source).toContain('<strong>Result summary</strong>')
+  expect(source).toContain('<strong>Report</strong>')
   expect(source).toContain('bodyClassName="attempt-summary__body"')
   expect(source).not.toContain('<p className="attempt-summary">')
   expect(styles).toMatch(
@@ -217,9 +149,6 @@ test('Board reads the compact projection without colliding with Goal docs cache'
   expect(source).toContain("queryFn: () => readGoalBoard(projectId ?? '', goalId ?? '')")
   expect(source).toContain('select: requireGoalBoardDetail')
   expect(source).not.toContain("queryFn: () => readGoal(projectId ?? '', goalId ?? '')")
-  expect(source).toContain('<strong>Delivery operations</strong>')
-  expect(source).toContain('goal.operations.map((operation) =>')
-  expect(source).toContain("operation.requiredForGoal ? ' · required' : ' · optional'")
 })
 
 test('compact Kanban mounts only the selected Lane and immediate neighbors', () => {

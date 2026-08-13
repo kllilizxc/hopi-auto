@@ -16,7 +16,7 @@ test('aggregates only vendor-reported usage while preserving extra-run outcomes'
     entry('R-2', 'reviewer', {
       tokenUsage: null,
       vendorReportedCostUsd: 0.2,
-      result: 'reject',
+      termination: 'crashed',
     }),
   ]
 
@@ -33,12 +33,11 @@ test('aggregates only vendor-reported usage while preserving extra-run outcomes'
     runsWithVendorReportedCost: 1,
     vendorReportedCostUsd: 0.2,
     outcomes: {
-      success: 1,
-      rejected: 1,
-      preparationFailed: 0,
-      failed: 0,
+      normal: 1,
+      cancelled: 0,
       interrupted: 0,
-      stale: 0,
+      crashed: 1,
+      timedOut: 0,
     },
   })
 })
@@ -46,16 +45,17 @@ test('aggregates only vendor-reported usage while preserving extra-run outcomes'
 function entry(
   runId: string,
   responsibility: RunCostEntry['responsibility'],
-  overrides: Partial<RunCostEntry['diagnostics']> & { result?: string },
+  overrides: Partial<RunCostEntry['diagnostics']> & {
+    termination?: RunCostEntry['termination']
+  },
 ): RunCostEntry {
-  const { result = 'success', ...diagnosticOverrides } = overrides
+  const { termination = 'normal', ...diagnosticOverrides } = overrides
   return {
     workId: 'W-1',
     runId,
     responsibility,
-    status: 'finished',
-    result,
-    application: 'published',
+    status: 'settled',
+    termination,
     diagnostics: {
       elapsedMs: 1_000,
       modelMessages: 1,

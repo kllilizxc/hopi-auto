@@ -1,24 +1,19 @@
 import { describe, expect, test } from 'bun:test'
-import type {
-  AttentionDocument,
-  GoalDocument,
-  WorkDocument,
-} from '../src/domain/canonicalDocuments'
+import type { GoalDocument, WorkDocument } from '../src/domain/canonicalDocuments'
 import type { GoalPackage } from '../src/domain/goalPackage'
 import { deriveGoalWorkProjections } from '../src/domain/workProjection'
 
 describe('derived Work projection', () => {
-  test('maps durable stages to the four active Kanban columns and cancelled archive', () => {
-    const goalPackage = packageWith([
-      work('P-1', 'planning', 'plan'),
-      work('W-1', 'engineering', 'generate'),
-      work('W-2', 'engineering', 'review'),
-      work('W-3', 'engineering', 'done'),
-      work('W-4', 'engineering', 'cancelled'),
-    ])
-
-    const projections = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())
-
+  test('keeps the old four-lane projection and cancelled archive', () => {
+    const projections = project(
+      packageWith([
+        work('P-1', 'planning', 'plan'),
+        work('W-1', 'engineering', 'generate'),
+        work('W-2', 'engineering', 'review'),
+        work('W-3', 'engineering', 'done'),
+        work('W-4', 'engineering', 'cancelled'),
+      ]),
+    )
     expect(
       projections.map(({ workId, column, cancelled }) => ({ workId, column, cancelled })),
     ).toEqual([
@@ -30,202 +25,101 @@ describe('derived Work projection', () => {
     ])
   })
 
-  test('uses one primary badge with the accepted priority', () => {
-    const scheduledAt = '2026-07-12T00:00:00Z'
-    const goalPackage = packageWith(
-      [
-        work('W-attention', 'engineering', 'generate', { notBefore: scheduledAt }),
-        work('W-needs-you', 'engineering', 'generate', { notBefore: scheduledAt }),
-        work('W-working', 'engineering', 'generate', { notBefore: scheduledAt }),
-        work('W-scheduled', 'engineering', 'generate', { notBefore: scheduledAt }),
-        work('W-queued', 'engineering', 'generate'),
-        work('W-waiting', 'engineering', 'generate', { dependsOn: ['W-scheduled'] }),
-      ],
-      [
-        attention('A-1', 'project:Project-1/goal:G-1/work:W-attention'),
-        attention('A-2', 'project:Project-1/goal:G-1/work:W-needs-you'),
-      ],
+  test('does not synthesize a Run from Work kind or stage', () => {
+    const [planning, build, review] = project(
+      packageWith([
+        work('P-1', 'planning', 'plan'),
+        work('W-build', 'engineering', 'generate'),
+        work('W-review', 'engineering', 'review'),
+      ]),
     )
-
-    const projections = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
-      ...runtime(),
-      now: new Date('2026-07-11T00:00:00Z'),
-      liveRunWorkIds: new Set(['W-attention', 'W-working']),
-    })
-
-    expect(Object.fromEntries(projections.map((item) => [item.workId, item.primaryBadge]))).toEqual(
-      {
-        'W-attention': 'working',
-        'W-needs-you': 'scheduled',
-        'W-working': 'working',
-        'W-scheduled': 'scheduled',
-        'W-queued': 'queued',
-        'W-waiting': 'waiting',
-      },
-    )
+    for (const projection of [planning, build, review]) {
+      expect(projection).toMatchObject({
+        ready: false,
+        responsibility: null,
+        primaryBadge: 'waiting',
+        failedPredicates: ['no_queued_run'],
+      })
+    }
   })
 
-  test('reports every failed readiness predicate without inventing another stage', () => {
+  test('projects only an explicitly queued profile as runnable', () => {
+    const [projection] = project(packageWith([work('W-1', 'engineering', 'review')]), {
+      queuedRunProfiles: new Map([['W-1', 'generator']]),
+    })
+    expect(projection).toMatchObject({
+      ready: true,
+      responsibility: 'generator',
+      primaryBadge: 'queued',
+      failedPredicates: [],
+    })
+  })
+
+  test('shows a settled Run as waiting for Assistant without changing the lane', () => {
+    const [projection] = project(packageWith([work('W-1', 'engineering', 'review')]), {
+      settledRunWorkIds: new Set(['W-1']),
+    })
+    expect(projection).toMatchObject({
+      column: 'Review',
+      ready: false,
+      responsibility: null,
+      primaryBadge: 'Waiting for Assistant',
+      failedPredicates: ['no_queued_run'],
+    })
+  })
+
+  test('retains lifecycle, dependency, schedule, lease, and capacity gates', () => {
     const goalPackage = packageWith([
-      work('P-1', 'planning', 'plan'),
+      work('W-dependency', 'engineering', 'generate'),
       work('W-1', 'engineering', 'generate', {
-        contractRevision: 1,
+        dependsOn: ['W-dependency'],
+        notBefore: '2026-08-14T00:00:00Z',
       }),
     ])
     goalPackage.goal.attributes.lifecycle = 'paused'
-    goalPackage.goal.attributes.contractRevision = 2
-
-    const projection = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
-      ...runtime(),
+    const projection = project(goalPackage, {
       projectEligible: false,
-      passCapacity: { planner: true, generator: false, reviewer: true },
-    }).find((item) => item.workId === 'W-1')
-
-    expect(projection).toMatchObject({
-      ready: false,
-      primaryBadge: 'waiting',
-      failedPredicates: expect.arrayContaining([
+      liveRunWorkIds: new Set(['W-1']),
+      queuedRunProfiles: new Map([['W-1', 'generator']]),
+      runCapacity: { planner: true, generator: false, reviewer: true },
+    })[1]
+    expect(projection?.failedPredicates).toEqual(
+      expect.arrayContaining([
         'goal_not_active',
         'project_ineligible',
-        'stale_contract_revision',
+        'dependency_incomplete',
+        'not_before',
+        'live_run',
         'capacity',
       ]),
-    })
-  })
-
-  test('shows a settled failed Attempt as responsibility waiting for the Assistant', () => {
-    const goalPackage = packageWith([work('W-1', 'engineering', 'review')])
-
-    expect(
-      deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
-        ...runtime(),
-        settledFailureWorkIds: new Set(['W-1']),
-      })[0],
-    ).toMatchObject({
-      ready: false,
-      responsibility: 'reviewer',
-      primaryBadge: 'Waiting for Assistant',
-      failedPredicates: ['failed_attempt'],
-    })
-  })
-
-  test('represents a Project blocker only as project ineligibility on each Work', () => {
-    const goalPackage = packageWith([work('P-1', 'planning', 'plan')])
-
-    const projection = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
-      ...runtime(),
-      projectEligible: false,
-    })[0]
-
-    expect(projection).toMatchObject({
-      ready: false,
-      primaryBadge: 'waiting',
-      failedPredicates: ['project_ineligible'],
-    })
-    expect(projection?.failedPredicates).not.toContain('attention')
-  })
-
-  test('does not let Attention presentation override Work readiness', () => {
-    const target = 'project:Project-1/goal:G-1/work:W-1'
-    const goalPackage = packageWith(
-      [work('W-1', 'engineering', 'generate')],
-      [attention('A-waiting', target), attention('A-needs', target)],
     )
-
-    expect(
-      deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())[0]?.primaryBadge,
-    ).toBe('queued')
-  })
-
-  test('does not turn informational Attention into a Work owner', () => {
-    const target = 'project:Project-1/goal:G-1/work:W-1'
-    const goalPackage = packageWith(
-      [work('W-1', 'engineering', 'generate')],
-      [attention('A-info', target)],
-    )
-
-    expect(
-      deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())[0]?.primaryBadge,
-    ).toBe('queued')
-  })
-
-  test('keeps an open Work Attention outside the scheduling projection', () => {
-    const target = 'project:Project-1/goal:G-1/work:W-1'
-    const pending = attention('A-retry', target)
-    const goalPackage = packageWith([work('W-1', 'engineering', 'generate')], [pending])
-
-    expect(deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, runtime())[0]).toMatchObject({
-      ready: true,
-      primaryBadge: 'queued',
-      failedPredicates: [],
-    })
-  })
-
-  test('gives Planning and Engineering independent Work leases', () => {
-    const goalPackage = packageWith([
-      work('P-1', 'planning', 'plan'),
-      work('W-1', 'engineering', 'review'),
-    ])
-
-    const projections = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
-      ...runtime(),
-      liveRunWorkIds: new Set(['W-1']),
-    })
-    const planning = projections.find((item) => item.workId === 'P-1')
-    const engineering = projections.find((item) => item.workId === 'W-1')
-
-    expect(planning).toMatchObject({
-      ready: true,
-      primaryBadge: 'queued',
-      failedPredicates: [],
-    })
-    expect(engineering).toMatchObject({
-      ready: false,
-      primaryBadge: 'working',
-      failedPredicates: ['live_run'],
-    })
-  })
-
-  test('projects historical Planning only as terminal', () => {
-    const goalPackage = packageWith([
-      work('P-1', 'planning', 'done'),
-      work('W-1', 'engineering', 'review'),
-    ])
-
-    const planning = deriveGoalWorkProjections('Project-1', 'G-1', goalPackage, {
-      ...runtime(),
-      liveRunWorkIds: new Set(['W-1']),
-    }).find((item) => item.workId === 'P-1')
-
-    expect(planning?.failedPredicates).toEqual(['terminal'])
   })
 })
 
-function runtime() {
-  return {
+function project(
+  goalPackage: GoalPackage,
+  overrides: Partial<Parameters<typeof deriveGoalWorkProjections>[3]> = {},
+) {
+  return deriveGoalWorkProjections('P-1', 'G-1', goalPackage, {
     projectEligible: true,
-    liveRunWorkIds: new Set<string>(),
-    settledFailureWorkIds: new Set<string>(),
-    passCapacity: { planner: true, generator: true, reviewer: true },
-    now: new Date('2026-07-11T00:00:00Z'),
-  }
+    liveRunWorkIds: new Set(),
+    queuedRunProfiles: new Map(),
+    settledRunWorkIds: new Set(),
+    runCapacity: { planner: true, generator: true, reviewer: true },
+    now: new Date('2026-08-13T00:00:00Z'),
+    ...overrides,
+  })
 }
 
-function packageWith(works: WorkDocument[], attentions: AttentionDocument[] = []): GoalPackage {
+function packageWith(works: WorkDocument[]): GoalPackage {
   const goal: GoalDocument = {
-    attributes: {
-      id: 'G-1',
-      title: 'Goal',
-      lifecycle: 'active',
-      priority: 0,
-      contractRevision: 1,
-    },
+    attributes: { id: 'G-1', title: 'Goal', lifecycle: 'active', priority: 0, contractRevision: 1 },
     body: 'Goal contract.\n',
   }
   return {
     goal,
     works: new Map(works.map((document) => [document.attributes.id, document])),
-    attentions: new Map(attentions.map((document) => [document.attributes.id, document])),
+    attentions: new Map(),
     evidence: new Map(),
     inputs: [],
   }
@@ -237,41 +131,25 @@ function work(
   stage: 'plan' | 'generate' | 'review' | 'done' | 'cancelled',
   overrides: Partial<WorkDocument['attributes']> = {},
 ): WorkDocument {
-  const attributes = {
+  const common = {
     id,
     title: id,
     notBefore: null,
     dependsOn: [],
     contractRevision: 1,
-    evidenceRefs: stage === 'done' && kind === 'engineering' ? ['E-1'] : [],
+    evidenceRefs: [],
     contextRefs: [],
     ownerMessages: [],
     ...overrides,
   }
   return kind === 'planning'
-    ? {
-        attributes: { ...attributes, kind, stage: stage as 'plan' | 'done' | 'cancelled' },
-        body: '',
-      }
+    ? { attributes: { ...common, kind, stage: stage as 'plan' | 'done' | 'cancelled' }, body: '' }
     : {
         attributes: {
-          ...attributes,
+          ...common,
           kind,
           stage: stage as 'generate' | 'review' | 'done' | 'cancelled',
         },
         body: '',
       }
-}
-
-function attention(id: string, target: string): AttentionDocument {
-  return {
-    attributes: {
-      id,
-      target,
-      createdAt: '2026-07-11T00:00:00Z',
-      resolvedAt: null,
-      summary: 'Needs you.',
-    },
-    body: 'Needs you.\n',
-  }
 }

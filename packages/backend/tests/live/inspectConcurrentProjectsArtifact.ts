@@ -103,17 +103,15 @@ try {
     const responsibilities = new Set<string>()
     for (const work of detail.works) {
       const response = await requestJson<{
-        attempts: Array<{ responsibility: string; status: string }>
+        attempts: Array<{ responsibility: string; status: string; termination: string | null }>
       }>(baseUrl, `/api/projects/${projectId}/goals/${goal.id}/works/${work.id}/attempts`)
       for (const attempt of response.attempts) {
-        if (attempt.status === 'finished') responsibilities.add(attempt.responsibility)
+        if (attempt.status === 'settled' && attempt.termination === 'normal') {
+          responsibilities.add(attempt.responsibility)
+        }
       }
     }
-    assert.deepEqual(
-      [...responsibilities].sort(),
-      ['generator', 'planner', 'reviewer'],
-      `${projectId} must retain all real responsibility Attempts`,
-    )
+    assert.ok(responsibilities.has('generator'), `${projectId} must retain a normal Generator Run`)
     verification[projectId] = {
       goalId: goal.id,
       integrationRoot,

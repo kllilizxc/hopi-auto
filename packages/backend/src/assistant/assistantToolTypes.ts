@@ -1,10 +1,9 @@
-import type { GoalDocument, WorkDocument } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import type { LinkedProjectRepo } from '../domain/project'
-import type { DeliveryOperation, DeliveryOperationIntent } from '../runtime/deliveryOperationStore'
 import type { GoalController } from '../runtime/goalController'
-import type { RunDirective } from '../runtime/runDirective'
+import type { RunRequest } from '../runtime/runRequest'
 import type { WorkRunRequest } from '../scheduler/projectReconciler'
+import type { WorkCompletionResult } from '../scheduler/projectReconciler'
 import type { ReconcileDecision } from '../scheduler/reconcileDecision'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { AssistantToolName } from './assistantToolSchemas'
@@ -22,40 +21,16 @@ export interface AssistantToolProject {
     interruptQueuedRuns(goalId?: string, workId?: string): Promise<number>
     liveWorkIds(): ReadonlySet<string>
     decisionWhenEligible(goalId: string, goalPackage?: GoalPackage): Promise<ReconcileDecision>
-    settledFailureWorkIds(goalId: string, goalPackage?: GoalPackage): Promise<ReadonlySet<string>>
-    requestWorkRun(
-      goalId: string,
-      workId: string,
-      options?: { allowSuccessor?: boolean; directive?: RunDirective },
-    ): Promise<WorkRunRequest>
+    requestWorkRun(goalId: string, workId: string, request: RunRequest): Promise<WorkRunRequest>
     completeWork(
       goalId: string,
       workId: string,
       input: { sourceEventId: string; decision: string },
-    ): Promise<WorkDocument>
-    completeGoal(goalId: string, input: { decision: string }): Promise<GoalDocument>
-    proposeOperation(
+    ): Promise<WorkCompletionResult>
+    completeGoal(
       goalId: string,
-      input: {
-        id: string
-        workId?: string | null
-        idempotencyKey: string
-        requiredForGoal: boolean
-        intent: DeliveryOperationIntent
-        proposedByEventId: string
-      },
-    ): Promise<DeliveryOperation>
-    executeOperation(
-      goalId: string,
-      operationId: string,
-      approvedByEventId: string,
-    ): Promise<DeliveryOperation>
-    cancelOperation(
-      goalId: string,
-      operationId: string,
-      eventId: string,
-    ): Promise<DeliveryOperation>
-    listGoalOperations(goalId: string): Promise<DeliveryOperation[]>
+      input: { sourceEventId: string; decision: string },
+    ): Promise<import('../domain/canonicalDocuments').GoalDocument>
   }
 }
 

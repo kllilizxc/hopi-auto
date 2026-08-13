@@ -18,9 +18,10 @@ export interface AttemptSummary {
   workId: string
   runId: string
   responsibility: 'planner' | 'generator' | 'reviewer'
-  status: string
-  result: string | null
-  application: string | null
+  status: 'queued' | 'running' | 'settled'
+  termination: 'normal' | 'cancelled' | 'interrupted' | 'crashed' | 'timed_out' | null
+  reportMarkdown: string | null
+  candidateCommits: Array<{ repoId: string; baseCommit: string; resultCommit: string }>
 }
 
 export interface GoalDeliveryContext extends BrowserHarnessContext {
@@ -149,7 +150,7 @@ async function readAttempts(
         context.baseUrl,
         `/api/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(goalId)}/works/${encodeURIComponent(work.id)}/attempts/${encodeURIComponent(attempt.runId)}/events?limit=200`,
       )
-      if (attempt.status === 'finished' && attempt.result === 'success') {
+      if (attempt.status === 'settled' && attempt.termination === 'normal') {
         assert.ok(
           events.items.some((event) => event.kind === 'transcript' && event.transport),
           `${attempt.responsibility} ${attempt.runId} must contain real transport events`,
@@ -162,28 +163,15 @@ async function readAttempts(
 }
 
 function assertRealResponsibilityPath(attempts: AttemptSummary[]) {
-  for (const responsibility of ['planner', 'generator', 'reviewer'] as const) {
-    assert.ok(
-      attempts.some(
-        (attempt) =>
-          attempt.responsibility === responsibility &&
-          attempt.status === 'finished' &&
-          attempt.result === 'success',
-      ),
-      `Expected a successful real ${responsibility} Attempt`,
-    )
-  }
   assert.ok(
     attempts.some(
-      (attempt) => attempt.responsibility === 'generator' && attempt.application === 'published',
+      (attempt) =>
+        attempt.responsibility === 'generator' &&
+        attempt.status === 'settled' &&
+        attempt.termination === 'normal' &&
+        attempt.candidateCommits.length > 0,
     ),
-    'Generator output must be published',
-  )
-  assert.ok(
-    attempts.some(
-      (attempt) => attempt.responsibility === 'reviewer' && attempt.application === 'integrated',
-    ),
-    'C1 integration must follow successful Review',
+    'Delivery must retain one normal Generator Run and its candidate commit',
   )
 }
 

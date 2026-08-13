@@ -17,25 +17,19 @@ afterEach(async () => {
 })
 
 describe('Run artifacts', () => {
-  test('promotes declared proof into the durable Run store and rewrites result.json', async () => {
+  test('promotes declared proof into the durable Run store without rewriting a semantic result', async () => {
     const root = await temporaryRoot()
     const runRoot = join(root, 'R-1')
     const scratch = join(runRoot, 'scratch')
     const source = join(scratch, 'deep', 'asset.png')
-    const resultFile = join(runRoot, 'result.json')
     await mkdir(join(scratch, 'deep'), { recursive: true })
     await Bun.write(source, 'proof')
-    await Bun.write(
-      resultFile,
-      `${JSON.stringify({ result: 'success', summary: 'proved', artifacts: [source] })}\n`,
-    )
 
     const result = await preserveRunArtifacts({
       runId: 'R-1',
       runRoot,
       artifacts: [source, 'deep/asset.png'],
       sourceRoots: [scratch],
-      resultFile,
     })
 
     expect(result.references).toEqual(['artifact:R-1/001-asset.png'])
@@ -44,10 +38,6 @@ describe('Run artifacts', () => {
       runId: 'R-1',
       artifacts: [{ reference: 'artifact:R-1/001-asset.png', path: 'artifacts/001-asset.png' }],
     })
-    expect(await Bun.file(resultFile).json()).toMatchObject({
-      artifacts: ['artifact:R-1/001-asset.png'],
-    })
-
     await cleanupRunScratch(scratch)
     expect(await Bun.file(source).exists()).toBe(false)
     expect(await Bun.file(join(runRoot, 'artifacts', '001-asset.png')).text()).toBe('proof')
@@ -130,21 +120,13 @@ describe('Run artifacts', () => {
     const root = await temporaryRoot()
     const runRoot = join(root, 'R-1')
     const source = join(root, 'temporary-proof')
-    const resultFile = join(runRoot, 'result.json')
     await mkdir(join(source, 'nested'), { recursive: true })
     await Bun.write(join(source, 'ledger.json'), '{"phase":"validated"}\n')
     await Bun.write(join(source, 'nested', 'proof.txt'), 'durable proof\n')
-    await mkdir(runRoot, { recursive: true })
-    await Bun.write(
-      resultFile,
-      `${JSON.stringify({ result: 'success', summary: 'proved', artifacts: [source] })}\n`,
-    )
-
     const result = await preserveRunArtifacts({
       runId: 'R-1',
       runRoot,
       artifacts: [source],
-      resultFile,
     })
 
     expect(result.references).toEqual(['artifact:R-1/001-temporary-proof'])
@@ -161,12 +143,9 @@ describe('Run artifacts', () => {
         join(runRoot, 'artifacts', '001-temporary-proof', 'nested', 'proof.txt'),
       ).text(),
     ).toBe('durable proof\n')
-    expect(await Bun.file(resultFile).json()).toMatchObject({
-      artifacts: ['artifact:R-1/001-temporary-proof'],
-    })
   })
 
-  test('keeps Planner proposal paths out of Evidence artifacts', async () => {
+  test('does not retain a special proposal-path compatibility branch', async () => {
     const root = await temporaryRoot()
     const runRoot = join(root, 'R-1')
     const proposalRoot = join(runRoot, 'proposal')
@@ -178,12 +157,11 @@ describe('Run artifacts', () => {
       runId: 'R-1',
       runRoot,
       artifacts: [proposalPath],
-      proposalRoots: [proposalRoot],
+      sourceRoots: [proposalRoot],
     })
 
-    expect(result.references).toEqual([])
-    expect(result.ignoredProposalPaths).toEqual([proposalPath])
-    expect(await Bun.file(join(runRoot, 'artifacts.json')).exists()).toBe(false)
+    expect(result.references).toEqual(['artifact:R-1/001-publish-preview.md'])
+    expect(result.preserved).toHaveLength(1)
   })
 
   test('keeps a Project-relative artifact directory as portable supporting material', async () => {

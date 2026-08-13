@@ -1,7 +1,5 @@
 # HOPI MVP Document Model
 
-Status: Work-based implementation baseline; not current product authority. See `mvp_design.md`.
-
 Status: forward document and authority reference
 Last updated: 2026-07-29
 
@@ -466,9 +464,31 @@ different root creates a new Attention.
 
 ### `design/**`
 
-`design/index.md` is the current design map and concise summary. Topic files hold substantial
-rationale and implementation design. Design documents never own Goal lifecycle, Work stage,
-Attention resolution, or runtime state.
+`design/index.md` is the shared Wayfinding map: a low-resolution index rather than the store of each
+decision's detail. Topic files and retained Reports hold substantial rationale and evidence. The
+recommended body follows the Wayfinder convention:
+
+```markdown
+## Destination
+
+## Notes
+
+## Decisions so far
+
+## Not yet specified
+
+## Out of scope
+```
+
+`Destination` orients each planning session to the current Goal without duplicating its contract.
+`Decisions so far` links each resolved decision ticket by name with a one-line gist; the linked Report
+or topic document owns the answer. `Not yet specified` holds in-scope fog that cannot yet be phrased
+as a precise question. `Out of scope` records what lies beyond the destination and never graduates
+unless the destination changes. Current Planning authority and its explicit Run instruction carry
+the frontier ticket rather than restating its answer in the map.
+
+HOPI parses none of this prose. Clear Goals need no map ceremony, and design documents never own
+lifecycle, stage, Attention resolution, dependency, or runtime state.
 
 When Assistant adopts an Inbox image for a Goal, it copies the immutable bytes to Goal-local
 `assets/`. Work selects the asset explicitly through `contextRefs`, whose caller-authored purpose
@@ -607,6 +627,11 @@ constraints, non-goals, and success-criteria sections instead of storing placeho
 contract and verbatim Input remain separate first-class documents because normalization and source
 provenance are different facts.
 
+The Planning Work carries only the current decision ticket, not a complete future roadmap. Its
+Report may expose new tickets or clear some fog, but Assistant updates the map and selects the next
+frontier ticket after observing current facts. The kernel does not derive future Planning Runs from
+headings or Report prose.
+
 Triggers include Goal creation with a Planning first Work, material contract change, resume,
 reopen, an explicit speaking-Assistant planning request after Attention, and an active Goal with no
 nonterminal Work. A stale Run result is not a planning trigger because it has no authority to change
@@ -641,6 +666,13 @@ Run may preserve artifacts but fails its semantic guard.
 `dependsOn` is the only causal-order and conflict-avoidance graph between Engineering Work. Only a
 dependency at `done` satisfies an edge. References must exist in the same Goal, edges remain after
 completion, and cycles are invalid. Planning Work is not a second dependency graph.
+
+An Engineering Work row is a current execution commitment. Its objective and acceptance must already
+be stable enough to act on. `dependsOn` may order such commitments, but it must not represent an
+unanswered semantic decision or reserve a placeholder for work whose contract still depends on new
+evidence. A downstream Work may be created before its dependency finishes only when every allowed
+dependency result leaves that downstream contract valid; otherwise it remains beyond the current
+frontier rather than becoming placeholder Work.
 
 If Planner cannot establish that two writers are independent, it orders them. Missed overlap is
 contained by task branches and handled by deterministic integration rejection and repair or
