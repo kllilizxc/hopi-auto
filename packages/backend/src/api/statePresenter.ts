@@ -5,6 +5,7 @@ import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocumen
 import type { GoalPackage } from '../domain/goalPackage'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { MvpRuntime } from '../runtime/mvpRuntime'
+import { deriveRunSchedulingFacts } from '../runtime/runAttemptStore'
 import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
 import {
   type ScopedAssistantAttention,
@@ -81,6 +82,9 @@ export async function presentState(
           attemptWorkIds(queuedAttempts, project.projectId, goalId),
         ),
         passCapacity: { planner: true, generator: true, reviewer: true },
+        ...deriveRunSchedulingFacts(
+          [...attemptSnapshot.listGoal(project.projectId, goalId).values()].flat(),
+        ),
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
       const goalAttentionCount = [...goalPackage.attentions.values()].filter(

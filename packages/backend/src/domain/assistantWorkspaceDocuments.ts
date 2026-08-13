@@ -64,16 +64,11 @@ export const inboxContextSchema = z
         message: 'Inbox context goalId requires projectId',
       })
     }
-    if (!context.projectId && !context.attentionRefs?.length) {
+    if (!context.projectId && !context.attentionRefs?.length && !context.replyTo) {
       refinement.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Inbox context requires a Project location or canonical Attention reference',
-      })
-    }
-    if (context.replyTo && !context.attentionRefs?.length) {
-      refinement.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Inbox replyTo requires exact Attention references',
+        message:
+          'Inbox context requires a Project location, canonical Attention reference, or reply target',
       })
     }
     if (context.workRefs?.length && !context.projectId) {
@@ -98,6 +93,7 @@ export const inboxContextSchema = z
 export const inboxEventAttributesSchema = z
   .object({
     id: stableIdSchema,
+    threadId: stableIdSchema.optional(),
     receivedAt: timestampSchema,
     status: z.enum(INBOX_STATUSES),
     source: z.enum(INBOX_SOURCES),

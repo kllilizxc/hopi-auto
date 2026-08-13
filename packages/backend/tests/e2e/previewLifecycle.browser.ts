@@ -62,11 +62,19 @@ try {
 
   await requestJson(baseUrl, '/api/projects', {
     method: 'POST',
-    body: { projectId: VALID_PROJECT, repoId: 'primary', repoPath: validRepo },
+    body: {
+      projectId: VALID_PROJECT,
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary', repoPath: validRepo }],
+    },
   })
   await requestJson(baseUrl, '/api/projects', {
     method: 'POST',
-    body: { projectId: MISSING_PROJECT, repoId: 'primary', repoPath: missingRepo },
+    body: {
+      projectId: MISSING_PROJECT,
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary', repoPath: missingRepo }],
+    },
   })
   await requestJson(baseUrl, `/api/projects/${VALID_PROJECT}/goals`, {
     method: 'POST',

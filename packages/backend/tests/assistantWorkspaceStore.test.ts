@@ -169,6 +169,33 @@ describe('AssistantWorkspaceStore', () => {
       attentionRefs: [workspaceAttentionReference(fixture.homeId, 'A-project')],
       replyTo: inboxEventReference(fixture.homeId, 'EV-question'),
     })
+    expect(reply.attributes.threadId).toBe(
+      (await fixture.store.readEvent('EV-question'))?.attributes.threadId,
+    )
+  })
+
+  test('continues an explicit Thread reply even when the current page scope changes', async () => {
+    const fixture = await setup(true)
+    const parent = await fixture.store.receiveEvent({
+      eventId: 'EV-project-root',
+      content: 'Start in the Project.',
+      context: { projectId: 'P-1' },
+    })
+    await fixture.store.handleEvent(parent.attributes.id, {
+      reply: 'Continue wherever it is useful.',
+      disposition: 'answered',
+    })
+
+    const reply = await fixture.store.receiveEvent({
+      eventId: 'EV-home-reply',
+      content: 'Continue from Home.',
+      context: { replyTo: inboxEventReference(fixture.homeId, parent.attributes.id) },
+    })
+
+    expect(reply.attributes).toMatchObject({
+      threadId: parent.attributes.threadId,
+      context: { replyTo: inboxEventReference(fixture.homeId, parent.attributes.id) },
+    })
   })
 
   test('rejects receipt content or page-context rewriting', async () => {

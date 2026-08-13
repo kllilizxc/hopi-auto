@@ -15,6 +15,11 @@ export async function settledFailureWorkIds(
       if (isWorkTerminal(work.attributes) || requestedWorkIds.has(work.attributes.id)) return
       const latest = attemptsByWork.get(work.attributes.id)?.[0]
       if (!latest || !isSettledFailure(latest)) return
+      if (latest.protocol === 'report') {
+        if (!latest.workHash) return
+        if ((await workAssignmentHash(work)) === latest.workHash) blocked.add(work.attributes.id)
+        return
+      }
       if (
         latest.responsibility !== responsibilityFor(work.attributes.kind, work.attributes.stage)
       ) {
@@ -30,6 +35,12 @@ export async function settledFailureWorkIds(
 }
 
 function isSettledFailure(attempt: RunAttemptSummary) {
+  if (attempt.protocol === 'report') {
+    return (
+      (attempt.status === 'finished' || attempt.status === 'interrupted') &&
+      attempt.termination !== 'normal'
+    )
+  }
   if (attempt.status !== 'finished') return false
   if (attempt.application === 'operational_failure' || attempt.application === 'invalid') {
     return true

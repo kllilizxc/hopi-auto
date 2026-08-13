@@ -45,6 +45,7 @@ import {
 } from '../components/ui'
 import {
   type AgentPlanSnapshot,
+  type DeliveryOperationView,
   type GoalControl,
   type KanbanColumn,
   type RunAttemptDetail,
@@ -586,11 +587,13 @@ export function BoardView() {
           <p>{focus?.projection.primaryBadge ?? 'No pending Work'}</p>
         </div>
         <div>
-          <small>Progress</small>
-          <strong>
-            {goal.works.filter((work) => work.stage === 'done').length} of {goal.works.length}
-          </strong>
-          <p>Work complete</p>
+          <small>Goal decision</small>
+          <strong>{goal.goal.lifecycle}</strong>
+          <p>
+            {goal.attentions.length > 0
+              ? `${goal.attentions.length} open decision${goal.attentions.length === 1 ? '' : 's'}`
+              : 'No open decisions'}
+          </p>
         </div>
       </section>
 
@@ -634,6 +637,36 @@ export function BoardView() {
           </div>
         )}
       </AppDisclosure>
+
+      {goal.operations.length > 0 && (
+        <AppDisclosure
+          className="goal-execution-cost"
+          summary={
+            <>
+              <span>
+                <strong>Delivery operations</strong>
+                <small>Typed external effects</small>
+              </span>
+              <span>{operationStatusHeadline(goal.operations)}</span>
+            </>
+          }
+        >
+          <div className="goal-execution-cost__roles">
+            {goal.operations.map((operation) => (
+              <div key={operation.id}>
+                <small>
+                  {operation.intent.kind}
+                  {operation.requiredForGoal ? ' · required' : ' · optional'}
+                </small>
+                <strong>{operation.status}</strong>
+                <span>{operation.intent.changeSetId}</span>
+                <span>{operationResultHeadline(operation)}</span>
+                <span>{operation.id}</span>
+              </div>
+            ))}
+          </div>
+        </AppDisclosure>
+      )}
 
       <AppScrollShadow
         className="kanban-scroll"
@@ -1087,6 +1120,20 @@ function WorkDetail({
                   <small>Not before</small>
                   <strong>{work.notBefore ?? 'now'}</strong>
                 </span>
+                <span title={selectedAttempt?.runId}>
+                  <small>Run</small>
+                  <strong>{selectedAttempt?.runId ?? 'not started'}</strong>
+                  {selectedAttempt && (
+                    <em>
+                      {selectedAttempt.profile} · {selectedAttempt.protocol}
+                    </em>
+                  )}
+                </span>
+                <span title={latestEpochTitle(selectedAttempt)}>
+                  <small>Session Epochs</small>
+                  <strong>{selectedAttempt?.sessionEpochs.length ?? 0}</strong>
+                  {selectedAttempt && <em>{latestEpochLabel(selectedAttempt)}</em>}
+                </span>
                 <AttemptDiagnosticFacts
                   summary={attemptsQuery.data?.summary ?? null}
                   diagnostics={selectedAttempt?.diagnostics ?? null}
@@ -1203,6 +1250,13 @@ function WorkContract({
           </div>
         </section>
       )}
+      {selectedAttempt && (
+        <RunFacts
+          attempt={selectedAttempt}
+          detail={selectedDetail}
+          detailLoading={loading && !selectedDetail}
+        />
+      )}
       <section>
         <h2>Evidence</h2>
         <div className="chip-list">
@@ -1286,6 +1340,164 @@ function WorkContract({
       </section>
     </AppScrollShadow>
   )
+}
+
+function RunFacts({
+  attempt,
+  detail,
+  detailLoading,
+}: {
+  attempt: RunAttemptSummary
+  detail: RunAttemptDetail | null
+  detailLoading: boolean
+}) {
+  return (
+    <section className="run-facts-section work-system-prompt-section">
+      <div className="work-system-prompt-heading">
+        <div>
+          <h2>Run facts</h2>
+          <p>Durable execution facts; Work stage and Goal acceptance remain separate decisions.</p>
+        </div>
+        <code>{attempt.runId}</code>
+      </div>
+      <div className="fact-grid run-fact-grid">
+        <span>
+          <small>Profile</small>
+          <strong>{attempt.profile}</strong>
+        </span>
+        <span>
+          <small>Protocol</small>
+          <strong>{attempt.protocol}</strong>
+        </span>
+        <span>
+          <small>Workspace</small>
+          <strong>{attempt.workspaceMode}</strong>
+        </span>
+        <span>
+          <small>Termination</small>
+          <strong>
+            {attempt.termination ?? (attempt.status === 'running' ? 'running' : 'pending')}
+          </strong>
+        </span>
+        <span>
+          <small>Exit code</small>
+          <strong>{attempt.exitCode ?? 'not recorded'}</strong>
+        </span>
+        <span>
+          <small>Application</small>
+          <strong>{attempt.application ?? 'none'}</strong>
+        </span>
+      </div>
+
+      <div className="run-fact-block">
+        <h3>Session Epochs</h3>
+        {attempt.sessionEpochs.length > 0 ? (
+          <ol className="run-epoch-list work-run-prompt">
+            {attempt.sessionEpochs.map((epoch) => (
+              <li key={`${epoch.epoch}:${epoch.sessionId}`}>
+                <div className="work-system-prompt-meta">
+                  <StatusChip size="sm" variant="soft">
+                    Epoch {epoch.epoch}
+                  </StatusChip>
+                  <strong>{epoch.transport}</strong>
+                  <code title={epoch.sessionId}>{epoch.sessionId}</code>
+                  <small>
+                    {epoch.closeReason ?? 'active'} · {formatAttemptTime(epoch.startedAt)}
+                  </small>
+                </div>
+                {epoch.handoffMarkdown && (
+                  <AppDisclosure summary="Bounded handoff">
+                    <pre>{epoch.handoffMarkdown}</pre>
+                  </AppDisclosure>
+                )}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="work-system-prompt-empty">No provider Session Epoch was recorded.</p>
+        )}
+      </div>
+
+      <div className="run-fact-block">
+        <h3>Report</h3>
+        {attempt.reportMarkdown ? (
+          <pre className="run-report">{attempt.reportMarkdown}</pre>
+        ) : (
+          <p className="work-system-prompt-empty">
+            {attempt.status === 'running' ? 'The Run has not settled yet.' : 'No Report was recorded.'}
+          </p>
+        )}
+      </div>
+
+      <div className="run-fact-block">
+        <h3>ChangeSet</h3>
+        {detailLoading ? (
+          <p className="work-system-prompt-empty">
+            <AppBreathingIndicator /> Loading ChangeSet facts
+          </p>
+        ) : detail?.changeSet ? (
+          <div className="work-run-prompt">
+            <div className="work-system-prompt-meta">
+              <StatusChip size="sm" variant="soft">
+                {detail.changeSet.disposition}
+              </StatusChip>
+              <code>{detail.changeSet.id}</code>
+            </div>
+            <pre>{formatChangeSet(detail.changeSet)}</pre>
+          </div>
+        ) : (
+          <p className="work-system-prompt-empty">No source delta was frozen for this Run.</p>
+        )}
+      </div>
+
+      <div className="run-fact-block">
+        <h3>Artifacts</h3>
+        {detailLoading ? (
+          <p className="work-system-prompt-empty">
+            <AppBreathingIndicator /> Loading artifact facts
+          </p>
+        ) : detail &&
+          (detail.artifacts.preserved.length > 0 || detail.artifacts.unavailable.length > 0) ? (
+          <pre>{formatArtifacts(detail.artifacts)}</pre>
+        ) : (
+          <p className="work-system-prompt-empty">No artifacts were declared for this Run.</p>
+        )}
+      </div>
+
+      <small className="run-transcript-note">Transcript entries remain in the Activity tab.</small>
+    </section>
+  )
+}
+
+function shortRevision(value: string) {
+  return value.slice(0, 10)
+}
+
+function formatChangeSet(changeSet: NonNullable<RunAttemptDetail['changeSet']>) {
+  return changeSet.repos
+    .map(
+      (repo) =>
+        `${repo.repoId}\nbase   ${shortRevision(repo.baseCommit)}\nresult ${shortRevision(repo.resultCommit)}\npatch  ${shortRevision(repo.contentHash)}`,
+    )
+    .join('\n\n')
+}
+
+function formatArtifacts(artifacts: RunAttemptDetail['artifacts']) {
+  return [
+    ...artifacts.preserved.map(
+      (artifact) =>
+        `${artifact.reference}\n${artifact.kind} · ${formatBytes(artifact.sizeBytes)}`,
+    ),
+    ...artifacts.unavailable.map(
+      (artifact) => `${artifact.reference}\nunavailable · ${artifact.reason}`,
+    ),
+  ].join('\n\n')
+}
+
+function formatBytes(value: number) {
+  if (value < 1_000) return `${value} B`
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(1)} KB`
+  return `${(value / 1_000_000).toFixed(1)} MB`
 }
 
 function RunPromptView({ prompt }: { prompt: string }) {
@@ -1546,6 +1758,17 @@ export function attemptModelLabel(attempt: RunAttemptSummary | null) {
     : model
 }
 
+export function latestEpochLabel(attempt: RunAttemptSummary | null) {
+  const epoch = attempt?.sessionEpochs.at(-1)
+  if (!epoch) return 'not recorded'
+  return `${epoch.transport} · ${epoch.closeReason ?? 'active'}`
+}
+
+function latestEpochTitle(attempt: RunAttemptSummary | null) {
+  const epoch = attempt?.sessionEpochs.at(-1)
+  return epoch ? `Latest Session: ${epoch.sessionId}` : undefined
+}
+
 export function attemptOutcomeBreakdown(attempts: RunAttemptSummary[]) {
   let rejected = 0
   let preparationFailed = 0
@@ -1579,6 +1802,25 @@ export function executionCostHeadline(summary: RunCostSummary) {
     ? `${summary.reportedTurns} turns`
     : `${summary.modelMessages} model messages`
   return `${summary.runs} Runs · ${modelActivity} · ${summary.toolCalls} tools · ${formatDuration(summary.elapsedMs)}`
+}
+
+export function operationStatusHeadline(operations: readonly DeliveryOperationView[]) {
+  const succeeded = operations.filter((operation) => operation.status === 'succeeded').length
+  const requiredPending = operations.filter(
+    (operation) => operation.requiredForGoal && operation.status !== 'succeeded',
+  ).length
+  return `${succeeded} / ${operations.length} succeeded${requiredPending ? ` · ${requiredPending} required pending` : ''}`
+}
+
+function operationResultHeadline(operation: DeliveryOperationView) {
+  if (!operation.result) return 'No observed result yet'
+  if (operation.result.kind === 'archive_created') {
+    return `${operation.result.kind} · ${formatBytes(operation.result.size)}`
+  }
+  if (operation.result.kind === 'baseline_integrated') {
+    return `${operation.result.kind} · ${operation.result.repos.length} Repo${operation.result.repos.length === 1 ? '' : 's'}`
+  }
+  return operation.result.summary
 }
 
 function formatTokenCoverage(summary: RunCostSummary) {

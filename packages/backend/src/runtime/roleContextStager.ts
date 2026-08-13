@@ -28,6 +28,7 @@ import {
 } from './browserEnvironment'
 import { renderContextManifest, renderResponsibilityPrompt } from './roleContextRendering'
 import { parsePortableArtifactReference } from './runArtifacts'
+import type { RunDirective } from './runDirective'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
 import { type SourceMergePreflightResult, inspectSourceMerge } from './sourceMergePreflight'
 
@@ -67,6 +68,7 @@ export interface PrepareRoleContextInput {
   workId: string
   runId: string
   responsibility: Responsibility
+  directive?: RunDirective
   primaryRepoId: string
   repoRoots: readonly RoleRepoRoot[]
   apiOrigin?: string
@@ -133,11 +135,19 @@ export function createRoleContextStager(
       assertStableId(input.runId, 'runId')
 
       const projectRoot = resolve(input.projectRoot)
+      const reportRun = input.directive?.protocol === 'report'
+      const workspaceMode =
+        input.directive?.workspaceMode ??
+        (input.responsibility === 'generator'
+          ? 'isolated_write'
+          : input.responsibility === 'reviewer'
+            ? 'read_only'
+            : 'none')
       const apiOrigin = input.apiOrigin ? normalizeApiOrigin(input.apiOrigin) : undefined
       const primaryRepoId = input.primaryRepoId
       assertStableId(primaryRepoId, 'primaryRepoId')
       const repoRoots = normalizeRepoRoots(input.repoRoots, primaryRepoId)
-      const repoGuidance = await discoverRepoGuidance(repoRoots)
+      const repoGuidance = workspaceMode === 'none' ? [] : await discoverRepoGuidance(repoRoots)
       const paths = createGoalPackagePaths(projectRoot, input.projectId, input.projectPath)
       const runRoot = runStoragePath(absoluteHomeRoot, input.runId)
       const contextRoot = join(runRoot, 'context')
@@ -204,7 +214,7 @@ export function createRoleContextStager(
           ]),
         ),
       )
-      const repoProjection = input.responsibility === 'planner' ? 'release' : 'candidate'
+      const repoProjection = workspaceMode === 'none' ? 'release' : 'candidate'
       const repoProjectionHeads = Object.fromEntries(
         await Promise.all(
           repoRoots.map(async (repo) => [
@@ -224,7 +234,7 @@ export function createRoleContextStager(
           `Work path ${workPath} owns ${parsedWork.attributes.id}, expected ${input.workId}`,
         )
       }
-      if (input.responsibility !== 'planner') {
+      if (!reportRun && input.responsibility !== 'planner') {
         if (!isEngineeringWork(parsedWork.attributes)) {
           throw new RoleContextStagingError(
             `${input.responsibility} requires Engineering Work ${input.workId}`,
@@ -285,7 +295,7 @@ export function createRoleContextStager(
           ? join(contextRoot, 'evidence-artifacts.json')
           : undefined
       const repairView =
-        input.responsibility === 'generator'
+        workspaceMode === 'isolated_write'
           ? {
               candidate: await inspectCurrentCandidate(repoRoots, releaseRef, runtimeScratchDir),
             }
@@ -301,7 +311,7 @@ export function createRoleContextStager(
         repairView,
       )
       const operatorPreference =
-        input.responsibility === 'planner'
+        !reportRun && input.responsibility === 'planner'
           ? await snapshotOperatorPreference(publisher, absoluteHomeRoot)
           : undefined
       const operatorPreferenceFile = operatorPreference
@@ -340,7 +350,7 @@ export function createRoleContextStager(
 
       const agentsFile = snapshot.files.find((file) => file.path === paths.agentsPath)
       let bootstrapSourceRoot: string | undefined
-      if (input.responsibility === 'planner' && agentsFile?.content === null) {
+      if (!reportRun && input.responsibility === 'planner' && agentsFile?.content === null) {
         bootstrapSourceRoot = join(contextRoot, 'source')
         await stageTrackedSource(projectRoot, releaseHead, bootstrapSourceRoot, paths.projectPath)
       }
@@ -426,6 +436,7 @@ export function createRoleContextStager(
       await Bun.write(resultFile, '')
 
       return {
+        outcomeMode: reportRun ? 'freeform' : 'structured',
         runtimeScratchDir,
         runtimeCacheDir,
         runRoot,
@@ -458,7 +469,8 @@ export function createRoleContextStager(
         apiOrigin,
         goalFile: join(authorityRoot, ...goalPath.split('/')),
         designFile: join(authorityRoot, ...paths.designIndex(input.goalId).split('/')),
-        extraReadableRoots: [...new Set(repoRoots.map((repo) => repo.path))],
+        extraReadableRoots:
+          workspaceMode === 'none' ? [] : [...new Set(repoRoots.map((repo) => repo.path))],
         extraWritableRoots: [
           ...new Set([
             runRoot,
@@ -466,7 +478,7 @@ export function createRoleContextStager(
             runtimeScratchDir,
             runtimeCacheDir,
             ...(browserHarnessCommand ? [browserEnvironmentRoot(absoluteHomeRoot)] : []),
-            ...(input.responsibility === 'generator' ? repoRoots.map((repo) => repo.path) : []),
+            ...(workspaceMode === 'isolated_write' ? repoRoots.map((repo) => repo.path) : []),
           ]),
         ],
         contextFile,
@@ -1059,6 +1071,12 @@ function proposalCapabilities(
     fieldConstraints: {
       decisionPrompt: 'optional or null; 1-8 questions; 2-3 options per question',
     },
+  }
+  if (input.directive?.protocol === 'report') {
+    return {
+      proposalRoot: '$HOPI_PROPOSAL_ROOT',
+      writable: [],
+    }
   }
   if (input.responsibility !== 'planner') {
     return {

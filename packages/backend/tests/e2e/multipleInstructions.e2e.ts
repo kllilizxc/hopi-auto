@@ -51,11 +51,19 @@ try {
   const baseUrl = `http://127.0.0.1:${server.port}`
   await requestJson(baseUrl, '/api/projects', {
     method: 'POST',
-    body: { projectId: PROJECT_A, repoId: 'primary', repoPath: repoA },
+    body: {
+      projectId: PROJECT_A,
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary', repoPath: repoA }],
+    },
   })
   await requestJson(baseUrl, '/api/projects', {
     method: 'POST',
-    body: { projectId: PROJECT_B, repoId: 'primary', repoPath: repoB },
+    body: {
+      projectId: PROJECT_B,
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary', repoPath: repoB }],
+    },
   })
   await requestJson(baseUrl, `/api/projects/${PROJECT_A}/goals`, {
     method: 'POST',

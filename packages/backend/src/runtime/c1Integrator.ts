@@ -836,7 +836,7 @@ async function durabilitySync(projectRoot: string) {
   }
 }
 
-async function materializeCommit(projectRoot: string, oldTarget: string, commit: string) {
+export async function materializeCommit(projectRoot: string, oldTarget: string, commit: string) {
   const changes = (
     await gitBytes(projectRoot, ['diff', '--name-status', '--no-renames', '-z', oldTarget, commit])
   )

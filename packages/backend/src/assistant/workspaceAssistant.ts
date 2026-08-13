@@ -40,8 +40,10 @@ import { createProcessGroupTerminator } from '../runtime/processGroup'
 import { runtimeCacheRoot } from '../runtime/runPaths'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import {
+  type AssistantThreadScope,
   assistantConversationScopeForEvent,
-  assistantEventBelongsToScope,
+  assistantEventBelongsToThread,
+  assistantThreadScopeForEvent,
 } from './assistantConversationScope'
 import type { AssistantConversationStore, AssistantSession } from './assistantConversationStore'
 import type { AssistantActionReceipt } from './assistantConversationStore'
@@ -481,17 +483,37 @@ export function createWorkspaceAssistant(input: {
         return { kind: 'answered', eventId }
       }
       const conversationScope = assistantConversationScopeForEvent(event)
+      const threadScope = assistantThreadScopeForEvent(event)
       const projectId =
         conversationScope.kind === 'project' ? conversationScope.projectId : undefined
       const internal = isInternalInboxSource(event.attributes.source)
       let stateSnapshot: AssistantStateSnapshot | null = null
       const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
 
+      const threadEvents = [...workspaceState.events.values()]
+        .filter((candidate) => assistantEventBelongsToThread(candidate, threadScope))
+        .toSorted(
+          (left, right) =>
+            left.attributes.receivedAt.localeCompare(right.attributes.receivedAt) ||
+            left.attributes.id.localeCompare(right.attributes.id),
+        )
+      const origin = threadEvents[0] ?? event
+      await input.conversation.ensureThread({
+        threadId: threadScope.threadId,
+        createdAt: origin.attributes.receivedAt,
+        origin: {
+          eventId: origin.attributes.id,
+          projectId: origin.attributes.context?.projectId ?? null,
+          goalId: origin.attributes.context?.goalId ?? null,
+        },
+        eventIds: threadEvents.map((candidate) => candidate.attributes.id),
+      })
       await input.conversation.begin(eventId)
-      const conversationWorkspace =
-        conversationScope.kind === 'project'
-          ? join(workspaceRoot, 'projects', encodeURIComponent(conversationScope.projectId))
-          : join(workspaceRoot, 'home')
+      const conversationWorkspace = join(
+        workspaceRoot,
+        'threads',
+        encodeURIComponent(threadScope.threadId),
+      )
       const turnRoot = join(
         resolve(input.homeRoot),
         '.hopi',
@@ -502,7 +524,6 @@ export function createWorkspaceAssistant(input: {
       )
       const toolToken = input.tools.issue(eventId)
       let usedTool = false
-      let bootstrappingSpeakingSession = false
 
       const observer: AssistantModelObserver = {
         onEvent: async (runtimeEvent) => {
@@ -512,23 +533,7 @@ export function createWorkspaceAssistant(input: {
           await input.conversation.record(eventId, runtimeEvent)
         },
         onSession: async (session) => {
-          if (internal) {
-            await input.conversation.record(eventId, {
-              kind: 'message',
-              level: 'info',
-              role: 'coordinator',
-              content: bootstrappingSpeakingSession
-                ? `Established native ${session.transport} speaking Session ${session.sessionId} from the internal bootstrap.`
-                : `Forked speaking Session into native ${session.transport} branch ${session.sessionId}.`,
-            })
-            return
-          }
-          await input.conversation.writeSession(
-            conversationScope,
-            session,
-            contextDigest,
-            runtimeDigest,
-          )
+          await input.conversation.writeSession(threadScope, session, contextDigest, runtimeDigest)
         },
       }
 
@@ -556,21 +561,44 @@ export function createWorkspaceAssistant(input: {
               }),
             }
         let session = await input.conversation.readSession(
-          conversationScope,
+          threadScope,
           contextDigest,
           runtimeDigest,
         )
-        bootstrappingSpeakingSession = internal && session === null
+        const configuredTransport = executionPlan.config?.transport
+        if (
+          session &&
+          configuredTransport &&
+          configuredTransport !== 'process' &&
+          session.transport !== configuredTransport
+        ) {
+          await input.conversation.rotateSession(threadScope, {
+            reason: 'transport_changed',
+            handoffMarkdown: renderThreadEpochHandoff(threadEvents, event),
+          })
+          await input.conversation.record(eventId, {
+            kind: 'message',
+            level: 'info',
+            role: 'coordinator',
+            content: `The configured Assistant transport changed from ${session.transport} to ${configuredTransport}; starting a new Session Epoch in the same Thread.`,
+          })
+          session = null
+        }
         const pendingActionReceipts = internal
           ? []
           : await input.conversation.readPendingActionReceipts(conversationScope)
-        const rebuildPrompt = renderNewConversation(
+        const threadManifest = await input.conversation.readThread(threadScope)
+        const previousEpochHandoff = session
+          ? null
+          : (threadManifest?.epochs.at(-1)?.handoffMarkdown ?? null)
+        let rebuildPrompt = renderNewConversation(
           workspaceState.events,
           event,
           workspaceState.preference,
           stateSnapshot,
-          conversationScope,
+          threadScope,
           pendingActionReceipts,
+          previousEpochHandoff,
         )
         let result: AssistantModelResult
         try {
@@ -593,23 +621,41 @@ export function createWorkspaceAssistant(input: {
               toolMode,
               executionPlan,
               signal,
-              invocation: internal && !bootstrappingSpeakingSession ? 'supervision' : 'speaking',
+              invocation: 'speaking',
             },
             observer,
           )
         } catch (error) {
-          if (internal || !session || !(error instanceof AssistantSessionUnavailableError)) {
+          if (!session || !(error instanceof AssistantSessionUnavailableError)) {
             throw error
           }
+          const handoffMarkdown = renderThreadEpochHandoff(threadEvents, event)
+          await input.conversation.rotateSession(threadScope, {
+            reason: 'session_unavailable',
+            handoffMarkdown,
+          })
           await input.conversation.record(eventId, {
             kind: 'message',
             level: 'info',
             role: 'coordinator',
             content:
-              'The saved vendor session could not continue; rebuilding it from durable conversation history.',
+              'The saved vendor Session could not continue; rotating the same Thread to a new Session Epoch from bounded durable history.',
           })
-          await input.conversation.clearSession(conversationScope)
+          if (usedTool) {
+            throw new WorkspaceAssistantError(
+              'The provider Session became unavailable after a tool call; the current turn was not replayed because its boundary is uncertain.',
+            )
+          }
           session = null
+          rebuildPrompt = renderNewConversation(
+            workspaceState.events,
+            event,
+            workspaceState.preference,
+            stateSnapshot,
+            threadScope,
+            pendingActionReceipts,
+            handoffMarkdown,
+          )
           result = await input.runner.run(
             {
               eventId,
@@ -639,14 +685,13 @@ export function createWorkspaceAssistant(input: {
         if (!reply && !internal && !presentedAttention) {
           throw new WorkspaceAssistantError('Assistant produced an empty public reply')
         }
-        if (!internal || bootstrappingSpeakingSession) {
-          await input.conversation.writeSession(
-            conversationScope,
-            result.session,
-            contextDigest,
-            runtimeDigest,
-          )
-        } else if (reply || presentedAttention) {
+        await input.conversation.writeSession(
+          threadScope,
+          result.session,
+          contextDigest,
+          runtimeDigest,
+        )
+        if (internal && (reply || presentedAttention)) {
           const receipt = reply || 'Your input is needed.'
           await input.conversation.recordActionReceipt(conversationScope, {
             receiptId: await assistantActionReceiptId(eventId, 'reply', receipt),
@@ -1021,15 +1066,15 @@ function appendCodexAssistantProviderConfig(command: string[]) {
 
 const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
   'Role: HOPI Project owner. Assistant owns operator conversation, judgment, orchestration, incidental self-contained operations, and publication of accepted results.',
-  'Durable linked-source implementation, tests, Evidence, review, and recovery belong to Engineering Work. Each Engineering Work receives every Repo binding of its Project; Generator delivers and Reviewer verifies or rejects.',
+  'Durable linked-source implementation, tests, Evidence, review, and recovery belong to Work Runs. A Run follows its explicit instruction and workspace boundary; isolated writes produce an immutable ChangeSet, and independent review is optional.',
   'HOPI state, documents, and mutation tools are canonical product authority. Provider-native shell, browser, skills, and plans may inspect or support incidental operations, but they do not create or replace Goal or Engineering Work delivery.',
   'Unrestricted access changes capability, not ownership.',
 ] as const
 
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
-  'User turns are input; system turns are events. A material Project event wakes supervision and holds new responsibility dispatch for that Project until this turn settles. This guarantees observation, not approval: stay silent when current truth needs no intervention.',
-  'On Planner settlement, inspect only material execution defects such as unsupported feasibility assumptions, mixed proof boundaries, speculative reusable infrastructure, or Work staged beside unresolved Attention. Request replanning only when the current plan is not realistically executable.',
-  'Inspect proposed Work bodies, not only DAG shape or architecture labels. A shared package, port, profile, or feature name does not make independently deliverable user flows, state machines, operation families, consumer migrations, or proof environments one executable Work. For that material defect, request same-contract Planning and name the mixed boundaries; do not invent numeric size thresholds or decompose the plan in Assistant prose.',
+  'User turns are input; system turns are events. Every top-level turn owns a logical Thread and a fresh provider Session; explicit replies alone continue that Thread. A system event starts a fresh supervision Thread and does not resume or lock sibling user Threads.',
+  'On a planning Report, inspect only material execution defects such as unsupported feasibility assumptions, mixed proof boundaries, speculative reusable infrastructure, or Work staged beside unresolved Attention. Request another planning Run only when the current plan is not realistically executable.',
+  'Inspect proposed Work bodies, not only dependency shape or architecture labels. A shared package, port, profile, or feature name does not make independently deliverable user flows, state machines, operation families, consumer migrations, or proof environments one executable Work. For that material defect, request a planning Run and name the mixed boundaries; do not invent numeric size thresholds or decompose the plan in Assistant prose.',
   'A named test suite, browser harness, adapter, or application is a proof container, not a proof boundary. Judge whether each Work delivers a useful buildable candidate with intentionally deferred behavior and focused proof, and intervene when its acceptance still requires simultaneously completing independently failing scenarios. Do not demand headings or formulaic output.',
   'A Work requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded.',
   'Current authority is ordered by meaning, not recency: the current turn and current Goal accepted Inputs, design/runbook, and current source facts outrank Project conversation history, older Goals, historical Attention rationale, Assistant updates, and adapter claims. When they conflict, inspect the retained canonical paths and resolve the conflict before acting or asking.',
@@ -1038,11 +1083,11 @@ const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'For Needs You, put the complete operator action in the Attention summary or decisionPrompt and do not repeat it in the ordinary reply. Keep related runtime chronology out of the primary request.',
   'Project Preview optimizes for a usable local experience: the normal user entry opens, authentication may be mocked, and useful data is visible. Prefer local data; fall back to DEV. Announce only entries the operator should open as surfaces.',
   'docs/hopi/preview/runbook.md is free-form Project guidance. Engineering Work that creates or changes Preview reads or updates it before implementation; ordinary Start/Stop does not create separate documentation Work.',
-  'A user-initiated Preview Start already requests a working Preview. On failure, read only the session status and bounded log summary needed to confirm Preview is unavailable; do not inspect source, reproduce services, or find the root cause in Assistant. If no existing Work owns the repair, immediately create the smallest experience-oriented Goal with one Engineering Work. Generator owns exploration, reproduction, runbook maintenance, implementation, and browser verification. Do not wait for a second repair message or duplicate an existing repair Work.',
+  'A user-initiated Preview Start already requests a working Preview. On failure, read only the session status and bounded log summary needed to confirm Preview is unavailable; do not inspect source, reproduce services, or find the root cause in Assistant. If no existing Work owns the repair, immediately create the smallest experience-oriented Goal with one Engineering Work. Its isolated-write Run owns exploration, reproduction, runbook maintenance, implementation, and browser verification. Do not wait for a second repair message or duplicate an existing repair Work.',
   'A Preview failure is only evidence that the user experience is unavailable; it does not define the Goal around the failing service or preserve the failed topology. Create Preview Goal and Work contracts in experience terms only: user entry, working authentication, visible useful data, and one basic interaction. Unless current operator input explicitly requires a real provider, do not prescribe services, root causes, live authentication or DEV-only data, and do not prohibit mock authentication or local sample data. Old runbook and adapter implementation restrictions are revisable technical history, not accepted operator policy.',
-  'Generator explores the runbook and source first, then relevant knowledge, and asks one short question only when a necessary fact remains unavailable. It chooses the shortest working path, may mock authentication or provide local sample data, and starts and browser-checks before broad builds or test suites.',
+  'The implementation Run explores the runbook and source first, then relevant knowledge, and asks one short question only when a necessary fact remains unavailable. It chooses the shortest working path, may mock authentication or provide local sample data, and starts and browser-checks before broad builds or test suites.',
   'Preview Work ends when the intended page opens with useful data and one basic interaction works. Do not expand it to unrelated services, every product capability, production-equivalent infrastructure, or detailed diagnosis beyond the blockers to that experience.',
-  'Reviewer verifies that experience in a browser; transport reachability alone cannot pass. Stop must clean up owned processes, ports, and resources.',
+  'When independent review is requested, its read-only Run verifies that experience in a browser; transport reachability alone cannot pass. Stop must clean up owned processes, ports, and resources.',
   'Preview may read and write the configured local or DEV data normally; do not add a database approval gate.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
@@ -1080,7 +1125,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 20
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 21
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
@@ -1099,14 +1144,15 @@ function renderNewConversation(
   current: InboxEventDocument,
   preference: AssistantPreferenceDocument,
   state?: AssistantStateSnapshot,
-  scope = assistantConversationScopeForEvent(current),
+  scope: AssistantThreadScope = assistantThreadScopeForEvent(current),
   actionReceipts: readonly AssistantActionReceipt[] = [],
+  epochHandoff: string | null = null,
 ) {
   const historyEvents = [...events.values()]
     .filter(
       (event) => event.attributes.status === 'handled' && event.attributes.visibility === 'public',
     )
-    .filter((event) => assistantEventBelongsToScope(event, scope))
+    .filter((event) => assistantEventBelongsToThread(event, scope))
     .sort((left, right) => left.attributes.receivedAt.localeCompare(right.attributes.receivedAt))
   const history = boundedConversationHistory(historyEvents, 16_000)
   return [
@@ -1116,6 +1162,7 @@ function renderNewConversation(
     '',
     renderPreference(preference),
     '',
+    ...(epochHandoff ? ['## Previous Session Epoch handoff', '', epochHandoff, ''] : []),
     ...(history.length
       ? [
           '## Durable conversation history',
@@ -1129,6 +1176,33 @@ function renderNewConversation(
     '## Current turn',
     '',
     renderTurn(current, state, actionReceipts),
+  ].join('\n')
+}
+
+function renderThreadEpochHandoff(
+  events: readonly InboxEventDocument[],
+  current: InboxEventDocument,
+) {
+  const settled = events
+    .filter(
+      (event) =>
+        event.attributes.id !== current.attributes.id &&
+        event.attributes.status === 'handled' &&
+        event.attributes.visibility === 'public',
+    )
+    .sort((left, right) => left.attributes.receivedAt.localeCompare(right.attributes.receivedAt))
+  const history = boundedConversationHistory(settled, 8_000)
+  return [
+    '# Session Epoch handoff',
+    '',
+    `Logical Thread: ${assistantThreadScopeForEvent(current).threadId}`,
+    ...(history.length ? ['', '## Prior settled exchanges', '', ...history] : []),
+    '',
+    '## Pending turn',
+    '',
+    isInternalInboxSource(current.attributes.source)
+      ? `System event: ${current.body}`
+      : `User: ${current.body}`,
   ].join('\n')
 }
 
@@ -1176,7 +1250,7 @@ function renderCurrentSupervisionState(state: AssistantStateSnapshot | undefined
 function renderActionReceipts(receipts: readonly AssistantActionReceipt[]) {
   if (receipts.length === 0) return ''
   return [
-    '[Confirmed actions completed by supervision forks since this speaking Session last ran]',
+    '[Confirmed actions completed by other Assistant Threads in this page scope]',
     ...receipts.map((receipt) =>
       [
         `- ${receipt.receiptId} / ${receipt.kind}: ${receipt.summary}`,

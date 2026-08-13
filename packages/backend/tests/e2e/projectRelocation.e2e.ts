@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RoleRunner } from '../../src/agent/RoleRunner'
+import { assistantThreadScopeForEvent } from '../../src/assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../../src/assistant/assistantConversationStore'
 import type { AssistantModelRunner } from '../../src/assistant/workspaceAssistant'
 import { projectReleaseRef } from '../../src/domain/project'
@@ -109,13 +110,21 @@ try {
     PROJECT_ID,
     'Repository paths must be rebound after the machine move.',
   )
-  await runtime.assistantConversation.writeSession(
-    { kind: 'project', projectId: PROJECT_ID },
-    {
-      transport: 'codex',
-      sessionId: 'relocation-session',
+  const requestThread = assistantThreadScopeForEvent(request)
+  await runtime.assistantConversation.ensureThread({
+    threadId: requestThread.threadId,
+    createdAt: request.attributes.receivedAt,
+    origin: {
+      eventId: request.attributes.id,
+      projectId: PROJECT_ID,
+      goalId: GOAL_ID,
     },
-  )
+    eventIds: [request.attributes.id],
+  })
+  await runtime.assistantConversation.writeSession(requestThread, {
+    transport: 'codex',
+    sessionId: 'relocation-session',
+  })
   const sourceHomeDocument = await runtime.home.readHome()
   const sourceGoalStore = createGoalPackageStore(
     linked.integrationRoot,
@@ -212,10 +221,8 @@ try {
   const relocatedPackage = await relocatedGoalStore.readPackage(GOAL_ID)
   const relocatedRequest = await relocatedWorkspace.readEvent(request.attributes.id)
   const relocatedAttachment = await relocatedWorkspace.resolveAttachment(attachmentRef)
-  const relocatedSession = await createAssistantConversationStore(movedHome).readSession({
-    kind: 'project',
-    projectId: PROJECT_ID,
-  })
+  const relocatedSession =
+    await createAssistantConversationStore(movedHome).readSession(requestThread)
 
   assert.equal(relocatedHomeDocument.homeId, sourceHomeDocument.homeId)
   assert.equal(relocatedPackage.goal.attributes.id, GOAL_ID)

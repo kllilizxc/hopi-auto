@@ -35,11 +35,13 @@ import { createAssistantWorkspaceStore } from '../storage/assistantWorkspaceStor
 import { createGoalPackageStore } from '../storage/goalPackageStore'
 import { type AttentionTransport, createAssistantReplyDeliveryWorker } from './attentionDelivery'
 import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBootstrap'
+import { createDeliveryOperationStore } from './deliveryOperationStore'
 import { createGoalController } from './goalController'
 import { createPreviewManager } from './previewManager'
 import { recordProjectSystemEvent } from './projectSystemEvent'
 import { createResponsibilitySessionStore } from './responsibilitySessionStore'
 import { type RunAttemptStore, createRunAttemptStore } from './runAttemptStore'
+import { createRunChangeSetStore } from './runChangeSet'
 import { createRuntimeCoordination } from './runtimeCoordination'
 import { SOFTWARE_DELIVERY_CONCURRENCY } from './softwareDelivery'
 import { createWorkspaceAttentionController } from './workspaceAttentionController'
@@ -74,6 +76,8 @@ export interface MvpRuntime {
   coordinator: ReturnType<typeof createCoordinatorReconciler>
   preview: ReturnType<typeof createPreviewManager>
   attempts: ReturnType<typeof createRunAttemptStore>
+  operations: ReturnType<typeof createDeliveryOperationStore>
+  changeSets: ReturnType<typeof createRunChangeSetStore>
   commands: ReturnType<typeof createProjectCommandRunner>
   rebindProject(projectId: string, repoPath: string, projectPath?: string): Promise<void>
   rebindRepo(
@@ -109,6 +113,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   await ensureDefaultAgentAdapterConfig(options.homeRoot)
   const workspace = createAssistantWorkspaceStore(options.homeRoot, publisher)
   const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot)
+  const operations = createDeliveryOperationStore(options.homeRoot)
+  const changeSets = createRunChangeSetStore(options.homeRoot)
   await attempts.interruptRunningAttempts()
   const responsibilitySessions = createResponsibilitySessionStore(options.homeRoot)
   const assistantConversation = createAssistantConversationStore(options.homeRoot)
@@ -187,6 +193,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       publisher,
       roleRunner,
       attempts,
+      operations,
+      changeSets,
       responsibilitySessions,
       goalController: controller,
       apiOrigin: () => new URL(assistantToolUrl()).origin,
@@ -227,6 +235,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
         primary: repo.primary,
       })),
       store: project.store,
+      runManagedCompletion: { attempts, operations, changeSets },
     })),
   })
   const assistantRunner =
@@ -323,6 +332,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
           primary: repo.primary,
         })),
         store: project.store,
+        runManagedCompletion: { attempts, operations, changeSets },
       })
       coordinator.setProjectEligible(projectId, true)
       return { eligible: true }
@@ -400,6 +410,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     coordinator,
     preview,
     attempts,
+    operations,
+    changeSets,
     commands,
     rebindProject,
     rebindRepo,

@@ -1,5 +1,7 @@
 # Project Owner And Attention
 
+Status: Work-based implementation baseline; not current product authority. See `mvp_design.md`.
+
 Status: authoritative MVP design
 Last updated: 2026-07-28
 

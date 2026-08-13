@@ -52,7 +52,7 @@ server.registerTool(
   'hopi_create_goal',
   {
     description:
-      'Create one Goal from the current Inbox turn and atomically create its first Work. Planning shapes the Goal contract; Engineering starts managed Generator delivery, Reviewer verification, Evidence, and recovery without a Planning pass. A diagnosed missing Preview adapter can start with Engineering: Generator explores and creates or updates docs/hopi/preview/runbook.md before implementation; use Planning only for a genuinely unresolved contract. For Preview, preserve current docs/hopi/preview/runbook.md decisions unless this turn explicitly changes them; rebuild or ignore-old wording applies to implementation and evidence, not that runbook.',
+      'Create one Goal from the current Inbox turn and atomically create its first visible Work. Choose Planning for unresolved meaning or Engineering for an already concrete unit; later execution uses explicit Run instructions, profiles, and workspace modes rather than a mandatory role pipeline.',
     inputSchema: assistantMcpToolSchemas.hopi_create_goal,
   },
   (args) => callTool('hopi_create_goal', args),
@@ -62,7 +62,7 @@ server.registerTool(
   'hopi_create_work',
   {
     description:
-      'Create one Work in an active Goal. Planning records an explicit normalized contract change; Engineering records a complete Work contract and dependencies and starts its managed Generator, Reviewer, Evidence, and recovery lifecycle. Preview Work preserves current docs/hopi/preview/runbook.md decisions unless accepted input explicitly changes them; rebuild or ignore-old wording does not.',
+      'Create one visible Work in an active Goal. Planning records a normalized contract change; Engineering records a concrete objective, acceptance meaning, and optional dependencies. Creation does not imply a mandatory Generator/Reviewer sequence.',
     inputSchema: assistantMcpToolSchemas.hopi_create_work,
   },
   (args) => callTool('hopi_create_work', args),
@@ -82,7 +82,7 @@ server.registerTool(
   'hopi_control_goal',
   {
     description:
-      'Change one Goal lifecycle or priority. Reopen advances its contract revision, optionally records a normalized contract change, and creates Planning.',
+      'Explicitly complete a Goal from current acceptance meaning, change its lifecycle or priority, or reopen it. Completion is a semantic decision and is blocked by nonterminal Work or active Runs; it is never inferred from a Work count.',
     inputSchema: assistantMcpToolSchemas.hopi_control_goal,
   },
   (args) => callTool('hopi_control_goal', args),
@@ -92,10 +92,20 @@ server.registerTool(
   'hopi_control_work',
   {
     description:
-      'Continue one Work now or at a future instant, change dependencies, or cancel one Work. Continue durably queues the next Attempt in the same responsibility lineage and may attach source-traced guidance. Cancellation removes that execution path, terminates queued and running Attempts while preserving history, and reports the resulting Goal state and eligible Coordinator decision; it does not pause the Goal.',
+      'Run explicit instructions for one Work with an independently selected execution profile and workspace mode, explicitly complete it, continue its legacy compatibility flow, change dependencies, or cancel it. A run produces a durable natural-language Report and never implies Work completion or a fixed Planner/Generator/Reviewer transition. isolated_write source is frozen as an unaccepted ChangeSet.',
     inputSchema: assistantMcpToolSchemas.hopi_control_work,
   },
   (args) => callTool('hopi_control_work', args),
+)
+
+server.registerTool(
+  'hopi_control_operation',
+  {
+    description:
+      'Propose, execute, or cancel one typed delivery Operation. baseline_integration validates the ChangeSet base and preserves candidate Git ancestry; archive creates a durable ZIP. requiredForGoal is explicit per Operation—optional delivery never becomes a hidden completion gate.',
+    inputSchema: assistantMcpToolSchemas.hopi_control_operation,
+  },
+  (args) => callTool('hopi_control_operation', args),
 )
 
 server.registerTool(

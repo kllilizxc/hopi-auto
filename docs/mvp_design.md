@@ -1,792 +1,352 @@
 # HOPI MVP Design
 
-Status: forward product and architecture authority
-Last updated: 2026-07-24
+Status: current product authority
 
-This document defines the target MVP for HOPI.
+Last updated: 2026-08-13
 
-- [The Project Owner design](./mvp_project_owner.md) owns Assistant supervision, wake-up, Attention,
-  and Needs You.
-- [The Project Runtime design](./mvp_project_runtime.md) owns Project-level Prepare and Preview.
-- [The document model](./mvp_document_model.md) owns file layout, schemas, and field invariants.
-- [The Assistant design](./mvp_assistant.md) owns conversation, vendor-qualified session continuity, HOPI
-  tools, and Assistant UI behavior.
-- [The execution design](./mvp_execution.md) owns responsibilities, scheduling, worktrees,
-  completion, delivery, and Preview behavior.
-- [The state machine](./mvp_state_machine.md) is the derived lifecycle visualization. It is not a
-  second workflow authority.
-- [The publish protocol ADR](./mvp_publish_protocol.md) owns implementation details for the
-  kernel publication primitive.
-Production code supports only the current document and runtime schemas. After a schema change,
-discard the Assistant Home and managed runtime state, then create current state again. Readers never
-infer another format or rewrite business prose.
+Migration baseline: `0fe89334e30f76c45da00ada4f8b75378f5dab8d`
 
-## Product Goal
+HOPI evolves from the existing Work-based product. This document replaces both the fixed
+`Planner -> Generator -> Reviewer -> C1` product model and the clean-slate proposal that removed
+Work entirely.
 
-HOPI is the operating system for a one-person company.
+The migration changes the boundaries that caused real failures while preserving the product and
+runtime capabilities that already work: Project linking, Goal and Work documents, the Board,
+Assistant feed, stable worktrees, multi-Repo execution, Preview, provider adapters, artifacts, and
+the publication coordinator.
 
-The operator talks to one workspace-wide Assistant. The Assistant accepts instructions at any
-time, answers as one normal persistent Assistant conversation, and uses HOPI tools when it needs to
-create or control Goals. Reconciler schedules work and drives a fixed multi-agent delivery flow.
-Together they interrupt the operator only when:
+## Product outcome
 
-- a Goal is complete
-- work cannot continue safely
-- a product or business decision requires operator authority
+HOPI is one user-facing assistant that turns conversations into durable Goals, visible Work, and
+bounded execution. The operator must be able to answer these questions without inspecting SQLite,
+temporary worktrees, provider transcripts, or Coordinator processes:
 
-Every deviation is detected, recorded, and owned. HOPI repairs safe deviations without
-interruption. A deviation that changes the Goal contract or requires authority HOPI does not have
-becomes Attention and a reliable notification. Runtime failure remains visible as a settled Attempt:
-the unchanged Work is not automatically redispatched, while a deterministic Wake gives the Assistant
-the current facts needed to retry, change the plan, or ask the operator.
+- What outcome is this Goal trying to achieve?
+- What Work is currently understood and why does it exist?
+- What actually ran, with which provider/model/reasoning configuration?
+- Did a Run finish, fail, crash, time out, or get interrupted?
+- Was provider context reused or rotated?
+- What source change was produced and from which base?
+- Was that change integrated, archived, deployed, or otherwise delivered?
+- What decision or external fact is still needed?
 
-The MVP proves this loop for software delivery before generalizing responsibilities or workflows.
+## Product topology
 
-## Product Mental Model
-
-The operator needs only three durable concepts:
-
-1. **Assistant**: the conversation and intent surface.
-2. **Project**: stable product context containing its repository binding, project guidance,
-   responsibility-runner defaults, Preview capability, and Goals. Project has no workflow
-   lifecycle.
-3. **Goal**: an outcome HOPI keeps advancing until it is done, cancelled, paused, or needs the
-   operator.
-
-Attention remains an internal durable control document, not a separate product concept. Open
-Attention is supplied to the Project Assistant. It appears as **Needs you** only when a handled
-public Assistant turn references it through `attentionRequest`; the UI reads the Attention's current
-operator summary and optional choices. Neither the request nor the reply changes Attention,
-scheduling, or responsibility. The Assistant resolves the condition from current facts. An ordinary
-message on the same Goal is not inferred to be a reply. Goal completion appears as a normal Assistant
-and Goal update derived from final Planning Evidence. There is no separate Attention page.
-
-The speaking Assistant is the only operator-delivery authority. Inbox context correlates a public
-reply to complete canonical Goal-local or workspace Attention references. The handled request turn
-stores those same references, while their summaries, choices, and technical detail remain solely in
-Attention. A configured webhook mirrors the already handled public reply and has its own Inbox
-acknowledgement; raw Attention is never another user channel.
-
-Each Goal has a Kanban view for progress and troubleshooting. Its columns and cards are projections
-of Work, readiness, Runs, and Attention rather than another workflow authority.
-
-The three operator surfaces have distinct jobs: Assistant shows the latest outcome and any action
-the operator must take, Kanban shows current progress, and Attempt details show execution evidence
-and diagnostics. Assistant does not duplicate the board or narrate the internal delivery process.
-Provider progress messages, tool calls, and recoverable tool errors remain in the raw turn record and
-become one collapsed Activity row after the next non-tool boundary; only the turn's final durable
-reply is rendered as Assistant speech. While tools are still the conversation tail, their stream is
-shown directly. A single rebuildable conversation-level activity projection renders public work as
-`Working` and otherwise renders hidden Wake publication or internal speaking work as `Thinking`.
-It appears only at the tail and never becomes historical conversation state.
-
-Internally:
+HOPI has three independent continuity planes:
 
 ```text
-User -> durable conversation turn -> configured Assistant session -> ordinary reply
-                                                             \-> optional HOPI tool call
-                                                          -> publish(bundle)
-                                                          -> sparse Work DAG
-                                                          -> fixed responsibility pass
-                                                          -> semantic guard -> Evidence / Attention
-
-semantic state change -> deterministic Wake -> internal Inbox turn -> configured Assistant session
+conversation: Thread -> Session Epochs
+goal meaning: Goal -> Goal Document revisions -> visible Work
+execution:    Work -> Run -> Report / ChangeSet -> Operation
 ```
 
-## Design Principles
+These planes may reference one another but do not substitute for one another:
 
-### 1. Documents are durable truth
+- a provider Session is not durable conversation truth;
+- a Work stage is not evidence that a Run succeeded;
+- a ChangeSet is not proof that the Goal is accepted or deployed;
+- a Work count is not Goal progress.
 
-If durable product state can live in files, it does not live only in a database.
+## Durable concepts
 
-- Goal contracts, designs, Work, dependencies, routed inputs, timing, Attention, and Evidence are
-  documents.
-- PIDs, leases, heartbeats, raw transcripts, indexes, and UI projections are disposable runtime
-  data.
-- A database or search service may be a rebuildable index, never the sole workflow authority.
-- Canonical project documents are Git-tracked or covered by a lossless export path.
+| Concept | Owns | Does not own |
+| --- | --- | --- |
+| Project | Repo membership, permissions, Prepare/Preview, execution boundary | conversation history or one global execution queue |
+| Thread | one user-visible conversation and its Epoch chain | Goal binding or execution state |
+| Goal | one acceptable outcome, lifecycle, and current Goal Document | numeric progress or a mandatory task graph |
+| Work | one operator-visible unit of currently understood work | a mandatory Generator/Reviewer pipeline |
+| Run | one immutable, bounded execution assignment for a Work | Work meaning or a reusable settled Session |
+| ChangeSet | immutable multi-Repo source delta and lineage | review, acceptance, integration, or deployment meaning |
+| Attention | one unresolved user or external fact | a hidden Work stage or automatic pause rule |
+| Operation | one typed, idempotent external side effect | arbitrary model-authored JSON execution |
 
-Multiple files do not create multiple truths. Each fact has one owning document.
+Document Revision, Session Epoch, Artifact, Event, transcript, and runtime diagnostics are
+inspectable infrastructure records. They need not be primary Board objects.
 
-Model input is a disposable projection of those documents, never another authority. A responsibility
-Run receives the current assignment first, followed by exact canonical source paths and the small
-fixed role contract needed to act on it. HOPI may inline an objective, acceptance criteria, accepted
-Input, or latest Evidence summary to make the assignment salient, but the projection always names
-the owning document and is discarded with the Run.
+## Goal and Work
 
-That projection keeps a stable authority prefix and a bounded current-state suffix. The prefix owns
-the role contract and complete Work; the suffix owns the latest candidate delta, prior observed
-checks, Evidence findings, and Run-local paths to copied reproducer artifacts. A previous Agent
-summary is a claim, never proof. This shape lets a healthy vendor Session and provider prompt cache
-retain its code map without making accumulated conversation or an obsolete Run path authoritative.
-The Session is reused only while its transport, model, execution boundary, and Work contract remain
-compatible and its last invocation has no unresolved execution-infrastructure failure.
+### Goal authority
 
-### 2. A Goal is a bounded document package
+Each Goal owns one current Markdown Goal Document containing the desired outcome, acceptance
+meaning, current understanding, current state, open questions, and stable references. Headings are
+writing conventions, not a parsed workflow schema.
 
-A Goal is one product concept backed by separate contract, design, Input, Work, Attention, and
-Evidence documents. Different facts remain searchable and do not accumulate in one large file.
+After creation, one logical Goal Supervisor is the only semantic writer of that document. User
+messages become durable directives or references. A Goal Document update uses revision
+compare-and-swap so two concurrent judgments cannot silently overwrite one another.
 
-### 3. The Work DAG is sparse and incremental
-
-Assistant may admit one complete Engineering Work directly from one accepted Input. It uses this
-bounded path only when current Goal authority already defines one settled Engineering outcome
-and no existing Work or durable design contract must be revised. One Input can directly admit at
-most one Engineering Work across the Home. When more than one new Work, contract revision, design
-judgment, or graph rewrite is needed, Planner creates only the Engineering Work required by the
-current Goal boundary.
-Each Work owns one durable candidate that follows one canonical fact chain and can receive one
-terminal Reviewer judgment through one primary verification strategy. A product or runtime flow may
-therefore span ordered Work. The whole graph need not exist up front.
-
-Planner splits at a stable contract or artifact boundary when accepted concerns require independent
-proof. A helper-only change without its own durable proof boundary remains with its consumer. Sparse
-means omitting ceremonial Work, not merging distinct proof boundaries.
-
-Before publishing runnable Work, Planner records every known causal or conflict-avoidance order
-in `dependsOn`. Independent Work remains as dependency-free roots when both can start from the
-current release and they do not require one another's published results, write overlapping source,
-or contend for the same exclusive external resource. Parallelism is a consequence of that
-independence, not a reason to split one cohesive outcome. The MVP has no second resource-lock or
-file-overlap graph.
-
-### 4. The MVP has one fixed delivery workflow
+Goal lifecycle remains deliberately small:
 
 ```text
-Planning Work:    Planner -> done
-Engineering Work: Generator -> Reviewer -> Coordinator integration -> done
+active <-> paused
+active | paused -> done | cancelled
+done | cancelled -> active
 ```
 
-This workflow has no intermediate success. Reviewer `success` closes the complete Work and releases
-its dependents. A verified checkpoint followed by a still-required user decision, Assistant action,
-durable external run, or later proof uses the existing targeted Attention while the Work remains in
-`review`. Planner normally splits independently schedulable outcomes into separate Work; when one
-lineage must span the external action, Attention is the pause and no additional phase state is
-introduced.
-
-The Reconciler uses one code-owned kind/stage-to-responsibility mapping. Planner, Generator, and
-Reviewer are fixed responsibility passes executed by one generic `RoleRunner`; they are not durable actor types.
-Coordinator integration is deterministic kernel behavior, not another responsibility pass or Work
-stage. Project overrides, arbitrary passes, capability matching, workflow expressions, and a
-workflow editor are deferred.
-
-Planning is a responsibility, not a mandatory admission stage. Goal creation requires its caller to
-author and explicitly select one Planning or Engineering first Work, then publishes it atomically
-with the Goal and accepted Input. Coordinator derives structural Work fields but not its semantic
-assignment. Direct admission does not imply Goal completion: after Engineering Work drains, the
-ordinary final Planning
-assessment still decides whether the Goal is complete, needs more Work, or needs authority.
-
-Agent permission follows resource ownership rather than semantic command allowlists. One resolved
-execution envelope is used both to launch the provider and to describe its actual shell, network,
-filesystem, tool, and root capabilities to the Agent. Deterministic boundaries protect only HOPI authority and managed Git
-projections, another responsibility's immutable surface, and external side effects not authorized by
-the current Input, Work, or operator. Natural-language authority remains sufficient; HOPI adds no
-permission DSL, capability field, or command taxonomy.
-
-Each envelope describes only its current process. A speaking Assistant's bounded environment does
-not describe the independent environment of a later responsibility Run. Accepted Work carries the
-authorized objective into that Run, which resolves its own capabilities at start and records actual
-execution failures as diagnostics instead of treating the speaking turn's limits as global HOPI
-limits.
-
-Compact state is an index into durable truth. Every truncated file-backed diagnostic carries its
-readable source path, so an Agent can inspect the complete record before deciding ownership or
-consequence. HOPI does not replace the missing tail of an operational failure with a guessed
-classification.
-
-Provider-native unrestricted host access is a Project-local operator preference, not durable Project
-authority. It defaults off and is stored in HOPI's local runtime settings, with localStorage as a UI
-mirror rather than an execution-time source of truth. When enabled, newly started speaking
-Assistant turns in that Project and its Planner, Generator, and Reviewer Runs use the ordinary HOPI
-OS user's permissions. When disabled or unavailable, adapters retain their bounded workspace and
-declared-root policy. The runtime reads this setting when each invocation starts, so backend restart,
-route changes, and an absent browser cannot silently change the effective mode. Wake itself performs
-no provider execution; the resulting supervision fork uses the configured Assistant capability.
-
-Responsibility passes own semantic judgment and their authorized content surfaces. Coordinator
-alone owns canonical publication, managed task-worktree Git metadata and checkpoints, integration
-refs, Run-scoped process cleanup, and retry scheduling. It does not own Git operations in a
-Run-owned scratch clone when accepted Work requires branch or PR delivery. Targeted Attention means
-missing operator authority or an unavailable external action only; it is never a generic
-representation of a sandbox, Git, port, or tool failure that Coordinator or a later Run can handle.
-
-### 5. Engineering Work is the isolation boundary
-
-Each engineering Work item owns one stable branch and worktree. Generator repair, Reviewer
-inspection, and Coordinator integration reuse it. Goal worktrees are too coarse and Run
-worktrees are too short-lived.
-
-Before admitting another responsibility pass, Coordinator synchronizes that stable task branch
-with the current Repo release while preserving its checkpointed Work delta. An already-current
-branch is reused unchanged; a clean release advance is incorporated mechanically. A dirty or
-conflicting branch that cannot be synchronized without guessing is preserved behind Work-target
-Attention before a model pass starts. Speaking Assistant may retry after a concrete repair or
-request Planning when the contract or DAG actually needs to change; the sync fault itself creates no
-unrelated Planning. This is maintenance of the existing Work projection, not another
-workflow state.
-
-Work identity also bounds what may be preserved. When accepted Planning requires the old task delta
-or checkpoint not to be used at all, Planner creates a distinct Engineering Work identity and routes
-the monotonic DAG through it. Coordinator never resets the old stable branch and HOPI adds no
-`freshWorktree`, repair mode, or branch-generation field.
-
-Each Project-to-Repo binding owns the derived HOPI-managed integration branch
-`hopi/project/<projectId>/release` and one stable integration worktree. Task worktrees branch from
-that target and C1 moves only that target. Managed worktrees live under the Repo-adjacent
-`.hopi-worktrees/<repo-name>/projects/<projectId>/` root, never inside the selected checkout or
-Assistant-home state. The selected checkout only locates the Git object database and initial HEAD;
-Coordinator never changes its branch, index, or working tree.
-
-### 6. Prefer one publisher over a lock hierarchy
-
-The MVP has one Coordinator process and one global publication mutex. Model calls, tests, and
-task worktrees remain parallel; only final semantic validation and durable publication are
-serialized.
-
-One project may belong to only one active HOPI home. Linking the same writable project to two
-homes is an unsupported deployment; ownership must move only after the old home is stopped.
-
-The kernel exposes three ideas to product architecture:
-
-- `publish(bundle)`: validated, idempotent document publication with at most one control gate
-- semantic guard: stale or no-longer-authorized results cannot advance state
-- settled Work recovery: an unchanged failed Attempt pauses automatic redispatch; Wake presents the
-  facts and Assistant chooses the next action without a retry threshold, synthetic Attention, Run-count fuse,
-  or failure-kind workflow
-
-Publication mechanics live only in [the publish protocol ADR](./mvp_publish_protocol.md).
-
-### 7. Identity is stable and explicitly scoped
-
-Assistant home owns a stable `homeId`; each project owns a stable `projectId`. Canonical identities
-are:
-
-- event: `(homeId, eventId)`
-- Goal: `(projectId, goalId)`
-- Work: `(projectId, goalId, workId)`
-- producer Run reference: `(projectId, goalId, workId, runId)`
-- Goal-local Attention: `(projectId, goalId, attentionId)`
-- workspace Attention: `(homeId, attentionId)`
-
-The ordinary linking UI does not expose `projectId`. The first durable link derives a readable,
-Home-unique identity from the primary selected Project folder; that identity is then persisted and
-never re-derived from a later path or folder rename. A link may additionally own one optional
-operator-facing `label`: trimmed non-empty Unicode text up to 80 characters. Product surfaces render
-that label before the selected Project folder name, but identity, URLs, release refs, permissions,
-Assistant scope, and Repo topology continue to use `projectId`. Labels need not be unique, and an
-omitted label preserves the existing folder-name fallback. Product UI and Assistant Project creation
-share this input; neither derives `projectId` from the label. The Project card may replace or clear
-its label inline; clearing restores the folder-name fallback without reloading Project execution.
-Explicit IDs remain available at the API boundary for deterministic automation and tests.
-
-The ordinary Assistant Create Goal operation does not expose `goalId` to the operator. New Goals
-derive a Project-local, readable `G-<title>` identity from the Goal title. Unicode letters and
-numbers remain readable, spacing and punctuation normalize to `-`, and a same-name collision
-receives the smallest free numeric suffix (`-2`, `-3`, ...). Existing identities are never renamed;
-explicit IDs remain available to deterministic automation and tests.
-
-Local IDs may repeat outside their owning package. Integration, delivery, receipts, and references
-use the complete canonical identity rather than a bare local ID.
-
-A Run record, process, and transcript may be discarded, but its `runId` is never reused within the
-owning Work. Any qualified producer Run reference retained in Evidence or Git remains permanently
-meaningful after runtime cleanup.
-
-#### Agent plan runtime projection
-
-A responsibility adapter may emit a structured Agent plan while executing one Attempt. HOPI
-normalizes that vendor event into a transport-independent runtime snapshot whose items contain only
-display text and completion state. The snapshot is observability, not workflow authority:
-
-- plan items describe outcome, decision, or dependency boundaries that materially change what
-  remains to be achieved. Supporting reads, setup, routine checks, result serialization, and other
-  operations with no independently meaningful outcome stay folded into the owning item. Independent
-  operations may be batched. HOPI imposes no simple/complex classification and no minimum or maximum
-  item count; it preserves the model's proportionate plan instead of rewriting or hiding items by
-  keyword;
-
-- it never creates Work, changes a Work stage, satisfies a dependency, or contributes Evidence;
-- the latest snapshot from the latest running Attempt replaces earlier snapshots instead of merging
-  them across retries, resumed sessions, responsibilities, or Runs;
-- adapters may retain only vendor task identity and title inside the matching vendor Session cache
-  so an incremental update after native Session resume can still name the affected task. The current
-  Attempt snapshot contains only tasks created, updated, or authoritatively listed in that Attempt;
-  untouched historical tasks are not merged into it. The cache is discarded with the vendor Session,
-  transport change, or Work contract revision;
-- Kanban shows Agent plan items as one compact segmented progress track, collapsed by default. Each
-  item owns one segment; expanding the track reveals the complete current list, and the running
-  segment uses a restrained pulsing full fill with a quiet same-color glow. Completed segments and
-  their expanded item markers inherit the containing Lane's phase color rather than a global success
-  color. Expanded items remain a non-interactive projection rather than independent Subtask entities;
-  clicking one opens the containing Work detail, while only the progress summary toggles expansion.
-  The track exists only after a non-terminal Work has started; never-started, Done, and cancelled Work
-  render no progress track. Started Work without an Agent plan uses one fallback segment derived from
-  its runtime state.
-  Attempt detail does not repeat this card-level task projection; the normalized plan event remains
-  available in the Run record;
-- plan events stay out of the conversational Activity projection, because changing an internal plan
-  is neither Assistant speech nor a tool interaction; and
-- raw vendor transcripts remain diagnostic input only. Product UI reads the normalized event stream
-  and gracefully omits plans recorded before normalization support existed.
-
-An Agent plan may be revised or abandoned at any time. Canonical decomposition remains Planner-owned
-Work in the Goal package; promoting an internal plan item into durable Work requires the ordinary
-reviewed planning path.
-
-#### Project and Repo boundary
-
-`Project` is the user's durable product context; `Repo` is a Git object database shared by one or
-more Project bindings. A Project owns one or more Repo bindings with stable `repoId` values and
-exactly one `primaryRepoId`. The primary Repo binding
-contains the one canonical `.hopi` Project package and the Project-level `AGENTS.md` and Preview
-entrypoint. Repo bindings may expose their own `scripts/hopi/prepare` capability. Every binding has
-a HOPI-owned `hopi/project/<projectId>/release` ref and
-managed integration worktree. The selected checkout is never a canonical publication or delivery
-root.
-
-Every Engineering Work receives all Repo bindings in its Project as one source workspace. The
-Project binding is already the durable environment boundary; Work does not repeat or narrow it.
-Workspace membership grants visibility and mutation capability; it does not require every Repo to
-participate in every Work. Generator and Reviewer judge which Repo-local commands and contracts are
-material to the accepted outcome. Coordinator observes Git deltas after execution and checkpoints
-or integrates only bindings whose source actually changed.
-Goal, Work, Kanban, and the fixed responsibility passes remain Project-scoped rather than
-multiplying per Repo. The primary
-Project-qualified release ref remains the one logical C1 boundary: its `project.yml` snapshots the target commit
-for each secondary Repo, whose managed refs and worktrees are recoverable projections after C1.
-The complete protocol belongs to [the multi-Repo design](./mvp_multi_repo.md).
-
-### 8. Structured control, unstructured semantics
-
-The kernel validates small structured control envelopes: identity, lifecycle, stage, explicit
-context references, timing, retry count, and provenance. Intent, reasoning, findings, acceptance
-meaning, and evidence explanations remain free Markdown interpreted by models. Free Markdown is
-never searched, split by headings, or compared by substring to recover a control fact.
-
-HOPI does not introduce a criteria-mapping DSL, model-produced Assistant Action result, or
-structured domain ontology for the MVP. The configured model uses ordinary tool calls whose small schemas are
-permission and validation boundaries; reply prose is never parsed as control. Responsibility
-passes are replaceable prompts and permission envelopes run through the same generic `RoleRunner`;
-their durable effects are documents and fixed result values.
-
-### 9. Proactive reasoning keeps one action authority
-
-Coordinator coalesces meaningful state changes into a deterministic Wake so a failure does not
-depend on the operator noticing a card. Wake has no model, product lifecycle, or semantic decision:
-it publishes one internal turn to the persistent Assistant conversation. That speaking thread rereads
-current truth and owns every action or notification. User input has speaking priority, while newer
-Wake facts coalesce behind the active turn. This adds proactive diagnosis without another agent role,
-workflow, action format, or operator-visible thread.
-
-### 10. Agents receive an environment, not a playbook
-
-Every model-facing surface has four possible inputs:
-
-1. the outcome owned by the current responsibility;
-2. current authority and observed environment facts;
-3. tools whose names, arguments, effects, and ownership match the responsibility;
-4. deterministic red lines required for safety, persistence, external side effects, or protocol
-   integrity.
-
-Nothing else is a fixed instruction. HOPI does not prescribe search order, decomposition style,
-repair strategy, retry heuristics, evidence technique, response style, or tool-call sequence. Those
-are model judgments and improve with the configured model. A historical failure may justify exposing
-a missing fact or improving a tool, but does not justify adding an `if/else` lesson to every later
-prompt.
-
-The execution envelope is the single description of process capabilities. Canonical documents are
-the single source of product intent. Tool schemas describe inputs and effects, not circumstances in
-which the model should choose them. Deterministic validators reject invalid state transitions and
-unsafe writes; they do not classify free-form intent for the model.
-
-Generated diagnostics are context, never operator authority. A UI action may state the operator's
-requested outcome and attach current failure facts, but HOPI does not synthesize planning or
-implementation instructions and then label them as user input. Verbatim Inbox input remains
-provenance; only an explicit semantic operation adopts it into Goal, design, Work, or lifecycle
-authority.
-
-Prompt and tool changes are reviewed by deletion first. A retained sentence must identify its owning
-goal, an otherwise unavailable environment fact, a tool effect, or one of the deterministic red
-lines above. Tests protect those semantics and compactness rather than preserving accumulated
-wording.
-
-## Architecture Map
-
-The authority is split by concern rather than repeated in one large document:
-
-- [Document model](./mvp_document_model.md): file layout, schemas, field ownership, references,
-  dependencies, revision, recovery counters, Attention, and Evidence.
-- [Assistant](./mvp_assistant.md): persistent vendor-qualified conversation, deterministic Wake, HOPI tools,
-  turn recovery, and live conversation behavior.
-- [Execution](./mvp_execution.md): Planner responsibilities, fixed workflow, semantic
-  guards, worktrees, scheduling, completion, notification, and Preview.
-- [Multi-Repo](./mvp_multi_repo.md): Project Repo membership, multi-root Work execution, primary
-  C1 release manifests, and projection recovery.
-- [Multi-vendor adapters](./multi_vendor_agent_support.md): vendor command, event, image, MCP, and
-  session implementation boundary beneath the shared Assistant and RoleRunner contracts.
-- [State machine](./mvp_state_machine.md): derived lifecycle, readiness, and Kanban visualization.
-- [Publish protocol](./mvp_publish_protocol.md): single-gate file publication, cross-root receipts,
-  C1 durability, and crash boundaries.
-
-## Core Model Summary
-
-- Assistant receives every instruction as a normal conversation turn; selected Project or Goal is context
-  only, and canonical effects occur only through HOPI tool calls.
-- Assistant receives environment, conversation, scoped state, and operation semantics as facts,
-  including whether an effect is internal scratch state or operator-addressable Evidence, and judges
-  the semantic owner. Its goal is an effect matching the operator intent's scope, durability, and
-  accessibility; no deterministic prose classifier maps requests to Goal operations.
-- UI and Assistant expose the same semantic product operations through shared domain commands;
-  pickers, navigation, and dialogs remain presentation rather than new workflow concepts.
-- Images are immutable Inbox attachments first. Assistant may explicitly adopt a relevant image as
-  a portable Goal asset whose path and purpose live in editable design Markdown.
-- Wake proactively routes meaningful state changes to that same Assistant; it never judges, mutates
-  state, or appears as another product thread. Its compact observation
-  includes bounded receipts for recent public Assistant updates so it knows what the operator already
-  received without inheriting full conversation or private Wake history.
-- Project owns stable context, one primary Repo binding, and one or more Project-qualified managed
-  release worktrees; a Git Repo may participate in several Projects.
-- Goal owns the outcome contract and lifecycle.
-- Every Engineering Work runs against the Project's complete Repo environment; actual Git deltas,
-  rather than a model-authored Repo subset, determine which bindings change at C1.
-- Engineering dispatch does not automatically execute every Repo's setup or verification commands;
-  Repo-local capabilities are environment knowledge for Generator and Reviewer. Project Preview is
-  the Project-level exception and prepares every managed integration Repo before startup. One
-  Project Preview session may expose several named operator-facing surfaces without assigning them
-  to Goals or Repos.
-- Planning Work keeps the Goal blocked while Planner clarifies, updates design, maintains the
-  sparse Work DAG, and makes the final semantic completion assessment.
-- Engineering Work moves through Generator, Reviewer, and deterministic C1 integration.
-- Attention is the only operator-interruption document; Evidence is immutable provenance.
-- Coordinator is the sole publisher and deterministic authority for structural guards.
-
-## Product Surface
-
-The MVP UI contains:
-
-1. Global Assistant conversation with live model messages and tool activity, queued turns,
-   Assistant-mediated clarification messages and ordinary completion updates. Internal Wake
-   turns remain hidden unless the speaking thread explicitly promotes its reply. A hidden corner
-   debug entry may inspect disposable Wake runtime streams on demand without adding product
-   state or persistent Wake list headers.
-   The composer supports bounded image selection and paste, and the conversation preserves image
-   thumbnails with their source turns.
-2. Project switcher and overview with one Home agent-settings panel for Assistant, Planner,
-   Generator, and Reviewer, plus Project guidance, effective responsibility model defaults, and
-   Goals, but no Project workflow status. Each Home role may explicitly select its transport, model,
-   and compatible reasoning effort; an inherited workflow role continues to use each owning
-   Project's default.
-3. Goal list with derived current/next summaries rather than workflow controls.
-4. Goal detail with contract, derived focus, Assistant updates, and explicit Pause or Resume.
-5. Goal Kanban showing active Work as cards in `Plan`, `Build`, `Review`, and `Done`, with cancelled
-   Work hidden by default behind an archive filter.
-
-Every peer-view tab surface uses one shared tab rail. Project shortcuts, Goal switching,
-Kanban/Goal docs navigation, and Activity/Work contract share selection, keyboard, overflow, and
-navigation behavior while using only the visual variant required by their hierarchy. Goal switching
-is rendered once in the Goal surface's title slot rather than duplicated in the global shell: the
-selected Goal is the page title, nearby Goals are smaller muted peers beside it, and additional Goals
-remain available through the same overflow control. This title variant has no rail border or
-background. The compact Project rail derives its shortcut count from its own available width at the
-readable compact-tab size; it consumes otherwise idle shell space before placing remaining Projects
-in overflow. A Project with unresolved Attention explicitly referenced by a Needs You turn shows
-that exact Attention count on its shortcut and in overflow; ordinary open Attention
-does not create the badge, and zero omits it. A Goal completion first observed after that browser has
-established its Project baseline adds a success marker to the same Project shortcut and overflow
-option. Activating that Project tab, including an already selected tab, records the currently visible
-completion identities as read and removes only the success marker; a simultaneous NeedsYou count
-remains. Completion read state is a browser-local presentation preference, not Assistant delivery
-acknowledgement or Goal authority. The compact Project rail and ordinary content tabs retain their
-sliding selected indicator. Attempt history and document indexes remain lists because they select
-records rather than peer views.
-
-Browser-local Goal view state contains only presentation preferences: expanded Work progress rows
-and the currently snapped compact Lane, keyed by stable Project and Goal identity. Re-entry restores
-those preferences but never treats them as Work, plan, or Lane authority. Compact startup, lazy-route
-loading, and initial Goal reads share one bottom-right non-modal loading notice; it does not replace
-the mounted shell or capture pointer input.
-
-Project and Goal navigation commits the operator's selection immediately: the URL, switcher, and
-target surface change before lazy code or canonical data finishes loading. An exact cached target
-projection renders immediately and revalidates in the background. An uncached target renders its own
-non-blocking loading notice; it never keeps the previous Project or Goal visible under the new
-selection. Prefetch on pointer, focus, or pointer-down remains an optimization rather than a
-navigation gate. Rapid selection is route-owned, so slower reads may populate only their exact cache
-keys and cannot restore an earlier route. A target read failure remains on that target instead of
-falling back to the previous surface. Work-card and Attempt selection apply the same exact-scope
-stale-while-revalidate rule to Attempt summaries and paged event history.
-
-Canonical shell, Goal board, Goal docs, and message history projections additionally keep bounded
-browser-session snapshots keyed by exact query or stream identity. Re-entry or same-tab reload may
-render the last successfully displayed projection synchronously while canonical synchronization
-runs in the background. Snapshots expire, remain isolated by Project and Goal, and are disposable
-read caches: they cannot cross scopes, satisfy Evidence, or become Project, Goal, conversation, Run,
-or workflow authority. Existing backend APIs remain the sole data source.
-
-Read projections are scoped to the surface that renders them. The Kanban projection contains Goal
-header facts, card facts, current Agent plans, and relevant Attention, but excludes design documents,
-Goal Evidence bodies and artifacts, canonical Work bodies, and Goal Attention bodies. Attention on
-the Board is open status and routing identity only; resolved history and readable bodies belong to
-Assistant. Goal docs polls a
-catalog of document paths and short display excerpts; it reads only the selected design body on
-demand and never transfers Work or artifact data. An opened Work contract similarly reads that
-single Work body on demand. The persistent shell projection excludes Attention bodies, which are
-read only while Assistant is visible. Active projections use the fast polling cadence, settled Goal
-projections back off, and hidden or closed live streams stop. The quantitative budgets and repeatable
-desktop/mobile profile are canonical in `packages/frontend/PERFORMANCE.md`. Compact Kanban keeps every
-Lane in the horizontal navigation geometry but mounts card lists only for the selected Lane and its
-immediate neighbors; advancing selection moves that render window before another Lane becomes
-adjacent.
-
-The projection still derives one primary badge in priority order: **Needs you**, **Waiting for
-Assistant**, `working`, `scheduled`, `queued`, then `waiting`. The card footer shows the count of
-real runtime Attempts and, only when dispatch is currently prevented, one concise `Blocked by …`
-reason derived from readiness facts. A Done card also shows when its successful terminal Attempt
-made completion effective. The Done Lane orders cards by that derived time, newest first; records
-without a derivable completion time follow timestamped cards in stable projection order. This is a
-presentation rule over the server-derived read projection and durable Attempt log, not another
-model-maintained Work field. This runtime count is the only attempt count; Work carries no duplicate
-repair counter. Lane placement and
-segmented progress already communicate ordinary running and queued state without repeating footer
-labels.
-Kanban is read-only: it has no drag-to-transition or direct status mutation. A card links to its
-canonical Work, Evidence, dependency, timing, and error facts. Only the running title and current
-segment fill carry restrained status motion; the title uses the Lane color while the card surface
-remains still. Reduced-motion keeps the title as a static emphasis. Opening a card also lists each
-runtime Attempt and its normalized live message/tool stream. The detail header shows the execution
-model and reasoning effort captured for the selected Attempt; switching Attempts switches that
-value. One horizontally scrollable fact strip combines that execution
-identity with revision/recovery timing and the selected Attempt's cost diagnostics. It omits Stage,
-Responsibility, and Repositories because the Lane, Attempt list, and Work contract already own that
-context. A terminal result summary is a collapsed single-line preview above Activity, not an
-unbounded fixed paragraph: expanding it exposes the full text in a bounded diagnostic region so the
-message stream retains useful height. The diagnostic stream is not another workflow authority. A
-separate polished Diagnostics product is deferred.
-
-Active Goals reconcile without manual Start until they complete, pause, cancel, reach
-`notBefore`, or need Attention.
-
-## Explicit MVP Non-Goals
-
-The MVP does not include:
-
-- editable or project-specific workflow profiles
-- a project-configurable integration target
-- project-defined responsibility passes or capability matching
-- workflow expressions, hooks, BPMN, or a general workflow DSL
-- responsibility prompt editing in the UI
-- model-produced Assistant Actions, staged-diff commands, or parsing reply prose as commands
-- a separate Attention page or direct internal-diagnostics command surface
-- separate decision documents or a second blocking relation
-- multiple control targets on one Attention
-- multiple notification channels or exactly-once delivery
-- Schedule documents, recurring schedules, or Goal-level time state
-- resource claims or inferred file-overlap locks
-- per-project, per-Goal, or target-aware publication locks
-- switching or removing the primary Repo after Project creation
-- a general cross-root transaction layer outside the fixed primary-C1 Repo projection protocol
-- importing uncommitted checkout content or rewriting a selected checkout by branch switch, merge,
-  rebase, reset, force update, or conflict resolution
-- one writable project attached to multiple active HOPI homes
-- child-process reattachment
-- kernel semantic judgments about stale output
-- product-visible restart, fence, pending-result, or patch-rebuild states
-- multi-user RBAC or remote tenancy
-- vector memory as workflow truth
-- OCR pipelines, embeddings, automatic image relevance classification, an Asset lifecycle, or a
-  standalone media library
-- direct Kanban mutation or drag-to-transition
-- parallel source writers in one task worktree
-- speculative Work created only to keep lanes busy
-- database-owned Goal, Work, Input, timing, Attention, or notification truth
-- a canonical Goal journal, terminal-Work archive lifecycle, or control semantics for ordinary
-  supporting-file directories
-- a general crash-atomic transaction layer for multi-file or cross-root publication
-- universal domain operation IDs or durable semantic operation receipts
-- a criteria-to-Evidence mapping DSL or semantic Input normalization schema
-- raw transcripts as the primary observability surface
-- silent deployment, payment, deletion, or external communication outside approval policy
-
-## Implemented Cutover Boundary
-
-The production path is the MVP path:
-
-- Bun serves the API and imports the React product UI through one colocated HTML route whose module
-  entry remains `packages/frontend/src/main.tsx`. The same server must serve every JS, CSS, and asset
-  URL emitted into that HTML; an HTML shell without loadable assets is not a working UI.
-- The backend entrypoint owns HTTP transport composition only. Request parsing and route matching,
-  Assistant Feed, Goal, and Workspace-state presentation, and runtime reload/health lifecycle are
-  separate modules; presenters read canonical/runtime state but do not mutate it.
-- Assistant tools have one capability-checking facade, one application executor, and pure
-  presentation/support modules. Assistant Home persistence owns canonical link transactions while
-  managed Git/worktree materialization is an infrastructure dependency beneath it.
-- Vendor-independent adapter facts live in one registry. Role context staging consumes those
-  contracts and delegates prompt/manifest rendering to a pure rendering boundary.
-- `RoleRunner` is the only responsibility runner; vendor transports are adapters beneath it.
-- Assistant keeps one Home conversation and one conversation per Project through its Home-configured
-  vendor adapter, while one Home-wide queue serializes speech. It reaches canonical state only through
-  HOPI tools and has no staged-diff or model-produced Action protocol.
-- canonical Assistant-home and Project documents, one `PublicationCoordinator`, stable Work
-  worktrees, and deterministic C1 own control and integration.
-- one code-owned workflow fixes Planner, Generator, Reviewer, retry, and concurrency behavior.
-- the read-only four-column Kanban, Attention feed, Preview adapter, and webhook delivery project
-  directly from canonical state.
-
-The Goal-scoped Assistant authority, `todo.yml` board authority, decisions, planning requests,
-parsed `actions[]`, merger role, per-Run task worktrees, old server routes, Vite runtime, and writable
-React workflow screens are deleted. `packages/frontend` remains as the React presentation boundary
-and reads only MVP projections. Deleted authorities have no production readers or importers.
-
-## Completed Delivery Order
-
-1. Establish `{ projectId, repoPath }` bindings, Project-qualified HOPI release branches, and
-   Repo-adjacent stable integration worktrees without mutating selected checkouts.
-2. Implement the single Coordinator instance lock, global publication mutex, single-gate
-   `publish(bundle)` contract, and startup validation against that managed root.
-3. Add the fixed three-pass workflow, canonical context bundles, root `AGENTS.md` bootstrap,
-   deterministic Coordinator integration, and the single recovery counter.
-4. Make task branches stable and derive branch and checkpoint facts from qualified Work identity
-   and task branch HEAD.
-5. Introduce global two-state Inbox turns, Home/Project vendor-qualified session caches, live events,
-   and HOPI control tools.
-6. Add `contractRevision`, semantic guards, and singleton Planning Work.
-7. Introduce bounded Goal packages, single-target Attention, and per-Work documents.
-8. Make Assistant, Project, Goal, and derived Goal Kanban the primary UI; expose Pause or Resume
-   through the same intent path.
-9. Retire `planning-requests.yml`, Assistant Actions, and old state authorities; development state
-   is recreated on schema changes.
-
-Each completed slice preserved an end-to-end path and added current-schema restart coverage.
-
-## MVP Acceptance Scenarios
-
-### Autonomous software Goal
-
-Assistant receives a bug report, uses its Goal tool to create Goal documents and Planning Work,
-and Reconciler drives Planner,
-Generator, and Reviewer passes through the generic runner. After Reviewer success, Coordinator
-integrates deterministically. Final Planning judges the Goal criteria satisfied and returns success
-with current Evidence. When the Project exposes a reviewed Preview
-capability, that final assessment receives the formal Project Preview bound to the current release
-heads as supporting context. Planner decides what evidence is sufficient for the accepted outcome.
-Coordinator checks structural facts, marks the Goal `done`, and exposes final Planning Evidence as
-the completion update.
-
-### Screenshot-guided Goal
-
-The operator attaches a reference screenshot while asking Assistant to reproduce an interface.
-The Inbox receipt durably owns the original image. Assistant sees it, adopts it into the selected
-Goal with a concise purpose, and starts Planning in the same publication. Planner records the design
-decision and cites the exact Goal asset in each related Engineering Work. Generator and Reviewer
-receive that image with their Work while unrelated Work receives no image context. Restart, retry,
-and Home relocation preserve the same file and Markdown provenance.
-
-### Concurrent instructions
-
-Instructions arriving during active Runs or another Assistant turn become durable immediately.
-Assistant turns remain FIFO within one speaking conversation; pass Runs continue in parallel while their
-final publications enter one short global queue. A same-Goal material change accepted through a
-HOPI tool
-increments `contractRevision`; old Work remains on its prior revision, admitted Runs are
-interrupted, and stale output remains Attempt-only. Other Goals schedule independently.
-
-### Decision and automatic resume
-
-A pass creates targeted Attention with one recommendation. The operator answers in the normal
-conversation; Assistant reads current state and uses the appropriate HOPI tool. A Goal-local answer
-publishes its effects and Input before resolving Attention. An event-target answer resolves that
-guard and lets the original pending turn run again with the answer visible in durable conversation
-history, without parsing prose into an Action.
-
-### Persistent external blocker
-
-A required browser environment remains unavailable after HOPI has provided its normal Run-scoped
-runtime capability. HOPI preserves the task branch and raw diagnostics, then creates a strategy-free
-Work Attention. Assistant inspects the environment and current authority and decides whether to
-retry, change the plan, or request operator authority. Only an explicit operator request transfers
-ownership to the user.
-
-### Restart recovery
-
-The server exits during a Run, publication, integration, or notification. On restart HOPI first
-validates every root, never reattaches the old child, and preserves the task branch and every
-published attempt count. Its runtime Attempt is marked interrupted for UI history. Evidence already
-written without a Work gate remains unconsumed and a later attempt uses a new Run, so a process
-crash may undercount one canonical recovery attempt. A result detected stale before publication
-remains Attempt-only. An Attention-producing outcome leaves Work
-unchanged by design until a new Run follows resolution. Any managed-projection inconsistency after
-the C1 ref boundary creates workspace project Attention. Delivery recovery may reattempt the one
-recorded clean fast-forward, but delivery drift is nonblocking and it never repairs checkout content
-or changes branches. Managed-root ownership does not authorize destructive reconstruction of newer
-canonical documents.
-Invalid Assistant-home state requires supervisor intervention. Inbox turn state, qualified Goal
-Input path and digest, qualified Work integration trailers, Work references to immutable Evidence,
-Attention identity, and current semantic state prevent
-duplicate domain effects. At-least-once webhook mirroring may repeat after a crash but keeps the
-same canonical Inbox event identity and cannot repeat domain effects.
-
-### Home relocation
-
-Git refs and canonical `.hopi` files move to another machine. Goal Inputs, contracts, DAG, timing,
-task branches, Attention, Evidence, stable Repo IDs, and the primary release manifest remain
-self-contained. Assistant-home Inbox turns and workspace Attention move with the HOPI-home export
-together with `home.yml`; the complete existing Repo-ID set is explicitly rebound as one local
-operation before validation allows work to resume. A startup against stale paths fails closed and
-exposes Project Attention, but cannot schedule Agent work. While that Project authority is unreadable,
-the product state remains available as a Project/Repo/Attention shell and does not pretend to list
-Goals from missing files; successful complete-set Rebind reloads the same canonical Goal packages.
-HOPI refuses to reconstruct a missing primary managed root from a potentially older Git checkpoint.
-
-## Evidence From CardGame
-
-The CardGame history supports the retained choices:
-
-- long-running Goals need multiple documents, durable Work, verification, and task isolation
-- task worktrees keep failed work off the integration target
-- fixed Planner, Generator, and Reviewer responsibilities provide understandable passes while
-  deterministic integration does not require another responsibility pass
-- bounded failure followed by proactive Assistant assessment is valuable
-
-It also demonstrates what this MVP removes:
-
-- a 161-task, 1,275-line `todo.yml`
-- invalid or unaudited dependency graph edits
-- duplicate planning refills
-- stale or malformed Goal and design text
-- disagreement between tasks, blockers, requests, and runtime state
-- mechanical status-to-responsibility routing
-- repeated unchanged environment failures
-- divergent retry worktrees
-- ignoring all canonical `.hopi` files
-
-The lesson is not to abandon documents, Work, responsibilities, or worktrees. It is to give every
-fact one authority, validate every publication, keep ordering explicit, and make execution
-isolation match durable Work.
-
-## Deferred Evolution
-
-After the fixed flow is reliable, HOPI may add:
-
-- selectable and safely editable workflow profiles
-- responsibility passes for research, operations, support, and business workflows
-- capability- and permission-based Run contracts
-- conditional assurance policies
-- recurring schedules and richer connectors
-- multiple notification channels
-- sharded publication when a single global queue becomes a measured bottleneck
-- rebuildable SQLite FTS or other indexes
-- a temporary recovery bundle or Git snapshot publisher only if measured crash-recovery evidence
-  shows that single-gate publication is insufficient
-
-Extensions must preserve the document authorities and invariants in this design rather than
-create a parallel workflow truth.
-
-## Supported Host Boundary
-
-The MVP Coordinator and executable adapter contract support macOS, Linux, and WSL. WSL is the
-supported Windows deployment because it preserves POSIX executables, signals, process groups, Git
-worktrees, and shell adapters. A Windows browser may connect to a Coordinator running in WSL.
-Native `win32` hosting is rejected at startup with an actionable message and remains deferred; HOPI
-does not add a second PowerShell adapter, executable-mode emulation, or process-control protocol
-until that deployment is required.
+`done` is an explicit semantic decision based on the current acceptance meaning and observed
+facts. It is never derived from `completed Work / total Work`.
+
+### Work remains a product concept
+
+Work is retained because it gives the operator a stable planning and intervention surface. It is
+created only when a unit of work is understood well enough to name and inspect. Unknown downstream
+work remains prose in the Goal Document until evidence makes it actionable.
+
+Existing Work kinds, IDs, Markdown bodies, dependency references, and Board lanes remain readable
+during migration. Their meaning is narrowed:
+
+- dependencies are optional ordering constraints, not a requirement to model a complete DAG;
+- `Plan`, `Build`, `Review`, and `Done` are visible focus/lifecycle lanes;
+- `Review` is optional and may be entered, skipped, or revisited;
+- changing a lane does not itself schedule a provider role;
+- cancelled Work is excluded from progress because numeric Work progress does not exist;
+- a Goal may complete after the Supervisor explicitly settles or archives remaining Work, but it
+  cannot complete while an active Run or required Operation is still executing.
+
+During compatibility migration the stored `planning | engineering` kind and
+`plan | generate | review | done | cancelled` stage may remain. They must stop selecting a fixed
+responsibility in the scheduler. A later schema may simplify those enums only after UI and data
+migration prove that doing so removes more complexity than it adds.
+
+## Run and Session lifecycle
+
+A Run is one execution attempt with immutable input:
+
+```text
+Work identity
+instruction Markdown
+source Event/directive and stable references
+Goal Document revision
+base ChangeSet or base Repo refs
+workspace mode: none | read_only | isolated_write
+requested execution profile
+```
+
+Its lifecycle is mechanical:
+
+```text
+queued -> running -> settled
+queued ------------> settled
+```
+
+Settlement stores a separate termination fact:
+
+```text
+normal | cancelled | interrupted | crashed | timed_out
+```
+
+Semantic success, rejection, findings, and recommended next steps live in the Report. Runtime must
+settle every exit path even when the model emits no terminal JSON or no final text. In that case it
+generates a minimal factual Report from timing, exit status, diagnostics, transcript tail, and
+workspace observations.
+
+Every new Run starts a fresh provider Session. A still-running Run may rotate through Session
+Epochs when context pressure or provider compatibility requires it:
+
+```text
+Run R1 -> Epoch 1 -> checkpoint/handoff -> Epoch 2
+```
+
+Epoch rotation preserves the Run ID and workspace. A settled Run is never resumed. Review feedback,
+repair, or retry creates a new Run with explicit references to the previous Report and ChangeSet.
+
+The runtime records requested and actual provider, model, reasoning effort, permission boundary,
+Session/Epoch identity, timestamps, termination, exit code, diagnostics, transcript, artifacts,
+and workspace observations. Actual execution facts take precedence over requested configuration.
+
+## Review and execution profiles
+
+Planning, implementation, investigation, reproduction, review, repair, and verification all use
+the same Run mechanism. Natural-language instruction defines the purpose. `workspaceMode` defines
+the machine-enforced source permission.
+
+Existing `planner`, `generator`, and `reviewer` settings may remain temporarily as named model
+profiles so operators do not lose configuration. They are not business roles and the scheduler
+must not infer a mandatory workflow from them. The UI must state which profile was requested and
+which execution configuration actually ran.
+
+The Goal Supervisor decides whether evidence warrants an independent review. A Work may therefore
+follow any evidence-backed path, including:
+
+```text
+Build -> Done
+Build -> Review -> Done
+Build -> Review -> Build -> Done
+Plan -> Build
+```
+
+Those are choices, not one global state machine.
+
+## Conversation and supervision
+
+The existing Assistant panel and feed remain the user surface. Internally:
+
+- every top-level message creates a Thread root;
+- an explicit reply continues that Thread;
+- Project/Goal page location contributes origin references, not permanent routing authority;
+- sibling Threads do not share a provider Session;
+- a Thread may discuss zero, one, or several Goals;
+- long Threads rotate Session Epochs using a bounded handoff;
+- an Attention reply retains exact Thread, Goal, and Attention references.
+
+The user-side Assistant answers conversation and emits explicit Goal directives. A logical Goal
+Supervisor reacts to Goal facts using a bounded packet and a fresh invocation. It may update the
+Goal Document, create or adjust Work, start/cancel Runs, create/resolve Attention, propose an
+Operation, or change Goal lifecycle. It never edits Project source directly.
+
+The first migration may preserve the existing Feed HTTP contract and React stream components. The
+storage and session boundary may change without forcing a simultaneous frontend rewrite.
+
+## ChangeSet and Operation
+
+An `isolated_write` Run freezes any surviving source delta into an immutable ChangeSet on every
+termination path, including interruption and crash. At minimum each Repo entry records:
+
+```text
+producer Run
+Repo ID
+base commit
+result commit or immutable patch
+content hash
+created time
+```
+
+A ChangeSet means only that a source delta exists. It does not mean reviewed, accepted, integrated,
+or delivered.
+
+Git ref movement, baseline integration, archive creation, pull requests, and deployment cross the
+database boundary and therefore use typed Operations:
+
+```text
+proposed -> approved? -> executing -> succeeded | failed | cancelled
+```
+
+Each Operation kind owns a validated intent and result. Every Operation stores an idempotency key,
+authorization facts, expected external state, observed result, timing, and recovery information.
+
+Baseline integration compares every current Repo ref with the ChangeSet expected base. A valid
+fast-forward preserves candidate ancestry. A conflict becomes an observed result for the
+Supervisor; the runtime does not fabricate a merge policy or replace ancestry with a synthetic
+tree-only commit.
+
+ZIP, PR, deployment, and baseline integration block Goal completion only when the current Goal
+acceptance meaning requires them.
+
+## Deterministic kernel and model judgment
+
+The runtime, not a model, enforces:
+
+- append-only durable input and exact recipient/reference facts;
+- Goal Document compare-and-swap and single-writer capability;
+- idempotent tool and Operation effects;
+- immutable Run input and terminal settlement;
+- workspace permission, leases, capacity, timeout, and configured cost limits;
+- content-addressed artifacts and immutable ChangeSets;
+- expected-base checks for external state changes;
+- process-group cleanup and managed-worktree ownership;
+- bounded default Thread, Goal, and Run context.
+
+Models decide meaning:
+
+- what the user intends;
+- what Work is currently useful;
+- which Run instruction should execute next;
+- whether review is warranted;
+- whether evidence satisfies Work or Goal acceptance;
+- whether an Attention is actually resolved;
+- how to respond to a conflict or failed Operation.
+
+Runtime limits and failures produce facts. They do not invent semantic recovery policy.
+
+## Fact priority
+
+When descriptions conflict:
+
+```text
+external observation and physical database/Git state
+  > immutable ChangeSet / Artifact / Run / Operation result
+  > current Goal and Work documents
+  > Thread messages, old Reports, and transcripts
+```
+
+Physical facts cannot decide whether the operator's desired outcome is acceptable. Conversely,
+prose cannot override a failed deployment or a Git ref that did not move.
+
+## Product surface invariants
+
+The migration preserves the current frontend structure:
+
+- `/projects` Project home;
+- `/projects/:projectId` scoped Assistant;
+- `/projects/:projectId/board/:goalId` four-lane Work Board;
+- `/projects/:projectId/docs/:goalId` three-pane document view;
+- the current Layout, project/Goal switchers, Assistant drawer, card grid, Work detail modal, and
+  document panes.
+
+The content evolves without a layout rewrite:
+
+- Goal headers show lifecycle and natural-language semantic status, never Work-count progress;
+- Work cards remain real Work cards;
+- Work detail presents its Run history;
+- Run detail presents actual model configuration, Epoch/handoff, termination, Report, ChangeSet,
+  artifacts, and a transcript audit entry;
+- the Board may show optional Review but must not imply that it is mandatory;
+- Assistant, Project, and Goal activity reuse the existing feed surface while Thread isolation is
+  introduced behind it.
+
+## Persistence and migration
+
+This is an incremental migration, not a permanent compatibility architecture:
+
+1. Start from the last Work-based implementation with its complete test suite.
+2. Add new durable Run/Epoch/ChangeSet/Operation facts alongside existing Work documents.
+3. Switch one writer and one reader at a time behind contract tests.
+4. Migrate existing Home data once, with a verified backup and rollback path.
+5. Stop writing the superseded Attempt/result fields.
+6. Remove compatibility readers only after the new path and frontend have passed the take-home
+   replay and restart tests.
+
+Do not assign a persisted schema/epoch number until the migration spike determines whether any
+already-created experimental database must be retained. One version number must never describe two
+different layouts.
+
+The clean-slate implementation that removed Work remains a reference source for Session Epoch,
+Run settlement, ChangeSet, and Operation code. It is not the product model and is not switched into
+production as a whole.
+
+## Explicit non-goals
+
+The MVP does not:
+
+- model a complete Work DAG before evidence exists;
+- require every Work to pass a Reviewer;
+- infer Goal progress from Work counts;
+- depend on model-authored terminal JSON for settlement;
+- resume a settled Run or hide a retry inside an old Session;
+- treat a provider Session or temporary worktree as unique truth;
+- build an untyped arbitrary-JSON Operation executor;
+- add full event sourcing or a vector database without measured need;
+- rewrite the frontend layout as part of the backend migration;
+- maintain indefinite dual writes between old and new execution records.
+
+## Implementation order
+
+1. Establish a green Work-based baseline and preserve the clean-slate workspace as reference.
+2. Freeze this document and the evolution acceptance contract.
+3. Add Run settlement and actual execution facts.
+4. Add Session Epoch rotation without changing Run identity.
+5. Separate scheduler mechanics from fixed responsibility selection.
+6. Add ChangeSet lineage and typed Operations.
+7. Introduce Thread isolation behind the existing feed contract.
+8. Adapt the existing Board and detail surfaces.
+9. Run migration, restart, multi-Repo, browser, and take-home replay gates.
+10. Remove superseded fixed-pipeline code and compatibility storage.
+
+Each step must leave the application startable and its previously accepted behavior testable. API,
+storage, scheduler, and frontend are not switched simultaneously.
+
+## Acceptance authority
+
+[`mvp_evolution_acceptance.md`](./mvp_evolution_acceptance.md) defines the required regression
+trajectories and implementation gates. Existing test cases remain useful historical coverage, but
+they cannot require a fixed responsibility pipeline when they conflict with this document.

@@ -27,6 +27,7 @@ import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { HostDirectoryPickerError } from '../src/runtime/hostDirectoryPicker'
 import { type RunAttemptSummary, createRunAttemptStore } from '../src/runtime/runAttemptStore'
+import { createRunChangeSetStore, readGitHead } from '../src/runtime/runChangeSet'
 import { runStoragePath } from '../src/runtime/runPaths'
 import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -444,16 +445,27 @@ describe('MVP server', () => {
       workId: 'W-1',
       runId: 'R-1',
       responsibility: 'reviewer',
+      protocol: 'legacy_outcome',
+      profile: 'reviewer',
+      workspaceMode: 'read_only',
+      instructionMarkdown: 'Review the current Work candidate.',
+      inputRefs: [],
+      baseChangeSetId: null,
       workHash: null,
+      requestedExecution: null,
       execution: null,
+      sessionEpochs: [],
       requestedAt: '2026-07-11T00:00:00Z',
       startedAt: '2026-07-11T00:00:00Z',
       endedAt: '2026-07-11T00:05:00Z',
       status: 'finished',
+      termination: 'normal',
       result: 'success',
       summary: 'Integrated.',
+      reportMarkdown: '# Run Report\n\nIntegrated.\n',
       exitCode: 0,
       application: 'integrated',
+      changeSetId: null,
       ...overrides,
     })
 
@@ -845,10 +857,14 @@ describe('MVP server', () => {
     expect(goalVisible).toBe(true)
     expect(speakingRuns).toBe(1)
     expect(
-      await Bun.file(
-        join(homeRoot, '.hopi', 'runtime', 'assistant', 'sessions', 'home.json'),
-      ).json(),
-    ).toMatchObject({ transport: 'codex', sessionId: 'session-after-project-change' })
+      await createAssistantConversationStore(homeRoot).readThread({
+        kind: 'thread',
+        threadId: String(submitted.threadId),
+      }),
+    ).toMatchObject({
+      threadId: submitted.threadId,
+      epochs: [{ transport: 'codex', sessionId: 'session-after-project-change' }],
+    })
   })
 
   test('shares one host directory chooser across concurrent requests', async () => {
@@ -1125,7 +1141,7 @@ describe('MVP server', () => {
     ).rejects.toThrow('400')
   })
 
-  test('bootstraps a Project speaking session from its first Preview system event', async () => {
+  test('keeps Preview system events and a user message in sibling Thread Sessions', async () => {
     const homeRoot = join(temporaryRoot, 'preview-bootstrap-home')
     const repoRoot = await createRepo(join(temporaryRoot, 'preview-bootstrap-repo'))
     const publisher = new PublicationCoordinator()
@@ -1148,7 +1164,7 @@ describe('MVP server', () => {
           reply: isPublic ? 'Continuing in the bootstrapped Project session.' : '',
           session: {
             transport: 'codex',
-            sessionId: input.session?.sessionId ?? 'preview-bootstrap-session',
+            sessionId: input.session?.sessionId ?? `preview-bootstrap-session-${calls.length}`,
           },
         }
       },
@@ -1185,16 +1201,7 @@ describe('MVP server', () => {
       sessionId: null,
       prompt: expect.stringContaining('Project Preview start failed.'),
     })
-    const projectSessionPath = join(
-      homeRoot,
-      '.hopi',
-      'runtime',
-      'assistant',
-      'sessions',
-      'projects',
-      'P-preview-bootstrap.json',
-    )
-    await waitForFile(projectSessionPath)
+    await waitForInboxHandled(homeRoot, publisher, calls[0]?.eventId ?? '')
 
     await request(base, '/api/projects/P-preview-bootstrap/preview/start', {
       method: 'POST',
@@ -1206,10 +1213,11 @@ describe('MVP server', () => {
       ),
     ).toBe(true)
     expect(calls[1]).toMatchObject({
-      invocation: 'supervision',
-      sessionId: 'preview-bootstrap-session',
+      invocation: 'speaking',
+      sessionId: null,
       prompt: expect.stringContaining('Project Preview start failed.'),
     })
+    await waitForInboxHandled(homeRoot, publisher, calls[1]?.eventId ?? '')
 
     const submitted = await request(base, '/api/inbox', {
       method: 'POST',
@@ -1224,11 +1232,7 @@ describe('MVP server', () => {
     expect(calls[2]).toMatchObject({
       eventId: submittedEventId,
       invocation: 'speaking',
-      sessionId: 'preview-bootstrap-session',
-    })
-    expect(await Bun.file(projectSessionPath).json()).toMatchObject({
-      scope: 'project:P-preview-bootstrap',
-      sessionId: 'preview-bootstrap-session',
+      sessionId: null,
     })
 
     const workspace = await createAssistantWorkspaceStore(homeRoot, publisher).readWorkspace()
@@ -1236,6 +1240,30 @@ describe('MVP server', () => {
       event.body.includes('Project Preview start failed.'),
     )
     expect(previewEvents).toHaveLength(2)
+    expect(
+      new Set([
+        ...previewEvents.map((event) => event.attributes.threadId),
+        workspace.events.get(submittedEventId)?.attributes.threadId,
+      ]).size,
+    ).toBe(3)
+    const conversation = createAssistantConversationStore(homeRoot)
+    const sessionIds = await Promise.all(
+      [...previewEvents, workspace.events.get(submittedEventId)].map(async (event) => {
+        if (!event?.attributes.threadId) throw new Error('Expected a durable Thread ID')
+        const thread = await conversation.readThread({
+          kind: 'thread',
+          threadId: event.attributes.threadId,
+        })
+        return thread?.epochs.at(-1)?.sessionId
+      }),
+    )
+    expect(new Set(sessionIds)).toEqual(
+      new Set([
+        'preview-bootstrap-session-1',
+        'preview-bootstrap-session-2',
+        'preview-bootstrap-session-3',
+      ]),
+    )
     expect(
       previewEvents.every(
         (event) =>
@@ -1346,7 +1374,7 @@ describe('MVP server', () => {
     ).toMatchObject({ goal: { id: 'G-优化整体前端样式' } })
   })
 
-  test('exposes canonical product APIs and Work Attempt streams', async () => {
+  test('EV-005 exposes actual Run configuration through existing Work Attempt APIs', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoRoot = await createRepo(join(temporaryRoot, 'repo'))
     const before = await checkoutSnapshot(repoRoot)
@@ -1563,6 +1591,7 @@ describe('MVP server', () => {
     expect(boardProjection.evidence).toBeUndefined()
     expect((boardProjection.works as Array<Record<string, unknown>>)[0]?.body).toBeUndefined()
     expect(boardProjection.attentions).toMatchObject([{ id: 'A-board-routing' }])
+    expect(boardProjection.operations).toEqual([])
     expect(boardProjection.attentions).toHaveLength(1)
     expect((boardProjection.attentions as Array<Record<string, unknown>>)[0]?.body).toBeUndefined()
     const fullProjection = await request(base, '/api/projects/P-1/goals/G-1')
@@ -1601,9 +1630,60 @@ describe('MVP server', () => {
       responsibility: 'planner',
       runRoot: join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1'),
     })
+    await attempt.setExecution({
+      transport: 'codex',
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'xhigh',
+      permissionBoundary: 'bounded',
+    })
+    await attempt.recordSession({
+      transport: 'codex',
+      sessionId: 'thread-R-1',
+      executionKey: 'execution-R-1',
+    })
+    const changeSetRepo = await createRepo(join(temporaryRoot, 'attempt-change-set-repo'))
+    const changeSetBase = await readGitHead(changeSetRepo)
+    await Bun.write(join(changeSetRepo, 'REPORT.md'), 'durable source evidence\n')
+    await git(changeSetRepo, ['add', '.'])
+    await git(changeSetRepo, ['commit', '-m', 'candidate'])
+    const changeSet = await createRunChangeSetStore(homeRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    }).freeze({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'plan-initial',
+      runId: 'R-1',
+      repos: [
+        {
+          repoId: 'primary',
+          worktreePath: changeSetRepo,
+          baseCommit: changeSetBase,
+          resultCommit: await readGitHead(changeSetRepo),
+        },
+      ],
+    })
+    if (!changeSet) throw new Error('Expected API fixture ChangeSet')
+    await attempt.setChangeSet(changeSet.id)
     await Bun.write(
       join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1', 'prompt.md'),
       '# Planner system prompt\n\nCreate the Engineering Work DAG.\n',
+    )
+    await Bun.write(
+      join(homeRoot, '.hopi', 'runtime', 'runs', 'R-1', 'artifacts.json'),
+      `${JSON.stringify({
+        runId: 'R-1',
+        artifacts: [
+          {
+            reference: 'artifact:R-1/001-report.txt',
+            path: 'artifacts/001-report.txt',
+            source: '/private/runtime/report.txt',
+            kind: 'file',
+            sizeBytes: 42,
+          },
+        ],
+        unavailable: [{ reference: 'missing.log', reason: 'Artifact was not produced.' }],
+      })}\n`,
     )
     await attempt.record({
       kind: 'message',
@@ -1629,6 +1709,19 @@ describe('MVP server', () => {
         {
           runId: 'R-1',
           status: 'running',
+          requestedExecution: {
+            provider: 'codex',
+            model: 'gpt-5.6-sol',
+            reasoningEffort: 'xhigh',
+            permissionBoundary: 'bounded',
+          },
+          execution: {
+            provider: 'codex',
+            model: 'gpt-5.6-sol',
+            reasoningEffort: 'xhigh',
+            permissionBoundary: 'bounded',
+          },
+          changeSetId: 'CS-R-1',
           diagnostics: { tokenUsage: { inputTokens: 400, cachedInputTokens: 250 } },
         },
       ],
@@ -1653,7 +1746,20 @@ describe('MVP server', () => {
     expect(attemptDetail).toMatchObject({
       runId: 'R-1',
       runPrompt: '# Planner system prompt\n\nCreate the Engineering Work DAG.\n',
+      termination: null,
+      reportMarkdown: null,
+      sessionEpochs: [{ epoch: 1, sessionId: 'thread-R-1', endedAt: null }],
+      changeSet: {
+        id: 'CS-R-1',
+        disposition: 'unaccepted',
+        repos: [{ repoId: 'primary', baseCommit: changeSetBase }],
+      },
+      artifacts: {
+        preserved: [{ reference: 'artifact:R-1/001-report.txt', kind: 'file', sizeBytes: 42 }],
+        unavailable: [{ reference: 'missing.log', reason: 'Artifact was not produced.' }],
+      },
     })
+    expect(JSON.stringify(attemptDetail.artifacts)).not.toContain('/private/runtime/report.txt')
     expect(attemptDetail.events).toBeUndefined()
     const eventHead = await request(
       base,
@@ -1725,6 +1831,27 @@ describe('MVP server', () => {
           streamIndex: 3,
         },
       ],
+    })
+    await attempt.finish({
+      outcome: {
+        result: 'success',
+        summary: 'Planning evidence recorded.',
+        exitCode: 0,
+        termination: 'normal',
+        reportMarkdown: '# Run Report\n\nPlanning evidence recorded.',
+      },
+      application: 'published',
+    })
+    expect(
+      await request(base, '/api/projects/P-1/goals/G-1/works/plan-initial/attempts/R-1'),
+    ).toMatchObject({
+      status: 'finished',
+      termination: 'normal',
+      reportMarkdown: '# Run Report\n\nPlanning evidence recorded.\n',
+      sessionEpochs: [
+        { epoch: 1, sessionId: 'thread-R-1', endedAt: expect.any(String), closeReason: 'normal' },
+      ],
+      changeSet: { id: 'CS-R-1' },
     })
 
     const paused = await request(base, '/api/projects/P-1/goals/G-1/pause', {
@@ -2938,15 +3065,6 @@ async function waitForAssistantCalls(calls: readonly unknown[], count: number) {
     await Bun.sleep(10)
   }
   throw new Error(`Assistant did not receive ${count} call(s)`)
-}
-
-async function waitForFile(path: string) {
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    if (await Bun.file(path).exists()) return
-    await Bun.sleep(10)
-  }
-  throw new Error(`File was not created: ${path}`)
 }
 
 async function waitForInboxHandled(

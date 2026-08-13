@@ -1,6 +1,5 @@
 import { type CommandRunner, createCommandRunner } from '../commands/commandRunner'
 import {
-  type InboxEventDocument,
   type WorkspaceAttentionDocument,
   workspaceAttentionProjectId,
 } from '../domain/assistantWorkspaceDocuments'
@@ -27,10 +26,7 @@ import { withPreparedProjectRepositories } from '../runtime/projectDirectory'
 import type { WorkRunRequest } from '../scheduler/projectReconciler'
 import type { AssistantHomeStore } from '../storage/assistantHomeStore'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
-import {
-  type AssistantConversationScope,
-  assistantConversationScopeForEvent,
-} from './assistantConversationScope'
+import type { AssistantConversationScope } from './assistantConversationScope'
 import {
   assertPortableGoalText,
   currentBytes,
@@ -87,16 +83,9 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
   const now = options.now ?? (() => new Date())
 
   async function assertPresentableAttentionReferences(
-    event: InboxEventDocument,
     projectId: string,
     references: readonly string[],
   ) {
-    const scope = assistantConversationScopeForEvent(event)
-    if (scope.kind !== 'project' || scope.projectId !== projectId) {
-      throw new AssistantToolRequestError(
-        'Attention can be presented only from its Project conversation',
-      )
-    }
     const workspace = await options.workspace.readWorkspace()
     for (const reference of references) {
       const parsed = parseAttentionReference(reference)
@@ -264,7 +253,7 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
     project: AssistantToolProject
     goalId: string
     workId: string
-    kind: 'work_continue_requested' | 'work_cancelled'
+    kind: 'work_run_requested' | 'work_continue_requested' | 'work_completed' | 'work_cancelled'
     affectedWorkIds?: readonly string[]
     settledRefs?: readonly string[]
     pendingRefs?: readonly string[]
@@ -273,12 +262,15 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
     const currentPackage = await input.project.store.readPackage(input.goalId)
     const currentWork = currentPackage.works.get(input.workId)
     if (!currentWork) throw new Error(`Work not found after control: ${input.workId}`)
-    const runRequest = input.kind === 'work_continue_requested' ? input.runRequest : undefined
+    const runRequest =
+      input.kind === 'work_run_requested' || input.kind === 'work_continue_requested'
+        ? input.runRequest
+        : undefined
     const changed = runRequest ? runRequest.disposition === 'scheduled' : true
     const postActionState = await postWorkActionState(
       input.project,
       input.goalId,
-      input.kind === 'work_cancelled',
+      input.kind === 'work_cancelled' || input.kind === 'work_completed',
     )
     const cancellationConsequence =
       input.kind === 'work_cancelled' && 'coordinatorDecisionWhenEligible' in postActionState
@@ -849,6 +841,38 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         const goalPackage = await project.store.readPackage(args.goalId)
         const work = goalPackage.works.get(args.workId)
         if (!work) throw new AssistantToolRequestError(`Work not found: ${args.workId}`)
+        if (args.action.kind === 'complete') {
+          await project.reconciler.completeWork(args.goalId, args.workId, {
+            sourceEventId: eventId,
+            decision: args.action.decision,
+          })
+          return currentWorkResult({
+            project,
+            goalId: args.goalId,
+            workId: args.workId,
+            kind: 'work_completed',
+          })
+        }
+        if (args.action.kind === 'run') {
+          const runRequest = await project.reconciler.requestWorkRun(args.goalId, args.workId, {
+            allowSuccessor: true,
+            directive: {
+              protocol: 'report',
+              profile: args.action.profile,
+              workspaceMode: args.action.workspaceMode,
+              instructionMarkdown: args.action.instructionMarkdown,
+              refs: args.action.refs,
+              baseChangeSetId: args.action.baseChangeSetId,
+            },
+          })
+          return currentWorkResult({
+            project,
+            goalId: args.goalId,
+            workId: args.workId,
+            kind: 'work_run_requested',
+            runRequest,
+          })
+        }
         if (args.action.kind === 'continue') {
           let workChanged = false
           if (args.action.message) {
@@ -924,6 +948,64 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
           ...effect,
         })
       }
+      case 'hopi_control_operation': {
+        const args = parseAssistantToolArguments(name, input)
+        const project = requireProject(options.projects, args.projectId)
+        options.onGoalEffect(eventId, project.projectId, args.goalId)
+        const before = await project.reconciler.listGoalOperations(args.goalId)
+        if (args.action.kind === 'propose') {
+          const operationId =
+            args.action.operationId ??
+            derivedOperationId(project.projectId, args.goalId, eventId, args.action.idempotencyKey)
+          const operation = await project.reconciler.proposeOperation(args.goalId, {
+            id: operationId,
+            workId: args.action.workId,
+            idempotencyKey: args.action.idempotencyKey,
+            requiredForGoal: args.action.requiredForGoal,
+            intent: args.action.intent,
+            proposedByEventId: eventId,
+          })
+          return {
+            summary: `Proposed ${operation.intent.kind} Operation ${operation.id}.`,
+            changed: !before.some((candidate) => candidate.id === operation.id),
+            value: {
+              effect: {
+                kind: 'operation_proposed',
+                projectId: project.projectId,
+                goalId: args.goalId,
+                operationId: operation.id,
+              },
+              operation,
+            },
+          }
+        }
+        const previous = before.find((operation) => operation.id === args.action.operationId)
+        const operation =
+          args.action.kind === 'execute'
+            ? await project.reconciler.executeOperation(
+                args.goalId,
+                args.action.operationId,
+                eventId,
+              )
+            : await project.reconciler.cancelOperation(
+                args.goalId,
+                args.action.operationId,
+                eventId,
+              )
+        return {
+          summary: `${operation.intent.kind} Operation ${operation.id} is ${operation.status}.`,
+          changed: JSON.stringify(previous) !== JSON.stringify(operation),
+          value: {
+            effect: {
+              kind: `operation_${args.action.kind}`,
+              projectId: project.projectId,
+              goalId: args.goalId,
+              operationId: operation.id,
+            },
+            operation,
+          },
+        }
+      }
       case 'hopi_control_goal': {
         const args = parseAssistantToolArguments(name, input)
         const project = requireProject(options.projects, args.projectId)
@@ -931,6 +1013,12 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         let goal = await requireGoal(project.store, args.goalId)
         let changed = false
         switch (args.action.kind) {
+          case 'complete':
+            goal = await project.reconciler.completeGoal(args.goalId, {
+              decision: args.action.decision,
+            })
+            changed = true
+            break
           case 'pause':
             if (goal.attributes.lifecycle === 'active') {
               await project.controller.pauseGoal(args.goalId)
@@ -1010,7 +1098,7 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         const target = `project:${project.projectId}`
         if (change.kind === 'present_attention_to_user') {
           const requestedReferences = [...new Set(change.attentionRefs)]
-          await assertPresentableAttentionReferences(event, project.projectId, requestedReferences)
+          await assertPresentableAttentionReferences(project.projectId, requestedReferences)
           const previousReferences = new Set(event.attributes.attentionRequest?.attentionRefs ?? [])
           const staged = await options.workspace.stageAttentionRequest(eventId, {
             attentionRefs: requestedReferences,
@@ -1221,4 +1309,16 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
       }
     }
   }
+}
+
+function derivedOperationId(
+  projectId: string,
+  goalId: string,
+  eventId: string,
+  idempotencyKey: string,
+) {
+  const digest = new Bun.CryptoHasher('sha256')
+    .update(`${projectId}\u0000${goalId}\u0000${eventId}\u0000${idempotencyKey}`)
+    .digest('hex')
+  return `OP-${digest.slice(0, 24)}`
 }

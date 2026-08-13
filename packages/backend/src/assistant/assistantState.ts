@@ -33,10 +33,11 @@ import {
   resolveEvidenceArtifact,
 } from '../runtime/evidenceArtifacts'
 import type { Responsibility } from '../runtime/roleContextStager'
-import type {
-  RunAttemptSnapshot,
-  RunAttemptStore,
-  RunAttemptSummary,
+import {
+  type RunAttemptSnapshot,
+  type RunAttemptStore,
+  type RunAttemptSummary,
+  deriveRunSchedulingFacts,
 } from '../runtime/runAttemptStore'
 import { runStoragePath } from '../runtime/runPaths'
 import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
@@ -112,6 +113,7 @@ export interface AssistantStateDelegation {
   targetWorkId: string
   work: {
     attributes: AssistantStateWorkAttributes
+    body: string
     path: string
     runtime: AssistantStateRuntime
   }
@@ -158,6 +160,7 @@ export interface AssistantStateWorkAttributes {
 
 export interface AssistantStateWorkSnapshot {
   attributes: AssistantStateWorkAttributes
+  body: string
   path: string
   candidateIntegration?: AssistantStateCandidateIntegration
   projection: WorkProjection | null
@@ -167,6 +170,7 @@ export interface AssistantStateWorkSnapshot {
 
 export interface AssistantStatePlanningOutcome {
   attributes: AssistantStateWorkAttributes
+  body: string
   path: string
   runtime: AssistantStateRuntime
   evidence: AssistantStateEvidenceSummary
@@ -331,6 +335,9 @@ export function createAssistantStateReader(options: {
                     generator: activeCounts.generator < SOFTWARE_DELIVERY_CONCURRENCY.generator,
                     reviewer: activeCounts.reviewer < SOFTWARE_DELIVERY_CONCURRENCY.reviewer,
                   },
+                  ...deriveRunSchedulingFacts(
+                    [...attemptSnapshot.listGoal(project.projectId, goalId).values()].flat(),
+                  ),
                   now: observedAt,
                 },
               )
@@ -399,6 +406,7 @@ export function createAssistantStateReader(options: {
                       attributes: input.includeEvidence
                         ? work.attributes
                         : compactWorkAttributes(work),
+                      body: boundedText(work.body, input.includeEvidence ? 4_000 : 1_200),
                       path: project.store.paths.absolute(
                         project.store.paths.workDocument(goalId, work.attributes.id),
                       ),
@@ -412,6 +420,7 @@ export function createAssistantStateReader(options: {
               const latestPlanningOutcome = latestPlanning
                 ? {
                     attributes: compactWorkAttributes(latestPlanning),
+                    body: boundedText(latestPlanning.body, input.includeEvidence ? 4_000 : 1_200),
                     path: project.store.paths.absolute(
                       project.store.paths.workDocument(goalId, latestPlanning.attributes.id),
                     ),
@@ -1046,6 +1055,7 @@ async function readCrossProjectDelegations(input: {
                   targetWorkId: work.attributes.id,
                   work: {
                     attributes: compactWorkAttributes(work),
+                    body: boundedText(work.body, 1_200),
                     path: targetProject.store.paths.absolute(
                       targetProject.store.paths.workDocument(goalId, work.attributes.id),
                     ),

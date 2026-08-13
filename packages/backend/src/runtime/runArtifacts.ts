@@ -1,5 +1,6 @@
 import { copyFile, cp, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
+import { z } from 'zod'
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const PORTABLE_ARTIFACT_PATTERN = /^artifact:([A-Za-z0-9][A-Za-z0-9._-]*)\/(.+)$/
@@ -19,6 +20,33 @@ export interface PreserveRunArtifactsResult {
   replacements: ReadonlyMap<string, string>
   ignoredProposalPaths: readonly string[]
 }
+
+const runArtifactManifestSchema = z
+  .object({
+    runId: z.string().min(1),
+    artifacts: z.array(
+      z
+        .object({
+          reference: z.string().min(1),
+          path: z.string().min(1),
+          source: z.string().min(1),
+          kind: z.enum(['file', 'directory']),
+          sizeBytes: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+    unavailable: z.array(
+      z
+        .object({
+          reference: z.string().min(1),
+          reason: z.string().min(1),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
+export type RunArtifactManifest = z.infer<typeof runArtifactManifestSchema>
 
 class RunArtifactError extends Error {}
 
@@ -130,13 +158,21 @@ export async function preserveRunArtifacts(input: {
   }
 
   if (preserved.length > 0 || unavailable.length > 0) {
-    await Bun.write(
-      join(runRoot, 'artifacts.json'),
-      `${JSON.stringify({ runId: input.runId, artifacts: preserved, unavailable }, null, 2)}\n`,
-    )
+    const manifest = runArtifactManifestSchema.parse({
+      runId: input.runId,
+      artifacts: preserved,
+      unavailable,
+    })
+    await Bun.write(join(runRoot, 'artifacts.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   }
   if (input.resultFile) await rewriteResultArtifacts(input.resultFile, references)
   return { references, preserved, unavailable, replacements, ignoredProposalPaths }
+}
+
+export async function readRunArtifactManifest(runRoot: string) {
+  const file = Bun.file(join(resolve(runRoot), 'artifacts.json'))
+  if (!(await file.exists())) return null
+  return runArtifactManifestSchema.parse(await file.json())
 }
 
 export async function discoverRunArtifactPaths(root: string) {

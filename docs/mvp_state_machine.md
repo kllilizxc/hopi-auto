@@ -1,5 +1,7 @@
 # HOPI MVP State Model
 
+Status: fixed-pipeline implementation baseline; not current product authority. See `mvp_design.md`.
+
 Status: current derived-state authority
 Last updated: 2026-07-29
 

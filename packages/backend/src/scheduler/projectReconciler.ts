@@ -1,7 +1,12 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
-import { isEngineeringWork, isWorkTerminal } from '../domain/canonicalDocuments'
+import {
+  type GoalDocument,
+  type WorkDocument,
+  isEngineeringWork,
+  isWorkTerminal,
+} from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import { type LinkedProjectRepo, requireProjectRepo } from '../domain/project'
 import { resolveProjectPath } from '../domain/projectPath'
@@ -9,6 +14,16 @@ import type { WorkRuntimeFacts } from '../domain/workProjection'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { type C1Integrator, createC1Integrator } from '../runtime/c1Integrator'
 import { createCompletionStructureVerifier } from '../runtime/completionVerifier'
+import {
+  type DeliveryOperationExecutor,
+  createDeliveryOperationExecutor,
+} from '../runtime/deliveryOperationExecutor'
+import {
+  type DeliveryOperation,
+  type DeliveryOperationIntent,
+  type DeliveryOperationStore,
+  createDeliveryOperationStore,
+} from '../runtime/deliveryOperationStore'
 import { type GoalController, createGoalController } from '../runtime/goalController'
 import {
   type PassOutcomeApplication,
@@ -40,9 +55,14 @@ import {
   type RunAttemptSummary,
   createRunAttemptStore,
 } from '../runtime/runAttemptStore'
+import {
+  type RunChangeSetStore,
+  createRunChangeSetStore,
+  readGitHead,
+} from '../runtime/runChangeSet'
+import { type RunDirective, legacyRunDirective, runDirectiveSchema } from '../runtime/runDirective'
 import { runStoragePath } from '../runtime/runPaths'
 import { settledFailureWorkIds as deriveSettledFailureWorkIds } from '../runtime/settledAttemptFailure'
-import { responsibilityFor } from '../runtime/softwareDelivery'
 import {
   type StableWorktreeManager,
   StableWorktreeSyncError,
@@ -66,6 +86,9 @@ export interface ProjectReconcilerOptions {
   worktrees?: StableWorktreeManager
   outcomes?: PassOutcomeCoordinator
   attempts?: RunAttemptStore
+  changeSets?: RunChangeSetStore
+  operations?: DeliveryOperationStore
+  operationExecutor?: DeliveryOperationExecutor
   preparer?: ProjectPreparer
   preparationTimeoutMs?: number
   responsibilitySessions?: ResponsibilitySessionStore
@@ -108,8 +131,32 @@ export interface ProjectReconciler {
   requestWorkRun(
     goalId: string,
     workId: string,
-    options?: { allowSuccessor?: boolean },
+    options?: { allowSuccessor?: boolean; directive?: RunDirective },
   ): Promise<WorkRunRequest>
+  completeWork(
+    goalId: string,
+    workId: string,
+    input: { sourceEventId: string; decision: string },
+  ): Promise<WorkDocument>
+  completeGoal(goalId: string, input: { decision: string }): Promise<GoalDocument>
+  proposeOperation(
+    goalId: string,
+    input: {
+      id: string
+      workId?: string | null
+      idempotencyKey: string
+      requiredForGoal: boolean
+      intent: DeliveryOperationIntent
+      proposedByEventId: string
+    },
+  ): Promise<DeliveryOperation>
+  executeOperation(
+    goalId: string,
+    operationId: string,
+    approvedByEventId: string,
+  ): Promise<DeliveryOperation>
+  cancelOperation(goalId: string, operationId: string, eventId: string): Promise<DeliveryOperation>
+  listGoalOperations(goalId: string): Promise<DeliveryOperation[]>
   interruptQueuedRuns(goalId?: string, workId?: string): Promise<number>
   interruptRuns(goalId?: string, workId?: string): void
 }
@@ -133,11 +180,21 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     options.contextStager ?? createRoleContextStager(options.homeRoot, options.publisher)
   const worktrees = options.worktrees ?? createStableWorktreeManager()
   const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot, { now })
+  const changeSets = options.changeSets ?? createRunChangeSetStore(options.homeRoot, { now })
+  const primaryRepoId = options.primaryRepoId
+  const projectRepos = options.projectRepos
+  const operations = options.operations ?? createDeliveryOperationStore(options.homeRoot, { now })
+  const operationExecutor =
+    options.operationExecutor ??
+    createDeliveryOperationExecutor({
+      projectId: options.projectId,
+      repos: projectRepos,
+      operations,
+      changeSets,
+    })
   const preparer = options.preparer ?? createProjectPreparer()
   const responsibilitySessions =
     options.responsibilitySessions ?? createResponsibilitySessionStore(options.homeRoot)
-  const primaryRepoId = options.primaryRepoId
-  const projectRepos = options.projectRepos
   const primaryProjectRepo = requireProjectRepo({ repos: projectRepos }, primaryRepoId)
   const c1Layout = {
     projectId: options.projectId,
@@ -149,7 +206,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       primary: repo.primary,
     })),
   }
-  const completion = createCompletionStructureVerifier(options.store, c1Layout)
+  const completion = createCompletionStructureVerifier(options.store, c1Layout, {
+    attempts,
+    operations,
+    changeSets,
+  })
   const outcomes =
     options.outcomes ??
     createPassOutcomeCoordinator(options.store, options.publisher, {
@@ -197,7 +258,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     async decisionWhenEligible(goalId, suppliedPackage) {
       const goalPackage = suppliedPackage ?? (await options.store.readPackage(goalId))
       const snapshot = await attempts.snapshot()
-      const queued = queuedWorkIds(snapshot.queued(), options.projectId, goalId)
+      const queuedAttempts = snapshot
+        .queued()
+        .filter((attempt) => attempt.projectId === options.projectId && attempt.goalId === goalId)
+      const queued = new Set(queuedAttempts.map((attempt) => attempt.workId))
+      const goalAttempts = snapshot.listGoal(options.projectId, goalId)
       const livePrefix = `${goalId}/`
       const live = [...runSlots]
         .filter(([key]) => key.startsWith(livePrefix))
@@ -208,7 +273,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         goalPackage,
         runtime: {
           projectEligible: true,
-          liveRunWorkIds: new Set([...live, ...queued]),
+          liveRunWorkIds: new Set(live),
           settledFailureWorkIds: await deriveSettledFailureWorkIds(
             goalPackage,
             snapshot.listGoal(options.projectId, goalId),
@@ -219,6 +284,17 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             generator: true,
             reviewer: true,
           },
+          requestedRunProfiles: new Map(
+            queuedAttempts.map((attempt) => [attempt.workId, attempt.profile] as const),
+          ),
+          supervisorManagedWorkIds: new Set(
+            [...goalAttempts].flatMap(([workId, workAttempts]) =>
+              workAttempts.some((attempt) => attempt.protocol === 'report') ? [workId] : [],
+            ),
+          ),
+          supervisorManagedGoal: [...goalAttempts.values()].some((workAttempts) =>
+            workAttempts.some((attempt) => attempt.protocol === 'report'),
+          ),
           now: now(),
         },
       })
@@ -250,17 +326,94 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         throw new Error(`Cannot continue missing or terminal Work: ${workId}`)
       }
       const runId = createRunId()
-      const responsibility = responsibilityFor(work.attributes.kind, work.attributes.stage)
-      if (!responsibility) throw new Error(`Work has no current responsibility: ${workId}`)
+      const directive = requestOptions?.directive
+        ? runDirectiveSchema.parse(requestOptions.directive)
+        : legacyRunDirective(work.attributes)
+      if (!directive) throw new Error(`Work has no current Run profile: ${workId}`)
       return attempts.reserve({
         projectId: options.projectId,
         goalId,
         workId,
         runId,
-        responsibility,
+        responsibility: directive.profile,
         workHash: await workAssignmentHash(work),
         allowSuccessor: requestOptions?.allowSuccessor,
+        directive,
       })
+    },
+    async completeWork(goalId, workId, input) {
+      const snapshot = await attempts.snapshot()
+      if (
+        runSlots.has(`${goalId}/${workId}`) ||
+        [...snapshot.running(), ...snapshot.queued()].some(
+          (attempt) =>
+            attempt.projectId === options.projectId &&
+            attempt.goalId === goalId &&
+            attempt.workId === workId,
+        )
+      ) {
+        throw new Error(`Cannot complete Work with an active or queued Run: ${workId}`)
+      }
+      return goalController.completeWork(goalId, workId, input)
+    },
+    async completeGoal(goalId, input) {
+      const snapshot = await attempts.snapshot()
+      if (
+        [...runSlots.keys()].some((key) => key.startsWith(`${goalId}/`)) ||
+        [...snapshot.running(), ...snapshot.queued()].some(
+          (attempt) => attempt.projectId === options.projectId && attempt.goalId === goalId,
+        )
+      ) {
+        throw new Error(`Cannot complete Goal with active or queued Runs: ${goalId}`)
+      }
+      const incompleteRequired = (await operations.listGoal(options.projectId, goalId)).filter(
+        (operation) => operation.requiredForGoal && operation.status !== 'succeeded',
+      )
+      if (incompleteRequired.length > 0) {
+        throw new Error(
+          `Cannot complete Goal with incomplete required Operations: ${incompleteRequired.map((operation) => operation.id).join(', ')}`,
+        )
+      }
+      return goalController.completeGoal(goalId, input)
+    },
+    async proposeOperation(goalId, input) {
+      const goalPackage = await options.store.readPackage(goalId)
+      if (input.workId && !goalPackage.works.has(input.workId)) {
+        throw new Error(`Delivery Operation Work not found: ${input.workId}`)
+      }
+      const changeSet = await changeSets.readById(input.intent.changeSetId)
+      if (
+        !changeSet ||
+        changeSet.projectId !== options.projectId ||
+        changeSet.goalId !== goalId ||
+        (input.workId && changeSet.workId !== input.workId)
+      ) {
+        throw new Error(
+          `Delivery Operation ChangeSet is outside current scope: ${input.intent.changeSetId}`,
+        )
+      }
+      return operations.propose({
+        ...input,
+        projectId: options.projectId,
+        goalId,
+      })
+    },
+    async executeOperation(goalId, operationId, approvedByEventId) {
+      const operation = await operations.read(operationId)
+      if (!operation || operation.projectId !== options.projectId || operation.goalId !== goalId) {
+        throw new Error(`Delivery Operation not found in Goal ${goalId}: ${operationId}`)
+      }
+      return operationExecutor.execute(operationId, approvedByEventId)
+    },
+    async cancelOperation(goalId, operationId, eventId) {
+      const operation = await operations.read(operationId)
+      if (!operation || operation.projectId !== options.projectId || operation.goalId !== goalId) {
+        throw new Error(`Delivery Operation not found in Goal ${goalId}: ${operationId}`)
+      }
+      return operations.cancel(operationId, eventId)
+    },
+    listGoalOperations(goalId) {
+      return operations.listGoal(options.projectId, goalId)
     },
     async reconcileGoal(goalId, runtime) {
       const interruptionGeneration = {
@@ -277,9 +430,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           (attempt) => attempt.projectId === options.projectId && attempt.goalId === goalId,
         )) {
         const queuedWork = goalPackage.works.get(queued.workId)
-        const currentResponsibility = queuedWork
-          ? responsibilityFor(queuedWork.attributes.kind, queuedWork.attributes.stage)
-          : null
+        const currentLegacyDirective = queuedWork ? legacyRunDirective(queuedWork.attributes) : null
         const currentHash =
           queuedWork && !isWorkTerminal(queuedWork.attributes)
             ? await workAssignmentHash(queuedWork)
@@ -287,7 +438,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         if (
           !queuedWork ||
           isWorkTerminal(queuedWork.attributes) ||
-          currentResponsibility !== queued.responsibility ||
+          (queued.protocol === 'legacy_outcome' &&
+            currentLegacyDirective?.profile !== queued.profile) ||
           currentHash !== queued.workHash
         ) {
           await attempts.interruptQueued({
@@ -301,6 +453,18 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       }
       if (invalidatedQueuedAttempt) attemptSnapshot = await attempts.snapshot()
       const requested = queuedWorkIds(attemptSnapshot.queued(), options.projectId, goalId)
+      const goalAttempts = attemptSnapshot.listGoal(options.projectId, goalId)
+      const requestedRunProfiles = new Map(
+        attemptSnapshot
+          .queued()
+          .filter((attempt) => attempt.projectId === options.projectId && attempt.goalId === goalId)
+          .map((attempt) => [attempt.workId, attempt.profile] as const),
+      )
+      const supervisorManagedWorkIds = new Set(
+        [...goalAttempts].flatMap(([workId, workAttempts]) =>
+          workAttempts.some((attempt) => attempt.protocol === 'report') ? [workId] : [],
+        ),
+      )
       const livePrefix = `${goalId}/`
       const localLiveWorkIds = [...runSlots]
         .filter(([key]) => key.startsWith(livePrefix))
@@ -320,6 +484,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           generator: runtime.passCapacity.generator,
           reviewer: runtime.passCapacity.reviewer,
         },
+        requestedRunProfiles,
+        supervisorManagedWorkIds,
+        supervisorManagedGoal: [...goalAttempts.values()].some((workAttempts) =>
+          workAttempts.some((attempt) => attempt.protocol === 'report'),
+        ),
         now: runtime.now ?? now(),
       }
       const decision = decideGoalReconciliation({
@@ -349,16 +518,38 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       const owningWork = goalPackage.works.get(workId)
       if (!owningWork) throw new Error(`Work is missing: ${workId}`)
       const assignmentHash = await workAssignmentHash(owningWork)
-      const reservation = await attempts.reserve({
-        projectId: options.projectId,
-        goalId,
-        workId,
-        runId: createRunId(),
-        responsibility,
-        workHash: assignmentHash,
-      })
+      const queuedAttempt = attemptSnapshot
+        .queued()
+        .find(
+          (candidate) =>
+            candidate.projectId === options.projectId &&
+            candidate.goalId === goalId &&
+            candidate.workId === workId &&
+            candidate.profile === responsibility,
+        )
+      const compatibilityDirective = legacyRunDirective(owningWork.attributes)
+      const reservation = queuedAttempt
+        ? { runId: queuedAttempt.runId, disposition: 'already_scheduled' as const }
+        : await attempts.reserve({
+            projectId: options.projectId,
+            goalId,
+            workId,
+            runId: createRunId(),
+            responsibility,
+            workHash: assignmentHash,
+            ...(compatibilityDirective ? { directive: compatibilityDirective } : {}),
+          })
       if (reservation.disposition === 'already_active') return { kind: 'wait', decision }
       const runId = reservation.runId
+      const runAttempt =
+        queuedAttempt ??
+        (await attempts.list(options.projectId, goalId, workId)).find(
+          (candidate) => candidate.runId === runId,
+        )
+      if (!runAttempt) throw new Error(`Reserved Run is missing: ${runId}`)
+      const directive = directiveFromAttempt(runAttempt)
+      const reportRun = directive.protocol === 'report'
+      const workspaceMode = directive.workspaceMode
       if (runSlots.has(liveKey)) return { kind: 'wait', decision }
       const runController = new AbortController()
       const runSlot: WorkRunSlot = {
@@ -368,6 +559,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       }
       runSlots.set(liveKey, runSlot)
       let attempt: RunAttemptRecorder | null = null
+      let freezeGeneratorSource: (() => Promise<void>) | null = null
       try {
         if (
           interruptionGeneration.project !== projectInterruptionGeneration ||
@@ -387,19 +579,20 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         })
         attempt = recorder
         const runRepos =
-          responsibility === 'planner' || isEngineeringWork(owningWork.attributes)
+          reportRun || responsibility === 'planner' || isEngineeringWork(owningWork.attributes)
             ? projectRepos
             : []
-        if (responsibility !== 'planner' && runRepos.length === 0) {
+        if (!reportRun && responsibility !== 'planner' && runRepos.length === 0) {
           throw new Error(`Engineering Work ${workId} has no Project Repo environment`)
         }
         let worktreeEntries: Array<{
           repo: LinkedProjectRepo
           worktree: Awaited<ReturnType<StableWorktreeManager['prepare']>>
+          baseCommit: string
         }> = []
         try {
           worktreeEntries =
-            responsibility === 'planner'
+            workspaceMode === 'none'
               ? []
               : await Promise.all(
                   runRepos.map(async (repo) => {
@@ -411,13 +604,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                       repoId: repo.repoId,
                       primaryRepoId,
                     }
-                    return {
-                      repo,
-                      worktree:
-                        responsibility === 'reviewer'
-                          ? await worktrees.prepareClean(worktreeInput)
-                          : await worktrees.prepare(worktreeInput),
-                    }
+                    const worktree =
+                      workspaceMode === 'read_only'
+                        ? await worktrees.prepareClean(worktreeInput)
+                        : await worktrees.prepare(worktreeInput)
+                    return { repo, worktree, baseCommit: await readGitHead(worktree.path) }
                   }),
                 )
         } catch (error) {
@@ -431,9 +622,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           })
           await attempt.finish({
             outcome: {
-              result: 'fail',
+              result: reportRun ? null : 'fail',
               summary,
               exitCode: null,
+              termination: 'crashed',
+              reportMarkdown: `# Run Report\n\n${summary}\n`,
             },
             application: 'operational_failure',
           })
@@ -445,6 +638,49 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             application: 'operational_failure',
           }
         }
+        let generatorSourceFrozen = false
+        freezeGeneratorSource =
+          workspaceMode === 'isolated_write'
+            ? async () => {
+                if (generatorSourceFrozen || worktreeEntries.length === 0) {
+                  return
+                }
+                const checkpoints = await Promise.all(
+                  worktreeEntries.map(async ({ repo, worktree, baseCommit }) => ({
+                    repoId: repo.repoId,
+                    worktreePath: worktree.path,
+                    baseCommit,
+                    resultCommit: (
+                      await checkpointTask({
+                        worktreePath: worktree.path,
+                        projectId: options.projectId,
+                        goalId,
+                        workId,
+                        runId,
+                        repoId: repo.repoId,
+                      })
+                    ).head,
+                  })),
+                )
+                const frozen = await changeSets.freeze({
+                  projectId: options.projectId,
+                  goalId,
+                  workId,
+                  runId,
+                  repos: checkpoints,
+                })
+                if (frozen) {
+                  await recorder.setChangeSet(frozen.id)
+                  await recorder.record({
+                    kind: 'message',
+                    level: 'info',
+                    role: 'coordinator',
+                    content: `Frozen unaccepted ChangeSet ${frozen.id} from ${frozen.repos.length} Repo${frozen.repos.length === 1 ? '' : 's'}.`,
+                  })
+                }
+                generatorSourceFrozen = true
+              }
+            : null
         const scopedWorktrees = await Promise.all(
           worktreeEntries.map(async (entry) => ({
             ...entry,
@@ -452,7 +688,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           })),
         )
         const roleRepoRoots = await Promise.all(
-          responsibility === 'planner'
+          workspaceMode === 'none'
             ? runRepos.map(async (repo) => ({
                 repoId: repo.repoId,
                 path: await ensureProjectScope(repo.integrationRoot, repo.projectPath),
@@ -468,6 +704,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           projectId: options.projectId,
           goalId,
           workId,
+          runId,
           responsibility,
         }
         const sessionScope = {
@@ -484,6 +721,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           workId,
           runId,
           responsibility,
+          directive,
           primaryRepoId,
           repoRoots: roleRepoRoots,
           apiOrigin: options.apiOrigin?.(),
@@ -498,7 +736,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           context.runRoot,
         )
         const preparation =
-          responsibility === 'planner'
+          workspaceMode === 'none'
             ? null
             : await (async () => {
                 await recorder.record({
@@ -523,11 +761,12 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           })
         }
         if (runController.signal.aborted) {
+          if (freezeGeneratorSource) await freezeGeneratorSource()
           await recorder.interrupt(new Error(`${responsibility} Run was interrupted`))
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
         let runCwd = responsibilitySession.workspaceDir
-        if (responsibility === 'generator') {
+        if (workspaceMode === 'isolated_write') {
           const primaryWorktree = scopedWorktrees.find(({ repo }) => repo.repoId === primaryRepoId)
           if (!primaryWorktree) {
             throw new Error(`Primary Repo task worktree is missing: ${primaryRepoId}`)
@@ -541,6 +780,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             workId,
             runId,
             responsibility,
+            protocol: directive.protocol,
+            workspaceMode,
             cwd: runCwd,
             sourceRoots: worktreeEntries.map(({ worktree }) => worktree.path),
             context: { ...context, runViewRoot },
@@ -550,33 +791,54 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           {
             onEvent: (event) => recorder.record(event),
             onExecution: (execution) => recorder.setExecution(execution),
-            onSession: (nextSession) =>
-              responsibilitySessions.write(sessionKey, sessionScope, nextSession),
+            onSession: async (nextSession) => {
+              await Promise.all([
+                responsibilitySessions.write(sessionKey, sessionScope, nextSession),
+                recorder.recordSession(nextSession),
+              ])
+            },
             onSessionInvalid: () =>
               responsibilitySessions.invalidateVendor(sessionKey, sessionScope),
+            onSessionRotate: async (rotation) => {
+              if (workspaceMode === 'isolated_write') {
+                const checkpoints = await Promise.all(
+                  worktreeEntries.map(({ repo, worktree }) =>
+                    checkpointTask({
+                      worktreePath: worktree.path,
+                      projectId: options.projectId,
+                      goalId,
+                      workId,
+                      runId,
+                      repoId: repo.repoId,
+                    }),
+                  ),
+                )
+                await recorder.record({
+                  kind: 'message',
+                  level: 'info',
+                  role: 'coordinator',
+                  content: `Checkpointed ${checkpoints.length} Repo workspace${checkpoints.length === 1 ? '' : 's'} before Session Epoch rotation.`,
+                })
+              }
+              await recorder.rotateSession({
+                reason: rotation.reason,
+                handoffMarkdown: rotation.handoffMarkdown,
+              })
+            },
           },
         )
         if (runController.signal.aborted) {
           let checkpointFailure: unknown = null
-          if (responsibility === 'generator' && worktreeEntries.length > 0) {
+          if (freezeGeneratorSource) {
             try {
-              await Promise.all(
-                worktreeEntries.map(({ repo, worktree }) =>
-                  checkpointTask({
-                    worktreePath: worktree.path,
-                    projectId: options.projectId,
-                    goalId,
-                    workId,
-                    runId,
-                    repoId: repo.repoId,
-                  }),
-                ),
-              )
+              await freezeGeneratorSource()
               await recorder.record({
                 kind: 'message',
                 level: 'info',
                 role: 'coordinator',
-                content: 'Checkpointed safe partial Generator source before interruption.',
+                content: reportRun
+                  ? 'Checkpointed safe partial writable source before interruption and froze any delta.'
+                  : 'Checkpointed safe partial Generator source before interruption and froze any delta.',
               })
             } catch (error) {
               checkpointFailure = error
@@ -584,7 +846,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
                 kind: 'message',
                 level: 'error',
                 role: 'coordinator',
-                content: `Partial Generator checkpoint failed during interruption: ${errorMessage(error)}`,
+                content: `${reportRun ? 'Partial writable-source' : 'Partial Generator'} checkpoint failed during interruption: ${errorMessage(error)}`,
               })
             }
           }
@@ -597,23 +859,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           )
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
-        if (responsibility === 'generator' && worktreeEntries.length > 0) {
+        if (freezeGeneratorSource) {
           try {
-            await Promise.all(
-              worktreeEntries.map(({ repo, worktree }) =>
-                checkpointTask({
-                  worktreePath: worktree.path,
-                  projectId: options.projectId,
-                  goalId,
-                  workId,
-                  runId,
-                  repoId: repo.repoId,
-                }),
-              ),
-            )
+            await freezeGeneratorSource()
           } catch (error) {
             const summary = `Task checkpoint failed: ${errorMessage(error)}`
-            if (error instanceof TaskCheckpointError && error.code !== 'infrastructure') {
+            if (
+              !reportRun &&
+              error instanceof TaskCheckpointError &&
+              error.code !== 'infrastructure'
+            ) {
               const invalid: PassOutcomeApplication = { kind: 'invalid', reason: summary }
               await finishAttempt(recorder, options.store, goalId, outcome, invalid)
               return {
@@ -630,6 +885,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               artifacts: [],
               exitCode: outcome.exitCode,
               failureKind: 'operational',
+              termination: 'crashed',
+              reportMarkdown: `# Run Report\n\n${summary}\n`,
             }
           }
         }
@@ -652,6 +909,26 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             [context.proposalRoot],
           )
         } catch (error) {
+          if (reportRun) {
+            const summary = `Run artifact validation failed: ${errorMessage(error)}`
+            await recorder.finish({
+              outcome: {
+                result: null,
+                summary,
+                exitCode: outcome.exitCode,
+                termination: 'crashed',
+                reportMarkdown: `# Run Report\n\n${summary}\n`,
+              },
+              application: 'reported',
+            })
+            return {
+              kind: 'pass_finished',
+              workId,
+              runId,
+              result: 'reported',
+              application: 'reported',
+            }
+          }
           const invalid: PassOutcomeApplication = {
             kind: 'invalid',
             reason: `Run artifact validation failed: ${errorMessage(error)}`,
@@ -663,6 +940,28 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             runId,
             result: outcome.result,
             application: invalid.kind,
+          }
+        }
+
+        if (reportRun) {
+          await recorder.finish({
+            outcome: {
+              result: null,
+              summary: outcome.summary,
+              exitCode: outcome.exitCode,
+              termination:
+                outcome.termination ??
+                (outcome.failureKind === 'operational' ? 'crashed' : 'normal'),
+              reportMarkdown: outcome.reportMarkdown,
+            },
+            application: 'reported',
+          })
+          return {
+            kind: 'pass_finished',
+            workId,
+            runId,
+            result: 'reported',
+            application: 'reported',
           }
         }
 
@@ -812,16 +1111,36 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           commit: integration.commit,
         }
       } catch (error) {
+        let sourceFreezeFailure: unknown = null
+        if (freezeGeneratorSource) {
+          try {
+            await freezeGeneratorSource()
+          } catch (freezeError) {
+            sourceFreezeFailure = freezeError
+          }
+        }
         if (runController.signal.aborted) {
-          await attempt?.interrupt(error)
+          await attempt?.interrupt(
+            sourceFreezeFailure
+              ? new Error(
+                  `${errorMessage(error)}; source preservation failed: ${errorMessage(sourceFreezeFailure)}`,
+                )
+              : error,
+          )
           return { kind: 'wait', decision: { kind: 'wait', reasons: ['run_interrupted'] } }
         }
-        const summary = `Responsibility runtime failed: ${errorMessage(error)}`
+        const summary = `Responsibility runtime failed: ${errorMessage(error)}${
+          sourceFreezeFailure
+            ? `; source preservation failed: ${errorMessage(sourceFreezeFailure)}`
+            : ''
+        }`
         await attempt?.finish({
           outcome: {
-            result: 'fail',
+            result: reportRun ? null : 'fail',
             summary,
             exitCode: null,
+            termination: 'crashed',
+            reportMarkdown: `# Run Report\n\n${summary}\n`,
           },
           application: 'operational_failure',
         })
@@ -1008,8 +1327,21 @@ async function finishAttempt(
       result: appliedResult,
       summary: appliedSummary,
       exitCode: outcome.exitCode,
+      termination: outcome.termination,
+      reportMarkdown: outcome.reportMarkdown,
     },
     application: application.kind,
+  })
+}
+
+function directiveFromAttempt(attempt: RunAttemptSummary): RunDirective {
+  return runDirectiveSchema.parse({
+    protocol: attempt.protocol,
+    profile: attempt.profile,
+    workspaceMode: attempt.workspaceMode,
+    instructionMarkdown: attempt.instructionMarkdown,
+    refs: attempt.inputRefs,
+    baseChangeSetId: attempt.baseChangeSetId,
   })
 }
 

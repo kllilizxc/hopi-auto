@@ -1,20 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { appendFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { HOME_ASSISTANT_CONVERSATION_SCOPE } from '../src/assistant/assistantConversationScope'
 import { createAssistantConversationStore } from '../src/assistant/assistantConversationStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-conversation-store')
-const homeSessionPath = join(
-  temporaryRoot,
-  '.hopi',
-  'runtime',
-  'assistant',
-  'sessions',
-  'home.json',
-)
-const projectSessionPath = (projectId: string) =>
-  join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'sessions', 'projects', `${projectId}.json`)
+const threadManifestPath = (threadId: string) =>
+  join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'threads', `${threadId}.json`)
 const turnEventsPath = (eventId: string) =>
   join(temporaryRoot, '.hopi', 'runtime', 'assistant', 'turns', eventId, 'events.jsonl')
 const projectReceiptPath = (projectId: string, receiptId: string) =>
@@ -38,68 +29,87 @@ afterEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
 })
 
-describe('AssistantConversationStore session cache', () => {
-  test('stores isolated Home and Project sessions', async () => {
+describe('AssistantConversationStore Threads and Session Epochs', () => {
+  test('stores isolated Thread sessions and durable Epoch facts', async () => {
     const store = createAssistantConversationStore(temporaryRoot)
+    await registerThread(store, 'T-A', 'EV-A')
+    await registerThread(store, 'T-B', 'EV-B')
     await store.writeSession(
-      HOME_ASSISTANT_CONVERSATION_SCOPE,
+      { kind: 'thread', threadId: 'T-A' },
       { transport: 'opencode', sessionId: 'ses-1' },
       'contract-a',
       'runtime-a',
     )
     await store.writeSession(
-      { kind: 'project', projectId: 'P-A' },
+      { kind: 'thread', threadId: 'T-B' },
       { transport: 'codex', sessionId: 'project-a' },
       'contract-a',
       'runtime-a',
     )
-    await store.writeSession(
-      { kind: 'project', projectId: 'P-项目二' },
-      { transport: 'claude', sessionId: 'project-b' },
-      'contract-a',
-      'runtime-a',
-    )
     expect(
-      await store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE, 'contract-a', 'runtime-a'),
+      await store.readSession({ kind: 'thread', threadId: 'T-A' }, 'contract-a', 'runtime-a'),
     ).toEqual({
       transport: 'opencode',
       sessionId: 'ses-1',
     })
     expect(
-      await store.readSession({ kind: 'project', projectId: 'P-A' }, 'contract-a', 'runtime-a'),
+      await store.readSession({ kind: 'thread', threadId: 'T-B' }, 'contract-a', 'runtime-a'),
     ).toEqual({ transport: 'codex', sessionId: 'project-a' })
-    expect(
-      await store.readSession(
-        { kind: 'project', projectId: 'P-项目二' },
-        'contract-a',
-        'runtime-a',
-      ),
-    ).toEqual({ transport: 'claude', sessionId: 'project-b' })
-
-    expect(await Bun.file(projectSessionPath('P-A')).exists()).toBe(true)
+    expect(await Bun.file(threadManifestPath('T-A')).exists()).toBe(true)
+    expect(await store.readThread({ kind: 'thread', threadId: 'T-A' })).toMatchObject({
+      threadId: 'T-A',
+      origin: { eventId: 'EV-A' },
+      eventIds: ['EV-A'],
+      epochs: [{ epoch: 1, transport: 'opencode', sessionId: 'ses-1', endedAt: null }],
+    })
   })
 
-  test('isolates and discards malformed session metadata', async () => {
+  test('isolates malformed Thread runtime metadata without affecting event truth', async () => {
     const store = createAssistantConversationStore(temporaryRoot)
-    await mkdir(join(homeSessionPath, '..'), { recursive: true })
-    await Bun.write(homeSessionPath, '{not-json')
+    const path = threadManifestPath('T-broken')
+    await mkdir(join(path, '..'), { recursive: true })
+    await Bun.write(path, '{not-json')
 
-    expect(await store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE)).toBeNull()
-    expect(await Bun.file(homeSessionPath).exists()).toBe(false)
+    expect(await store.readSession({ kind: 'thread', threadId: 'T-broken' })).toBeNull()
+    expect(await Bun.file(path).exists()).toBe(false)
   })
 
-  test('invalidates a session created under another Assistant contract', async () => {
-    const store = createAssistantConversationStore(temporaryRoot)
+  test('rotates an incompatible Session while retaining its bounded handoff', async () => {
+    const store = createAssistantConversationStore(temporaryRoot, {
+      now: sequenceClock([
+        '2026-07-28T00:00:00Z',
+        '2026-07-28T00:01:00Z',
+        '2026-07-28T00:02:00Z',
+        '2026-07-28T00:03:00Z',
+      ]),
+    })
+    const scope = { kind: 'thread', threadId: 'T-contract' } as const
+    await registerThread(store, scope.threadId, 'EV-contract')
+    await store.writeSession(scope, { transport: 'codex', sessionId: 'thread-old' }, 'contract-old')
+
+    expect(await store.readSession(scope, 'contract-current')).toBeNull()
+    expect(await store.readThread(scope)).toMatchObject({
+      epochs: [
+        {
+          epoch: 1,
+          sessionId: 'thread-old',
+          closeReason: 'contract_changed',
+          handoffMarkdown: expect.stringContaining('Continue from durable Thread events'),
+        },
+      ],
+    })
+
     await store.writeSession(
-      HOME_ASSISTANT_CONVERSATION_SCOPE,
-      { transport: 'codex', sessionId: 'thread-old' },
-      'contract-old',
+      scope,
+      { transport: 'codex', sessionId: 'thread-new' },
+      'contract-current',
     )
-
-    expect(
-      await store.readSession(HOME_ASSISTANT_CONVERSATION_SCOPE, 'contract-current'),
-    ).toBeNull()
-    expect(await Bun.file(homeSessionPath).exists()).toBe(false)
+    expect((await store.readThread(scope))?.epochs).toHaveLength(2)
+    expect((await store.readThread(scope))?.epochs.at(-1)).toMatchObject({
+      epoch: 2,
+      sessionId: 'thread-new',
+      endedAt: null,
+    })
   })
 
   test('ignores only a concurrently appended unterminated event tail', async () => {
@@ -217,3 +227,21 @@ describe('AssistantConversationStore session cache', () => {
     ])
   })
 })
+
+async function registerThread(
+  store: ReturnType<typeof createAssistantConversationStore>,
+  threadId: string,
+  eventId: string,
+) {
+  return store.ensureThread({
+    threadId,
+    createdAt: '2026-07-28T00:00:00Z',
+    origin: { eventId, projectId: null, goalId: null },
+    eventIds: [eventId],
+  })
+}
+
+function sequenceClock(values: readonly string[]) {
+  let index = 0
+  return () => new Date(values[Math.min(index++, values.length - 1)] ?? '2026-07-28T00:00:00Z')
+}

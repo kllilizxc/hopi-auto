@@ -483,6 +483,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           return json(
             {
               eventId: event.attributes.id,
+              threadId: event.attributes.threadId,
               status: (await runtime.workspace.readEvent(event.attributes.id))?.attributes.status,
             },
             202,

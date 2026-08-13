@@ -11,6 +11,9 @@ export type Responsibility = 'planner' | 'generator' | 'reviewer'
 export type ConfigurableAgentRole = 'assistant' | Responsibility
 export type PassResult = 'success' | 'reject' | 'attention' | 'fail' | 'replan'
 export type RunAttemptStatus = 'queued' | 'running' | 'finished' | 'interrupted'
+export type RunProtocol = 'legacy_outcome' | 'report'
+export type RunWorkspaceMode = 'none' | 'read_only' | 'isolated_write'
+export type RunTermination = 'normal' | 'cancelled' | 'interrupted' | 'crashed' | 'timed_out'
 export type CodingAgentTransport = 'codex' | 'claude' | 'opencode'
 export type CodingReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
 
@@ -138,6 +141,7 @@ export type ProjectDirectorySelection =
 
 export interface InboxEventView {
   id: string
+  threadId?: string
   receivedAt: string
   status: 'pending' | 'handled'
   source: 'user' | 'system'
@@ -372,20 +376,79 @@ export interface RunAttemptSummary {
   workId: string
   runId: string
   responsibility: Responsibility
+  protocol: RunProtocol
+  profile: Responsibility
+  workspaceMode: RunWorkspaceMode
+  instructionMarkdown: string
+  inputRefs: string[]
+  baseChangeSetId: string | null
+  workHash: string | null
+  requestedExecution: RunExecutionIdentity | null
   execution: {
     transport: AgentRuntimeTransport
+    provider: AgentRuntimeTransport
     model: string | null
     reasoningEffort: CodingReasoningEffort | null
+    permissionBoundary: 'bounded' | 'unrestricted'
   } | null
+  sessionEpochs: RunSessionEpoch[]
   requestedAt: string
   startedAt: string | null
   endedAt: string | null
   status: RunAttemptStatus
+  termination: RunTermination | null
   result: PassResult | null
   summary: string | null
+  reportMarkdown: string | null
   exitCode: number | null
   application: string | null
+  changeSetId: string | null
   diagnostics?: RunAttemptDiagnostics | null
+}
+
+export interface RunExecutionIdentity {
+  transport: AgentRuntimeTransport
+  provider: AgentRuntimeTransport
+  model: string | null
+  reasoningEffort: CodingReasoningEffort | null
+  permissionBoundary: 'bounded' | 'unrestricted'
+}
+
+export interface RunSessionEpoch {
+  epoch: number
+  transport: CodingAgentTransport
+  sessionId: string
+  startedAt: string
+  endedAt: string | null
+  closeReason: string | null
+  handoffMarkdown: string | null
+}
+
+export interface RunChangeSet {
+  id: string
+  projectId: string
+  goalId: string
+  workId: string
+  producerRunId: string
+  disposition: 'unaccepted'
+  createdAt: string
+  repos: Array<{
+    repoId: string
+    baseCommit: string
+    resultCommit: string
+    patchPath: string
+    contentHash: string
+  }>
+  manifestHash: string
+}
+
+export interface RunArtifactFacts {
+  preserved: Array<{
+    reference: string
+    kind: 'file' | 'directory'
+    sizeBytes: number
+  }>
+  unavailable: Array<{ reference: string; reason: string }>
 }
 
 export interface RunTokenUsage {
@@ -483,6 +546,8 @@ export type RunAttemptEvent =
 
 export interface RunAttemptDetail extends RunAttemptSummary {
   runPrompt: string | null
+  changeSet: RunChangeSet | null
+  artifacts: RunArtifactFacts
 }
 
 export interface EvidenceView {
@@ -493,6 +558,68 @@ export interface EvidenceView {
   owner: string
   artifacts: string[]
   body: string
+}
+
+export type DeliveryOperationIntent =
+  | {
+      kind: 'baseline_integration'
+      changeSetId: string
+    }
+  | {
+      kind: 'archive'
+      changeSetId: string
+      outputName: string
+    }
+
+export type DeliveryOperationResult =
+  | {
+      kind: 'baseline_integrated'
+      changeSetId: string
+      repos: Array<{
+        repoId: string
+        expectedBase: string
+        resultCommit: string
+        observedCommit: string
+      }>
+    }
+  | {
+      kind: 'baseline_conflict'
+      changeSetId: string
+      summary: string
+      repos: Array<{
+        repoId: string
+        expectedBase: string
+        resultCommit: string
+        observedCommit: string
+      }>
+    }
+  | {
+      kind: 'archive_created'
+      changeSetId: string
+      path: string
+      contentHash: string
+      size: number
+    }
+  | {
+      kind: 'operation_failed'
+      summary: string
+    }
+
+export interface DeliveryOperationView {
+  id: string
+  projectId: string
+  goalId: string
+  workId: string | null
+  idempotencyKey: string
+  requiredForGoal: boolean
+  intent: DeliveryOperationIntent
+  status: 'proposed' | 'executing' | 'succeeded' | 'failed' | 'cancelled'
+  proposedByEventId: string
+  approvedByEventId: string | null
+  proposedAt: string
+  startedAt: string | null
+  endedAt: string | null
+  result: DeliveryOperationResult | null
 }
 
 export interface GoalDetail {
@@ -510,6 +637,7 @@ export interface GoalDetail {
   attentions: AttentionView[]
   projectAttention: AttentionView | null
   evidence: EvidenceView[]
+  operations: DeliveryOperationView[]
 }
 
 export interface GoalBoardDetail {
@@ -518,6 +646,7 @@ export interface GoalBoardDetail {
   works: WorkCardView[]
   attentions: AttentionSummaryView[]
   projectAttention: AttentionView | null
+  operations: DeliveryOperationView[]
 }
 
 export interface GoalDocsDetail {

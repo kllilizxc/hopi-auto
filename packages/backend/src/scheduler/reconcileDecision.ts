@@ -39,6 +39,9 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
     (work) => !isWorkTerminal(work.attributes),
   )
   if (nonterminal.length === 0) {
+    if (runtime.supervisorManagedGoal || (runtime.supervisorManagedWorkIds?.size ?? 0) > 0) {
+      return { kind: 'wait', reasons: ['awaiting_supervisor_completion'] }
+    }
     return { kind: 'ensure_planning' }
   }
 

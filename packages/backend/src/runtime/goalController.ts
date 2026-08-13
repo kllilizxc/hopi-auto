@@ -80,6 +80,12 @@ export interface GoalController {
     workId: string,
     input: { sourceEventId: string; content: string },
   ): Promise<WorkDocument>
+  completeWork(
+    goalId: string,
+    workId: string,
+    input: { sourceEventId: string; decision: string },
+  ): Promise<WorkDocument>
+  completeGoal(goalId: string, input: { decision: string }): Promise<GoalDocument>
   cancelWork(goalId: string, workId: string): Promise<readonly WorkDocument[]>
   cancelGoal(goalId: string): Promise<GoalDocument>
   reopenGoal(
@@ -489,6 +495,82 @@ export function createGoalController(
           content: renderWorkDocument(next),
         },
       })
+      return next
+    },
+    async completeWork(goalId, workId, input) {
+      const goalPackage = await store.readPackage(goalId)
+      const work = goalPackage.works.get(workId)
+      if (!work || isWorkTerminal(work.attributes)) {
+        throw new GoalControllerError(`Cannot complete missing or terminal Work: ${workId}`)
+      }
+      if (
+        work.attributes.dependsOn.some(
+          (dependencyId) => goalPackage.works.get(dependencyId)?.attributes.stage !== 'done',
+        )
+      ) {
+        throw new GoalControllerError(
+          `Cannot complete Work with incomplete dependencies: ${workId}`,
+        )
+      }
+      if (
+        goalPackage.goal.attributes.lifecycle !== 'active' &&
+        goalPackage.goal.attributes.lifecycle !== 'paused'
+      ) {
+        throw new GoalControllerError(
+          `Cannot complete Work in ${goalPackage.goal.attributes.lifecycle} Goal: ${workId}`,
+        )
+      }
+      const decision = input.decision.trim()
+      if (!decision) throw new GoalControllerError('Work completion decision cannot be empty')
+      const path = store.paths.workDocument(goalId, workId)
+      const source = await Bun.file(store.paths.absolute(path)).text()
+      const ownerMessages = appendProjectOwnerMessage(work.attributes.ownerMessages, {
+        recordedAt: now().toISOString(),
+        sourceEventId: input.sourceEventId,
+        content: `Completion decision: ${decision}`,
+      })
+      const next: WorkDocument = {
+        ...work,
+        attributes: {
+          ...work.attributes,
+          stage: 'done',
+          ownerMessages: [...ownerMessages],
+        },
+      }
+      await store.publishGoal(goalId, {
+        supportingWrites: [],
+        gateWrite: {
+          path,
+          expectedHash: await hashBytes(new TextEncoder().encode(source)),
+          content: renderWorkDocument(next),
+        },
+      })
+      return next
+    },
+    async completeGoal(goalId, input) {
+      const goalPackage = await store.readPackage(goalId)
+      const goal = goalPackage.goal
+      if (goal.attributes.lifecycle !== 'active' && goal.attributes.lifecycle !== 'paused') {
+        throw new GoalControllerError(
+          `Only an active or paused Goal can complete from ${goal.attributes.lifecycle}`,
+        )
+      }
+      const nonterminal = [...goalPackage.works.values()].filter(
+        (work) => !isWorkTerminal(work.attributes),
+      )
+      if (nonterminal.length > 0) {
+        throw new GoalControllerError(
+          `Cannot complete Goal with nonterminal Work: ${nonterminal.map((work) => work.attributes.id).join(', ')}`,
+        )
+      }
+      const decision = input.decision.trim()
+      if (!decision) throw new GoalControllerError('Goal completion decision cannot be empty')
+      const next: GoalDocument = {
+        ...goal,
+        attributes: { ...goal.attributes, lifecycle: 'done' },
+        body: `${goal.body.trimEnd()}\n\n## Completion decision\n\n${decision}\n`,
+      }
+      await replaceGoal(store, goalId, next)
       return next
     },
     async cancelWork(goalId, workId) {

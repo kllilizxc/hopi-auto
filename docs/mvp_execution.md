@@ -1,5 +1,7 @@
 # HOPI MVP Execution
 
+Status: fixed-pipeline implementation baseline; not current product authority. See `mvp_design.md`.
+
 Status: forward execution authority
 Last updated: 2026-07-30
 

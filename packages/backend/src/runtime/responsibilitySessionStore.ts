@@ -29,6 +29,7 @@ export interface ResponsibilitySessionKey {
   projectId: string
   goalId: string
   workId: string
+  runId: string
   responsibility: Responsibility
 }
 
@@ -106,7 +107,13 @@ export function createResponsibilitySessionStore(homeRoot: string): Responsibili
     const assignmentHash = assignmentHashSchema.parse(scope.assignmentHash)
     const runtimeDigest = runtimeDigestSchema.parse(scope.runtimeDigest)
     const responsibility = z.enum(RESPONSIBILITIES).parse(key.responsibility)
-    const assignmentRoot = join(workRoot(key), responsibility, `assignment-${assignmentHash}`)
+    const runId = stableIdSchema.parse(key.runId)
+    const assignmentRoot = join(
+      workRoot(key),
+      `run-${runId}`,
+      responsibility,
+      `assignment-${assignmentHash}`,
+    )
     const runtimeRoot = join(assignmentRoot, `runtime-${runtimeDigest}`)
     return {
       contractRevision,

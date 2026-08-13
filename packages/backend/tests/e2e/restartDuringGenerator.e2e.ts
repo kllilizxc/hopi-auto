@@ -43,7 +43,11 @@ try {
   const firstUrl = `http://127.0.0.1:${firstServer.port}`
   await requestJson(firstUrl, '/api/projects', {
     method: 'POST',
-    body: { projectId: PROJECT_ID, repoId: 'primary', repoPath: repoRoot },
+    body: {
+      projectId: PROJECT_ID,
+      primaryRepoId: 'primary',
+      repos: [{ repoId: 'primary', repoPath: repoRoot }],
+    },
   })
   await requestJson(firstUrl, `/api/projects/${PROJECT_ID}/goals`, {
     method: 'POST',

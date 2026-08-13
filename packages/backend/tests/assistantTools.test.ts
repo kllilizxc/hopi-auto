@@ -17,6 +17,7 @@ import {
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+import { createDeliveryOperationStore } from '../src/runtime/deliveryOperationStore'
 import { createGoalController } from '../src/runtime/goalController'
 import { createPreviewManager } from '../src/runtime/previewManager'
 import { type RunAttemptStore, createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -1077,6 +1078,121 @@ describe('Assistant HOPI tools', () => {
     expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(1)
   })
 
+  test('requests free-form Runs and applies explicit Work and Goal completion decisions', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-supervisor',
+      content: 'Inspect, then accept the current result.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+
+    const requested = await fixture.tools.executeForEvent('EV-supervisor', 'hopi_control_work', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'plan-initial',
+      action: {
+        kind: 'run',
+        profile: 'reviewer',
+        workspaceMode: 'read_only',
+        instructionMarkdown: 'Inspect current authority and report whether it is sufficient.',
+        refs: ['goal://G-1'],
+      },
+    })
+    expect(requested.value).toMatchObject({
+      effect: {
+        kind: 'work_run_requested',
+        runId: 'R-requested-1',
+        runDisposition: 'scheduled',
+      },
+    })
+    expect(fixture.requestedRunOptions).toEqual([
+      {
+        allowSuccessor: true,
+        directive: {
+          protocol: 'report',
+          profile: 'reviewer',
+          workspaceMode: 'read_only',
+          instructionMarkdown: 'Inspect current authority and report whether it is sufficient.',
+          refs: ['goal://G-1'],
+          baseChangeSetId: null,
+        },
+      },
+    ])
+
+    await fixture.tools.executeForEvent('EV-supervisor', 'hopi_control_work', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'plan-initial',
+      action: { kind: 'complete', decision: 'The current planning objective is fully resolved.' },
+    })
+    const completed = await fixture.tools.executeForEvent('EV-supervisor', 'hopi_control_goal', {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      action: { kind: 'complete', decision: 'The current Goal acceptance meaning is satisfied.' },
+    })
+    const goalPackage = await fixture.goalStore.readPackage('G-1')
+    expect(goalPackage.works.get('plan-initial')?.attributes.stage).toBe('done')
+    expect(goalPackage.goal.attributes.lifecycle).toBe('done')
+    expect(goalPackage.goal.body).toContain('The current Goal acceptance meaning is satisfied.')
+    expect(completed.value).toMatchObject({
+      effect: { kind: 'goal_complete' },
+      lifecycle: 'done',
+    })
+  })
+
+  test('proposes a typed Operation idempotently from the durable Inbox event', async () => {
+    const fixture = await setup()
+    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.workspace.receiveSystemEvent({
+      eventId: 'EV-operation',
+      content: 'The Goal explicitly requires a delivery archive.',
+      context: { projectId: 'P-1', goalId: 'G-1' },
+    })
+    const request = {
+      projectId: 'P-1',
+      goalId: 'G-1',
+      action: {
+        kind: 'propose' as const,
+        workId: 'plan-initial',
+        idempotencyKey: 'goal-delivery-archive',
+        requiredForGoal: true,
+        intent: {
+          kind: 'archive' as const,
+          changeSetId: 'CS-R-1',
+          outputName: 'delivery.zip',
+        },
+      },
+    }
+
+    const first = await fixture.tools.executeForEvent(
+      'EV-operation',
+      'hopi_control_operation',
+      request,
+    )
+    const repeated = await fixture.tools.executeForEvent(
+      'EV-operation',
+      'hopi_control_operation',
+      request,
+    )
+
+    expect(first).toMatchObject({
+      changed: true,
+      value: {
+        effect: {
+          kind: 'operation_proposed',
+          operationId: expect.stringMatching(/^OP-[a-f0-9]{24}$/),
+        },
+        operation: {
+          status: 'proposed',
+          requiredForGoal: true,
+          proposedByEventId: 'EV-operation',
+        },
+      },
+    })
+    expect(repeated).toMatchObject({ changed: false, value: first.value })
+  })
+
   test('requests one Work continuation without mutating Attention', async () => {
     const fixture = await setup()
     await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
@@ -1879,6 +1995,7 @@ describe('Assistant HOPI tools', () => {
       'P-2',
       fixture.publisher,
     )
+    const delegatedController = createGoalController(delegatedStore, {})
     fixture.projects.set('P-2', {
       projectId: 'P-2',
       primaryRepoId: delegatedLink.primaryRepoId,
@@ -1886,7 +2003,7 @@ describe('Assistant HOPI tools', () => {
       projectRoot: delegatedLink.integrationRoot,
       sourceRoot: delegatedLink.integrationRoot,
       store: delegatedStore,
-      controller: createGoalController(delegatedStore, {}),
+      controller: delegatedController,
       reconciler: {
         interruptRuns() {},
         async interruptQueuedRuns() {
@@ -1903,6 +2020,21 @@ describe('Assistant HOPI tools', () => {
         },
         async requestWorkRun() {
           return { runId: 'R-requested-delegation', disposition: 'scheduled' as const }
+        },
+        completeWork: (goalId, workId, input) =>
+          delegatedController.completeWork(goalId, workId, input),
+        completeGoal: (goalId, input) => delegatedController.completeGoal(goalId, input),
+        async proposeOperation() {
+          throw new Error('Unexpected delegated Operation proposal')
+        },
+        async executeOperation() {
+          throw new Error('Unexpected delegated Operation execution')
+        },
+        async cancelOperation() {
+          throw new Error('Unexpected delegated Operation cancellation')
+        },
+        async listGoalOperations() {
+          return []
         },
       },
     })
@@ -2740,6 +2872,7 @@ async function setup(
   await git(repoRoot, ['add', '.'])
   await git(repoRoot, ['commit', '-m', 'initial'])
   const homeRoot = join(temporaryRoot, 'home')
+  const deliveryOperations = createDeliveryOperationStore(homeRoot)
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(homeRoot, publisher)
   const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
@@ -2753,6 +2886,7 @@ async function setup(
   const goalEffects: Array<{ eventId: string; projectId: string; goalId: string }> = []
   const projectDispatchEffects: Array<{ eventId: string; projectId: string }> = []
   let requestedRunSequence = 0
+  const requestedRunOptions: unknown[] = []
   const projects = new Map([
     [
       'P-1',
@@ -2782,13 +2916,38 @@ async function setup(
           async settledFailureWorkIds() {
             return new Set<string>()
           },
-          async requestWorkRun() {
+          async requestWorkRun(_goalId: string, _workId: string, requestOptions?: unknown) {
+            requestedRunOptions.push(requestOptions)
             requestedRunSequence += 1
             return {
               runId: `R-requested-${requestedRunSequence}`,
               disposition: 'scheduled' as const,
             }
           },
+          completeWork: (
+            goalId: string,
+            workId: string,
+            input: { sourceEventId: string; decision: string },
+          ) => controller.completeWork(goalId, workId, input),
+          completeGoal: (goalId: string, input: { decision: string }) =>
+            controller.completeGoal(goalId, input),
+          proposeOperation: (
+            goalId: string,
+            input: Parameters<typeof deliveryOperations.propose>[0] & {
+              proposedByEventId: string
+            },
+          ) =>
+            deliveryOperations.propose({
+              ...input,
+              projectId: 'P-1',
+              goalId,
+            }),
+          async executeOperation() {
+            throw new Error('Operation execution is not configured in Assistant tool fixture')
+          },
+          cancelOperation: (_goalId: string, operationId: string, eventId: string) =>
+            deliveryOperations.cancel(operationId, eventId),
+          listGoalOperations: (goalId: string) => deliveryOperations.listGoal('P-1', goalId),
         },
       },
     ],
@@ -2860,6 +3019,7 @@ async function setup(
     topologyChangedEventIds,
     goalEffects,
     projectDispatchEffects,
+    requestedRunOptions,
     projects,
     publisher,
   }

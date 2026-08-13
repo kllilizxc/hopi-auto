@@ -22,12 +22,16 @@ export type WorkReadinessReason =
   | 'live_run'
   | 'capacity'
   | 'no_responsibility'
+  | 'awaiting_supervisor'
 
 export interface WorkRuntimeFacts {
   projectEligible: boolean
   liveRunWorkIds: ReadonlySet<string>
   settledFailureWorkIds: ReadonlySet<string>
   passCapacity: Record<'planner' | 'generator' | 'reviewer', boolean>
+  requestedRunProfiles?: ReadonlyMap<string, 'planner' | 'generator' | 'reviewer'>
+  supervisorManagedWorkIds?: ReadonlySet<string>
+  supervisorManagedGoal?: boolean
   now?: Date
 }
 
@@ -61,7 +65,10 @@ export function deriveWorkProjection(
 ): WorkProjection {
   const goal = goalPackage.goal.attributes
   const now = runtime.now ?? new Date()
-  const responsibility = responsibilityFor(work.kind, work.stage)
+  const requestedProfile = runtime.requestedRunProfiles?.get(work.id)
+  const supervisorManaged = runtime.supervisorManagedWorkIds?.has(work.id) ?? false
+  const responsibility =
+    requestedProfile ?? (supervisorManaged ? null : responsibilityFor(work.kind, work.stage))
   const failedPredicates: WorkReadinessReason[] = []
   const terminal = isWorkTerminal(work)
   const cancelled = work.stage === 'cancelled'
@@ -88,7 +95,9 @@ export function deriveWorkProjection(
   if (responsibility && runtime.passCapacity[responsibility] === false) {
     failedPredicates.push('capacity')
   }
-  if (!terminal && !responsibility) failedPredicates.push('no_responsibility')
+  if (!terminal && !responsibility) {
+    failedPredicates.push(supervisorManaged ? 'awaiting_supervisor' : 'no_responsibility')
+  }
 
   const ready = failedPredicates.length === 0
   return {

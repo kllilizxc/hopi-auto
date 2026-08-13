@@ -53,6 +53,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .hopi/docs/
 docs/*
 !docs/mvp_design.md
+!docs/mvp_evolution_acceptance.md
 !docs/mvp_assistant.md
 !docs/mvp_alignment_plan.md
 !docs/mvp_document_model.md

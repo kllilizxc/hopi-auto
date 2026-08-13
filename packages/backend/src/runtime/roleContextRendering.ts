@@ -66,20 +66,28 @@ export function renderContextManifest(
     operatorPreference?: { path: string; digest: string }
   },
 ) {
+  const reportRun = input.directive?.protocol === 'report'
   return [
-    '# HOPI Responsibility Context',
+    reportRun ? '# HOPI Run Context' : '# HOPI Responsibility Context',
     '',
     `- Project: ${input.projectId}`,
     `- Goal: ${input.goalId}`,
     `- Work: ${input.workId}`,
     `- Run: ${input.runId}`,
-    `- Responsibility: ${input.responsibility}`,
+    ...(reportRun
+      ? [
+          `- Protocol: ${input.directive?.protocol}`,
+          `- Execution profile: ${input.directive?.profile}`,
+          `- Workspace mode: ${input.directive?.workspaceMode}`,
+          `- Base ChangeSet: ${input.directive?.baseChangeSetId ?? 'none'}`,
+        ]
+      : [`- Responsibility: ${input.responsibility}`]),
     `- Primary authority release snapshot: ${context.releaseHead}`,
     '- Immutable authority root: $HOPI_AUTHORITY_ROOT',
     '- Writable proposal root: $HOPI_PROPOSAL_ROOT',
     '- Writable Run artifact output: $HOPI_ARTIFACT_DIR',
     '- Proposal capabilities: $HOPI_PROPOSAL_CAPABILITIES_FILE',
-    '- Terminal result schema: $HOPI_RESULT_SCHEMA_FILE',
+    ...(reportRun ? [] : ['- Terminal result schema: $HOPI_RESULT_SCHEMA_FILE']),
     '- Responsibility session workspace: $HOPI_SESSION_WORKSPACE',
     '- Reusable runtime cache: $HOPI_CACHE_DIR',
     `- Project primary Repo: ${context.primaryRepoId}`,
@@ -120,8 +128,15 @@ export function renderContextManifest(
       ? ['', '## Selected Evidence', '', ...context.evidencePaths.map((path) => `- ${path}`)]
       : []),
     '',
-    'Files under the authority root are immutable inputs. The proposal is never canonical until the Coordinator validates and publishes it.',
-    'The proposal root is an initially empty sparse overlay. Copy in only a document you intend to add or replace; an absent authority path means unchanged, never deleted.',
+    'Files under the authority root are immutable inputs.',
+    ...(reportRun
+      ? [
+          'This Run cannot mutate canonical Goal documents. Its durable semantic output is a natural-language Report.',
+        ]
+      : [
+          'The proposal is never canonical until the Coordinator validates and publishes it.',
+          'The proposal root is an initially empty sparse overlay. Copy in only a document you intend to add or replace; an absent authority path means unchanged, never deleted.',
+        ]),
     '',
   ].join('\n')
 }
@@ -152,6 +167,9 @@ export function renderResponsibilityPrompt(
   },
   assignment: RunAssignment,
 ) {
+  if (input.directive?.protocol === 'report') {
+    return renderReportRunPrompt(input, paths, assignment)
+  }
   const boundary = [
     '## Execution Boundary',
     '',
@@ -219,6 +237,137 @@ export function renderResponsibilityPrompt(
       '## Result',
       '',
       'Write one object matching $HOPI_RESULT_SCHEMA_FILE to $HOPI_OUTCOME_FILE.',
+      '',
+    ]),
+  ].join('\n')
+}
+
+function renderReportRunPrompt(
+  input: PrepareRoleContextInput,
+  paths: {
+    runRoot: string
+    contextFile: string
+    artifactManifestFile?: string
+    authorityRoot: string
+    proposalRoot: string
+    artifactOutputDir: string
+    proposalCapabilitiesFile: string
+    resultSchemaFile: string
+    resultFile: string
+    bootstrapSourceRoot?: string
+    agentsPath: string
+    attentionRoot: string
+    primaryRepoId: string
+    repoRoots: readonly RoleRepoRoot[]
+    repoGuidance: readonly { repoId: string; path: string }[]
+    reposFile: string
+    apiOrigin?: string
+    operatorPreferenceFile?: string
+    browserTargetsFile?: string
+    hasImages: boolean
+  },
+  assignment: RunAssignment,
+) {
+  const directive = input.directive
+  if (!directive || directive.protocol !== 'report') {
+    throw new Error('A Report Run prompt requires an explicit report directive')
+  }
+  const ownerMessages =
+    assignment.work.ownerMessages.length > 0
+      ? [
+          '### Project Owner Messages',
+          '',
+          ...assignment.work.ownerMessages.flatMap((message) => [
+            `${message.recordedAt} · source ${message.sourceEventId}`,
+            '',
+            message.content,
+            '',
+          ]),
+        ]
+      : []
+  const workspacePolicy =
+    directive.workspaceMode === 'isolated_write'
+      ? [
+          'You may inspect and modify only the supplied isolated Repo worktrees.',
+          'Source changes remain an unaccepted ChangeSet until a later explicit Operation accepts them.',
+        ]
+      : directive.workspaceMode === 'read_only'
+        ? ['You may inspect the supplied Repo projection, but must not modify Project source.']
+        : [
+            'Project source is outside this Run boundary. Work only from staged authority and Run data.',
+          ]
+  const supporting = renderCurrentAssignment('generator', assignment).supporting
+  return [
+    '# HOPI Run',
+    '',
+    ...assignmentSection('primary-task', [
+      '## Run Instruction',
+      '',
+      directive.instructionMarkdown.trim(),
+      '',
+      `Execution profile: ${directive.profile}`,
+      'The profile selects model/runtime configuration only. It does not assign a fixed business role or state transition.',
+      `Workspace mode: ${directive.workspaceMode}`,
+      ...workspacePolicy,
+      ...(directive.refs.length > 0
+        ? [
+            '',
+            'Caller-supplied references:',
+            ...directive.refs.map((reference) => `- ${reference}`),
+          ]
+        : []),
+      ...(directive.baseChangeSetId ? ['', `Base ChangeSet: ${directive.baseChangeSetId}`] : []),
+      '',
+      `## Work: ${assignment.work.title}`,
+      `Source: $HOPI_AUTHORITY_ROOT/${assignment.work.path}`,
+      `Kind and compatibility stage: ${assignment.work.kind} / ${assignment.work.stage}`,
+      '',
+      '<work>',
+      assignment.work.body.trim(),
+      '</work>',
+      '',
+      `## Goal: ${assignment.goal.title}`,
+      `Source: $HOPI_AUTHORITY_ROOT/${assignment.goal.path}`,
+      '',
+      '<goal>',
+      assignment.goal.body.trim(),
+      '</goal>',
+      '',
+      ...ownerMessages,
+    ]),
+    ...assignmentSection('execution-boundary', [
+      '## Execution Boundary',
+      '',
+      'Current execution environment:',
+      EXECUTION_ENVELOPE_MARKER,
+      '',
+      `Working directory: ${directive.workspaceMode === 'isolated_write' ? '$HOPI_PRIMARY_REPO_ROOT' : '$HOPI_SESSION_WORKSPACE'}`,
+      'Authority root: $HOPI_AUTHORITY_ROOT',
+      'Context manifest: $HOPI_CONTEXT_FILE',
+      'Run artifact output: $HOPI_ARTIFACT_DIR',
+      'Repo manifest: $HOPI_REPOS_FILE',
+      'Run scratch: $HOPI_RUN_SCRATCH',
+      'Shared cache: $HOPI_CACHE_DIR',
+      ...(paths.artifactManifestFile ? ['Evidence artifacts: $HOPI_EVIDENCE_ARTIFACTS_FILE'] : []),
+      ...paths.repoGuidance.map(
+        (guidance) => `Applicable Repo guidance ${guidance.repoId}: ${guidance.path}`,
+      ),
+      '',
+      'Canonical .hopi content and HOPI-managed Git metadata are immutable.',
+      'Do not write Goal proposals or infer a stage transition from the execution profile.',
+      '$HOPI_REPOS_FILE is the complete Project root map. Never scan parent or sibling directories.',
+      'Non-Preview external effects require explicit Work or operator authority.',
+      '',
+    ]),
+    ...assignmentSection('supporting-authority', [
+      ...supporting,
+      ...previousAttemptFacts(assignment.previousAttempt),
+    ]),
+    ...assignmentSection('required-result', [
+      '## Report',
+      '',
+      'Finish with a concise natural-language Markdown Report describing what you did, observed, changed, and recommend next.',
+      'Do not emit terminal JSON. The final response itself is the durable Run Report.',
       '',
     ]),
   ].join('\n')

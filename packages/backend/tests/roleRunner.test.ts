@@ -386,6 +386,52 @@ describe('ConfiguredRoleRunner', () => {
     expect(await Bun.file(fixture.context.resultFile).json()).toEqual(outcome)
   })
 
+  test('accepts a free-form Report without terminal JSON or an unrestricted boundary', async () => {
+    const fixture = await createFixture()
+    const report =
+      '# Findings\n\nThe current implementation already satisfies the requested behavior.'
+    const binary = await fakeClaude(
+      fixture.root,
+      `if (Bun.argv.includes("--json-schema")) throw new Error("Report Runs must not request a terminal schema")
+      console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-report"}))
+      console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-report",result:${JSON.stringify(report)}}))`,
+    )
+    const boundaries: string[] = []
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+      fullAccess: () => true,
+    })
+    const input = fixture.input('reviewer', fixture.repoRoot)
+
+    const result = await runner.run(
+      {
+        ...input,
+        protocol: 'report',
+        workspaceMode: 'read_only',
+        sourceRoots: [fixture.repoRoot],
+        context: { ...input.context, outcomeMode: 'freeform' },
+      },
+      {
+        onExecution: (execution) => {
+          boundaries.push(execution.permissionBoundary)
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      result: 'success',
+      summary: 'Findings',
+      termination: 'normal',
+      reportMarkdown: `${report}\n`,
+    })
+    expect(boundaries).toEqual(['bounded'])
+  })
+
   test('persists a validated Codex outcome from its adapter-owned final-message file', async () => {
     const fixture = await createFixture()
     const binary = await fakeCodex(
@@ -486,13 +532,48 @@ describe('ConfiguredRoleRunner', () => {
       },
     })
 
-    expect(result).toMatchObject({ result: 'fail', failureKind: 'operational' })
+    const report = result.reportMarkdown ?? ''
+    expect(report.includes('no terminal outcome')).toBe(false)
+    expect(result).toMatchObject({
+      result: 'fail',
+      failureKind: 'operational',
+      termination: 'normal',
+      reportMarkdown: expect.stringContaining('Please approve the plan.'),
+    })
     expect(result.summary).toContain('invalid vendor final response')
     expect(invalidations).toBe(0)
     expect(messages).toEqual([])
     expect(await Bun.file(join(fixture.runtimeScratchDir, 'recovery-prompt.txt')).exists()).toBe(
       false,
     )
+  })
+
+  test('creates a factual fallback Report when the provider returns no final language', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeClaude(
+      fixture.root,
+      'console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-empty"}))',
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+    })
+
+    const result = await runner.run(fixture.input('planner', fixture.proposalRoot))
+
+    expect(result).toMatchObject({
+      result: 'fail',
+      failureKind: 'operational',
+      termination: 'normal',
+      reportMarkdown: expect.stringContaining(
+        'Run exited without a structured responsibility outcome.',
+      ),
+    })
+    expect(result.summary).not.toContain('no terminal outcome')
   })
 
   test('keeps Claude task identity across resumed responsibility Attempts', async () => {
@@ -572,7 +653,7 @@ describe('ConfiguredRoleRunner', () => {
     ).not.toContain('# Prompt')
   })
 
-  test('does not rebuild a failed saved session inside the same Attempt', async () => {
+  test('does not guess Session invalidity from an unstructured provider exit', async () => {
     const fixture = await createFixture()
     const binary = await fakeCodex(
       fixture.root,
@@ -621,6 +702,78 @@ describe('ConfiguredRoleRunner', () => {
     expect(await Bun.file(join(fixture.runRoot, 'transcript.log')).text()).toContain(
       'saved thread not found',
     )
+  })
+
+  test('EV-002 rotates a context-exhausted Session Epoch inside the same Run', async () => {
+    const fixture = await createFixture()
+    const binary = await fakeClaude(
+      fixture.root,
+      `const marker = process.env.HOPI_RUN_SCRATCH + "/epoch-rotated"
+      const prompt = await Bun.stdin.text()
+      if (!(await Bun.file(marker).exists())) {
+        await Bun.write(marker, "yes")
+        await Bun.write("epoch-source.txt", "preserved across epochs\\n")
+        console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-epoch-1"}))
+        console.log(JSON.stringify({type:"result",subtype:"error_during_execution",is_error:true,session_id:"claude-epoch-1",result:"Maximum context length exceeded"}))
+      } else {
+        await Bun.write(process.env.HOPI_RUN_SCRATCH + "/epoch-2-prompt.txt", prompt)
+        const outcome = {result:"success",summary:"continued in the same Run",artifacts:[]}
+        console.log(JSON.stringify({type:"system",subtype:"init",session_id:"claude-epoch-2"}))
+        console.log(JSON.stringify({type:"result",subtype:"success",session_id:"claude-epoch-2",result:JSON.stringify(outcome),structured_output:outcome}))
+      }`,
+    )
+    const runner = new ConfiguredRoleRunner({
+      resolveConfig: () => ({
+        transport: 'claude',
+        binary,
+        cwdMode: 'root',
+        permissionMode: 'dontAsk',
+      }),
+    })
+    const sessions: string[] = []
+    const rotations: Array<{
+      reason: string
+      previousSessionId: string
+      handoffMarkdown: string
+    }> = []
+    let invalidations = 0
+    const input = fixture.input('generator', fixture.repoRoot)
+
+    const result = await runner.run(input, {
+      onSession: (session) => {
+        sessions.push(session.sessionId)
+      },
+      onSessionInvalid: () => {
+        invalidations += 1
+      },
+      onSessionRotate: (rotation) => {
+        rotations.push({
+          reason: rotation.reason,
+          previousSessionId: rotation.previousSession.sessionId,
+          handoffMarkdown: rotation.handoffMarkdown,
+        })
+      },
+    })
+
+    expect(result).toMatchObject({ result: 'success', summary: 'continued in the same Run' })
+    expect(sessions).toEqual(['claude-epoch-1', 'claude-epoch-2'])
+    expect(invalidations).toBe(1)
+    expect(rotations).toMatchObject([
+      {
+        reason: 'context_boundary',
+        previousSessionId: 'claude-epoch-1',
+        handoffMarkdown: expect.stringContaining(`- Run: ${input.runId}`),
+      },
+    ])
+    expect(await Bun.file(join(fixture.repoRoot, 'epoch-source.txt')).text()).toBe(
+      'preserved across epochs\n',
+    )
+    const continuation = await Bun.file(
+      join(fixture.runtimeScratchDir, 'epoch-2-prompt.txt'),
+    ).text()
+    expect(continuation).toContain('# Prompt')
+    expect(continuation).toContain('# Run Session Epoch handoff')
+    expect(continuation).toContain('same logical Run')
   })
 
   test('does not treat resumed model or tool content as a session failure', async () => {

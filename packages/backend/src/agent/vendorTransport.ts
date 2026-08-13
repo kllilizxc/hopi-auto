@@ -26,6 +26,7 @@ export interface TransportCommand {
 }
 
 export interface TransportContextBundle {
+  outcomeMode?: 'structured' | 'freeform'
   runRoot?: string
   runViewRoot?: string
   runtimeScratchDir: string
@@ -310,9 +311,10 @@ export async function resolveConfiguredTransportCommand(options: {
       '',
       '--disallowed-tools',
       NON_INTERACTIVE_CLAUDE_TOOLS.join(','),
-      '--json-schema',
-      JSON.stringify(roleOutcomeJsonSchema(options.input.role)),
     ]
+    if (options.bundle.outcomeMode !== 'freeform') {
+      cmd.push('--json-schema', JSON.stringify(roleOutcomeJsonSchema(options.input.role)))
+    }
     appendClaudeNonInteractivePermission(cmd)
     if (!options.fullAccess) {
       const accessibleDirs = new Set([

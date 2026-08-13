@@ -1,5 +1,8 @@
 # HOPI E2E Test Cases
 
+Status: historical Work-pipeline coverage. Current acceptance lives in
+`mvp_evolution_acceptance.md`.
+
 Status: executable runbook and coverage catalog
 Last updated: 2026-07-17
 

@@ -25,6 +25,7 @@ test('rejects incomplete Goal board projections instead of inventing empty Atten
       projectId: 'P-1',
       goal: { id: 'G-1' },
       works: [],
+      operations: [],
       projectAttention: null,
     }),
   ).toThrow('Goal board projection is incomplete')
@@ -34,6 +35,7 @@ test('rejects incomplete Goal board projections instead of inventing empty Atten
     goal: { id: 'G-1' },
     works: [],
     attentions: [],
+    operations: [],
     projectAttention: null,
   }
   expect(requireGoalBoardDetail(projection)).toBe(projection)

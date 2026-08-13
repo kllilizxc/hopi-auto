@@ -79,6 +79,24 @@ function completeProjectReconciler(reconciler: TestProjectReconciler): ProjectRe
     async interruptQueuedRuns() {
       return 0
     },
+    async completeWork() {
+      throw new Error('Unexpected Work completion in Coordinator test')
+    },
+    async completeGoal() {
+      throw new Error('Unexpected Goal completion in Coordinator test')
+    },
+    async proposeOperation() {
+      throw new Error('Unexpected Delivery Operation proposal in Coordinator test')
+    },
+    async executeOperation() {
+      throw new Error('Unexpected Delivery Operation execution in Coordinator test')
+    },
+    async cancelOperation() {
+      throw new Error('Unexpected Delivery Operation cancellation in Coordinator test')
+    },
+    async listGoalOperations() {
+      return []
+    },
     ...reconciler,
   }
 }

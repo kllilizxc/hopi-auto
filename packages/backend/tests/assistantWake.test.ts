@@ -514,6 +514,7 @@ function reviewerRejectSnapshot(
                   dependsOn: [],
                   contractRevision: 1,
                 },
+                body: 'Work',
                 path: '/tmp/G-1/works/W-1.md',
                 projection: null,
                 runtime: runtime([
@@ -554,6 +555,7 @@ function planningOutcomeSnapshot(): AssistantStateSnapshot {
                 dependsOn: [],
                 contractRevision: 1,
               },
+              body: 'Planning outcome',
               path: '/tmp/G-1/works/plan-initial.md',
               runtime: runtime([
                 attempt('R-plan-1', 'planner', 'finished', 'success', 'published'),

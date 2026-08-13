@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { AssistantModelRunner } from '../src/assistant/workspaceAssistant'
 import type { WorkspaceAttentionDocument } from '../src/domain/assistantWorkspaceDocuments'
 import { workspaceAttentionReference } from '../src/domain/attentionReference'
+import { inboxEventReference } from '../src/domain/inboxEventReference'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { type MvpRuntime, createMvpRuntime } from '../src/runtime/mvpRuntime'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
@@ -20,7 +21,7 @@ afterEach(async () => {
 })
 
 describe('Project Assistant wake and Attention E2E', () => {
-  test('continues one unresolved Attention revision through one native fork', async () => {
+  test('continues one unresolved Attention revision through one fresh supervision Thread', async () => {
     const calls: Array<{
       mode: string | undefined
       invocation: string | undefined
@@ -33,7 +34,7 @@ describe('Project Assistant wake and Attention E2E', () => {
           invocation: input.invocation,
           sessionId: input.session?.sessionId ?? null,
         })
-        if (input.invocation !== 'supervision') {
+        if (input.toolMode !== 'internal') {
           return {
             reply: 'I will supervise this Project.',
             session: codexSession('project-session'),
@@ -59,7 +60,7 @@ describe('Project Assistant wake and Attention E2E', () => {
 
       expect(calls).toEqual([
         { mode: 'main', invocation: 'speaking', sessionId: null },
-        { mode: 'internal', invocation: 'supervision', sessionId: 'project-session' },
+        { mode: 'internal', invocation: 'speaking', sessionId: null },
       ])
       const events = [...(await runtime.workspace.readWorkspace()).events.values()]
         .filter((event) => event.attributes.source === 'system')
@@ -79,7 +80,7 @@ describe('Project Assistant wake and Attention E2E', () => {
     }
   })
 
-  test('uses one persistent Project session for user speech and internal supervision', async () => {
+  test('isolates user speech and internal supervision in sibling Threads', async () => {
     const calls: Array<{ mode: string | undefined; sessionId: string | null }> = []
     const runner: AssistantModelRunner = {
       async run(input) {
@@ -114,7 +115,7 @@ describe('Project Assistant wake and Attention E2E', () => {
 
       expect(calls).toEqual([
         { mode: 'main', sessionId: null },
-        { mode: 'internal', sessionId: 'project-session' },
+        { mode: 'internal', sessionId: null },
       ])
       expect(
         (await runtime.workspace.readEvent(wakeEvent.attributes.id))?.attributes,
@@ -134,7 +135,7 @@ describe('Project Assistant wake and Attention E2E', () => {
     let receiptPrompt = ''
     const runner: AssistantModelRunner = {
       async run(input) {
-        if (input.invocation === 'supervision') {
+        if (input.toolMode === 'internal') {
           if (!runtime) throw new Error('Runtime is not bound')
           const preference = (await runtime.workspace.readWorkspace()).preference
           await runtime.assistantTools.execute(input.toolToken, 'hopi_write_preferences', {
@@ -182,7 +183,7 @@ describe('Project Assistant wake and Attention E2E', () => {
       })
       await runtime.assistant.process('EV-user-receipt')
 
-      expect(receiptPrompt).toContain('Confirmed actions completed by supervision forks')
+      expect(receiptPrompt).toContain('Confirmed actions completed by other Assistant Threads')
       expect(receiptPrompt).toContain('hopi_write_preferences')
       expect(await runtime.assistantConversation.readPendingActionReceipts(scope)).toEqual([])
     } finally {
@@ -201,14 +202,47 @@ describe('Project Assistant wake and Attention E2E', () => {
     try {
       await runtime.workspace.createAttention(attention('A-choice', 'Choose A or B.'))
       const homeId = (await runtime.workspace.readWorkspace()).homeId
-      await runtime.workspace.receiveEvent({
+      const project = runtime.projects.get('P-1')
+      if (!project) throw new Error('Project missing')
+      await project.store.createGoal({
+        goalId: 'G-1',
+        title: 'Choose',
+        objective: 'Choose A or B.',
+      })
+      const request = await runtime.workspace.receiveSystemEvent({
+        eventId: 'EV-choice-request',
+        content: 'The Goal needs a choice.',
+        context: { projectId: 'P-1', goalId: 'G-1' },
+      })
+      const attentionRef = workspaceAttentionReference(homeId, 'A-choice')
+      await runtime.workspace.stageAttentionRequest(request.attributes.id, {
+        attentionRefs: [attentionRef],
+      })
+      await runtime.workspace.handleEvent(request.attributes.id, {
+        reply: 'Choose A or B.',
+        disposition: 'notified',
+        expose: true,
+      })
+      const answer = await runtime.workspace.receiveEvent({
         eventId: 'EV-answer',
         content: 'Choose B.',
         context: {
           projectId: 'P-1',
-          attentionRefs: [`home:${homeId}/attention:A-choice`],
+          goalId: 'G-1',
+          attentionRefs: [attentionRef],
+          replyTo: inboxEventReference(homeId, request.attributes.id),
         },
       })
+      expect(answer.attributes).toMatchObject({
+        threadId: request.attributes.threadId,
+        context: {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          attentionRefs: [attentionRef],
+          replyTo: inboxEventReference(homeId, request.attributes.id),
+        },
+      })
+      await runtime.assistant.process('EV-answer')
       await runtime.assistant.process('EV-answer')
       expect(
         (await runtime.workspace.readWorkspace()).attentions.get('A-choice')?.attributes.resolvedAt,

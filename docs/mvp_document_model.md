@@ -1,5 +1,7 @@
 # HOPI MVP Document Model
 
+Status: Work-based implementation baseline; not current product authority. See `mvp_design.md`.
+
 Status: forward document and authority reference
 Last updated: 2026-07-29
 

@@ -16,7 +16,7 @@ afterEach(async () => {
 })
 
 describe('ResponsibilitySessionStore', () => {
-  test('retains one workspace and vendor session within a Work assignment', async () => {
+  test('retains one workspace and vendor session within a running Run', async () => {
     const root = await temporaryRoot()
     const store = createResponsibilitySessionStore(root)
     const generator = key('W-1', 'generator')
@@ -61,6 +61,28 @@ describe('ResponsibilitySessionStore', () => {
     await store.invalidateVendor(generator, assignment)
     expect((await store.open(generator, assignment)).session).toBeNull()
     expect(await Bun.file(join(first.workspaceDir, 'partial-proof.json')).exists()).toBe(true)
+  })
+
+  test('EV-001 starts a fresh provider Session and workspace for every successor Run', async () => {
+    const root = await temporaryRoot()
+    const store = createResponsibilitySessionStore(root)
+    const firstRun = key('W-1', 'generator', 'R-1')
+    const successorRun = key('W-1', 'generator', 'R-2')
+    const assignment = scope(1, 'a')
+    const first = await store.open(firstRun, assignment)
+    await Bun.write(join(first.workspaceDir, 'prior-run-only.txt'), 'old Run state')
+    await store.write(firstRun, assignment, {
+      transport: 'codex',
+      sessionId: 'settled-session',
+      executionKey: 'same-execution-contract',
+    })
+
+    const successor = await store.open(successorRun, assignment)
+
+    expect(successor.session).toBeNull()
+    expect(successor.workspaceDir).not.toBe(first.workspaceDir)
+    expect(await Bun.file(join(successor.workspaceDir, 'prior-run-only.txt')).exists()).toBe(false)
+    expect((await store.open(firstRun, assignment)).session?.sessionId).toBe('settled-session')
   })
 
   test('starts a fresh conversation and workspace for a changed assignment fingerprint', async () => {
@@ -158,8 +180,8 @@ describe('ResponsibilitySessionStore', () => {
   })
 })
 
-function key(workId: string, responsibility: 'generator' | 'reviewer') {
-  return { projectId: 'P-1', goalId: 'G-1', workId, responsibility } as const
+function key(workId: string, responsibility: 'generator' | 'reviewer', runId = 'R-1') {
+  return { projectId: 'P-1', goalId: 'G-1', workId, runId, responsibility } as const
 }
 
 function scope(contractRevision: number, character: string, runtimeCharacter = 'f') {

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { RunAttemptSummary } from '../lib/api'
 import {
   attemptModelLabel,
+  latestEpochLabel,
   attemptOutcomeBreakdown,
   attemptOutcomeSummary,
   attemptStatus,
@@ -16,14 +17,27 @@ const attempt: RunAttemptSummary = {
   workId: 'W-1',
   runId: 'R-1',
   responsibility: 'planner',
+  protocol: 'legacy_outcome',
+  profile: 'planner',
+  workspaceMode: 'none',
+  instructionMarkdown: 'Plan the Work.',
+  inputRefs: [],
+  baseChangeSetId: null,
+  workHash: null,
+  requestedExecution: null,
   execution: null,
+  sessionEpochs: [],
+  requestedAt: '2026-07-15T23:59:00.000Z',
   startedAt: '2026-07-16T00:00:00.000Z',
   endedAt: '2026-07-16T00:01:00.000Z',
   status: 'finished',
+  termination: 'normal',
   result: 'success',
   summary: 'The model completed, but its result was not applied.',
+  reportMarkdown: '# Run Report\n\nCompleted.',
   exitCode: 0,
   application: 'stale',
+  changeSetId: null,
 }
 
 describe('Board Attempt status', () => {
@@ -80,6 +94,53 @@ describe('Board Attempt status', () => {
       'Messages and tool activity',
     )
   })
+})
+
+test('EV-011 keeps one logical Run label while exposing its latest Session Epoch', () => {
+  expect(
+    latestEpochLabel({
+      ...attempt,
+      sessionEpochs: [
+        {
+          epoch: 1,
+          transport: 'claude',
+          sessionId: 'session-1',
+          startedAt: '2026-07-16T00:00:00.000Z',
+          endedAt: '2026-07-16T00:00:30.000Z',
+          closeReason: 'context_boundary',
+          handoffMarkdown: '# Handoff',
+        },
+        {
+          epoch: 2,
+          transport: 'claude',
+          sessionId: 'session-2',
+          startedAt: '2026-07-16T00:00:30.000Z',
+          endedAt: '2026-07-16T00:01:00.000Z',
+          closeReason: 'normal',
+          handoffMarkdown: null,
+        },
+      ],
+    }),
+  ).toBe('claude · normal')
+})
+
+test('EV-011 preserves the old Board and Work modal while adding complete Run facts', async () => {
+  const source = await Bun.file(new URL('./BoardView.tsx', import.meta.url)).text()
+
+  expect(source).toContain("id: 'Plan'")
+  expect(source).toContain("id: 'Build'")
+  expect(source).toContain("id: 'Review'")
+  expect(source).toContain("id: 'Done'")
+  expect(source).toContain('<AppModal.Dialog className="work-detail-modal"')
+  expect(source).toContain('<AppTabs.Panel className="work-detail-tab-panel" id="activity">')
+  expect(source).toContain('<AppTabs.Panel className="work-detail-tab-panel" id="contract">')
+  expect(source).toContain('<h2>Run facts</h2>')
+  expect(source).toContain('<h3>Session Epochs</h3>')
+  expect(source).toContain('<h3>Report</h3>')
+  expect(source).toContain('<h3>ChangeSet</h3>')
+  expect(source).toContain('<h3>Artifacts</h3>')
+  expect(source).toContain('Transcript entries remain in the Activity tab.')
+  expect(source).not.toContain("goal.works.filter((work) => work.stage === 'done').length")
 })
 
 test('Work Attempt messages reuse the shared breathing tail activity', async () => {
@@ -156,6 +217,9 @@ test('Board reads the compact projection without colliding with Goal docs cache'
   expect(source).toContain("queryFn: () => readGoalBoard(projectId ?? '', goalId ?? '')")
   expect(source).toContain('select: requireGoalBoardDetail')
   expect(source).not.toContain("queryFn: () => readGoal(projectId ?? '', goalId ?? '')")
+  expect(source).toContain('<strong>Delivery operations</strong>')
+  expect(source).toContain('goal.operations.map((operation) =>')
+  expect(source).toContain("operation.requiredForGoal ? ' · required' : ' · optional'")
 })
 
 test('compact Kanban mounts only the selected Lane and immediate neighbors', () => {

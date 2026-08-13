@@ -10,6 +10,8 @@ import {
   previewRuntimeInputsSchema,
   previewRuntimeInputsShapeSchema,
 } from '../runtime/previewRuntimeInputs'
+import { RESPONSIBILITIES } from '../runtime/roleContextStager'
+import { RUN_WORKSPACE_MODES } from '../runtime/runDirective'
 
 const goalReferences = z
   .array(
@@ -52,6 +54,7 @@ const assistantToolNames = [
   'hopi_write_design',
   'hopi_control_goal',
   'hopi_control_work',
+  'hopi_control_operation',
   'hopi_manage_attention',
   'hopi_control_preview',
 ] as const
@@ -84,6 +87,9 @@ const attentionReferenceSchema = z
   .refine((reference) => parseAttentionReference(reference) !== null, 'Invalid Attention reference')
 
 const goalActionSchema = z.discriminatedUnion('kind', [
+  z
+    .object({ kind: z.literal('complete'), decision: z.string().trim().min(1).max(16_000) })
+    .strict(),
   z.object({ kind: z.literal('pause') }).strict(),
   z.object({ kind: z.literal('resume') }).strict(),
   z.object({ kind: z.literal('cancel') }).strict(),
@@ -97,6 +103,19 @@ const goalActionSchema = z.discriminatedUnion('kind', [
 ])
 
 const workActionSchema = z.discriminatedUnion('kind', [
+  z
+    .object({ kind: z.literal('complete'), decision: z.string().trim().min(1).max(16_000) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('run'),
+      profile: z.enum(RESPONSIBILITIES),
+      workspaceMode: z.enum(RUN_WORKSPACE_MODES),
+      instructionMarkdown: z.string().trim().min(1).max(64_000),
+      refs: z.array(z.string().trim().min(1).max(1_000)).max(128).default([]),
+      baseChangeSetId: stableIdSchema.nullable().default(null),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal('continue'),
@@ -113,6 +132,35 @@ const workActionSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('cancel') }).strict(),
+])
+
+const deliveryOperationIntentSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('baseline_integration'), changeSetId: stableIdSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('archive'),
+      changeSetId: stableIdSchema,
+      outputName: z
+        .string()
+        .trim()
+        .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}\.zip$/),
+    })
+    .strict(),
+])
+
+const operationActionSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('propose'),
+      operationId: stableIdSchema.optional(),
+      workId: stableIdSchema.nullable().default(null),
+      idempotencyKey: z.string().trim().min(1).max(256),
+      requiredForGoal: z.boolean(),
+      intent: deliveryOperationIntentSchema,
+    })
+    .strict(),
+  z.object({ kind: z.literal('execute'), operationId: stableIdSchema }).strict(),
+  z.object({ kind: z.literal('cancel'), operationId: stableIdSchema }).strict(),
 ])
 
 export type AssistantToolName = (typeof assistantToolNames)[number]
@@ -240,6 +288,13 @@ export const assistantToolSchemas = {
       goalId: stableIdSchema,
       workId: stableIdSchema,
       action: workActionSchema,
+    })
+    .strict(),
+  hopi_control_operation: z
+    .object({
+      projectId: stableIdSchema,
+      goalId: stableIdSchema,
+      action: operationActionSchema,
     })
     .strict(),
   hopi_manage_attention: z
@@ -408,6 +463,7 @@ const mcpControlGoalSchema = z
     projectId: stableIdSchema,
     goalId: stableIdSchema,
     action: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('complete'), decision: z.string().min(1).max(16_000) }).strict(),
       z.object({ kind: z.literal('pause') }).strict(),
       z.object({ kind: z.literal('resume') }).strict(),
       z.object({ kind: z.literal('cancel') }).strict(),
@@ -427,6 +483,17 @@ const mcpControlWorkSchema = z
     goalId: stableIdSchema,
     workId: stableIdSchema,
     action: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('complete'), decision: z.string().min(1).max(16_000) }).strict(),
+      z
+        .object({
+          kind: z.literal('run'),
+          profile: z.enum(RESPONSIBILITIES),
+          workspaceMode: z.enum(RUN_WORKSPACE_MODES),
+          instructionMarkdown: z.string().min(1).max(64_000),
+          refs: z.array(z.string().min(1).max(1_000)).max(128).optional(),
+          baseChangeSetId: stableIdSchema.nullable().optional(),
+        })
+        .strict(),
       z
         .object({
           kind: z.literal('continue'),

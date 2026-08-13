@@ -34,8 +34,15 @@ describe('RunAttemptStore', () => {
     )
     await recorder.setExecution({
       transport: 'codex',
+      provider: 'codex',
       model: 'gpt-5.6-sol',
       reasoningEffort: 'xhigh',
+      permissionBoundary: 'bounded',
+    })
+    await recorder.recordSession({
+      transport: 'codex',
+      sessionId: 'thread-R-1',
+      executionKey: 'codex-execution',
     })
     await recorder.record({
       kind: 'message',
@@ -68,6 +75,8 @@ describe('RunAttemptStore', () => {
         result: 'success',
         summary: 'Implementation verified.',
         exitCode: 0,
+        termination: 'normal',
+        reportMarkdown: '# Implementation report\n\nAll focused checks passed.',
       },
       application: 'published',
     })
@@ -82,7 +91,25 @@ describe('RunAttemptStore', () => {
       status: 'finished',
       result: 'success',
       application: 'published',
+      termination: 'normal',
+      requestedExecution: {
+        transport: 'codex',
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'xhigh',
+        permissionBoundary: 'bounded',
+      },
       execution: { transport: 'codex', model: 'gpt-5.6-sol', reasoningEffort: 'xhigh' },
+      reportMarkdown: '# Implementation report\n\nAll focused checks passed.\n',
+      sessionEpochs: [
+        {
+          epoch: 1,
+          transport: 'codex',
+          sessionId: 'thread-R-1',
+          endedAt: expect.any(String),
+          closeReason: 'normal',
+        },
+      ],
     })
     expect(detail?.events.map((event) => event.kind)).toEqual([
       'message',
@@ -104,6 +131,137 @@ describe('RunAttemptStore', () => {
     })
     expect(detail?.runPrompt).toBe(
       '# Generator system prompt\n\nImplement the owning Work exactly.\n',
+    )
+  })
+
+  test('EV-002 retains Session Epoch handoff and Run identity across restart', async () => {
+    let tick = 0
+    const store = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date(Date.UTC(2026, 6, 11, 0, 0, tick++)),
+    })
+    const recorder = await store.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-epoch',
+      runId: 'R-epoch',
+      responsibility: 'generator',
+      runRoot: runRoot('R-epoch'),
+    })
+    await recorder.recordSession({
+      transport: 'claude',
+      sessionId: 'session-epoch-1',
+      executionKey: 'claude-execution',
+    })
+    await recorder.rotateSession({
+      reason: 'context_boundary',
+      handoffMarkdown:
+        '# Run Session Epoch handoff\n\nThe workspace checkpoint is durable; continue the same Run.',
+    })
+    await recorder.recordSession({
+      transport: 'claude',
+      sessionId: 'session-epoch-2',
+      executionKey: 'claude-execution',
+    })
+    await recorder.finish({
+      outcome: {
+        result: 'success',
+        summary: 'Completed after handoff.',
+        exitCode: 0,
+        termination: 'normal',
+      },
+      application: 'reported',
+    })
+
+    const restarted = createRunAttemptStore(temporaryRoot)
+    const attempt = await restarted.read('P-1', 'G-1', 'W-epoch', 'R-epoch')
+    expect(attempt).toMatchObject({
+      runId: 'R-epoch',
+      status: 'finished',
+      sessionEpochs: [
+        {
+          epoch: 1,
+          sessionId: 'session-epoch-1',
+          closeReason: 'context_boundary',
+          handoffMarkdown: expect.stringContaining('continue the same Run'),
+        },
+        {
+          epoch: 2,
+          sessionId: 'session-epoch-2',
+          closeReason: 'normal',
+          handoffMarkdown: null,
+        },
+      ],
+    })
+  })
+
+  test('EV-003 settles every mechanical termination with a durable factual Report', async () => {
+    const store = createRunAttemptStore(temporaryRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
+    const finishCases = [
+      { runId: 'R-normal', workId: 'W-normal', termination: 'normal' as const },
+      { runId: 'R-crashed', workId: 'W-crashed', termination: 'crashed' as const },
+      { runId: 'R-timeout', workId: 'W-timeout', termination: 'timed_out' as const },
+    ]
+    for (const item of finishCases) {
+      const recorder = await store.start({
+        projectId: 'P-1',
+        goalId: 'G-1',
+        workId: item.workId,
+        runId: item.runId,
+        responsibility: 'generator',
+        runRoot: runRoot(item.runId),
+      })
+      await recorder.finish({
+        outcome: {
+          result: item.termination === 'normal' ? 'success' : 'fail',
+          summary: `${item.termination} process observation`,
+          exitCode: item.termination === 'normal' ? 0 : null,
+          termination: item.termination,
+        },
+        application: item.termination === 'normal' ? 'published' : 'operational_failure',
+      })
+      await recorder.finish({
+        outcome: { result: 'fail', summary: 'must not replace settlement', exitCode: 99 },
+        application: 'operational_failure',
+      })
+    }
+
+    const interrupted = await store.start({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-interrupted',
+      runId: 'R-interrupted',
+      responsibility: 'generator',
+      runRoot: runRoot('R-interrupted'),
+    })
+    await interrupted.interrupt(new Error('operator stopped the Run'))
+
+    await store.reserve({
+      projectId: 'P-1',
+      goalId: 'G-1',
+      workId: 'W-cancelled',
+      runId: 'R-cancelled',
+      responsibility: 'generator',
+      workHash: 'c'.repeat(64),
+    })
+    await store.interruptQueued({ workId: 'W-cancelled' })
+
+    const restarted = createRunAttemptStore(temporaryRoot)
+    const expected = new Map([
+      ['W-normal', 'normal'],
+      ['W-crashed', 'crashed'],
+      ['W-timeout', 'timed_out'],
+      ['W-interrupted', 'interrupted'],
+      ['W-cancelled', 'cancelled'],
+    ])
+    for (const [workId, termination] of expected) {
+      const [attempt] = await restarted.list('P-1', 'G-1', workId)
+      expect(attempt).toMatchObject({ termination, endedAt: expect.any(String) })
+      expect(attempt?.reportMarkdown).toStartWith('# Run Report\n\n')
+    }
+    expect((await restarted.list('P-1', 'G-1', 'W-normal'))[0]?.summary).toBe(
+      'normal process observation',
     )
   })
 
@@ -181,8 +339,10 @@ describe('RunAttemptStore', () => {
 
     await recorder.setExecution({
       transport: 'codex',
+      provider: 'codex',
       model: 'gpt-5.6',
       reasoningEffort: 'medium',
+      permissionBoundary: 'bounded',
     })
     expect(store.generation()).toBe(2)
     expect((await store.snapshot()).list('P-1', 'G-1', 'W-1')[0]?.execution).toMatchObject({
@@ -217,8 +377,10 @@ describe('RunAttemptStore', () => {
     expect(await restarted.interruptRunningAttempts()).toBe(1)
     expect(await restarted.read('P-1', 'G-1', 'W-1', 'R-running')).toMatchObject({
       status: 'interrupted',
+      termination: 'interrupted',
       endedAt: '2026-07-11T00:01:00.000Z',
       summary: 'Coordinator stopped before recording an Attempt outcome.',
+      reportMarkdown: expect.stringContaining('Coordinator stopped'),
     })
   })
 
@@ -282,7 +444,12 @@ describe('RunAttemptStore', () => {
       }),
     ).toBe(1)
     expect(await restarted.list('P-1', 'G-1', 'W-1')).toMatchObject([
-      { runId: 'R-queued', status: 'interrupted' },
+      {
+        runId: 'R-queued',
+        status: 'interrupted',
+        termination: 'cancelled',
+        reportMarkdown: expect.stringContaining('interrupted before dispatch'),
+      },
     ])
   })
 

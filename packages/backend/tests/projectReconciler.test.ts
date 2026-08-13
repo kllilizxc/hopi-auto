@@ -9,7 +9,10 @@ import type {
   RoleRunner,
 } from '../src/agent/RoleRunner'
 import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
+import { projectReleaseRef } from '../src/domain/project'
+import { createServer } from '../src/mvpServer'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+import { createDeliveryOperationStore } from '../src/runtime/deliveryOperationStore'
 import { createGoalController } from '../src/runtime/goalController'
 import type { ProjectPreparer } from '../src/runtime/projectPreparation'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
@@ -116,6 +119,535 @@ describe('ProjectReconciler', () => {
     })
   })
 
+  test('EV-006 runs explicit profiles independently of Work stage and keeps review optional', async () => {
+    const fixture = await createFixture({ directInitialWork: true })
+    const inspectDirective = {
+      protocol: 'report' as const,
+      profile: 'reviewer' as const,
+      workspaceMode: 'read_only' as const,
+      instructionMarkdown: 'Inspect the current implementation and report remaining risk.',
+      refs: ['goal://goal-1/work/W-1'],
+      baseChangeSetId: null,
+    }
+
+    expect(
+      await fixture.reconciler.requestWorkRun('goal-1', 'W-1', {
+        directive: inspectDirective,
+      }),
+    ).toMatchObject({ disposition: 'scheduled' })
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'pass_finished',
+      result: 'reported',
+      application: 'reported',
+    })
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+      'generate',
+    )
+    expect(fixture.runner.runContracts[0]).toMatchObject({
+      profile: 'reviewer',
+      protocol: 'report',
+      workspaceMode: 'read_only',
+      prompt: expect.stringContaining(inspectDirective.instructionMarkdown),
+    })
+    const inspectedAttempt = (await fixture.attempts.list('project-1', 'goal-1', 'W-1'))[0]
+    expect(inspectedAttempt).toMatchObject({
+      profile: 'reviewer',
+      protocol: 'report',
+      workspaceMode: 'read_only',
+      result: null,
+      termination: 'normal',
+      application: 'reported',
+      reportMarkdown: expect.stringContaining('reviewer completed'),
+    })
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'wait',
+      decision: { reasons: ['awaiting_supervisor'] },
+    })
+
+    const implementDirective = {
+      protocol: 'report' as const,
+      profile: 'generator' as const,
+      workspaceMode: 'isolated_write' as const,
+      instructionMarkdown: 'Implement the Work in the isolated source projection.',
+      refs: [],
+      baseChangeSetId: null,
+    }
+    await fixture.reconciler.requestWorkRun('goal-1', 'W-1', {
+      directive: implementDirective,
+    })
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'pass_finished',
+      result: 'reported',
+      application: 'reported',
+    })
+    const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+    expect(attempts).toHaveLength(2)
+    const implementationAttempt = attempts.find((attempt) => attempt.profile === 'generator')
+    expect(implementationAttempt).toMatchObject({
+      profile: 'generator',
+      protocol: 'report',
+      result: null,
+      changeSetId: `CS-${implementationAttempt?.runId}`,
+    })
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+      'generate',
+    )
+  })
+
+  test('EV-002 checkpoints source and rotates Session Epochs without changing the Run', async () => {
+    const checkpointPaths: string[] = []
+    const fixture = await createFixture({
+      directInitialWork: true,
+      generatorEpochRotation: true,
+      checkpointTask: async (input) => {
+        checkpointPaths.push(input.worktreePath)
+        return checkpointTaskWorktree(input)
+      },
+    })
+    await fixture.reconciler.requestWorkRun('goal-1', 'W-1', {
+      directive: {
+        protocol: 'report',
+        profile: 'generator',
+        workspaceMode: 'isolated_write',
+        instructionMarkdown: 'Implement the Work across a context boundary.',
+        refs: [],
+        baseChangeSetId: null,
+      },
+    })
+
+    const result = await fixture.reconciler.reconcileGoal('goal-1')
+    const [attempt] = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+    if (!attempt?.changeSetId) throw new Error('Expected a frozen ChangeSet')
+    const detail = await fixture.attempts.read('project-1', 'goal-1', 'W-1', attempt.runId)
+    const repoChange = detail?.changeSet?.repos[0]
+    if (!repoChange) throw new Error('Expected one frozen Repo change')
+    const generatorCwd = fixture.runner.generatorCwds[0]
+    if (!generatorCwd) throw new Error('Expected one Generator workspace')
+
+    expect(result).toMatchObject({
+      kind: 'pass_finished',
+      runId: attempt.runId,
+      result: 'reported',
+      application: 'reported',
+    })
+    expect(attempt).toMatchObject({
+      status: 'finished',
+      termination: 'normal',
+      sessionEpochs: [
+        {
+          epoch: 1,
+          sessionId: `session-${attempt.runId}-epoch-1`,
+          closeReason: 'context_boundary',
+          handoffMarkdown: expect.stringContaining(`Run ${attempt.runId}`),
+        },
+        {
+          epoch: 2,
+          sessionId: `session-${attempt.runId}-epoch-2`,
+          closeReason: 'normal',
+          handoffMarkdown: null,
+        },
+      ],
+    })
+    expect(checkpointPaths).toHaveLength(2)
+    expect(new Set(checkpointPaths)).toEqual(new Set([generatorCwd]))
+    expect(
+      await git(generatorCwd, [
+        'rev-list',
+        '--count',
+        `${repoChange.baseCommit}..${repoChange.resultCommit}`,
+      ]),
+    ).toBe('2')
+    expect(await Bun.file(join(generatorCwd, 'src', 'epoch-one.ts')).text()).toBe(
+      'export const epoch = 1\n',
+    )
+    expect(detail?.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'message',
+        role: 'coordinator',
+        content: 'Checkpointed 1 Repo workspace before Session Epoch rotation.',
+      }),
+    )
+  })
+
+  test('EV-007 requires explicit semantic Work and Goal completion decisions', async () => {
+    const fixture = await createFixture({ directInitialWork: true })
+    await fixture.reconciler.requestWorkRun('goal-1', 'W-1', {
+      directive: {
+        protocol: 'report',
+        profile: 'generator',
+        workspaceMode: 'isolated_write',
+        instructionMarkdown: 'Implement the accepted behavior and report the evidence.',
+        refs: [],
+        baseChangeSetId: null,
+      },
+    })
+
+    await expect(
+      fixture.reconciler.completeWork('goal-1', 'W-1', {
+        sourceEventId: 'EV-complete',
+        decision: 'The implementation meets the current Work acceptance meaning.',
+      }),
+    ).rejects.toThrow('active or queued Run')
+    await fixture.reconciler.reconcileGoal('goal-1')
+
+    const completedWork = await fixture.reconciler.completeWork('goal-1', 'W-1', {
+      sourceEventId: 'EV-complete',
+      decision: 'The implementation Report and frozen ChangeSet satisfy this Work.',
+    })
+    expect(completedWork.attributes).toMatchObject({
+      stage: 'done',
+      ownerMessages: [
+        expect.objectContaining({
+          sourceEventId: 'EV-complete',
+          content: expect.stringContaining('frozen ChangeSet satisfy this Work'),
+        }),
+      ],
+    })
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toEqual({
+      kind: 'wait',
+      decision: { kind: 'wait', reasons: ['awaiting_supervisor_completion'] },
+    })
+    expect((await fixture.store.readPackage('goal-1')).goal.attributes.lifecycle).toBe('active')
+
+    const changeSetId = (await fixture.attempts.list('project-1', 'goal-1', 'W-1'))[0]?.changeSetId
+    if (!changeSetId) throw new Error('Expected a frozen ChangeSet')
+    await fixture.reconciler.proposeOperation('goal-1', {
+      id: 'OP-required-archive',
+      workId: 'W-1',
+      idempotencyKey: 'required-archive',
+      requiredForGoal: true,
+      intent: { kind: 'archive', changeSetId, outputName: 'required-delivery.zip' },
+      proposedByEventId: 'EV-complete',
+    })
+    await fixture.reconciler.proposeOperation('goal-1', {
+      id: 'OP-optional-integration',
+      workId: 'W-1',
+      idempotencyKey: 'optional-integration',
+      requiredForGoal: false,
+      intent: { kind: 'baseline_integration', changeSetId },
+      proposedByEventId: 'EV-complete',
+    })
+    await expect(
+      fixture.reconciler.completeGoal('goal-1', {
+        decision: 'Current acceptance meaning is satisfied.',
+      }),
+    ).rejects.toThrow('OP-required-archive')
+    expect(
+      await fixture.reconciler.executeOperation('goal-1', 'OP-required-archive', 'EV-complete'),
+    ).toMatchObject({ status: 'succeeded', result: { kind: 'archive_created' } })
+
+    const completedGoal = await fixture.reconciler.completeGoal('goal-1', {
+      decision: 'Current acceptance meaning is satisfied by the observed Report and ChangeSet.',
+    })
+    expect(completedGoal.attributes.lifecycle).toBe('done')
+    expect(completedGoal.body).toContain('## Completion decision')
+    expect(completedGoal.body).toContain('Current acceptance meaning is satisfied')
+    expect(await fixture.reconciler.listGoalOperations('goal-1')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'OP-required-archive', status: 'succeeded' }),
+        expect.objectContaining({ id: 'OP-optional-integration', status: 'proposed' }),
+      ]),
+    )
+    expect(await fixture.reconciler.reconcileGoal('goal-1')).toEqual({
+      kind: 'wait',
+      decision: { kind: 'wait', reasons: ['goal_done'] },
+    })
+  })
+
+  test('EV-012 preserves rejection and repair lineage through restart, Operations, and product APIs', async () => {
+    const fixture = await createFixture({
+      directInitialWork: true,
+      generatorChangesOnRetry: true,
+      reviewerRejectCount: 2,
+      objective: 'Set feature to 3 with verification evidence.',
+      acceptanceCriteria: ['feature equals 3.', 'verification evidence is reviewable.'],
+    })
+    const attempt = async (runId: string) => {
+      const value = (await fixture.attempts.list('project-1', 'goal-1', 'W-1')).find(
+        (candidate) => candidate.runId === runId,
+      )
+      if (!value) throw new Error(`Expected Run ${runId}`)
+      return value
+    }
+    const detail = async (runId: string) => {
+      const value = await fixture.attempts.read('project-1', 'goal-1', 'W-1', runId)
+      if (!value) throw new Error(`Expected Run detail ${runId}`)
+      return value
+    }
+
+    const implementation = await fixture.reconciler.requestWorkRun('goal-1', 'W-1', {
+      directive: {
+        protocol: 'report',
+        profile: 'generator',
+        workspaceMode: 'isolated_write',
+        instructionMarkdown: 'Implement the first candidate and preserve its source delta.',
+        refs: [],
+        baseChangeSetId: null,
+      },
+    })
+    let restarted = fixture.createReconciler()
+    expect(await restarted.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'pass_finished',
+      runId: implementation.runId,
+      result: 'reported',
+    })
+    const implementationDetail = await detail(implementation.runId)
+    const firstChangeSet = implementationDetail.changeSet
+    if (!firstChangeSet) throw new Error('Expected the rejected candidate ChangeSet')
+
+    const defectReview = await restarted.requestWorkRun('goal-1', 'W-1', {
+      directive: {
+        protocol: 'report',
+        profile: 'reviewer',
+        workspaceMode: 'read_only',
+        instructionMarkdown: 'Independently inspect the first candidate for source defects.',
+        refs: [firstChangeSet.id],
+        baseChangeSetId: firstChangeSet.id,
+      },
+    })
+    expect(await restarted.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'pass_finished',
+      runId: defectReview.runId,
+      result: 'reported',
+    })
+    expect(await attempt(defectReview.runId)).toMatchObject({
+      summary: 'Independent review found a source defect.',
+      reportMarkdown: expect.stringContaining('Independent review found a source defect.'),
+    })
+
+    const repair = await restarted.requestWorkRun('goal-1', 'W-1', {
+      directive: {
+        protocol: 'report',
+        profile: 'generator',
+        workspaceMode: 'isolated_write',
+        instructionMarkdown: 'Repair the source defect and add focused verification evidence.',
+        refs: [defectReview.runId, firstChangeSet.id],
+        baseChangeSetId: firstChangeSet.id,
+      },
+    })
+    restarted = fixture.createReconciler()
+    expect(await restarted.reconcileGoal('goal-1')).toMatchObject({
+      kind: 'pass_finished',
+      runId: repair.runId,
+      result: 'reported',
+    })
+    const repairDetail = await detail(repair.runId)
+    const repairedChangeSet = repairDetail.changeSet
+    if (!repairedChangeSet) throw new Error('Expected the repair ChangeSet')
+    const firstRepoChange = firstChangeSet.repos[0]
+    const repairedRepoChange = repairedChangeSet.repos[0]
+    if (!firstRepoChange || !repairedRepoChange) {
+      throw new Error('Expected primary Repo changes in both ChangeSets')
+    }
+    expect(repairDetail).toMatchObject({
+      baseChangeSetId: firstChangeSet.id,
+      sessionEpochs: [{ sessionId: `session-${repair.runId}-generator` }],
+    })
+    expect(repairedRepoChange.baseCommit).toBe(firstRepoChange.resultCommit)
+
+    const evidenceReview = await restarted.requestWorkRun('goal-1', 'W-1', {
+      directive: {
+        protocol: 'report',
+        profile: 'reviewer',
+        workspaceMode: 'read_only',
+        instructionMarkdown: 'Independently review the repair and its documentation evidence.',
+        refs: [repairedChangeSet.id],
+        baseChangeSetId: repairedChangeSet.id,
+      },
+    })
+    await restarted.reconcileGoal('goal-1')
+    expect(await attempt(evidenceReview.runId)).toMatchObject({
+      summary: 'Independent review rejected the documentation evidence.',
+      reportMarkdown: expect.stringContaining(
+        'Independent review rejected the documentation evidence.',
+      ),
+    })
+
+    const finalReview = await restarted.requestWorkRun('goal-1', 'W-1', {
+      directive: {
+        protocol: 'report',
+        profile: 'reviewer',
+        workspaceMode: 'read_only',
+        instructionMarkdown:
+          'Perform the final independent assessment of source and verification evidence.',
+        refs: [evidenceReview.runId, repairedChangeSet.id],
+        baseChangeSetId: repairedChangeSet.id,
+      },
+    })
+    await restarted.reconcileGoal('goal-1')
+    expect(await attempt(finalReview.runId)).toMatchObject({
+      summary: 'Independent final review accepted the repaired source and documentation evidence.',
+    })
+
+    await restarted.completeWork('goal-1', 'W-1', {
+      sourceEventId: 'EV-final-review',
+      decision:
+        'The final independent Report accepts the repaired ChangeSet and verification evidence.',
+    })
+    const operationInputs = [
+      {
+        id: 'OP-integrate-candidate',
+        idempotencyKey: 'integrate-candidate-ancestry',
+        intent: { kind: 'baseline_integration' as const, changeSetId: firstChangeSet.id },
+      },
+      {
+        id: 'OP-integrate-repair',
+        idempotencyKey: 'integrate-accepted-repair',
+        intent: { kind: 'baseline_integration' as const, changeSetId: repairedChangeSet.id },
+      },
+      {
+        id: 'OP-required-archive',
+        idempotencyKey: 'archive-accepted-repair',
+        intent: {
+          kind: 'archive' as const,
+          changeSetId: repairedChangeSet.id,
+          outputName: 'accepted-repair.zip',
+        },
+      },
+    ]
+    for (const operation of operationInputs) {
+      await restarted.proposeOperation('goal-1', {
+        ...operation,
+        workId: 'W-1',
+        requiredForGoal: true,
+        proposedByEventId: 'EV-final-review',
+      })
+    }
+    await expect(
+      restarted.completeGoal('goal-1', {
+        decision: 'The accepted repair is ready for delivery.',
+      }),
+    ).rejects.toThrow('OP-integrate-candidate')
+
+    const operationStore = createDeliveryOperationStore(fixture.homeRoot, {
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    })
+    expect(
+      await operationStore.begin('OP-integrate-candidate', 'EV-operation-approval'),
+    ).toMatchObject({ status: 'executing' })
+    restarted = fixture.createReconciler()
+    const firstIntegration = await restarted.executeOperation(
+      'goal-1',
+      'OP-integrate-candidate',
+      'EV-operation-approval',
+    )
+    expect(firstIntegration).toMatchObject({
+      status: 'succeeded',
+      result: { kind: 'baseline_integrated', changeSetId: firstChangeSet.id },
+    })
+    expect(
+      await fixture
+        .createReconciler()
+        .executeOperation('goal-1', 'OP-integrate-candidate', 'EV-operation-retry'),
+    ).toEqual(firstIntegration)
+
+    expect(
+      await operationStore.begin('OP-integrate-repair', 'EV-operation-approval'),
+    ).toMatchObject({ status: 'executing' })
+    restarted = fixture.createReconciler()
+    expect(
+      await restarted.executeOperation('goal-1', 'OP-integrate-repair', 'EV-operation-approval'),
+    ).toMatchObject({
+      status: 'succeeded',
+      result: { kind: 'baseline_integrated', changeSetId: repairedChangeSet.id },
+    })
+    await expect(
+      restarted.completeGoal('goal-1', {
+        decision: 'The accepted repair is integrated.',
+      }),
+    ).rejects.toThrow('OP-required-archive')
+    const archive = await fixture
+      .createReconciler()
+      .executeOperation('goal-1', 'OP-required-archive', 'EV-operation-approval')
+    expect(archive).toMatchObject({
+      status: 'succeeded',
+      result: { kind: 'archive_created', changeSetId: repairedChangeSet.id },
+    })
+    if (archive.result?.kind !== 'archive_created') throw new Error('Expected archive result')
+    expect(await Bun.file(archive.result.path).exists()).toBe(true)
+
+    const completed = await fixture.createReconciler().completeGoal('goal-1', {
+      decision: 'Required ancestry-preserving integration and archive Operations both succeeded.',
+    })
+    expect(completed.attributes.lifecycle).toBe('done')
+
+    const releaseHead = await git(fixture.projectRoot, [
+      'rev-parse',
+      projectReleaseRef('project-1'),
+    ])
+    expect(releaseHead).toBe(repairedRepoChange.resultCommit)
+    await git(fixture.projectRoot, [
+      'merge-base',
+      '--is-ancestor',
+      firstRepoChange.resultCommit,
+      releaseHead,
+    ])
+    expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('3')
+    expect(await Bun.file(join(fixture.projectRoot, 'docs', 'verification.md')).text()).toContain(
+      'Feature 3',
+    )
+    expect(await Bun.file(join(fixture.repoRoot, 'src', 'feature.ts')).text()).toContain('1')
+    expect(await detail(implementation.runId)).toMatchObject({
+      changeSet: { id: firstChangeSet.id },
+    })
+
+    const allAttempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
+    expect(allAttempts).toHaveLength(5)
+    expect(new Set(allAttempts.map((candidate) => candidate.runId)).size).toBe(5)
+    const sessions = allAttempts.flatMap((candidate) =>
+      candidate.sessionEpochs.map((epoch) => epoch.sessionId),
+    )
+    expect(new Set(sessions).size).toBe(5)
+
+    const server = createServer({
+      rootDir: fixture.homeRoot,
+      port: 0,
+      attempts: fixture.attempts,
+      startCoordinator: false,
+    })
+    const baseUrl = `http://127.0.0.1:${server.port}`
+    const readApi = async (path: string) => {
+      const response = await fetch(`${baseUrl}${path}`)
+      if (!response.ok) throw new Error(`API ${path} returned ${response.status}`)
+      return response.json() as Promise<Record<string, unknown>>
+    }
+    try {
+      const board = await readApi('/api/projects/project-1/goals/goal-1?view=board')
+      expect(board).toMatchObject({
+        goal: { lifecycle: 'done' },
+        works: [{ id: 'W-1', stage: 'done' }],
+      })
+      expect(board.operations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'OP-integrate-candidate', status: 'succeeded' }),
+          expect.objectContaining({ id: 'OP-integrate-repair', status: 'succeeded' }),
+          expect.objectContaining({ id: 'OP-required-archive', status: 'succeeded' }),
+        ]),
+      )
+      const attemptProjection = await readApi(
+        '/api/projects/project-1/goals/goal-1/works/W-1/attempts',
+      )
+      if (!Array.isArray(attemptProjection.attempts)) throw new Error('Expected Run list API')
+      expect(
+        (attemptProjection.attempts as Array<{ runId: string }>).map(
+          (candidate) => candidate.runId,
+        ),
+      ).toEqual(expect.arrayContaining(allAttempts.map((candidate) => candidate.runId)))
+      const repairProjection = await readApi(
+        `/api/projects/project-1/goals/goal-1/works/W-1/attempts/${repair.runId}`,
+      )
+      expect(repairProjection).toMatchObject({
+        runId: repair.runId,
+        reportMarkdown: expect.any(String),
+        changeSet: { id: repairedChangeSet.id },
+        sessionEpochs: [{ sessionId: `session-${repair.runId}-generator` }],
+        artifacts: { preserved: expect.any(Array), unavailable: expect.any(Array) },
+      })
+    } finally {
+      await server.shutdown()
+    }
+  })
+
   test('runs one Engineering Work across two Repos and publishes one primary C1', async () => {
     const releases: Array<{ projectId: string; commit: string }> = []
     const fixture = await createFixture({
@@ -202,7 +734,7 @@ describe('ProjectReconciler', () => {
     )
   })
 
-  test('reuses separate Generator and Reviewer sessions across a rejection loop', async () => {
+  test('starts fresh Generator and Reviewer Sessions across a rejection loop', async () => {
     const fixture = await createFixture({ reviewerRejectOnce: true })
 
     for (let cycle = 0; cycle < 5; cycle += 1) {
@@ -220,7 +752,7 @@ describe('ProjectReconciler', () => {
       fixture.runner.sessionsByRun
         .filter((run) => run.responsibility === 'generator')
         .map((run) => run.sessionId),
-    ).toEqual([null, 'session-W-1-generator'])
+    ).toEqual([null, null])
     expect(
       fixture.runner.refreshAssignmentsByRun
         .filter((run) => run.responsibility === 'generator')
@@ -230,7 +762,7 @@ describe('ProjectReconciler', () => {
       fixture.runner.sessionsByRun
         .filter((run) => run.responsibility === 'reviewer')
         .map((run) => run.sessionId),
-    ).toEqual([null, 'session-W-1-reviewer'])
+    ).toEqual([null, null])
     expect(
       fixture.runner.sessionWorkspacesByRun
         .filter((run) => run.responsibility === 'generator')
@@ -242,7 +774,7 @@ describe('ProjectReconciler', () => {
       },
       {
         path: expect.stringContaining('/generator/assignment-'),
-        markerFound: true,
+        markerFound: false,
       },
     ])
     expect(
@@ -256,13 +788,13 @@ describe('ProjectReconciler', () => {
       },
       {
         path: expect.stringContaining('/reviewer/assignment-'),
-        markerFound: true,
+        markerFound: false,
       },
     ])
-    expect(fixture.runner.sessionWorkspacesByRun[1]?.path).toBe(
+    expect(fixture.runner.sessionWorkspacesByRun[1]?.path).not.toBe(
       fixture.runner.sessionWorkspacesByRun[3]?.path,
     )
-    expect(fixture.runner.sessionWorkspacesByRun[2]?.path).toBe(
+    expect(fixture.runner.sessionWorkspacesByRun[2]?.path).not.toBe(
       fixture.runner.sessionWorkspacesByRun[4]?.path,
     )
     expect(new Set(fixture.runner.generatorCwds).size).toBe(1)
@@ -271,7 +803,7 @@ describe('ProjectReconciler', () => {
         .filter((run) => run.responsibility === 'reviewer')
         .map((run) => run.path),
     )
-    expect(new Set(fixture.runner.reviewerCwds).size).toBe(1)
+    expect(new Set(fixture.runner.reviewerCwds).size).toBe(2)
     expect(new Set(fixture.runner.reviewerRunRoots).size).toBe(2)
     expect(
       await Bun.file(
@@ -608,7 +1140,7 @@ describe('ProjectReconciler', () => {
     })
   })
 
-  test('checkpoints partial Generator source before completing an interruption', async () => {
+  test('EV-004 checkpoints partial Generator source before completing an interruption', async () => {
     let taskWorktreePath = ''
     const fixture = await createFixture({
       generatorWaitForAbort: true,
@@ -633,6 +1165,7 @@ describe('ProjectReconciler', () => {
     const result = await running
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
     const attempt = attempts.at(-1)
+    const detail = await fixture.attempts.read('project-1', 'goal-1', 'W-1', attempt?.runId ?? '')
 
     expect(result).toMatchObject({
       kind: 'wait',
@@ -653,14 +1186,32 @@ describe('ProjectReconciler', () => {
         'Generation-Mode: AI-Pure',
       ].join('\n'),
     )
-    expect(attempt).toMatchObject({ status: 'interrupted', result: null, application: null })
-    expect(
-      (await fixture.attempts.read('project-1', 'goal-1', 'W-1', attempt?.runId ?? ''))?.events,
-    ).toContainEqual(
+    expect(attempt).toMatchObject({
+      status: 'interrupted',
+      termination: 'interrupted',
+      result: null,
+      application: null,
+      changeSetId: `CS-${attempt?.runId}`,
+    })
+    expect(detail?.changeSet).toMatchObject({
+      id: `CS-${attempt?.runId}`,
+      producerRunId: attempt?.runId,
+      disposition: 'unaccepted',
+      repos: [
+        {
+          repoId: 'primary',
+          baseCommit: expect.stringMatching(/^[a-f0-9]{40}$/),
+          resultCommit: expect.stringMatching(/^[a-f0-9]{40}$/),
+          contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      ],
+    })
+    expect(detail?.events).toContainEqual(
       expect.objectContaining({
         kind: 'message',
         role: 'coordinator',
-        content: 'Checkpointed safe partial Generator source before interruption.',
+        content:
+          'Checkpointed safe partial Generator source before interruption and froze any delta.',
       }),
     )
     expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes).toMatchObject({
@@ -669,6 +1220,48 @@ describe('ProjectReconciler', () => {
       contextRefs: [],
       ownerMessages: [],
     })
+  })
+
+  test('EV-004 freezes every changed Repo when a multi-Repo Generator is interrupted', async () => {
+    const fixture = await createFixture({
+      includeSecondaryRepo: true,
+      changedRepoIds: ['primary', 'api'],
+      generatorWaitForAbort: true,
+    })
+
+    await fixture.reconciler.reconcileGoal('goal-1')
+    const running = fixture.reconciler.reconcileGoal('goal-1')
+    const worktreeRoot = join(dirname(fixture.projectRoot), 'work', 'goal-1', 'W-1')
+    const api = fixture.linked.repos.find((repo) => repo.repoId === 'api')
+    if (!api) throw new Error('Expected secondary Repo')
+    const apiWorktreeRoot = join(dirname(api.integrationRoot), 'work', 'goal-1', 'W-1')
+    await waitUntil(async () => {
+      const [primary, secondary] = await Promise.all([
+        Bun.file(join(worktreeRoot, 'src', 'feature.ts'))
+          .text()
+          .catch(() => ''),
+        Bun.file(join(apiWorktreeRoot, 'src', 'feature.ts'))
+          .text()
+          .catch(() => ''),
+      ])
+      return primary.includes('2') && secondary.includes('2')
+    })
+
+    fixture.reconciler.interruptRuns('goal-1')
+    await running
+    const attempt = (await fixture.attempts.list('project-1', 'goal-1', 'W-1')).at(-1)
+    const detail = await fixture.attempts.read('project-1', 'goal-1', 'W-1', attempt?.runId ?? '')
+
+    expect(attempt).toMatchObject({
+      termination: 'interrupted',
+      changeSetId: `CS-${attempt?.runId}`,
+    })
+    expect(detail?.changeSet?.repos.map((repo) => repo.repoId).sort()).toEqual(['api', 'primary'])
+    expect(
+      detail?.changeSet?.repos.every(
+        (repo) => repo.baseCommit !== repo.resultCommit && /^[a-f0-9]{64}$/.test(repo.contentHash),
+      ),
+    ).toBe(true)
   })
 
   test('contains Coordinator checkpoint infrastructure failure in Attempt history', async () => {
@@ -983,7 +1576,7 @@ describe('ProjectReconciler', () => {
     ).toEqual(['run-2', 'run-1'])
   })
 
-  test('resumes the same responsibility Session after a Project Owner Work message', async () => {
+  test('starts a fresh responsibility Session after a Project Owner Work message', async () => {
     const fixture = await createFixture({
       directInitialWork: true,
       generatorOperationalFailure: true,
@@ -1001,14 +1594,11 @@ describe('ProjectReconciler', () => {
     expect(second).toMatchObject({ kind: 'pass_finished', application: 'operational_failure' })
     expect(fixture.runner.sessionsByRun).toEqual([
       { responsibility: 'generator', sessionId: null },
-      { responsibility: 'generator', sessionId: 'session-W-1-generator' },
+      { responsibility: 'generator', sessionId: null },
     ])
     const firstRunView = fixture.runner.runViewsByRun[0]
     if (!firstRunView) throw new Error('Expected the first Generator Run view')
-    expect(fixture.runner.runViewsByRun.map(({ path }) => path)).toEqual([
-      firstRunView.path,
-      firstRunView.path,
-    ])
+    expect(fixture.runner.runViewsByRun[1]?.path).not.toBe(firstRunView.path)
     expect(fixture.runner.runViewsByRun.every(({ ownsCurrentRun }) => ownsCurrentRun)).toBe(true)
     const attempts = await fixture.attempts.list('project-1', 'goal-1', 'W-1')
     expect(attempts).toHaveLength(2)
@@ -1147,6 +1737,12 @@ class DeliveryScriptRunner implements RoleRunner {
   readonly reviewerCwds: string[] = []
   readonly reviewerRunRoots: string[] = []
   readonly repoRootsByRun: Array<{ responsibility: string; paths: string[] }> = []
+  readonly runContracts: Array<{
+    profile: string
+    protocol: string | undefined
+    workspaceMode: string | undefined
+    prompt: string
+  }> = []
   private generatorRuns = 0
   private reviewerRuns = 0
   private reviewerRejections = 0
@@ -1156,8 +1752,9 @@ class DeliveryScriptRunner implements RoleRunner {
       generatorResult: 'success' | 'fail'
       generatorChangesOnRetry: boolean
       generatorOperationalFailure: boolean
+      generatorEpochRotation: boolean
       reviewerOperationalWriteOnce: boolean
-      reviewerRejectOnce: boolean
+      reviewerRejectCount: number
       changedRepoIds: readonly string[]
       generatorWaitForAbort: boolean
       plannerWaitForAbort: boolean
@@ -1168,10 +1765,18 @@ class DeliveryScriptRunner implements RoleRunner {
   async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
     const artifacts: string[] = []
     this.responsibilities.push(input.responsibility)
+    this.runContracts.push({
+      profile: input.responsibility,
+      protocol: input.protocol,
+      workspaceMode: input.workspaceMode,
+      prompt: await Bun.file(input.context.promptFile).text(),
+    })
     await observer?.onExecution?.({
       transport: 'codex',
+      provider: 'codex',
       model: 'gpt-test',
       reasoningEffort: 'xhigh',
+      permissionBoundary: 'bounded',
     })
     this.sessionsByRun.push({
       responsibility: input.responsibility,
@@ -1199,7 +1804,10 @@ class DeliveryScriptRunner implements RoleRunner {
     }
     await observer?.onSession?.({
       transport: 'codex',
-      sessionId: `session-${input.workId}-${input.responsibility}`,
+      sessionId:
+        this.options.generatorEpochRotation && input.responsibility === 'generator'
+          ? `session-${input.runId}-epoch-1`
+          : `session-${input.runId}-${input.responsibility}`,
       executionKey: 'test-execution',
     })
     this.repoRootsByRun.push({
@@ -1226,7 +1834,30 @@ class DeliveryScriptRunner implements RoleRunner {
       else if (this.options.plannerResult === 'success') await this.plan(input)
     }
     if (input.responsibility === 'generator') {
-      const featureVersion = this.options.generatorChangesOnRetry ? this.generatorRuns++ + 2 : 2
+      if (this.options.generatorEpochRotation) {
+        for (const repo of input.context.repoRoots) {
+          if (!this.options.changedRepoIds.includes(repo.repoId)) continue
+          await mkdir(join(repo.path, 'src'), { recursive: true })
+          await Bun.write(join(repo.path, 'src', 'epoch-one.ts'), 'export const epoch = 1\n')
+        }
+        const previousSession = {
+          transport: 'codex' as const,
+          sessionId: `session-${input.runId}-epoch-1`,
+          executionKey: 'test-execution',
+        }
+        await observer?.onSessionInvalid?.()
+        await observer?.onSessionRotate?.({
+          reason: 'context_boundary',
+          previousSession,
+          handoffMarkdown: `# Run Session Epoch handoff\n\nRun ${input.runId} keeps its workspace.`,
+        })
+        await observer?.onSession?.({
+          ...previousSession,
+          sessionId: `session-${input.runId}-epoch-2`,
+        })
+      }
+      const generatorRun = this.generatorRuns++
+      const featureVersion = this.options.generatorChangesOnRetry ? generatorRun + 2 : 2
       await observer?.onEvent?.({
         kind: 'transcript',
         transport: 'codex',
@@ -1250,6 +1881,13 @@ class DeliveryScriptRunner implements RoleRunner {
           join(repo.path, 'src', 'feature.ts'),
           `export const feature = ${featureVersion}\n`,
         )
+        if (this.options.generatorChangesOnRetry && generatorRun > 0) {
+          await mkdir(join(repo.path, 'docs'), { recursive: true })
+          await Bun.write(
+            join(repo.path, 'docs', 'verification.md'),
+            `# Verification\n\nFeature ${featureVersion} is covered by the focused check.\n`,
+          )
+        }
       }
       if (this.options.generatorWaitForAbort) {
         await waitForAbort(input.signal)
@@ -1281,12 +1919,15 @@ class DeliveryScriptRunner implements RoleRunner {
     }
     if (
       input.responsibility === 'reviewer' &&
-      this.options.reviewerRejectOnce &&
-      this.reviewerRejections++ === 0
+      this.reviewerRejections < this.options.reviewerRejectCount
     ) {
+      const rejection = this.reviewerRejections++
       return {
         result: 'reject',
-        summary: 'Reviewer requested one focused correction.',
+        summary:
+          rejection === 0
+            ? 'Independent review found a source defect.'
+            : 'Independent review rejected the documentation evidence.',
         artifacts: [],
         exitCode: 0,
       }
@@ -1298,7 +1939,10 @@ class DeliveryScriptRunner implements RoleRunner {
           : input.responsibility === 'planner'
             ? this.options.plannerResult
             : 'success',
-      summary: `${input.responsibility} completed its fixed responsibility.`,
+      summary:
+        input.responsibility === 'reviewer' && this.options.reviewerRejectCount > 0
+          ? 'Independent final review accepted the repaired source and documentation evidence.'
+          : `${input.responsibility} completed its fixed responsibility.`,
       artifacts,
       exitCode: 0,
     }
@@ -1357,11 +2001,15 @@ async function createFixture(
     generatorChangesOnRetry?: boolean
     changedRepoIds?: readonly string[]
     generatorOperationalFailure?: boolean
+    generatorEpochRotation?: boolean
     generatorWaitForAbort?: boolean
     plannerWaitForAbort?: boolean
     plannerResult?: 'success' | 'fail'
     reviewerOperationalWriteOnce?: boolean
     reviewerRejectOnce?: boolean
+    reviewerRejectCount?: number
+    objective?: string
+    acceptanceCriteria?: readonly string[]
     includeSecondaryRepo?: boolean
     projectPath?: string
     worktrees?: StableWorktreeManager
@@ -1427,7 +2075,7 @@ async function createFixture(
   await store.createGoal({
     goalId: 'goal-1',
     title: 'Ship feature',
-    objective: 'Set feature to 2.',
+    objective: options.objective ?? 'Set feature to 2.',
     ...(options.directInitialWork
       ? {
           acceptedInput: {
@@ -1442,8 +2090,8 @@ async function createFixture(
           initialEngineeringWork: {
             id: 'W-1',
             title: 'Build feature 2',
-            objective: 'Set feature to 2.',
-            acceptanceCriteria: ['feature equals 2.'],
+            objective: options.objective ?? 'Set feature to 2.',
+            acceptanceCriteria: options.acceptanceCriteria ?? ['feature equals 2.'],
             assistantDispatch: 'home:H-1/event:EV-1' as const,
           },
         }
@@ -1453,8 +2101,9 @@ async function createFixture(
     generatorResult: options.generatorResult ?? 'success',
     generatorChangesOnRetry: options.generatorChangesOnRetry ?? false,
     generatorOperationalFailure: options.generatorOperationalFailure ?? false,
+    generatorEpochRotation: options.generatorEpochRotation ?? false,
     reviewerOperationalWriteOnce: options.reviewerOperationalWriteOnce ?? false,
-    reviewerRejectOnce: options.reviewerRejectOnce ?? false,
+    reviewerRejectCount: options.reviewerRejectCount ?? (options.reviewerRejectOnce ? 1 : 0),
     changedRepoIds: options.changedRepoIds ?? ['primary'],
     generatorWaitForAbort: options.generatorWaitForAbort ?? false,
     plannerWaitForAbort: options.plannerWaitForAbort ?? false,

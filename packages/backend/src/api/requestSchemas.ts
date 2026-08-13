@@ -86,16 +86,10 @@ export const inboxSchema = z
             message: 'goalId requires projectId',
           })
         }
-        if (!context.projectId && !context.attentionRefs?.length) {
+        if (!context.projectId && !context.attentionRefs?.length && !context.replyTo) {
           refinement.addIssue({
             code: z.ZodIssueCode.custom,
-            message: 'context requires a Project location or Attention reference',
-          })
-        }
-        if (context.replyTo && !context.attentionRefs?.length) {
-          refinement.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'replyTo requires exact Attention references',
+            message: 'context requires a Project location, Attention reference, or reply target',
           })
         }
       })

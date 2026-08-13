@@ -6,7 +6,7 @@ import type { GoalPackage } from '../domain/goalPackage'
 import type { WorkProjection } from '../domain/workProjection'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import { type MvpProjectRuntime, type MvpRuntime, requireProject } from '../runtime/mvpRuntime'
-import type { RunAttemptSummary } from '../runtime/runAttemptStore'
+import { type RunAttemptSummary, deriveRunSchedulingFacts } from '../runtime/runAttemptStore'
 import { type RunCostEntry, summarizeRunCosts } from '../runtime/runCostProjection'
 import { settledFailureWorkIds } from '../runtime/settledAttemptFailure'
 import { presentGoalAttention, presentWorkspaceAttention } from './assistantFeedPresenter'
@@ -178,7 +178,7 @@ export async function presentGoal(
       })),
     }
   }
-  const [workspace, designSnapshot, attemptSnapshot] = await Promise.all([
+  const [workspace, designSnapshot, attemptSnapshot, operations] = await Promise.all([
     runtime.workspace.readWorkspace(),
     view === 'full'
       ? runtime.publisher.snapshotTree(
@@ -187,6 +187,7 @@ export async function presentGoal(
         )
       : null,
     runtime.attempts.snapshot(),
+    project.reconciler.listGoalOperations(goalId),
   ])
   const attemptsByWork = attemptSnapshot.listGoal(projectId, goalId)
   const runningAttempts = attemptSnapshot.running()
@@ -214,6 +215,7 @@ export async function presentGoal(
       attemptWorkIds(attemptSnapshot.queued(), projectId, goalId),
     ),
     passCapacity: { planner: true, generator: true, reviewer: true },
+    ...deriveRunSchedulingFacts([...attemptsByWork.values()].flat()),
   })
   const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
   const agentPlanByWork = await readLiveAgentPlans(
@@ -253,6 +255,7 @@ export async function presentGoal(
     projectAttention: projectAttention
       ? presentWorkspaceAttention(projectAttention, projectId)
       : null,
+    operations,
   }
   if (view === 'board') return projection
   return {
@@ -348,6 +351,7 @@ function presentWorkBlocker(
       : 'Agent capacity'
   }
   if (reasons.has('no_responsibility')) return 'unsupported work stage'
+  if (reasons.has('awaiting_supervisor')) return 'Supervisor'
   return null
 }
 

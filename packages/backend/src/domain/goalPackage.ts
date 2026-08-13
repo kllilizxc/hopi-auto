@@ -187,10 +187,9 @@ function validateGoalTransition(goalId: string, previous: GoalPackage, next: Goa
   const after = next.goal
   if (
     after.attributes.id !== before.attributes.id ||
-    after.attributes.title !== before.attributes.title ||
-    after.body !== before.body
+    after.attributes.title !== before.attributes.title
   ) {
-    throw invalid(goalId, 'Goal identity, title, and original statement are immutable')
+    throw invalid(goalId, 'Goal identity and title are immutable')
   }
   if (
     after.attributes.contractRevision < before.attributes.contractRevision ||
@@ -360,14 +359,6 @@ function validateWorkGraph(
       if (!isStaleEngineeringWork && !isStagedPlanningWork) {
         throw invalid(goalId, `nonterminal Work ${workId} uses an invalid contractRevision`)
       }
-    }
-
-    if (
-      isEngineeringWork(attributes) &&
-      attributes.stage === 'done' &&
-      attributes.evidenceRefs.length === 0
-    ) {
-      throw invalid(goalId, `done Engineering Work ${workId} has no Evidence`)
     }
 
     for (const dependencyId of attributes.dependsOn) {
