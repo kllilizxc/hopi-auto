@@ -11,7 +11,7 @@ describe('Assistant automatic context', () => {
     expect(readAssistantPageScope('/projects')).toBeNull()
     expect(readAssistantPageScope('/projects/P-1')).toEqual({ projectId: 'P-1' })
     expect(readAssistantPageScope('/projects/P-1/goals/new')).toBeNull()
-    expect(readAssistantPageScope('/projects/P-1/board/G-1')).toEqual({
+    expect(readAssistantPageScope('/projects/P-1/route/G-1')).toEqual({
       projectId: 'P-1',
       goalId: 'G-1',
     })

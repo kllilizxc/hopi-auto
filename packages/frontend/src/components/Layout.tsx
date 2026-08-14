@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, FileText, FolderOpen, LayoutDashboard, X } from 'lucide-react'
+import { Bot, FileText, FolderOpen, Route as RouteIcon, X } from 'lucide-react'
 import {
   Suspense,
   createContext,
@@ -12,7 +12,7 @@ import {
   useState,
 } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { type AttentionView, readGoalBoard, readGoalDocs, readShellState } from '../lib/api'
+import { type AttentionView, readGoalDocs, readGoalRoute, readShellState } from '../lib/api'
 import { readAssistantPageScope } from '../lib/assistantContext'
 import {
   type GoalSurface,
@@ -31,7 +31,7 @@ import {
   resolveProjectGoalId,
   unseenProjectCompletionCount,
 } from '../lib/goalScope'
-import { goalBoardQueryKey, goalDocsQueryKey } from '../lib/queryKeys'
+import { goalDocsQueryKey, goalRouteQueryKey } from '../lib/queryKeys'
 import {
   CANONICAL_POLL_INTERVAL_MS,
   STABLE_QUERY_NOTIFY_PROPS,
@@ -40,7 +40,7 @@ import {
 import { cn, projectDisplayName } from '../lib/utils'
 import {
   loadAssistantPanel,
-  loadBoardView,
+  loadRouteView,
   loadGoalDocsPage,
   preloadAssistantPanel,
   preloadProjectHomePage,
@@ -175,7 +175,7 @@ export function Layout() {
     setAssistantOpen(true)
     setAssistantRequest((value) => value + 1)
   }, [])
-  const surface: GoalSurface = location.pathname.includes('/docs/') ? 'docs' : 'board'
+  const surface: GoalSurface = location.pathname.includes('/docs/') ? 'docs' : 'route'
   const orderedProjects = useMemo(
     () => orderProjectsByRecency(snapshot?.projects ?? [], recentProjects),
     [recentProjects, snapshot?.projects],
@@ -210,8 +210,8 @@ export function Layout() {
       const queryKey =
         nextSurface === 'docs'
           ? goalDocsQueryKey(scope.projectId, scope.goalId)
-          : goalBoardQueryKey(scope.projectId, scope.goalId)
-      const loadSurface = nextSurface === 'docs' ? loadGoalDocsPage() : loadBoardView()
+          : goalRouteQueryKey(scope.projectId, scope.goalId)
+      const loadSurface = nextSurface === 'docs' ? loadGoalDocsPage() : loadRouteView()
       const prefetch =
         nextSurface === 'docs'
           ? queryClient.prefetchQuery({
@@ -220,7 +220,7 @@ export function Layout() {
             })
           : queryClient.prefetchQuery({
               queryKey,
-              queryFn: () => readGoalBoard(scope.projectId, scope.goalId),
+              queryFn: () => readGoalRoute(scope.projectId, scope.goalId),
             })
 
       await Promise.all([loadSurface, prefetch])
@@ -406,7 +406,7 @@ export function Layout() {
           <section
             className={cn(
               'goal-workspace-surface',
-              surface === 'board' && 'goal-workspace-surface--board',
+              surface === 'route' && 'goal-workspace-surface--route',
             )}
           >
             <header className="workspace-topbar">
@@ -434,12 +434,12 @@ export function Layout() {
               >
                 <AppTabs.List aria-label="Goal workspace view">
                   <AppTabs.Tab
-                    id="board"
-                    onFocus={() => warmGoalSurface(routeScope, 'board')}
-                    onPointerDown={() => warmGoalSurface(routeScope, 'board')}
-                    onPointerEnter={() => warmGoalSurface(routeScope, 'board')}
+                    id="route"
+                    onFocus={() => warmGoalSurface(routeScope, 'route')}
+                    onPointerDown={() => warmGoalSurface(routeScope, 'route')}
+                    onPointerEnter={() => warmGoalSurface(routeScope, 'route')}
                   >
-                    <LayoutDashboard /> Kanban
+                    <RouteIcon /> Route
                   </AppTabs.Tab>
                   <AppTabs.Tab
                     id="docs"

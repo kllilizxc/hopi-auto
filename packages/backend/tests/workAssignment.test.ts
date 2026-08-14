@@ -1,69 +1,87 @@
 import { expect, test } from 'bun:test'
 import type { WorkDocument } from '../src/domain/canonicalDocuments'
-import { appendProjectOwnerMessage, workAssignmentHash } from '../src/runtime/workAssignment'
+import {
+  appendProjectOwnerMessage,
+  currentSettledWorkIds,
+  workAssignmentHash,
+} from '../src/runtime/workAssignment'
 
-test('Work assignment fingerprint ignores Evidence history but changes with executable authority', async () => {
-  const work: WorkDocument = {
-    attributes: {
-      id: 'W-1',
-      title: 'Build the feature',
-      kind: 'engineering',
-      stage: 'generate',
-      notBefore: null,
-      dependsOn: [],
-      contractRevision: 1,
-      evidenceRefs: [],
-      contextRefs: [],
-      ownerMessages: [],
-    },
-    body: '## Acceptance Criteria\n\n- Deliver the current contract.\n',
-  }
+const work: WorkDocument = {
+  attributes: {
+    id: 'W-1',
+    title: 'Build the feature',
+    kind: 'engineering',
+    status: 'open',
+    createdAt: '2026-08-14T00:00:00Z',
+    notBefore: null,
+    dependsOn: [],
+    contractRevision: 1,
+    evidenceRefs: [],
+    contextRefs: [],
+    ownerMessages: [],
+  },
+  body: '## Acceptance Criteria\n\n- Deliver the current contract.\n',
+}
+
+test('assignment hash ignores evidence and messages but changes with executable authority', async () => {
   const initial = await workAssignmentHash(work)
-  const withHistory = await workAssignmentHash({
-    ...work,
-    attributes: {
-      ...work.attributes,
-      evidenceRefs: ['E-R-1', 'E-R-2'],
-      contextRefs: [],
-      ownerMessages: [],
-    },
-  })
-  const revised = await workAssignmentHash({
-    ...work,
-    body: '## Acceptance Criteria\n\n- Deliver the revised contract.\n',
-  })
-  const withOwnerMessage = await workAssignmentHash({
-    ...work,
-    attributes: {
-      ...work.attributes,
-      ownerMessages: [
-        ...appendProjectOwnerMessage(work.attributes.ownerMessages, {
-          recordedAt: '2026-07-25T00:00:00.000Z',
-          sourceEventId: 'EV-guidance',
-          content: 'Use the verified API command.',
-        }),
-      ],
-    },
-  })
-
-  expect(withHistory).toBe(initial)
-  expect(withOwnerMessage).toBe(initial)
-  expect(revised).not.toBe(initial)
+  expect(
+    await workAssignmentHash({
+      ...work,
+      attributes: {
+        ...work.attributes,
+        evidenceRefs: ['E-1'],
+        ownerMessages: [
+          {
+            recordedAt: '2026-08-14T00:00:00Z',
+            sourceEventId: 'EV-1',
+            content: 'Historical note.',
+          },
+        ],
+      },
+    }),
+  ).toBe(initial)
+  expect(
+    await workAssignmentHash({ ...work, body: `${work.body}\n- New requirement.\n` }),
+  ).not.toBe(initial)
 })
 
-test('Project Owner messages are idempotent by source event', () => {
+test('owner messages are idempotent by source event', () => {
   const message = {
-    recordedAt: '2026-07-25T00:00:00.000Z',
-    sourceEventId: 'EV-guidance',
-    content: 'Use the verified API command.',
+    recordedAt: '2026-08-14T00:00:00Z',
+    sourceEventId: 'EV-1',
+    content: 'Use the verified API.',
   }
   const first = appendProjectOwnerMessage([], message)
-
   expect(appendProjectOwnerMessage(first, message)).toBe(first)
-  expect(() =>
-    appendProjectOwnerMessage(first, {
-      ...message,
-      content: 'Use a different command.',
-    }),
-  ).toThrow('Project Owner message already exists for EV-guidance')
+  expect(() => appendProjectOwnerMessage(first, { ...message, content: 'Different.' })).toThrow()
+})
+
+test('only a settled Attempt for the current Work authority waits for Assistant', async () => {
+  const currentHash = await workAssignmentHash(work)
+  const changed = { ...work, body: `${work.body}\n- Changed authority.\n` }
+  const attempt = {
+    projectId: 'P-1',
+    goalId: 'G-1',
+    workId: 'W-1',
+    runId: 'R-1',
+    workspaceMode: 'isolated_write' as const,
+    instructionMarkdown: 'Deliver the Work.',
+    refs: [],
+    workHash: currentHash,
+    execution: null,
+    requestedAt: '2026-08-14T00:00:00Z',
+    startedAt: '2026-08-14T00:00:01Z',
+    endedAt: '2026-08-14T00:00:02Z',
+    status: 'settled' as const,
+    termination: 'normal' as const,
+    reportMarkdown: 'Delivered.',
+    exitCode: 0,
+    candidateCommits: [],
+  }
+
+  expect(await currentSettledWorkIds([work], new Map([['W-1', [attempt]]]))).toEqual(
+    new Set(['W-1']),
+  )
+  expect(await currentSettledWorkIds([changed], new Map([['W-1', [attempt]]]))).toEqual(new Set())
 })

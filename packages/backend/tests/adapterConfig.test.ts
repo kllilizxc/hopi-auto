@@ -1,271 +1,73 @@
 import { describe, expect, test } from 'bun:test'
 import {
   normalizeAgentAdapterConfig,
-  readAgentRoleCodingDefaults,
-  readAssistantCodingDefaults,
+  readAgentCodingSettings,
   resolveAssistantTransportConfig,
-  resolveRoleTransportConfig,
-  updateAgentRoleCodingDefaults,
-  updateAssistantCodingDefaults,
+  resolveWorkerTransportConfig,
+  updateAgentCodingSettings,
 } from '../src/agent/adapterConfig'
 
 describe('agent adapter config', () => {
-  test('accepts the current complete config', () => {
+  test('accepts Codex max reasoning without coupling it to a specific model name', () => {
+    expect(
+      normalizeAgentAdapterConfig({
+        defaults: { transport: 'codex', model: 'gpt-5.6', reasoningEffort: 'max' },
+      }).defaults,
+    ).toEqual({ transport: 'codex', model: 'gpt-5.6', reasoningEffort: 'max' })
+  })
+
+  test('has only Assistant and Worker configuration', () => {
+    const config = normalizeAgentAdapterConfig({
+      defaults: { transport: 'codex', model: 'gpt-5.6', reasoningEffort: 'xhigh' },
+    })
+
+    expect(resolveAssistantTransportConfig(config)).toMatchObject({
+      transport: 'codex',
+      cwdMode: 'root',
+      model: 'gpt-5.6',
+    })
+    expect(resolveWorkerTransportConfig(config)).toMatchObject({
+      transport: 'codex',
+      cwdMode: 'worktree',
+      model: 'gpt-5.6',
+    })
+    expect(() => normalizeAgentAdapterConfig({ ...config, roles: {} })).toThrow('roles')
+  })
+
+  test('updates one agent without creating semantic role configuration', () => {
+    const config = normalizeAgentAdapterConfig({
+      defaults: { transport: 'codex', model: 'gpt-5.6', reasoningEffort: 'high' },
+    })
+    const changed = updateAgentCodingSettings(config, 'worker', {
+      transport: 'claude',
+      model: 'claude-sonnet',
+    })
+
+    expect(readAgentCodingSettings(changed, 'worker')).toMatchObject({
+      codingDefaults: { transport: 'claude', model: 'claude-sonnet' },
+      inherited: false,
+      configurable: true,
+    })
+    expect(readAgentCodingSettings(changed, 'assistant').inherited).toBeTrue()
+    expect(updateAgentCodingSettings(changed, 'worker', null)).not.toHaveProperty('worker')
+  })
+
+  test('rejects process for Assistant and permits it for Worker', () => {
+    const process = {
+      cmd: ['worker-adapter'],
+      cwdMode: 'worktree',
+    } as const
     expect(() =>
       normalizeAgentAdapterConfig({
-        defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-        roles: {},
+        defaults: { transport: 'codex', model: 'gpt-5.6', reasoningEffort: 'high' },
+        assistant: process,
+      }),
+    ).toThrow('assistant')
+    expect(() =>
+      normalizeAgentAdapterConfig({
+        defaults: { transport: 'codex', model: 'gpt-5.6', reasoningEffort: 'high' },
+        worker: process,
       }),
     ).not.toThrow()
-  })
-
-  test('resolves defaults-only configs for assistant and workflow roles', () => {
-    const config = normalizeAgentAdapterConfig({
-      defaults: {
-        transport: 'codex',
-        model: 'gpt-5.4',
-        reasoningEffort: 'xhigh',
-      },
-      roles: {},
-    })
-
-    expect(resolveAssistantTransportConfig(config)).toEqual({
-      transport: 'codex',
-      cwdMode: 'root',
-      sandbox: 'workspace-write',
-      approvalPolicy: 'never',
-      model: 'gpt-5.4',
-      reasoningEffort: 'xhigh',
-    })
-    expect(resolveRoleTransportConfig(config, 'generator')).toEqual({
-      transport: 'codex',
-      cwdMode: 'worktree',
-      sandbox: 'workspace-write',
-      approvalPolicy: 'never',
-      model: 'gpt-5.4',
-      reasoningEffort: 'xhigh',
-    })
-  })
-
-  test('uses Home defaults and explicit Home role overrides for workflow roles', () => {
-    const config = normalizeAgentAdapterConfig({
-      defaults: {
-        transport: 'codex',
-        model: 'gpt-5.4',
-        reasoningEffort: 'xhigh',
-      },
-      roles: {
-        reviewer: {
-          transport: 'claude',
-          cwdMode: 'worktree',
-          model: 'claude-review',
-          permissionMode: 'dontAsk',
-        },
-      },
-    })
-    expect(resolveRoleTransportConfig(config, 'generator')).toMatchObject({
-      transport: 'codex',
-      model: 'gpt-5.4',
-      reasoningEffort: 'xhigh',
-    })
-    expect(resolveRoleTransportConfig(config, 'reviewer')).toMatchObject({
-      transport: 'claude',
-      model: 'claude-review',
-    })
-    expect(resolveAssistantTransportConfig(config)).toMatchObject({
-      transport: 'codex',
-      model: 'gpt-5.4',
-      reasoningEffort: 'xhigh',
-    })
-  })
-
-  test('inherits non-Codex Home defaults for Assistant and workflow roles', () => {
-    const config = normalizeAgentAdapterConfig({
-      defaults: { transport: 'claude', model: 'claude-workflow' },
-      roles: {},
-    })
-
-    expect(resolveAssistantTransportConfig(config)).toMatchObject({
-      transport: 'claude',
-      cwdMode: 'root',
-      model: 'claude-workflow',
-      permissionMode: 'dontAsk',
-    })
-    expect(resolveRoleTransportConfig(config, 'planner')).toMatchObject({
-      transport: 'claude',
-      model: 'claude-workflow',
-    })
-  })
-
-  test('updates Assistant vendor and model without changing workflow defaults', () => {
-    const config = normalizeAgentAdapterConfig({
-      defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-      roles: {},
-    })
-    const overridden = updateAssistantCodingDefaults(config, {
-      transport: 'opencode',
-      model: 'anthropic/claude-sonnet-4-5',
-    })
-
-    expect(readAssistantCodingDefaults(overridden)).toEqual({
-      codingDefaults: {
-        transport: 'opencode',
-        model: 'anthropic/claude-sonnet-4-5',
-      },
-      inherited: false,
-    })
-    expect(resolveRoleTransportConfig(overridden, 'planner')).toMatchObject({
-      transport: 'codex',
-      model: 'gpt-5.4',
-    })
-    expect(readAssistantCodingDefaults(updateAssistantCodingDefaults(overridden, null))).toEqual({
-      codingDefaults: {
-        transport: 'codex',
-        model: 'gpt-5.4',
-        reasoningEffort: 'xhigh',
-      },
-      inherited: true,
-    })
-  })
-
-  test('preserves transport-supported advanced Assistant fields while changing the model', () => {
-    const config = normalizeAgentAdapterConfig({
-      defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-      assistant: {
-        transport: 'codex',
-        cwdMode: 'root',
-        binary: '/opt/codex',
-        profile: 'team',
-        sandbox: 'read-only',
-        approvalPolicy: 'never',
-      },
-      roles: {},
-    })
-
-    expect(
-      updateAssistantCodingDefaults(config, {
-        transport: 'codex',
-        model: 'gpt-5.5',
-        reasoningEffort: 'high',
-      }).assistant,
-    ).toEqual({
-      transport: 'codex',
-      cwdMode: 'root',
-      binary: '/opt/codex',
-      profile: 'team',
-      sandbox: 'read-only',
-      approvalPolicy: 'never',
-      model: 'gpt-5.5',
-      reasoningEffort: 'high',
-    })
-  })
-
-  test('updates and clears one workflow role override without losing advanced fields', () => {
-    const config = normalizeAgentAdapterConfig({
-      defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-      roles: {
-        reviewer: {
-          transport: 'codex',
-          cwdMode: 'worktree',
-          binary: '/opt/codex',
-          sandbox: 'read-only',
-          approvalPolicy: 'never',
-        },
-      },
-    })
-
-    const overridden = updateAgentRoleCodingDefaults(config, 'reviewer', {
-      transport: 'codex',
-      model: 'gpt-5.5',
-      reasoningEffort: 'high',
-    })
-    expect(overridden.roles.reviewer).toEqual({
-      transport: 'codex',
-      cwdMode: 'worktree',
-      binary: '/opt/codex',
-      sandbox: 'read-only',
-      approvalPolicy: 'never',
-      model: 'gpt-5.5',
-      reasoningEffort: 'high',
-    })
-    expect(readAgentRoleCodingDefaults(overridden, 'reviewer')).toEqual({
-      codingDefaults: {
-        transport: 'codex',
-        model: 'gpt-5.5',
-        reasoningEffort: 'high',
-      },
-      inherited: false,
-      configurable: true,
-    })
-    expect(
-      readAgentRoleCodingDefaults(
-        updateAgentRoleCodingDefaults(overridden, 'reviewer', null),
-        'reviewer',
-      ),
-    ).toEqual({
-      codingDefaults: {
-        transport: 'codex',
-        model: 'gpt-5.4',
-        reasoningEffort: 'xhigh',
-      },
-      inherited: true,
-      configurable: true,
-    })
-  })
-
-  test('rejects process as an Assistant transport', () => {
-    expect(() =>
-      normalizeAgentAdapterConfig({
-        defaults: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-        assistant: {
-          transport: 'process',
-          cwdMode: 'root',
-          cmd: ['bun', 'assistant.ts'],
-        },
-        roles: {},
-      }),
-    ).toThrow('assistant must use a built-in vendor transport')
-  })
-
-  test('lets explicit codex overrides inherit model and effort unless a profile is set', () => {
-    const inheritedConfig = normalizeAgentAdapterConfig({
-      defaults: {
-        transport: 'codex',
-        model: 'gpt-5.4',
-        reasoningEffort: 'xhigh',
-      },
-      assistant: {
-        transport: 'codex',
-        cwdMode: 'root',
-        sandbox: 'workspace-write',
-        approvalPolicy: 'never',
-      },
-      roles: {},
-    })
-    const profiledConfig = normalizeAgentAdapterConfig({
-      defaults: {
-        transport: 'codex',
-        model: 'gpt-5.4',
-        reasoningEffort: 'xhigh',
-      },
-      assistant: {
-        transport: 'codex',
-        cwdMode: 'root',
-        profile: 'team-default',
-        sandbox: 'workspace-write',
-        approvalPolicy: 'never',
-      },
-      roles: {},
-    })
-
-    expect(resolveAssistantTransportConfig(inheritedConfig)).toMatchObject({
-      model: 'gpt-5.4',
-      reasoningEffort: 'xhigh',
-    })
-    expect(resolveAssistantTransportConfig(profiledConfig)).toMatchObject({
-      profile: 'team-default',
-    })
-    expect(resolveAssistantTransportConfig(profiledConfig)).not.toHaveProperty('model')
-    expect(resolveAssistantTransportConfig(profiledConfig)).not.toHaveProperty('reasoningEffort')
   })
 })

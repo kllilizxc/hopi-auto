@@ -27,7 +27,7 @@ export function isNavigationQueryKey(queryKey: readonly unknown[]) {
     queryKey[1].length > 0 &&
     typeof queryKey[2] === 'string' &&
     queryKey[2].length > 0 &&
-    (queryKey[3] === 'board' || queryKey[3] === 'docs')
+    (queryKey[3] === 'route' || queryKey[3] === 'docs')
   )
 }
 

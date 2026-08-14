@@ -20,8 +20,7 @@ import {
   workspaceAssistantContextDigest,
   workspaceAssistantRuntimeDigest,
 } from '../src/assistant/workspaceAssistant'
-import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
-import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+import { PublicationCoordinator } from '../src/publication/publisher'
 import {
   browserEnvironmentRoot,
   browserHarnessAdapterCommand,
@@ -175,11 +174,7 @@ describe('WorkspaceAssistant conversation', () => {
     }
     expect(args).toContain('--dangerously-skip-permissions')
     const systemPrompt = args[args.indexOf('--append-system-prompt') + 1]
-    expect(systemPrompt).toContain('Role: HOPI Project owner')
-    expect(systemPrompt).toContain(
-      'every Planner, Generator, or Reviewer Run is an explicit hopi_control_work run request',
-    )
-    expect(systemPrompt).toContain('do not create or replace Goal or Engineering Work delivery')
+    expectWayfinderInstructions(systemPrompt)
     expect(args).not.toContain('--allowedTools')
     expect(settings).toEqual({ sandbox: { enabled: false } })
     expect(args).not.toContain('--add-dir')
@@ -571,13 +566,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(config.compaction).toEqual({ auto: true })
     expect(config.instructions).toEqual([join(cwd, 'hopi-assistant-instructions.md')])
     const opencodeInstructions = await Bun.file(config.instructions[0]).text()
-    expect(opencodeInstructions).toContain('Role: HOPI Project owner')
-    expect(opencodeInstructions).toContain(
-      'every Planner, Generator, or Reviewer Run is an explicit hopi_control_work run request',
-    )
-    expect(opencodeInstructions).toContain(
-      'do not create or replace Goal or Engineering Work delivery',
-    )
+    expectWayfinderInstructions(opencodeInstructions)
     expect(config.permission).toEqual({ '*': 'allow' })
     expect(await Bun.file(configPathFile).text()).toBe(join(cwd, 'opencode.json'))
     expect(await Bun.file(pwdFile).text()).toBe(cwd)
@@ -891,13 +880,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(args).not.toContain('agents.enabled=false')
     expect(args).not.toContain('include_collaboration_mode_instructions=false')
     const developerInstructions = args.find((arg) => arg.startsWith('developer_instructions='))
-    expect(developerInstructions).toContain('Role: HOPI Project owner')
-    expect(developerInstructions).toContain(
-      'every Planner, Generator, or Reviewer Run is an explicit hopi_control_work run request',
-    )
-    expect(developerInstructions).toContain(
-      'do not create or replace Goal or Engineering Work delivery',
-    )
+    expectWayfinderInstructions(developerInstructions)
     for (const feature of ['apps', 'goals', 'memories', 'plugins']) {
       expect(args).toContain(feature)
       expect(args[args.indexOf(feature) - 1]).toBe('--disable')
@@ -963,6 +946,7 @@ describe('WorkspaceAssistant conversation', () => {
       goalId: 'G-1',
       title: 'Goal',
       objective: 'Ship it.',
+      firstWork: initialEngineeringWork(),
       acceptedInput: {
         attributes: {
           sourceHomeId: 'H-1',
@@ -973,7 +957,6 @@ describe('WorkspaceAssistant conversation', () => {
         body: 'Use the current repository configuration.\n',
       },
     })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
     await fixture.workspace.receiveEvent({
       eventId: 'EV-1',
       content: 'hi',
@@ -995,9 +978,9 @@ describe('WorkspaceAssistant conversation', () => {
         attributes: expect.objectContaining({ sourceEventId: 'EV-accepted' }),
       }),
     ])
-    expect(
-      [...goalPackage.works.values()].filter((work) => work.attributes.stage === 'plan'),
-    ).toHaveLength(0)
+    expect([...goalPackage.works.values()].map((work) => work.attributes.kind)).toEqual([
+      'engineering',
+    ])
     expect(seen[0]?.sessionId).toBeNull()
     expect(seen[0]?.prompt).toContain('[Preferred page context: P-1 / G-1]')
     expect(seen[0]?.prompt).not.toContain('[Current execution environment observation]')
@@ -1007,104 +990,8 @@ describe('WorkspaceAssistant conversation', () => {
     expect(seen[0]?.prompt).toContain('"acceptedInputs"')
     expect(seen[0]?.prompt).toContain('Use the current repository configuration.')
     expect(seen[0]?.prompt).toContain('EV-accepted.md')
-    expect(seen[0]?.prompt).not.toContain('Role: HOPI Project owner')
-    expect(seen[0]?.prompt).not.toContain('Each Engineering Work receives every Repo binding')
-    expect(seen[0]?.prompt).toContain(
-      'holds new responsibility dispatch for that Project until this turn settles',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'A Run requested in this turn can start only after the turn settles',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'Wayfinding is about finding the way, not charging at the destination',
-    )
-    expect(seen[0]?.prompt).toContain('shared low-resolution map—an index, not a store')
-    expect(seen[0]?.prompt).toContain(
-      'fog-or-ticket test is whether you can state the question precisely now, not whether you can answer it now',
-    )
-    expect(seen[0]?.prompt).toContain('refer to tickets by name')
-    expect(seen[0]?.prompt).toContain(
-      'research uses an AFK Planner Run; prototype and grilling are HITL',
-    )
-    expect(seen[0]?.prompt).toContain('task is AFK or HITL and only unblocks a decision')
-    expect(seen[0]?.prompt).toContain(
-      'HITL stays with the operator through conversation or Attention',
-    )
-    expect(seen[0]?.prompt).toContain("At the map's edge, hand off actionable Engineering Work")
-    expect(seen[0]?.prompt).toContain('dependsOn links only execution commitments')
-    expect(seen[0]?.prompt).toContain('Inspect proposed Work bodies, not only DAG shape')
-    expect(seen[0]?.prompt).toContain(
-      'request same-contract Planning and name the mixed boundaries',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'A named test suite, browser harness, adapter, or application is a proof container',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'useful buildable candidate with intentionally deferred behavior',
-    )
-    expect(seen[0]?.prompt).toContain('Do not demand headings or formulaic output')
-    expect(seen[0]?.prompt).toContain('Current authority is ordered by meaning, not recency')
-    expect(seen[0]?.prompt).toContain(
-      'current turn and current Goal accepted Inputs, design/runbook, and current source facts outrank Project conversation history',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'Do not resolve and recreate the same condition as workspace Attention merely to paraphrase it',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'verify that current authority or a concrete current source consumer establishes what it is and how it is consumed',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'put the complete operator action in the Attention summary or decisionPrompt',
-    )
-    expect(seen[0]?.prompt).not.toContain('Assistant shell effects end with the turn')
-    expect(seen[0]?.prompt).not.toContain('Reply with outcome and action in 1-2 sentences')
-    expect(seen[0]?.prompt).toContain('normal user entry opens')
-    expect(seen[0]?.prompt).toContain('authentication may be mocked')
-    expect(seen[0]?.prompt).toContain('useful data is visible')
-    expect(seen[0]?.prompt).toContain('Prefer local data; fall back to DEV')
-    expect(seen[0]?.prompt).toContain('only entries the operator should open as surfaces')
-    expect(seen[0]?.prompt).toContain('docs/hopi/preview/runbook.md is free-form Project guidance')
-    expect(seen[0]?.prompt).toContain(
-      'A user-initiated Preview Start already requests a working Preview',
-    )
-    expect(seen[0]?.prompt).toContain('read only the session status and bounded log summary')
-    expect(seen[0]?.prompt).toContain('Assistant does not inspect source or diagnose')
-    expect(seen[0]?.prompt).toContain('create the smallest experience-oriented Goal')
-    expect(seen[0]?.prompt).toContain('request a writable Generator Run')
-    expect(seen[0]?.prompt).toContain('never wait for another message or duplicate Work')
-    expect(seen[0]?.prompt).toContain('A Preview failure is only evidence')
-    expect(seen[0]?.prompt).toContain('not authority for the failed service topology')
-    expect(seen[0]?.prompt).toContain(
-      'Create Preview Goal and Work contracts in experience terms only',
-    )
-    expect(seen[0]?.prompt).toContain(
-      'prescribe neither services, root causes, live authentication',
-    )
-    expect(seen[0]?.prompt).toContain('do not prohibit mock authentication or local sample data')
-    expect(seen[0]?.prompt).toContain('Runbook and adapter restrictions are revisable history')
-    expect(seen[0]?.prompt).toContain('runbook and source first, then relevant knowledge')
-    expect(seen[0]?.prompt).toContain(
-      'one short question only when a necessary fact remains unavailable',
-    )
-    expect(seen[0]?.prompt).toContain('shortest working path')
-    expect(seen[0]?.prompt).toContain('may mock authentication or provide local sample data')
-    expect(seen[0]?.prompt).toContain('browser-checks before broad builds or test suites')
-    expect(seen[0]?.prompt).toContain('page opens with useful data and one basic interaction works')
-    expect(seen[0]?.prompt).toContain('Do not expand it to unrelated services')
-    expect(seen[0]?.prompt).toContain('transport reachability alone is insufficient')
-    expect(seen[0]?.prompt).toContain('do not add a database approval gate')
-    expect(seen[0]?.prompt).not.toContain(
-      'must not replace a missing fact with exhaustive discovery',
-    )
-    expect(seen[0]?.prompt).not.toContain('omit internals unless asked or decision-relevant')
-    expect(seen[0]?.prompt).not.toContain('Only HOPI operatorUrl is linkable')
-    expect(seen[0]?.prompt).toContain('task worktrees are disposable')
-    expect(seen[0]?.prompt).toContain('$HOPI_CACHE_DIR persists')
-    expect(seen[0]?.prompt).toContain('detached descendants have no HOPI lifecycle')
-    expect(seen[0]?.prompt).toContain('Provider workspace and task worktrees are disposable')
-    expect(seen[0]?.prompt).not.toContain('answer without polling')
-    expect(seen[0]?.prompt).not.toContain('[Operator-facing reply contract]')
-    expect(seen[0]?.prompt).not.toContain('Default to one or two short sentences')
+    expect(seen[0]?.prompt).toContain('Deliver the accepted Goal.')
+    expect(seen[0]?.prompt).not.toContain('## Wayfinder')
     expect(seen[0]?.prompt.length).toBeLessThan(10_000)
     expect((await fixture.conversation.readTurn('EV-1'))?.manifest.status).toBe('completed')
   })
@@ -1122,7 +1009,12 @@ describe('WorkspaceAssistant conversation', () => {
         return { reply: 'Observed.', session: codexSession('thread-observation') }
       },
     }))
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.goalStore.createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+      firstWork: initialEngineeringWork(),
+    })
     await fixture.workspace.receiveEvent({
       eventId: 'EV-observe',
       content: 'What is the current state?',
@@ -1133,6 +1025,7 @@ describe('WorkspaceAssistant conversation', () => {
 
     expect(prompt).toContain('[Current Project state and unresolved Attention')
     expect(JSON.stringify(stateResult)).toContain('"lifecycle":"active"')
+    expect(JSON.stringify(stateResult)).toContain('Deliver the accepted Goal.')
     expect(JSON.stringify(stateResult)).toContain('"eventId":"EV-observe"')
   })
 
@@ -1153,10 +1046,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-2')
 
     expect(sessionIds).toEqual([null, 'thread-1'])
-    expect(prompts[0]).not.toContain('Role: HOPI Project owner')
-    expect(prompts[0]).toContain(
-      'holds new responsibility dispatch for that Project until this turn settles',
-    )
+    expect(prompts[0]).not.toContain('## Wayfinder')
     expect(prompts[1]).not.toContain('# HOPI Workspace Assistant')
     expect(prompts[1]).not.toContain('[Operator-facing reply contract]')
     expect(prompts[1]).not.toContain('[Current durable cross-Project user preferences]')
@@ -1563,7 +1453,7 @@ describe('WorkspaceAssistant conversation', () => {
     }))
     await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-system',
-      content: 'A Work stage changed; revalidate whether action is useful.',
+      content: 'Canonical Work state changed; revalidate whether action is useful.',
     })
 
     await fixture.assistant.process('EV-system')
@@ -1576,7 +1466,7 @@ describe('WorkspaceAssistant conversation', () => {
     })
     expect(prompts[0]).toContain('Project system event. This is not operator input.')
     expect(prompts[0]).toContain('A non-empty final response becomes the public update')
-    expect(prompts[0]).not.toContain('User: A Work stage changed')
+    expect(prompts[0]).not.toContain('User: Canonical Work state changed')
   })
 
   test('processes a durable internal observation against current state after its digest advances', async () => {
@@ -1672,32 +1562,29 @@ describe('WorkspaceAssistant conversation', () => {
               acceptedInputs: [],
               design: [],
               attentions: [],
-              latestPlanningOutcome: null,
               works: [
                 {
-                  attributes: { id: 'W-a', stage: 'generate' },
+                  attributes: { id: 'W-a', kind: 'engineering', status: 'open' },
                   body: oversizedArchiveBody,
                   path: '/canonical/G-1/works/W-a.md',
                   projection: { failedPredicates: [] },
                   runtime: {
-                    activeResponsibility: null,
                     latestAttempt: null,
                     attemptCount: 0,
                     recentAttempts: [],
                   },
                 },
                 {
-                  attributes: { id: 'W-z-failed', stage: 'review' },
+                  attributes: { id: 'W-z-failed', kind: 'engineering', status: 'open' },
+                  body: '## Objective\n\nRecover the failed Work.\n',
                   path: '/canonical/G-1/works/W-z-failed.md',
                   projection: { failedPredicates: ['no_queued_run'] },
                   runtime: {
-                    activeResponsibility: null,
                     latestAttempt: {
                       projectId: 'P-1',
                       goalId: 'G-1',
                       workId: 'W-z-failed',
                       runId: 'R-failed',
-                      responsibility: 'reviewer',
                       workspaceMode: 'read_only',
                       instructionMarkdown: 'Review the current candidate.',
                       refs: [],
@@ -1755,10 +1642,7 @@ describe('WorkspaceAssistant conversation', () => {
     expect(encoded).toBeDefined()
     const current = JSON.parse(encoded ?? '{}')
     expect(current.projects[0].goals[0].works).toHaveLength(2)
-    expect(current.projects[0].goals[0].works[0].body).toContain('archive-')
-    expect(current.projects[0].goals[0].works[0].body).toContain(
-      '[content omitted; inspect the canonical path for the full document]',
-    )
+    expect(current.projects[0].goals[0].works[0]).not.toHaveProperty('body')
     expect(current.projects[0].goals[0].works[1]).toMatchObject({
       path: '/canonical/G-1/works/W-z-failed.md',
       projection: { failedPredicates: ['no_queued_run'] },
@@ -1772,7 +1656,6 @@ describe('WorkspaceAssistant conversation', () => {
     })
     expect(current.projects[0].goals[0].works[1]).not.toHaveProperty('schedulingEffect')
     expect(prompts[0]).not.toContain('archive-end')
-    expect(prompts[0]).not.toContain('... truncated')
   })
 
   test('accepts an explicit retry Run handoff without a second model call', async () => {
@@ -1783,23 +1666,27 @@ describe('WorkspaceAssistant conversation', () => {
         await tools.execute(input.toolToken, 'hopi_control_work', {
           projectId: 'P-1',
           goalId: 'G-1',
-          workId: 'plan-initial',
+          workId: 'W-initial',
           action: {
             kind: 'run',
-            profile: 'planner',
             workspaceMode: 'none',
-            instructionMarkdown: 'Retry the planning Work after the transient interruption.',
+            instructionMarkdown: 'Retry the Work after the transient interruption.',
             refs: [],
           },
         })
         return { reply: '', session: codexSession('thread-atomic-retry') }
       },
     }))
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await fixture.goalStore.createGoal({
+      goalId: 'G-1',
+      title: 'Goal',
+      objective: 'Ship it.',
+      firstWork: initialEngineeringWork(),
+    })
     const attention = await publishTestWorkAttention(
       fixture.goalStore,
       'G-1',
-      'plan-initial',
+      'W-initial',
       3,
       'stream disconnected before completion',
     )
@@ -1865,7 +1752,7 @@ describe('WorkspaceAssistant conversation', () => {
     await fixture.assistant.process('EV-user-1')
     await fixture.workspace.receiveSystemEvent({
       eventId: 'EV-wake-1',
-      content: 'A Reviewer rejected the current candidate.',
+      content: 'An independent review rejected the current candidate.',
       context,
     })
     await fixture.assistant.process('EV-wake-1')
@@ -2125,22 +2012,32 @@ async function currentAssistantContextDigest(
   return workspaceAssistantContextDigest((await workspace.readWorkspace()).preference.digest)
 }
 
-async function finishInitialPlanning(
-  store: ReturnType<typeof createGoalPackageStore>,
-  goalId: string,
-) {
-  const path = store.paths.workDocument(goalId, 'plan-initial')
-  const source = await Bun.file(store.paths.absolute(path)).text()
-  const work = parseWorkDocument(source)
-  work.attributes.stage = 'done'
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path,
-      expectedHash: await hashBytes(new TextEncoder().encode(source)),
-      content: renderWorkDocument(work),
-    },
-  })
+function initialEngineeringWork() {
+  return {
+    id: 'W-initial',
+    title: 'Deliver the Goal',
+    kind: 'engineering' as const,
+    objective: 'Deliver the accepted Goal.',
+    acceptanceCriteria: ['The Goal success criteria are satisfied.'],
+  }
+}
+
+function expectWayfinderInstructions(source: string | undefined) {
+  expect(source).toContain('Role: HOPI Project Assistant')
+  expect(source).toContain('every Worker Run is requested explicitly')
+  expect(source).toContain('The Map is an index, not a store')
+  expect(source).toContain(
+    'Fog or Decision? The test is whether the question can be stated precisely now',
+  )
+  expect(source).toContain('one dependency-consistent frontier round at a time')
+  expect(source).toContain(
+    'present all those Attentions together as one numbered round in one present_attention_to_user call',
+  )
+  expect(source).toContain(
+    'A question whose answer depends on an unresolved Decision belongs to a later round',
+  )
+  expect(source).not.toContain('ask one real question at a time')
+  expect(source).not.toContain('Never resolve more than one non-research Decision')
 }
 
 async function git(cwd: string, args: string[]) {

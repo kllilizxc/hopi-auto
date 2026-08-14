@@ -7,15 +7,15 @@ import { initializeMessageStreamCache } from './lib/messageStreamCache'
 import { initializeNavigationCache } from './lib/navigationCache'
 import { NAVIGATION_CACHE_GC_INTERVAL_MS } from './lib/queryPerformance'
 import {
-  loadBoardView,
+  loadRouteView,
   loadGoalDocsPage,
   loadProjectHomePage,
 } from './routeModules'
 
 initializeMessageStreamCache()
 
-const BoardView = lazy(() =>
-  loadBoardView().then((module) => ({ default: module.BoardView })),
+const RouteView = lazy(() =>
+  loadRouteView().then((module) => ({ default: module.RouteView })),
 )
 const GoalDocsPage = lazy(() =>
   loadGoalDocsPage().then((module) => ({ default: module.GoalDocsPage })),
@@ -50,8 +50,8 @@ function App() {
               element={<Navigate to="../.." relative="path" replace />}
             />
             <Route
-              path="projects/:projectId/board/:goalId"
-              element={<RouteBoundary><BoardView /></RouteBoundary>}
+              path="projects/:projectId/route/:goalId"
+              element={<RouteBoundary><RouteView /></RouteBoundary>}
             />
             <Route
               path="projects/:projectId/docs/:goalId"

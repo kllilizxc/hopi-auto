@@ -2,7 +2,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
+import { parseWorkDocument } from '../src/domain/canonicalDocuments'
 import { projectReleaseRef } from '../src/domain/project'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createC1Integrator, findIntegrationCommits } from '../src/runtime/c1Integrator'
@@ -35,7 +35,7 @@ describe('C1Integrator', () => {
     if (result.kind !== 'integrated') throw new Error('Expected C1 integration')
     expect(await git(fixture.projectRoot, ['rev-parse', releaseRef])).toBe(result.commit)
     expect(await Bun.file(join(fixture.projectRoot, 'src', 'feature.ts')).text()).toContain('2')
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.status).toBe(
       'done',
     )
     expect(
@@ -95,8 +95,8 @@ describe('C1Integrator', () => {
       kind: 'rejected',
     })
     expect(await git(conflict.projectRoot, ['rev-parse', releaseRef])).toBe(currentRelease)
-    expect((await conflict.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'generate',
+    expect((await conflict.store.readPackage('goal-1')).works.get('W-1')?.attributes.status).toBe(
+      'open',
     )
 
     const stale = await createFixture()
@@ -192,37 +192,16 @@ async function createFixture(options: { sourceChange?: boolean } = {}) {
   const linked = await home.linkProject({ projectId: 'project-1', repoPath: repoRoot })
   const publisher = new PublicationCoordinator()
   const store = createGoalPackageStore(linked.integrationRoot, 'project-1', publisher)
-  await store.createGoal({ goalId: 'goal-1', title: 'Goal', objective: 'Ship feature 2.' })
-  const planningPath = store.paths.workDocument('goal-1', 'plan-initial')
-  const planningSource = await Bun.file(store.paths.absolute(planningPath)).text()
-  const planning = parseWorkDocument(planningSource)
-  planning.attributes.stage = 'done'
-  await store.publishGoal('goal-1', {
-    supportingWrites: [
-      {
-        path: store.paths.workDocument('goal-1', 'W-1'),
-        expectedHash: null,
-        content: renderWorkDocument({
-          attributes: {
-            id: 'W-1',
-            title: 'Build feature 2',
-            kind: 'engineering',
-            stage: 'generate',
-            notBefore: null,
-            dependsOn: [],
-            contractRevision: 1,
-            evidenceRefs: [],
-            contextRefs: [],
-            ownerMessages: [],
-          },
-          body: '## Acceptance Criteria\n\n- feature equals 2.\n',
-        }),
-      },
-    ],
-    gateWrite: {
-      path: planningPath,
-      expectedHash: await hashBytes(new TextEncoder().encode(planningSource)),
-      content: renderWorkDocument(planning),
+  await store.createGoal({
+    goalId: 'goal-1',
+    title: 'Goal',
+    objective: 'Ship feature 2.',
+    firstWork: {
+      id: 'W-1',
+      title: 'Build feature 2',
+      kind: 'engineering',
+      objective: 'Set feature to 2.',
+      acceptanceCriteria: ['Feature equals 2.'],
     },
   })
 
@@ -274,7 +253,7 @@ async function createFixture(options: { sourceChange?: boolean } = {}) {
       const workPath = store.paths.workDocument('goal-1', 'W-1')
       const source = await Bun.file(store.paths.absolute(workPath)).text()
       const completedWork = parseWorkDocument(source)
-      completedWork.attributes.stage = 'done'
+      completedWork.attributes.status = 'done'
       completedWork.body = `${completedWork.body.trim()}\n\n## Completion decision\n\nShip the current task branch.\n`
       return {
         goalId: 'goal-1',

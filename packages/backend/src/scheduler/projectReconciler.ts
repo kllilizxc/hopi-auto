@@ -1,11 +1,10 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { RoleRunResult, RoleRunner } from '../agent/RoleRunner'
+import type { WorkerRunResult, WorkerRunner } from '../agent/WorkerRunner'
 import {
   type GoalDocument,
   type WorkDocument,
   isEngineeringWork,
-  isPlanningWork,
   isWorkTerminal,
   renderGoalDocument,
   renderWorkDocument,
@@ -23,18 +22,6 @@ import {
   type ProjectPreparer,
   createProjectPreparer,
 } from '../runtime/projectPreparation'
-import {
-  type ResponsibilitySessionStore,
-  bindResponsibilitySessionRunView,
-  createResponsibilitySessionStore,
-} from '../runtime/responsibilitySessionStore'
-import { responsibilityRuntimeDigest } from '../runtime/roleContextRendering'
-import {
-  type Responsibility,
-  type RoleContextBundle,
-  type RoleContextStager,
-  createRoleContextStager,
-} from '../runtime/roleContextStager'
 import { discoverRunArtifactPaths, preserveRunArtifacts } from '../runtime/runArtifacts'
 import {
   type RunAttemptStore,
@@ -50,7 +37,18 @@ import {
   createStableWorktreeManager,
 } from '../runtime/stableWorktreeManager'
 import { checkpointTaskWorktree } from '../runtime/taskCheckpoint'
-import { workAssignmentHash } from '../runtime/workAssignment'
+import { currentSettledWorkIds, workAssignmentHash } from '../runtime/workAssignment'
+import { workerRuntimeDigest } from '../runtime/workerContextRendering'
+import {
+  type WorkerContextBundle,
+  type WorkerContextStager,
+  createWorkerContextStager,
+} from '../runtime/workerContextStager'
+import {
+  type WorkerSessionStore,
+  bindWorkerSessionRunView,
+  createWorkerSessionStore,
+} from '../runtime/workerSessionStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import { type ReconcileDecision, decideGoalReconciliation } from './reconcileDecision'
 
@@ -62,13 +60,13 @@ export interface ProjectReconcilerOptions {
   projectRepos: readonly LinkedProjectRepo[]
   store: GoalPackageStore
   publisher: PublicationCoordinator
-  roleRunner: RoleRunner
-  contextStager?: RoleContextStager
+  workerRunner: WorkerRunner
+  contextStager?: WorkerContextStager
   worktrees?: StableWorktreeManager
   attempts?: RunAttemptStore
   preparer?: ProjectPreparer
   preparationTimeoutMs?: number
-  responsibilitySessions?: ResponsibilitySessionStore
+  workerSessions?: WorkerSessionStore
   goalController?: GoalController
   now?: () => Date
   createRunId?: () => string
@@ -90,8 +88,8 @@ export type ProjectReconcileResult =
 export interface ProjectReconciler {
   reconcileGoal(
     goalId: string,
-    runtime: Pick<WorkRuntimeFacts, 'projectEligible' | 'runCapacity'> &
-      Partial<Omit<WorkRuntimeFacts, 'projectEligible' | 'runCapacity'>>,
+    runtime: Pick<WorkRuntimeFacts, 'projectEligible'> &
+      Partial<Omit<WorkRuntimeFacts, 'projectEligible'>> & { workerCapacity?: boolean },
   ): Promise<ProjectReconcileResult>
   decisionWhenEligible(
     goalId: string,
@@ -104,7 +102,7 @@ export interface ProjectReconciler {
   completeWork(
     goalId: string,
     workId: string,
-    input: { sourceEventId: string; decision: string },
+    input: { sourceEventId: string; decision: string; mapMarkdown?: string },
   ): Promise<WorkCompletionResult>
   completeGoal(
     goalId: string,
@@ -134,7 +132,6 @@ export interface WorkRunRequest {
 
 interface WorkRunSlot {
   runId: string
-  profile: Responsibility
   controller: AbortController
 }
 
@@ -150,12 +147,11 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
   const createRunId = options.createRunId ?? (() => `R-${crypto.randomUUID()}`)
   const checkpointTask = options.checkpointTask ?? checkpointTaskWorktree
   const contextStager =
-    options.contextStager ?? createRoleContextStager(options.homeRoot, options.publisher)
+    options.contextStager ?? createWorkerContextStager(options.homeRoot, options.publisher)
   const worktrees = options.worktrees ?? createStableWorktreeManager()
   const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot, { now })
   const preparer = options.preparer ?? createProjectPreparer()
-  const responsibilitySessions =
-    options.responsibilitySessions ?? createResponsibilitySessionStore(options.homeRoot)
+  const workerSessions = options.workerSessions ?? createWorkerSessionStore(options.homeRoot)
   const goalController = options.goalController ?? createGoalController(options.store, { now })
   const primaryProjectRepo = requireProjectRepo(
     { repos: options.projectRepos },
@@ -227,24 +223,13 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
     const goalAttempts = snapshot.listGoal(options.projectId, goalId)
     const facts: WorkRuntimeFacts = {
       projectEligible: runtime.projectEligible ?? true,
-      liveRunWorkIds: new Set([
+      runningWorkIds: new Set([
         ...localLive,
         ...running.map((attempt) => attempt.workId),
-        ...(runtime.liveRunWorkIds ?? []),
+        ...(runtime.runningWorkIds ?? []),
       ]),
-      queuedRunProfiles: new Map(
-        queued.map((attempt) => [attempt.workId, attempt.responsibility] as const),
-      ),
-      settledRunWorkIds: new Set(
-        [...goalAttempts]
-          .filter(([, history]) => history.some((attempt) => attempt.status === 'settled'))
-          .map(([workId]) => workId),
-      ),
-      runCapacity: runtime.runCapacity ?? {
-        planner: true,
-        generator: true,
-        reviewer: true,
-      },
+      queuedWorkIds: new Set(queued.map((attempt) => attempt.workId)),
+      settledWorkIds: await currentSettledWorkIds(goalPackage.works.values(), goalAttempts),
       now: runtime.now ?? now(),
     }
     return decideGoalReconciliation({
@@ -308,31 +293,37 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         .find((attempt) => attempt.status === 'running')
       if (active) return { runId: active.runId, disposition: 'already_active' }
 
-      let goalPackage = await options.store.readPackage(goalId)
+      const goalPackage = await options.store.readPackage(goalId)
       if (goalPackage.goal.attributes.lifecycle !== 'active') {
         throw new Error(
           `Cannot request a Run for ${goalPackage.goal.attributes.lifecycle} Goal ${goalId}`,
         )
       }
-      let work = goalPackage.works.get(workId)
+      const work = goalPackage.works.get(workId)
       if (!work || isWorkTerminal(work.attributes)) {
         throw new Error(`Cannot run missing or terminal Work: ${workId}`)
       }
-      if (request.profile !== 'planner' && !isEngineeringWork(work.attributes)) {
-        throw new Error(`${request.profile} requires Engineering Work: ${workId}`)
+      if (request.workspaceMode === 'isolated_write' && work.attributes.kind !== 'engineering') {
+        throw new Error(`Only Engineering Work may request an isolated-write Run: ${workId}`)
       }
-      if (request.workspaceMode === 'isolated_write' && !isEngineeringWork(work.attributes)) {
-        throw new Error(`isolated_write requires Engineering Work: ${workId}`)
+      const incompleteDependency = work.attributes.dependsOn.find(
+        (dependencyId) => goalPackage.works.get(dependencyId)?.attributes.status !== 'done',
+      )
+      if (work.attributes.contractRevision !== goalPackage.goal.attributes.contractRevision) {
+        throw new Error(`Cannot run stale Work: ${workId}`)
       }
-
-      if (isEngineeringWork(work.attributes)) {
-        if (request.profile === 'generator') {
-          work = await goalController.setEngineeringWorkFocus(goalId, workId, 'generate')
-        } else if (request.profile === 'reviewer') {
-          work = await goalController.setEngineeringWorkFocus(goalId, workId, 'review')
-        }
-        goalPackage = await options.store.readPackage(goalId)
-        work = goalPackage.works.get(workId) ?? work
+      if (incompleteDependency) throw new Error(`Dependency is not done: ${incompleteDependency}`)
+      if (work.attributes.notBefore && Date.parse(work.attributes.notBefore) > now().getTime()) {
+        throw new Error(`Work is scheduled for ${work.attributes.notBefore}: ${workId}`)
+      }
+      const openAttention = [...goalPackage.attentions.values()].find(
+        (attention) =>
+          attention.attributes.resolvedAt === null &&
+          attention.attributes.target ===
+            `project:${options.projectId}/goal:${goalId}/work:${workId}`,
+      )
+      if (openAttention) {
+        throw new Error(`Work is claimed by Attention ${openAttention.attributes.id}: ${workId}`)
       }
 
       return attempts.reserve({
@@ -359,28 +350,36 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           )
         }
         const work = goalPackage.works.get(workId)
-        if (!work || work.attributes.stage === 'cancelled') {
+        if (!work || work.attributes.status === 'cancelled') {
           throw new Error(`Cannot complete missing or cancelled Work: ${workId}`)
         }
         const incompleteDependency = work.attributes.dependsOn.find(
-          (dependencyId) => goalPackage.works.get(dependencyId)?.attributes.stage !== 'done',
+          (dependencyId) => goalPackage.works.get(dependencyId)?.attributes.status !== 'done',
         )
         if (incompleteDependency) {
           throw new Error(`Dependency is not done: ${incompleteDependency}`)
         }
         const completedWork: WorkDocument = {
           ...work,
-          attributes: { ...work.attributes, stage: 'done' },
+          attributes: { ...work.attributes, status: 'done' },
           body: appendCompletionDecision(work.body, input.sourceEventId, input.decision),
         }
-        if (isPlanningWork(work.attributes)) {
-          if (work.attributes.stage === 'done') {
+        if (work.attributes.kind === 'decision') {
+          if (work.attributes.status === 'done') {
             return { kind: 'already_completed', commit: null }
           }
           const path = options.store.paths.workDocument(goalId, workId)
           const source = await Bun.file(options.store.paths.absolute(path)).text()
+          const mapWrite =
+            input.mapMarkdown === undefined
+              ? null
+              : await supportingMarkdownWrite(
+                  options.store.paths.absolute(options.store.paths.designIndex(goalId)),
+                  options.store.paths.designIndex(goalId),
+                  input.mapMarkdown,
+                )
           await options.store.publishGoal(goalId, {
-            supportingWrites: [],
+            supportingWrites: mapWrite ? [mapWrite] : [],
             gateWrite: {
               path,
               expectedHash: await hashBytes(new TextEncoder().encode(source)),
@@ -457,7 +456,10 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           attributes: { ...goalPackage.goal.attributes, lifecycle: 'done' },
         }
         if (goalPackage.goal.attributes.lifecycle === 'done') return next
-        if (goalPackage.goal.attributes.lifecycle !== 'active') {
+        if (
+          goalPackage.goal.attributes.lifecycle !== 'active' &&
+          goalPackage.goal.attributes.lifecycle !== 'paused'
+        ) {
           throw new Error(`Cannot complete ${goalPackage.goal.attributes.lifecycle} Goal ${goalId}`)
         }
         const path = options.store.paths.goalDocument(goalId)
@@ -484,19 +486,16 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         return { kind: 'cancellation_finished' }
       }
 
-      const { workId, responsibility } = next
+      const { workId } = next
       const liveKey = `${goalId}/${workId}`
       if (runSlots.has(liveKey)) return { kind: 'wait', decision: next }
       const history = await attempts.list(options.projectId, goalId, workId)
-      const queued = history.find(
-        (attempt) => attempt.status === 'queued' && attempt.responsibility === responsibility,
-      )
+      const queued = history.find((attempt) => attempt.status === 'queued')
       if (!queued) return { kind: 'wait', decision: { kind: 'wait', reasons: ['no_queued_run'] } }
 
       const runController = new AbortController()
       const slot: WorkRunSlot = {
         runId: queued.runId,
-        profile: queued.responsibility,
         controller: runController,
       }
       runSlots.set(liveKey, slot)
@@ -532,20 +531,22 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
       goalId,
       workId,
       runId,
-      responsibility: queued.responsibility,
       runRoot: runStoragePath(options.homeRoot, runId),
       workHash: assignmentHash,
     })
 
     let preparedRepos: PreparedRepo[] = []
-    let result: RoleRunResult = factualRunResult('crashed', 'Run did not reach the role process.')
+    let result: WorkerRunResult = factualRunResult(
+      'crashed',
+      'Run did not reach the Worker process.',
+    )
     try {
       if (signal.aborted) {
         result = factualRunResult(abortTermination(signal), 'Run was interrupted before setup.')
       } else {
         preparedRepos =
           queued.workspaceMode === 'none' ? [] : await prepareTaskRepos(goalId, workId)
-        const roleRepoRoots =
+        const workerRepoRoots =
           queued.workspaceMode === 'none'
             ? await Promise.all(
                 options.projectRepos.map(async (repo) => ({
@@ -574,14 +575,13 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           goalId,
           workId,
           runId,
-          responsibility: queued.responsibility,
         }
         const sessionScope = {
           contractRevision: work.attributes.contractRevision,
           assignmentHash: assignmentHash ?? (await workAssignmentHash(work)),
-          runtimeDigest: responsibilityRuntimeDigest(queued.responsibility),
+          runtimeDigest: workerRuntimeDigest(),
         }
-        const responsibilitySession = await responsibilitySessions.open(sessionKey, sessionScope)
+        const workerSession = await workerSessions.open(sessionKey, sessionScope)
         const previous = historyBefore(
           queued,
           await attempts.list(options.projectId, goalId, workId),
@@ -593,19 +593,17 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           goalId,
           workId,
           runId,
-          responsibility: queued.responsibility,
           workspaceMode: queued.workspaceMode,
           instructionMarkdown: queued.instructionMarkdown,
           refs: queued.refs,
           primaryRepoId: options.primaryRepoId,
-          repoRoots: roleRepoRoots,
+          repoRoots: workerRepoRoots,
           apiOrigin: options.apiOrigin?.(),
-          runtimeScratchDir: responsibilitySession.workspaceDir,
+          runtimeScratchDir: workerSession.workspaceDir,
           ...(previous
             ? {
                 previousAttempt: {
                   runId: previous.runId,
-                  responsibility: previous.responsibility,
                   termination: previous.termination ?? 'interrupted',
                   reportMarkdown:
                     previous.reportMarkdown ?? 'The previous Run has no available Report.',
@@ -613,8 +611,8 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
               }
             : {}),
         })
-        const runViewRoot = await bindResponsibilitySessionRunView(
-          responsibilitySession.workspaceDir,
+        const runViewRoot = await bindWorkerSessionRunView(
+          workerSession.workspaceDir,
           context.runRoot,
         )
 
@@ -625,7 +623,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
             role: 'coordinator',
             content: 'Project preparation started.',
           })
-          const preparation = await prepareResponsibilityProject({
+          const preparation = await prepareWorkerProject({
             preparer,
             timeoutMs: options.preparationTimeoutMs,
             context,
@@ -642,7 +640,7 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
         if (signal.aborted) {
           result = factualRunResult(
             abortTermination(signal),
-            'Run was interrupted before the role process started.',
+            'Run was interrupted before the Worker process started.',
           )
         } else {
           const primaryPrepared = preparedRepos.find(
@@ -650,29 +648,26 @@ export function createProjectReconciler(options: ProjectReconcilerOptions): Proj
           )
           const runCwd =
             queued.workspaceMode === 'none'
-              ? responsibilitySession.workspaceDir
-              : (primaryPrepared?.projectRoot ?? responsibilitySession.workspaceDir)
-          result = await options.roleRunner.run(
+              ? workerSession.workspaceDir
+              : (primaryPrepared?.projectRoot ?? workerSession.workspaceDir)
+          result = await options.workerRunner.run(
             {
               projectId: options.projectId,
               goalId,
               workId,
               runId,
-              responsibility: queued.responsibility,
               workspaceMode: queued.workspaceMode,
               cwd: runCwd,
               sourceRoots: preparedRepos.map(({ worktree }) => worktree.path),
               context: { ...context, runViewRoot },
-              session: responsibilitySession.session,
+              session: workerSession.session,
               signal,
             },
             {
               onEvent: (event) => recorder.record(event),
               onExecution: (execution) => recorder.setExecution(execution),
-              onSession: (session) =>
-                responsibilitySessions.write(sessionKey, sessionScope, session),
-              onSessionInvalid: () =>
-                responsibilitySessions.invalidateVendor(sessionKey, sessionScope),
+              onSession: (session) => workerSessions.write(sessionKey, sessionScope, session),
+              onSessionInvalid: () => workerSessions.invalidateVendor(sessionKey, sessionScope),
             },
           )
           await preserveArtifacts(runId, result, context, preparedRepos)
@@ -781,8 +776,12 @@ function historyBefore(current: RunAttemptSummary, history: readonly RunAttemptS
 }
 
 function appendCompletionDecision(body: string, sourceEventId: string, decision: string) {
+  const heading =
+    body.includes('\n## Question\n') || body.startsWith('## Question\n')
+      ? '## Resolution'
+      : '## Completion decision'
   const section = [
-    '## Completion decision',
+    heading,
     '',
     `Assistant event: ${sourceEventId.trim()}`,
     '',
@@ -790,16 +789,26 @@ function appendCompletionDecision(body: string, sourceEventId: string, decision:
   ].join('\n')
   const next = `${body.trimEnd()}\n\n${section}\n`
   if (body === next || body.trimEnd().endsWith(section)) return `${body.trimEnd()}\n`
-  if (body.includes('\n## Completion decision\n')) {
+  if (body.includes(`\n${heading}\n`)) {
     throw new Error('Completion decision already exists with different content')
   }
   return next
 }
 
+async function supportingMarkdownWrite(absolutePath: string, path: string, content: string) {
+  const file = Bun.file(absolutePath)
+  const current = (await file.exists()) ? new Uint8Array(await file.arrayBuffer()) : null
+  return {
+    path,
+    expectedHash: current ? await hashBytes(current) : null,
+    content: `${content.trimEnd()}\n`,
+  }
+}
+
 async function preserveArtifacts(
   runId: string,
-  result: RoleRunResult,
-  context: RoleContextBundle,
+  result: WorkerRunResult,
+  context: WorkerContextBundle,
   preparedRepos: readonly PreparedRepo[],
 ) {
   const discovered = await discoverRunArtifactPaths(context.artifactOutputDir)
@@ -818,10 +827,10 @@ async function preserveArtifacts(
   })
 }
 
-async function prepareResponsibilityProject(input: {
+async function prepareWorkerProject(input: {
   preparer: ProjectPreparer
   timeoutMs?: number
-  context: RoleContextBundle
+  context: WorkerContextBundle
   primaryRepoId: string
 }) {
   const runtimeDir = join(input.context.runRoot, 'project-prepare')
@@ -892,7 +901,7 @@ function factualRunResult(
   termination: RunTermination,
   detail: string,
   exitCode: number | null = null,
-): RoleRunResult {
+): WorkerRunResult {
   return {
     termination,
     exitCode,

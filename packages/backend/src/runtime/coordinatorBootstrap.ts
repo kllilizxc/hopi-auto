@@ -194,7 +194,7 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
     const identity = parseWorkReference(project.projectId, record.workReference)
     const goalPackage = packages.get(identity.goalId)
     const work = goalPackage?.works.get(identity.workId)
-    if (!work || !isEngineeringWork(work.attributes) || work.attributes.stage !== 'done') {
+    if (!work || !isEngineeringWork(work.attributes) || work.attributes.status !== 'done') {
       throw new Error(
         `C1 ${record.commit} is not materialized as done Work ${record.workReference}`,
       )
@@ -203,7 +203,7 @@ async function validateManagedProjection(project: CoordinatorBootstrapProject) {
       project.projectRoot,
       `${record.commit}:${project.store.paths.workDocument(identity.goalId, identity.workId)}`,
     )
-    if (!source || parseWorkDocument(source).attributes.stage !== 'done') {
+    if (!source || parseWorkDocument(source).attributes.status !== 'done') {
       throw new Error(`C1 ${record.commit} does not contain done Work ${record.workReference}`)
     }
   }

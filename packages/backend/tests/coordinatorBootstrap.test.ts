@@ -43,7 +43,7 @@ describe('bootstrapCoordinator', () => {
     expect(await Bun.file(abandoned).exists()).toBe(false)
   })
 
-  test('allows only the scoped Planner AGENTS bootstrap before its first C1', async () => {
+  test('allows only the scoped Project AGENTS bootstrap before its first C1', async () => {
     const fixture = await setup(false, 'apps/new project')
     const agentsPath = join(fixture.projectRoot, 'apps', 'new project', 'AGENTS.md')
     await mkdir(join(agentsPath, '..'), { recursive: true })
@@ -58,8 +58,8 @@ describe('bootstrapCoordinator', () => {
   test('archives and repairs primary managed source without removing canonical documents', async () => {
     const fixture = await setup()
     await git(fixture.projectRoot, ['config', 'core.autocrlf', 'true'])
-    await Bun.write(join(fixture.projectRoot, 'README.md'), 'planner changed source\n')
-    await Bun.write(join(fixture.projectRoot, 'leaked.spec.ts'), 'planner leaked source\n')
+    await Bun.write(join(fixture.projectRoot, 'README.md'), 'bootstrap changed source\n')
+    await Bun.write(join(fixture.projectRoot, 'leaked.spec.ts'), 'bootstrap leaked source\n')
     await git(fixture.projectRoot, ['add', 'README.md', 'leaked.spec.ts'])
 
     const result = await fixture.bootstrap()
@@ -73,10 +73,10 @@ describe('bootstrapCoordinator', () => {
     expect(recoveries).toHaveLength(1)
     const recoveryPath = join(recoveryRoot, recoveries[0] ?? '')
     expect(await Bun.file(join(recoveryPath, 'files', 'README.md')).text()).toBe(
-      'planner changed source\n',
+      'bootstrap changed source\n',
     )
     expect(await Bun.file(join(recoveryPath, 'files', 'leaked.spec.ts')).text()).toBe(
-      'planner leaked source\n',
+      'bootstrap leaked source\n',
     )
   })
 

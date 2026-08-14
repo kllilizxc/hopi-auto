@@ -1,4 +1,7 @@
-# HOPI 本地运行问题目录
+# HOPI 历史运行问题目录
+
+> 本文只保留促成当前设计的历史证据。下文中的名称、路径和修复描述属于过去实现，
+> 不定义当前运行行为；当前权威文档以 [`README.md`](./README.md) 的清单为准。
 
 状态日期：2026-07-24
 
@@ -232,4 +235,3 @@ O-01 属于外部传输故障加恢复体验问题；O-03～O-05 是当前 Proje
 - [MVP Execution](./mvp_execution.md)
 - [MVP Multi-Repo](./mvp_multi_repo.md)
 - [MVP Document Model](./mvp_document_model.md)
-- [E2E Issue Log](./e2e_test_issues.md)

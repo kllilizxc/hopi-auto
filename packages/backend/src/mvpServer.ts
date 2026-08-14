@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ZodError } from 'zod'
-import type { RoleRunner } from './agent/RoleRunner'
+import type { WorkerRunner } from './agent/WorkerRunner'
 import { isPresentableAgentRuntimeEvent } from './agent/runtimeEvents'
 import {
   deriveAssistantFeedActivity,
@@ -12,7 +12,6 @@ import {
 import {
   deriveGoalSummaries,
   deriveWorkCompletedAt,
-  latestAgentPlan,
   presentGoal,
   presentGoalExecutionCost,
 } from './api/goalPresenter'
@@ -26,10 +25,9 @@ import {
   requirePart,
 } from './api/http'
 import {
-  agentRoleSettingsSchema,
+  agentSettingsSchema,
   canonicalInboxContext,
-  configurableAgentRoleSchema,
-  goalSchema,
+  configurableAgentSchema,
   parseInboxRequest,
   parsePreviewStartRequest,
   projectAgentAccessSchema,
@@ -61,7 +59,7 @@ import {
 import { GoalPackageNotFoundError } from './domain/goalPackage'
 import { normalizeProjectCodingDefaults } from './domain/projectCodingDefaults'
 import { resolveProjectPath } from './domain/projectPath'
-import { deriveReadableId, stableIdSchema } from './domain/stableId'
+import { stableIdSchema } from './domain/stableId'
 import { CursorPageError, paginateItems } from './presentation/cursorPage'
 import indexPage from './product.html'
 import { acquireCoordinatorInstanceLock } from './publication/instanceLock'
@@ -100,7 +98,7 @@ export interface ServerOptions {
   instanceId?: string
   publisher?: PublicationCoordinator
   attempts?: RunAttemptStore
-  roleRunner?: RoleRunner
+  workerRunner?: WorkerRunner
   assistantRunner?: AssistantModelRunner
   attentionTransport?: AttentionTransport
   startCoordinator?: boolean
@@ -116,7 +114,6 @@ export {
   deriveGoalSummaries,
   deriveWorkCompletedAt,
   goalCompletionProjection,
-  latestAgentPlan,
 }
 
 export function createServer(options: ServerOptions = {}): MvpServer {
@@ -132,7 +129,7 @@ export function createServer(options: ServerOptions = {}): MvpServer {
       homeRoot,
       publisher: options.publisher,
       attempts: options.attempts,
-      roleRunner: options.roleRunner,
+      workerRunner: options.workerRunner,
       assistantRunner: options.assistantRunner,
       attentionTransport:
         options.attentionTransport ??
@@ -239,13 +236,13 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           request.method === 'PATCH' &&
           parts.length === 4 &&
           parts[0] === 'api' &&
-          parts[1] === 'agent-roles' &&
+          parts[1] === 'agents' &&
           parts[3] === 'settings'
         ) {
-          const role = configurableAgentRoleSchema.parse(requirePart(parts, 2))
-          const body = await parseBody(request, agentRoleSettingsSchema)
-          await runtime.updateAgentRoleCodingDefaults(
-            role,
+          const agent = configurableAgentSchema.parse(requirePart(parts, 2))
+          const body = await parseBody(request, agentSettingsSchema)
+          await runtime.updateAgentCodingSettings(
+            agent,
             body.codingDefaults === null
               ? null
               : normalizeProjectCodingDefaults(body.codingDefaults),
@@ -412,34 +409,6 @@ export function createServer(options: ServerOptions = {}): MvpServer {
             await current.rebindRepo(projectId, repoId, body.repoPath, body.projectPath)
           })
           return json(await presentState(await nextRuntime))
-        }
-        if (
-          request.method === 'POST' &&
-          parts.length === 4 &&
-          parts[0] === 'api' &&
-          parts[1] === 'projects' &&
-          parts[3] === 'goals'
-        ) {
-          const project = requireProject(runtime.projects, requirePart(parts, 2))
-          const body = await parseBody(request, goalSchema)
-          const goalId =
-            body.goalId ?? deriveReadableId('G', body.title, await project.store.listGoalIds())
-          await executeDirectUserCommand(runtime, {
-            content: `Create Goal ${goalId}: ${body.title}\n\n${body.objective}`,
-            tool: 'hopi_create_goal',
-            input: {
-              projectId: project.projectId,
-              goalId,
-              title: body.title,
-              objective: body.objective,
-              priority: body.priority,
-              firstWork: { kind: 'planning' },
-            },
-            reply: `Created Goal ${goalId}.`,
-            disposition: 'tool:create_goal',
-          })
-          runtime.coordinator.wake()
-          return json(await presentGoal(runtime, project.projectId, goalId), 201)
         }
         if (request.method === 'POST' && url.pathname === '/api/inbox') {
           const body = await parseInboxRequest(request)
@@ -641,14 +610,9 @@ export function createServer(options: ServerOptions = {}): MvpServer {
           )
         }
         if (goalRoute && request.method === 'GET' && goalRoute.action === null) {
-          return json(
-            await presentGoal(
-              runtime,
-              goalRoute.projectId,
-              goalRoute.goalId,
-              readGoalView(url.searchParams.get('view')),
-            ),
-          )
+          const view = readGoalView(url.searchParams.get('view'))
+          if (!view) throw new ApiError(400, 'Unsupported Goal view')
+          return json(await presentGoal(runtime, goalRoute.projectId, goalRoute.goalId, view))
         }
         if (goalRoute && request.method === 'POST' && goalRoute.action === 'pause') {
           const project = requireProject(runtime.projects, goalRoute.projectId)

@@ -11,7 +11,7 @@ export function workCancellationClosure(
   for (const workId of requestedWorkIds) {
     const work = goalPackage.works.get(workId)
     if (!work) throw new WorkCancellationError(`Cannot cancel missing Work: ${workId}`)
-    if (work.attributes.stage === 'done') {
+    if (work.attributes.status === 'done') {
       throw new WorkCancellationError(`Cannot cancel completed Work: ${workId}`)
     }
     closure.add(workId)

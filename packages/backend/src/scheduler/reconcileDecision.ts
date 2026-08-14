@@ -3,11 +3,7 @@ import type { GoalPackage } from '../domain/goalPackage'
 import { type WorkRuntimeFacts, deriveGoalWorkProjections } from '../domain/workProjection'
 
 export type ReconcileDecision =
-  | {
-      kind: 'dispatch'
-      workId: string
-      responsibility: 'planner' | 'generator' | 'reviewer'
-    }
+  | { kind: 'dispatch'; workId: string }
   | { kind: 'finish_cancellation' }
   | { kind: 'wait'; reasons: string[] }
 
@@ -27,38 +23,29 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
   ) {
     return { kind: 'finish_cancellation' }
   }
-  if (goal.lifecycle !== 'active') {
-    return { kind: 'wait', reasons: [`goal_${goal.lifecycle}`] }
-  }
-  if (!runtime.projectEligible) {
-    return { kind: 'wait', reasons: ['project_ineligible'] }
-  }
+  if (goal.lifecycle !== 'active') return { kind: 'wait', reasons: [`goal_${goal.lifecycle}`] }
+  if (!runtime.projectEligible) return { kind: 'wait', reasons: ['project_ineligible'] }
 
   const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, runtime)
-  const ready = projections
+  const next = projections
     .filter(
-      (
-        projection,
-      ): projection is typeof projection & {
-        responsibility: 'planner' | 'generator' | 'reviewer'
-      } => projection.ready && projection.responsibility !== null,
+      (projection) =>
+        projection.state === 'queued' &&
+        projection.failedPredicates.every((reason) => reason === 'queued_run'),
     )
     .toSorted((left, right) => {
-      const responsibilityDifference =
-        responsibilityRank(left.responsibility) - responsibilityRank(right.responsibility)
-      if (responsibilityDifference) return responsibilityDifference
-      const rankDifference =
+      const rank =
         dependencyRank(left.workId, goalPackage) - dependencyRank(right.workId, goalPackage)
-      return rankDifference || left.workId.localeCompare(right.workId)
-    })
-  const next = ready[0]
-  if (next) {
-    return {
-      kind: 'dispatch',
-      workId: next.workId,
-      responsibility: next.responsibility,
-    }
-  }
+      if (rank) return rank
+      const leftWork = goalPackage.works.get(left.workId)
+      const rightWork = goalPackage.works.get(right.workId)
+      return (
+        (leftWork?.attributes.createdAt ?? '').localeCompare(
+          rightWork?.attributes.createdAt ?? '',
+        ) || left.workId.localeCompare(right.workId)
+      )
+    })[0]
+  if (next) return { kind: 'dispatch', workId: next.workId }
 
   return {
     kind: 'wait',
@@ -73,10 +60,6 @@ export function decideGoalReconciliation(input: ReconcileDecisionInput): Reconci
       ),
     ],
   }
-}
-
-function responsibilityRank(responsibility: 'planner' | 'generator' | 'reviewer') {
-  return responsibility === 'planner' ? 0 : 1
 }
 
 function dependencyRank(

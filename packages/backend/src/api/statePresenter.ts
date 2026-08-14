@@ -1,10 +1,11 @@
 import { join } from 'node:path'
-import type { ConfigurableAgentRole } from '../agent/adapterConfig'
+import type { ConfigurableAgent } from '../agent/adapterConfig'
 import type { InboxEventDocument } from '../domain/assistantWorkspaceDocuments'
 import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import { deriveGoalWorkProjections } from '../domain/workProjection'
 import type { MvpRuntime } from '../runtime/mvpRuntime'
+import { currentSettledWorkIds } from '../runtime/workAssignment'
 import {
   type ScopedAssistantAttention,
   goalCompletionProjection,
@@ -13,28 +14,28 @@ import {
   projectAssistantOpenRequests,
 } from './assistantFeedPresenter'
 import { deriveGoalSummaries, presentActiveAttempt } from './goalPresenter'
-import { CONFIGURABLE_AGENT_ROLES } from './requestSchemas'
+import { CONFIGURABLE_AGENTS } from './requestSchemas'
 
 export async function presentState(
   runtime: MvpRuntime,
   options: { includeAttentions?: boolean } = {},
 ) {
   const includeAttentions = options.includeAttentions ?? true
-  const [home, workspace, agentRoleSettingEntries, attemptSnapshot] = await Promise.all([
+  const [home, workspace, agentSettingEntries, attemptSnapshot] = await Promise.all([
     runtime.home.readHome(),
     runtime.workspace.readWorkspaceForControl(),
     Promise.all(
-      CONFIGURABLE_AGENT_ROLES.map(
-        async (role) => [role, await runtime.readAgentRoleCodingDefaults(role)] as const,
+      CONFIGURABLE_AGENTS.map(
+        async (agent) => [agent, await runtime.readAgentCodingSettings(agent)] as const,
       ),
     ),
     runtime.attempts.snapshot(),
   ])
   const runningAttempts = attemptSnapshot.running()
   const queuedAttempts = attemptSnapshot.queued()
-  const agentRoleSettings = Object.fromEntries(agentRoleSettingEntries) as Record<
-    ConfigurableAgentRole,
-    Awaited<ReturnType<MvpRuntime['readAgentRoleCodingDefaults']>>
+  const agentSettings = Object.fromEntries(agentSettingEntries) as Record<
+    ConfigurableAgent,
+    Awaited<ReturnType<MvpRuntime['readAgentCodingSettings']>>
   >
   const projects = []
   const goalAttentions = []
@@ -71,22 +72,18 @@ export async function presentState(
           .filter((attempt) => attempt.projectId === project.projectId && attempt.goalId === goalId)
           .map((attempt) => attempt.workId),
       )
+      const attemptsByWork = attemptSnapshot.listGoal(project.projectId, goalId)
       const projections = deriveGoalWorkProjections(project.projectId, goalId, goalPackage, {
         projectEligible: true,
-        liveRunWorkIds: liveWorkIds,
-        queuedRunProfiles: new Map(
+        runningWorkIds: liveWorkIds,
+        queuedWorkIds: new Set(
           queuedAttempts
             .filter(
               (attempt) => attempt.projectId === project.projectId && attempt.goalId === goalId,
             )
-            .map((attempt) => [attempt.workId, attempt.responsibility] as const),
+            .map((attempt) => attempt.workId),
         ),
-        settledRunWorkIds: new Set(
-          [...attemptSnapshot.listGoal(project.projectId, goalId)]
-            .filter(([, attempts]) => attempts.some((attempt) => attempt.status === 'settled'))
-            .map(([workId]) => workId),
-        ),
-        runCapacity: { planner: true, generator: true, reviewer: true },
+        settledWorkIds: await currentSettledWorkIds(goalPackage.works.values(), attemptsByWork),
       })
       const summaries = deriveGoalSummaries(goalPackage, projections)
       const goalAttentionCount = [...goalPackage.attentions.values()].filter(
@@ -140,7 +137,7 @@ export async function presentState(
   return {
     home: {
       ...home,
-      agentRoleCodingDefaults: agentRoleSettings,
+      agentCodingDefaults: agentSettings,
     },
     projects,
     attentions: includeAttentions

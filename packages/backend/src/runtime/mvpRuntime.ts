@@ -1,13 +1,12 @@
-import { ConfiguredRoleRunner, type RoleRunner } from '../agent/RoleRunner'
+import { ConfiguredWorkerRunner, type WorkerRunner } from '../agent/WorkerRunner'
 import {
-  type AgentRoleCodingSettings,
-  type ConfigurableAgentRole,
+  type AgentCodingSettings,
+  type ConfigurableAgent,
   readAgentAdapterConfig,
-  readAgentRoleCodingDefaults,
+  readAgentCodingSettings,
   resolveAssistantTransportConfig,
-  resolveRoleTransportConfig,
-  updateAgentRoleCodingDefaults,
-  updateAssistantCodingDefaults,
+  resolveWorkerTransportConfig,
+  updateAgentCodingSettings,
   writeAgentAdapterConfig,
 } from '../agent/adapterConfig'
 import { ensureDefaultAgentAdapterConfig } from '../agent/defaultAdapterConfig'
@@ -38,10 +37,10 @@ import { bootstrapCoordinator, recoverCoordinatorProject } from './coordinatorBo
 import { createGoalController } from './goalController'
 import { createPreviewManager } from './previewManager'
 import { recordProjectSystemEvent } from './projectSystemEvent'
-import { createResponsibilitySessionStore } from './responsibilitySessionStore'
 import { type RunAttemptStore, createRunAttemptStore } from './runAttemptStore'
 import { createRuntimeCoordination } from './runtimeCoordination'
-import { SOFTWARE_DELIVERY_CONCURRENCY } from './softwareDelivery'
+import { WORKER_CONCURRENCY } from './softwareDelivery'
+import { createWorkerSessionStore } from './workerSessionStore'
 import { createWorkspaceAttentionController } from './workspaceAttentionController'
 
 export interface MvpProjectRuntime {
@@ -60,7 +59,7 @@ export interface MvpProjectRuntime {
 
 export interface MvpRuntime {
   homeRoot: string
-  concurrency: Readonly<Record<'planner' | 'generator' | 'reviewer', number>>
+  concurrency: number
   publisher: PublicationCoordinator
   home: ReturnType<typeof createAssistantHomeStore>
   workspace: ReturnType<typeof createAssistantWorkspaceStore>
@@ -82,9 +81,9 @@ export interface MvpRuntime {
     repoPath: string,
     projectPath?: string,
   ): Promise<void>
-  readAgentRoleCodingDefaults(role: ConfigurableAgentRole): Promise<AgentRoleCodingSettings>
-  updateAgentRoleCodingDefaults(
-    role: ConfigurableAgentRole,
+  readAgentCodingSettings(agent: ConfigurableAgent): Promise<AgentCodingSettings>
+  updateAgentCodingSettings(
+    agent: ConfigurableAgent,
     input: ProjectCodingDefaultsInput | null,
   ): Promise<void>
 }
@@ -93,7 +92,7 @@ export interface CreateMvpRuntimeOptions {
   homeRoot: string
   publisher?: PublicationCoordinator
   attempts?: RunAttemptStore
-  roleRunner?: RoleRunner
+  workerRunner?: WorkerRunner
   assistantRunner?: AssistantModelRunner
   assistantToolUrl: () => string
   attentionTransport?: AttentionTransport
@@ -109,7 +108,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   await ensureDefaultAgentAdapterConfig(options.homeRoot)
   const workspace = createAssistantWorkspaceStore(options.homeRoot, publisher)
   const attempts = options.attempts ?? createRunAttemptStore(options.homeRoot)
-  const responsibilitySessions = createResponsibilitySessionStore(options.homeRoot)
+  const workerSessions = createWorkerSessionStore(options.homeRoot)
   const assistantConversation = createAssistantConversationStore(options.homeRoot)
   await assistantConversation.interruptRunning()
   const topologyChangedEvents = new Set<string>()
@@ -123,11 +122,11 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
   })
   const adapterPath = agentAdapterConfigPath(options.homeRoot)
   const readAdapterConfig = () => readAgentAdapterConfig(adapterPath)
-  const roleRunner =
-    options.roleRunner ??
-    new ConfiguredRoleRunner({
-      resolveConfig: async (input) => {
-        return resolveRoleTransportConfig(await readAdapterConfig(), input.responsibility)
+  const workerRunner =
+    options.workerRunner ??
+    new ConfiguredWorkerRunner({
+      resolveConfig: async () => {
+        return resolveWorkerTransportConfig(await readAdapterConfig())
       },
       fullAccess: (input) => options.projectFullAccess?.(input.projectId) ?? false,
     })
@@ -184,9 +183,9 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       projectRepos: linked.repos,
       store,
       publisher,
-      roleRunner,
+      workerRunner,
       attempts,
-      responsibilitySessions,
+      workerSessions,
       goalController: controller,
       apiOrigin: () => new URL(assistantToolUrl()).origin,
       onReleaseUpdated: async ({ projectId }) => {
@@ -310,7 +309,7 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
       store: project.store,
       reconciler: project.reconciler,
     })),
-    concurrency: SOFTWARE_DELIVERY_CONCURRENCY,
+    concurrency: WORKER_CONCURRENCY,
     delivery,
   })
   const restoreProjectEligibility = async (projectId: string) => {
@@ -360,37 +359,29 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     })
   }
 
-  async function readAgentRoleModelSettings(role: ConfigurableAgentRole) {
-    return readAgentRoleCodingDefaults(await readAdapterConfig(), role)
+  async function readAgentSettings(agent: ConfigurableAgent) {
+    return readAgentCodingSettings(await readAdapterConfig(), agent)
   }
 
-  async function updateAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {
-    if (await writeAssistantModelSettings(input)) await assistantConversation.clearSessions()
-  }
-
-  async function updateAgentRoleModelSettings(
-    role: ConfigurableAgentRole,
+  async function updateAgentSettings(
+    agent: ConfigurableAgent,
     input: ProjectCodingDefaultsInput | null,
   ) {
-    if (role === 'assistant') {
-      await updateAssistantModelSettings(input)
-      return
-    }
-    const current = await readAdapterConfig()
-    await writeAgentAdapterConfig(adapterPath, updateAgentRoleCodingDefaults(current, role, input))
-  }
-
-  async function writeAssistantModelSettings(input: ProjectCodingDefaultsInput | null) {
     const current = await readAdapterConfig()
     const previousTransport = resolveAssistantTransportConfig(current).transport
-    const next = updateAssistantCodingDefaults(current, input)
+    const next = updateAgentCodingSettings(current, agent, input)
     await writeAgentAdapterConfig(adapterPath, next)
-    return resolveAssistantTransportConfig(next).transport !== previousTransport
+    if (
+      agent === 'assistant' &&
+      resolveAssistantTransportConfig(next).transport !== previousTransport
+    ) {
+      await assistantConversation.clearSessions()
+    }
   }
 
   return {
     homeRoot: options.homeRoot,
-    concurrency: SOFTWARE_DELIVERY_CONCURRENCY,
+    concurrency: WORKER_CONCURRENCY,
     publisher,
     home,
     workspace,
@@ -407,8 +398,8 @@ export async function createMvpRuntime(options: CreateMvpRuntimeOptions): Promis
     commands,
     rebindProject,
     rebindRepo,
-    readAgentRoleCodingDefaults: readAgentRoleModelSettings,
-    updateAgentRoleCodingDefaults: updateAgentRoleModelSettings,
+    readAgentCodingSettings: readAgentSettings,
+    updateAgentCodingSettings: updateAgentSettings,
   }
 }
 

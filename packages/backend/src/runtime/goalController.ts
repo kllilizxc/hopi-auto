@@ -1,11 +1,10 @@
-import { createAssistantEngineeringWork } from '../domain/assistantEngineeringWork'
+import { workAttentionTarget } from '../domain/attentionTarget'
 import {
   type AttentionDocument,
+  type DecisionWorkAttributes,
   type GoalDocument,
   type WorkContextRef,
   type WorkDocument,
-  isEngineeringWork,
-  isPlanningWork,
   isWorkTerminal,
   parseAttentionDocument,
   renderAttentionDocument,
@@ -13,67 +12,61 @@ import {
   renderWorkDocument,
 } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
-import type { InboxEventReference } from '../domain/inboxEventReference'
 import { deriveReadableId } from '../domain/stableId'
 import { WorkCancellationError, workCancellationOrder } from '../domain/workCancellation'
 import { hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
-import type { GoalPackageStore } from '../storage/goalPackageStore'
-import type { PlanningReference } from '../storage/goalPackageStore'
+import type { CanonicalReference, GoalPackageStore } from '../storage/goalPackageStore'
 import { appendProjectOwnerMessage } from './workAssignment'
 
-export interface PlanningInputAdmission {
+export interface InputAdmission {
   path: string
   write: PublicationWrite | null
 }
 
-export interface PlanningContext {
+export interface CanonicalContext {
   supportingWrites?: PublicationWrite[]
-  references?: readonly PlanningReference[]
+  references?: readonly CanonicalReference[]
 }
 
-export interface AssistantEngineeringAdmission {
-  title: string
-  objective: string
-  acceptanceCriteria: readonly string[]
-  dependsOn: readonly string[]
-  assistantDispatch: InboxEventReference
-  acceptedInput: PlanningInputAdmission
-  context?: PlanningContext
-}
+export type CreateWorkInput =
+  | {
+      kind: 'decision'
+      title: string
+      decisionType: DecisionWorkAttributes['decisionType']
+      taskMode?: DecisionWorkAttributes['taskMode']
+      question: string
+      dependsOn: readonly string[]
+      acceptedInput?: InputAdmission
+      context?: CanonicalContext
+    }
+  | {
+      kind: 'engineering'
+      title: string
+      objective: string
+      acceptanceCriteria: readonly string[]
+      dependsOn: readonly string[]
+      acceptedInput?: InputAdmission
+      context?: CanonicalContext
+    }
 
 export interface GoalControllerOptions {
   now?: () => Date
 }
 
 export interface GoalController {
-  admitAssistantEngineeringWork(
-    goalId: string,
-    input: AssistantEngineeringAdmission,
-  ): Promise<WorkDocument>
-  ensurePlanning(
-    goalId: string,
-    reason: string,
-    acceptedInput?: PlanningInputAdmission,
-    context?: PlanningContext,
-  ): Promise<WorkDocument>
-  applyMaterialInstruction(
+  createWork(goalId: string, input: CreateWorkInput): Promise<WorkDocument>
+  reviseContract(
     goalId: string,
     input: {
-      contractChange: string
-      acceptedInput: PlanningInputAdmission
-      planningContext?: PlanningContext
+      contractMarkdown: string
+      acceptedInput: InputAdmission
+      context?: CanonicalContext
     },
   ): Promise<GoalDocument>
   pauseGoal(goalId: string): Promise<GoalDocument>
   resumeGoal(goalId: string): Promise<GoalDocument>
   setPriority(goalId: string, priority: number): Promise<GoalDocument>
-  setEngineeringWorkFocus(
-    goalId: string,
-    workId: string,
-    stage: 'generate' | 'review',
-  ): Promise<WorkDocument>
-  returnEngineeringWorkToGenerate(goalId: string, workId: string): Promise<WorkDocument>
   setWorkNotBefore(goalId: string, workId: string, notBefore: string | null): Promise<WorkDocument>
   setWorkDependencies(
     goalId: string,
@@ -85,11 +78,22 @@ export interface GoalController {
     workId: string,
     input: { sourceEventId: string; content: string },
   ): Promise<WorkDocument>
+  createAttention(
+    projectId: string,
+    goalId: string,
+    workId: string,
+    input: {
+      attentionId?: string
+      summary: string
+      decisionPrompt?: import('../domain/assistantDecisionPrompt').AssistantDecisionPrompt | null
+      body: string
+    },
+  ): Promise<AttentionDocument>
   cancelWork(goalId: string, workId: string): Promise<readonly WorkDocument[]>
   cancelGoal(goalId: string): Promise<GoalDocument>
   reopenGoal(
     goalId: string,
-    input: { eventId: string; contractChange?: string },
+    input: { eventId: string; contractMarkdown?: string },
   ): Promise<GoalDocument>
 }
 
@@ -102,229 +106,105 @@ export function createGoalController(
   const now = options.now ?? (() => new Date())
 
   return {
-    async admitAssistantEngineeringWork(goalId, input) {
+    async createWork(goalId, input) {
       const goalPackage = await store.readPackage(goalId)
-      const existing = [...goalPackage.works.values()].find(
-        (work) =>
-          isEngineeringWork(work.attributes) &&
-          work.attributes.assistantDispatch === input.assistantDispatch,
-      )
-      const workId =
-        existing?.attributes.id ?? deriveReadableId('W', input.title, [...goalPackage.works.keys()])
-      const work = createAssistantEngineeringWork({
-        id: workId,
-        title: input.title,
-        objective: input.objective,
-        acceptanceCriteria: input.acceptanceCriteria,
-        dependsOn: input.dependsOn,
-        contractRevision: goalPackage.goal.attributes.contractRevision,
-        assistantDispatch: input.assistantDispatch,
-        acceptedInputPath: input.acceptedInput.path,
-        references: input.context?.references,
-      })
-      if (!isEngineeringWork(work.attributes)) {
-        throw new GoalControllerError('Assistant Engineering Work builder returned Planning Work')
-      }
-      if (existing) {
-        if (!isEngineeringWork(existing.attributes)) {
-          throw new GoalControllerError(
-            'Assistant dispatch provenance belongs to non-Engineering Work',
-          )
-        }
-        if (
-          existing.attributes.title === work.attributes.title &&
-          JSON.stringify(existing.attributes.dependsOn) ===
-            JSON.stringify(work.attributes.dependsOn) &&
-          existing.attributes.contractRevision === work.attributes.contractRevision &&
-          JSON.stringify(existing.attributes.contextRefs) ===
-            JSON.stringify(work.attributes.contextRefs) &&
-          existing.body === work.body
-        ) {
-          return existing
-        }
-        throw new GoalControllerError(
-          `Inbox Input already directly admitted Engineering Work ${existing.attributes.id}`,
-        )
-      }
       if (goalPackage.goal.attributes.lifecycle !== 'active') {
-        throw new GoalControllerError('Direct Engineering Work requires an active Goal')
+        throw new GoalControllerError('Work creation requires an active Goal')
       }
-      for (const dependencyId of input.dependsOn) {
-        const dependency = goalPackage.works.get(dependencyId)
-        if (!dependency || !isEngineeringWork(dependency.attributes)) {
-          throw new GoalControllerError(
-            `Direct Engineering Work dependency is missing or not Engineering Work: ${dependencyId}`,
-          )
-        }
-        if (dependency.attributes.stage === 'cancelled') {
-          throw new GoalControllerError(
-            `Direct Engineering Work cannot depend on cancelled Work: ${dependencyId}`,
-          )
-        }
+      validateDependencies(goalPackage, '', input.dependsOn)
+      const workId = deriveReadableId('W', input.title, [...goalPackage.works.keys()])
+      const contextRefs = mergeWorkContextRefs(
+        [],
+        [
+          ...(input.acceptedInput
+            ? [{ path: input.acceptedInput.path, purpose: 'Accepted Inbox input' }]
+            : []),
+          ...(input.context?.references ?? []),
+        ],
+      )
+      const common = {
+        id: workId,
+        title: input.title.trim(),
+        status: 'open' as const,
+        createdAt: now().toISOString(),
+        notBefore: null,
+        dependsOn: [...new Set(input.dependsOn)],
+        contractRevision: goalPackage.goal.attributes.contractRevision,
+        evidenceRefs: [],
+        contextRefs,
+        ownerMessages: [],
       }
-
+      const work: WorkDocument =
+        input.kind === 'decision'
+          ? {
+              attributes: {
+                ...common,
+                kind: 'decision',
+                decisionType: input.decisionType,
+                ...(input.taskMode ? { taskMode: input.taskMode } : {}),
+              },
+              body: `## Question\n\n${input.question.trim()}\n`,
+            }
+          : {
+              attributes: {
+                ...common,
+                kind: 'engineering',
+              },
+              body: [
+                '## Objective',
+                '',
+                input.objective.trim(),
+                '',
+                '## Acceptance Criteria',
+                '',
+                ...input.acceptanceCriteria.map((criterion) => `- ${criterion.trim()}`),
+                '',
+              ].join('\n'),
+            }
       await store.publishGoal(goalId, {
         supportingWrites: [
           ...(input.context?.supportingWrites ?? []),
-          ...(input.acceptedInput.write ? [input.acceptedInput.write] : []),
+          ...(input.acceptedInput?.write ? [input.acceptedInput.write] : []),
         ],
         gateWrite: {
-          path: store.paths.workDocument(goalId, work.attributes.id),
+          path: store.paths.workDocument(goalId, workId),
           expectedHash: null,
           content: renderWorkDocument(work),
         },
       })
       return work
     },
-    async ensurePlanning(goalId, reason, acceptedInput, context = {}) {
+    async reviseContract(goalId, input) {
       const goalPackage = await store.readPackage(goalId)
-      const existing = [...goalPackage.works.values()].find(
-        (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-      )
-      if (existing) {
-        const next: WorkDocument = {
-          ...existing,
-          attributes: {
-            ...existing.attributes,
-            contextRefs: mergeWorkContextRefs(existing.attributes.contextRefs, [
-              ...(acceptedInput
-                ? [{ path: acceptedInput.path, purpose: 'Accepted Inbox input' }]
-                : []),
-              ...(context.references ?? []),
-            ]),
-          },
-        }
-        const changed =
-          JSON.stringify(next.attributes.contextRefs) !==
-          JSON.stringify(existing.attributes.contextRefs)
-        const supportingWrites = [
-          ...(context.supportingWrites ?? []),
-          ...(acceptedInput?.write ? [acceptedInput.write] : []),
-        ]
-        if (!changed && supportingWrites.length === 0) {
-          return existing
-        }
-
-        if (changed) {
-          const path = store.paths.workDocument(goalId, existing.attributes.id)
-          const source = await Bun.file(store.paths.absolute(path)).text()
-          await store.publishGoal(goalId, {
-            supportingWrites,
-            gateWrite: {
-              path,
-              expectedHash: await hashBytes(new TextEncoder().encode(source)),
-              content: renderWorkDocument(next),
-            },
-          })
-          return next
-        }
-
-        const gateWrite = supportingWrites.at(-1)
-        if (!gateWrite) return existing
-        await store.publishGoal(goalId, {
-          supportingWrites: supportingWrites.slice(0, -1),
-          gateWrite,
-        })
-        return existing
-      }
-      if (
-        goalPackage.goal.attributes.lifecycle === 'done' ||
-        goalPackage.goal.attributes.lifecycle === 'cancelled'
-      ) {
-        throw new GoalControllerError(
-          'Terminal Goal must be reopened before Planning Work is added',
-        )
-      }
-
-      const planning = createPlanningWork(
-        goalPackage,
-        goalPackage.goal.attributes.contractRevision,
-        reason,
-        acceptedInput,
-        context,
-      )
-      const planningWrite: PublicationWrite = {
-        path: store.paths.workDocument(goalId, planning.attributes.id),
-        expectedHash: null,
-        content: renderWorkDocument(planning),
-      }
-      await store.publishGoal(goalId, {
-        supportingWrites: [
-          ...(context.supportingWrites ?? []),
-          ...(acceptedInput?.write ? [acceptedInput.write] : []),
-        ],
-        gateWrite: planningWrite,
-      })
-      return planning
-    },
-    async applyMaterialInstruction(goalId, input) {
-      const goalPackage = await store.readPackage(goalId)
-      if (
-        goalPackage.goal.attributes.lifecycle === 'done' ||
-        goalPackage.goal.attributes.lifecycle === 'cancelled'
-      ) {
+      if (isTerminalGoal(goalPackage.goal)) {
         throw new GoalControllerError('Terminal Goal must be explicitly reopened')
       }
-      const representedPlanning = [...goalPackage.works.values()].find(
-        (work) =>
-          isPlanningWork(work.attributes) &&
-          work.attributes.stage === 'plan' &&
-          work.attributes.contractRevision === goalPackage.goal.attributes.contractRevision &&
-          work.attributes.revisionInput === input.acceptedInput.path,
-      )
-      if (representedPlanning) {
-        await this.ensurePlanning(
-          goalId,
-          input.contractChange,
-          input.acceptedInput,
-          input.planningContext,
-        )
-        return (await store.readPackage(goalId)).goal
+      const contractMarkdown = normalizeMarkdown(input.contractMarkdown)
+      if (goalPackage.goal.body === contractMarkdown && !input.acceptedInput.write) {
+        return goalPackage.goal
       }
-
-      const revision = goalPackage.goal.attributes.contractRevision + 1
-      const existingPlanning = [...goalPackage.works.values()].find(
-        (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-      )
-      const planning = materialRevisionPlanning(
-        goalPackage,
-        revision,
-        input.contractChange,
-        input.acceptedInput,
-        input.planningContext,
-      )
-      const planningPath = store.paths.workDocument(goalId, planning.attributes.id)
-      const planningSource = existingPlanning
-        ? await Bun.file(store.paths.absolute(planningPath)).text()
-        : null
-      const goalPath = store.paths.goalDocument(goalId)
-      const goalSource = await Bun.file(store.paths.absolute(goalPath)).text()
-      const nextGoal: GoalDocument = {
+      const next: GoalDocument = {
         ...goalPackage.goal,
         attributes: {
           ...goalPackage.goal.attributes,
-          contractRevision: revision,
+          contractRevision: goalPackage.goal.attributes.contractRevision + 1,
         },
+        body: contractMarkdown,
       }
+      const path = store.paths.goalDocument(goalId)
+      const source = await Bun.file(store.paths.absolute(path)).text()
       await store.publishGoal(goalId, {
         supportingWrites: [
-          ...(input.planningContext?.supportingWrites ?? []),
-          ...(input.acceptedInput?.write ? [input.acceptedInput.write] : []),
-          {
-            path: planningPath,
-            expectedHash: planningSource
-              ? await hashBytes(new TextEncoder().encode(planningSource))
-              : null,
-            content: renderWorkDocument(planning),
-          },
+          ...(input.context?.supportingWrites ?? []),
+          ...(input.acceptedInput.write ? [input.acceptedInput.write] : []),
         ],
         gateWrite: {
-          path: goalPath,
-          expectedHash: await hashBytes(new TextEncoder().encode(goalSource)),
-          content: renderGoalDocument(nextGoal),
+          path,
+          expectedHash: await hashBytes(new TextEncoder().encode(source)),
+          content: renderGoalDocument(next),
         },
       })
-      return nextGoal
+      return next
     },
     async pauseGoal(goalId) {
       const goal = await requireGoal(store, goalId)
@@ -332,242 +212,142 @@ export function createGoalController(
       if (goal.attributes.lifecycle !== 'active') {
         throw new GoalControllerError('Only an active Goal can pause')
       }
-      const next: GoalDocument = {
+      return replaceGoal(store, goalId, {
         ...goal,
         attributes: { ...goal.attributes, lifecycle: 'paused' },
-      }
-      await replaceGoal(store, goalId, next)
-      return next
+      })
     },
     async resumeGoal(goalId) {
-      let goalPackage = await store.readPackage(goalId)
-      if (goalPackage.goal.attributes.lifecycle === 'active') return goalPackage.goal
-      if (goalPackage.goal.attributes.lifecycle !== 'paused') {
+      const goal = await requireGoal(store, goalId)
+      if (goal.attributes.lifecycle === 'active') return goal
+      if (goal.attributes.lifecycle !== 'paused') {
         throw new GoalControllerError('Only a paused Goal can resume')
       }
-
-      await this.ensurePlanning(goalId, 'Reassess current truth after Goal resume.')
-      goalPackage = await store.readPackage(goalId)
-      const current = goalPackage.goal
-      const next: GoalDocument = {
-        ...current,
-        attributes: { ...current.attributes, lifecycle: 'active' },
-      }
-      await replaceGoal(store, goalId, next)
-      return next
+      return replaceGoal(store, goalId, {
+        ...goal,
+        attributes: { ...goal.attributes, lifecycle: 'active' },
+      })
     },
     async setPriority(goalId, priority) {
       if (!Number.isInteger(priority))
         throw new GoalControllerError('Goal priority must be an integer')
       const goal = await requireGoal(store, goalId)
       if (goal.attributes.priority === priority) return goal
-      const next: GoalDocument = {
+      return replaceGoal(store, goalId, {
         ...goal,
         attributes: { ...goal.attributes, priority },
-      }
-      await replaceGoal(store, goalId, next)
-      return next
-    },
-    async setEngineeringWorkFocus(goalId, workId, stage) {
-      const goalPackage = await store.readPackage(goalId)
-      if (goalPackage.goal.attributes.lifecycle !== 'active') {
-        throw new GoalControllerError('Engineering Work focus requires an active Goal')
-      }
-      const work = goalPackage.works.get(workId)
-      if (!work || !isEngineeringWork(work.attributes)) {
-        throw new GoalControllerError(`Engineering Work not found: ${workId}`)
-      }
-      if (isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(`Cannot change terminal Work focus: ${workId}`)
-      }
-      if (work.attributes.stage === stage) return work
-      const next: WorkDocument = {
-        ...work,
-        attributes: { ...work.attributes, stage },
-      }
-      const path = store.paths.workDocument(goalId, workId)
-      const source = await Bun.file(store.paths.absolute(path)).text()
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderWorkDocument(next),
-        },
       })
-      return next
-    },
-    async returnEngineeringWorkToGenerate(goalId, workId) {
-      const goalPackage = await store.readPackage(goalId)
-      const work = goalPackage.works.get(workId)
-      if (!work || !isEngineeringWork(work.attributes) || isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(
-          `Cannot return missing or terminal Engineering Work to Generator: ${workId}`,
-        )
-      }
-      if (work.attributes.stage === 'generate') return work
-      if (work.attributes.stage !== 'review') {
-        throw new GoalControllerError(
-          `Cannot return Engineering Work from ${work.attributes.stage} to Generator: ${workId}`,
-        )
-      }
-      const path = store.paths.workDocument(goalId, workId)
-      const source = await Bun.file(store.paths.absolute(path)).text()
-      const next: WorkDocument = {
-        ...work,
-        attributes: { ...work.attributes, stage: 'generate' },
-      }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderWorkDocument(next),
-        },
-      })
-      return next
     },
     async setWorkNotBefore(goalId, workId, notBefore) {
       if (notBefore !== null && Number.isNaN(Date.parse(notBefore))) {
         throw new GoalControllerError('Work notBefore must be an ISO timestamp or null')
       }
-      const goalPackage = await store.readPackage(goalId)
-      const work = goalPackage.works.get(workId)
-      if (!work || isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(`Cannot schedule missing or terminal Work: ${workId}`)
-      }
-      if (work.attributes.notBefore === notBefore) return work
-      const path = store.paths.workDocument(goalId, workId)
-      const source = await Bun.file(store.paths.absolute(path)).text()
-      const next: WorkDocument = {
+      return updateOpenWork(store, goalId, workId, (work) => ({
         ...work,
         attributes: { ...work.attributes, notBefore },
-      }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderWorkDocument(next),
-        },
-      })
-      return next
+      }))
     },
     async setWorkDependencies(goalId, workId, dependsOn) {
       const goalPackage = await store.readPackage(goalId)
       const work = goalPackage.works.get(workId)
-      if (!work || !isEngineeringWork(work.attributes) || isWorkTerminal(work.attributes)) {
+      if (!work || isWorkTerminal(work.attributes)) {
         throw new GoalControllerError(
-          `Cannot change dependencies for missing, terminal, or non-Engineering Work: ${workId}`,
+          `Cannot change dependencies for missing or terminal Work: ${workId}`,
         )
       }
       const nextDependencies = [...new Set(dependsOn)]
-      for (const dependencyId of nextDependencies) {
-        if (dependencyId === workId) {
-          throw new GoalControllerError(`Work cannot depend on itself: ${workId}`)
-        }
-        const dependency = goalPackage.works.get(dependencyId)
-        if (!dependency || !isEngineeringWork(dependency.attributes)) {
-          throw new GoalControllerError(
-            `Work dependency is missing or not Engineering Work: ${dependencyId}`,
-          )
-        }
-        if (dependency.attributes.stage === 'cancelled') {
-          throw new GoalControllerError(`Work cannot depend on cancelled Work: ${dependencyId}`)
-        }
-      }
-      if (JSON.stringify(nextDependencies) === JSON.stringify(work.attributes.dependsOn)) {
+      validateDependencies(goalPackage, workId, nextDependencies)
+      if (JSON.stringify(nextDependencies) === JSON.stringify(work.attributes.dependsOn))
         return work
-      }
-      const path = store.paths.workDocument(goalId, workId)
-      const source = await Bun.file(store.paths.absolute(path)).text()
-      const next: WorkDocument = {
+      return publishWork(store, goalId, {
         ...work,
         attributes: { ...work.attributes, dependsOn: nextDependencies },
-      }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderWorkDocument(next),
-        },
       })
-      return next
     },
     async appendWorkMessage(goalId, workId, input) {
+      const content = input.content.trim()
+      if (!content) throw new GoalControllerError('Work message cannot be empty')
+      return updateOpenWork(store, goalId, workId, (work) => ({
+        ...work,
+        attributes: {
+          ...work.attributes,
+          ownerMessages: [
+            ...appendProjectOwnerMessage(work.attributes.ownerMessages, {
+              recordedAt: now().toISOString(),
+              sourceEventId: input.sourceEventId,
+              content,
+            }),
+          ],
+        },
+      }))
+    },
+    async createAttention(projectId, goalId, workId, input) {
       const goalPackage = await store.readPackage(goalId)
       const work = goalPackage.works.get(workId)
       if (!work || isWorkTerminal(work.attributes)) {
-        throw new GoalControllerError(`Cannot message missing or terminal Work: ${workId}`)
+        throw new GoalControllerError(`Attention requires open Work: ${workId}`)
       }
-      const content = input.content.trim()
-      if (!content) throw new GoalControllerError('Work message cannot be empty')
-      const path = store.paths.workDocument(goalId, workId)
-      const source = await Bun.file(store.paths.absolute(path)).text()
-      const ownerMessages = appendProjectOwnerMessage(work.attributes.ownerMessages, {
-        recordedAt: now().toISOString(),
-        sourceEventId: input.sourceEventId,
-        content,
-      })
-      if (ownerMessages === work.attributes.ownerMessages) return work
-      const next: WorkDocument = {
-        ...work,
-        attributes: { ...work.attributes, ownerMessages: [...ownerMessages] },
+      const attentionId = input.attentionId ?? `A-${crypto.randomUUID()}`
+      const existing = goalPackage.attentions.get(attentionId)
+      if (existing) return existing
+      const attention: AttentionDocument = {
+        attributes: {
+          id: attentionId,
+          target: workAttentionTarget(projectId, goalId, workId),
+          createdAt: now().toISOString(),
+          resolvedAt: null,
+          resolutionInput: null,
+          summary: input.summary.trim(),
+          decisionPrompt: input.decisionPrompt ?? null,
+        },
+        body: `${input.body.trim()}\n`,
       }
       await store.publishGoal(goalId, {
         supportingWrites: [],
         gateWrite: {
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderWorkDocument(next),
+          path: store.paths.attentionDocument(goalId, attentionId),
+          expectedHash: null,
+          content: renderAttentionDocument(attention),
         },
       })
-      return next
+      return attention
     },
     async cancelWork(goalId, workId) {
       let goalPackage = await store.readPackage(goalId)
       const target = goalPackage.works.get(workId)
       if (!target) throw new GoalControllerError(`Cannot cancel missing Work: ${workId}`)
-      if (target.attributes.stage === 'done') {
+      if (target.attributes.status === 'done') {
         throw new GoalControllerError(`Cannot cancel completed Work: ${workId}`)
       }
-      if (target.attributes.stage === 'cancelled') return []
-      let cancellationOrder: string[]
+      if (target.attributes.status === 'cancelled') return []
+      let order: string[]
       try {
-        cancellationOrder = workCancellationOrder(goalPackage, [workId])
+        order = workCancellationOrder(goalPackage, [workId])
       } catch (error) {
         if (error instanceof WorkCancellationError) throw new GoalControllerError(error.message)
         throw error
       }
       const cancelled: WorkDocument[] = []
-      for (const candidateId of cancellationOrder) {
+      for (const candidateId of order) {
         goalPackage = await store.readPackage(goalId)
         const candidate = goalPackage.works.get(candidateId)
-        if (candidate && !isWorkTerminal(candidate.attributes)) {
-          await publishWorkCancellation(store, goalId, candidate)
-          cancelled.push({
-            ...candidate,
-            attributes: { ...candidate.attributes, stage: 'cancelled' },
-          } as WorkDocument)
-        }
+        if (!candidate || isWorkTerminal(candidate.attributes)) continue
+        const next = await publishWorkCancellation(store, goalId, candidate)
+        cancelled.push(next)
       }
       return cancelled
     },
     async cancelGoal(goalId) {
       let goalPackage = await store.readPackage(goalId)
-      const lifecycle = goalPackage.goal.attributes.lifecycle
-      if (lifecycle === 'done') {
+      if (goalPackage.goal.attributes.lifecycle === 'done') {
         throw new GoalControllerError('A completed Goal must be reopened before cancellation')
       }
-      if (lifecycle !== 'cancelled') {
-        const cancelled: GoalDocument = {
+      if (goalPackage.goal.attributes.lifecycle !== 'cancelled') {
+        await replaceGoal(store, goalId, {
           ...goalPackage.goal,
           attributes: { ...goalPackage.goal.attributes, lifecycle: 'cancelled' },
-        }
-        await replaceGoal(store, goalId, cancelled)
+        })
       }
-
       while (true) {
         goalPackage = await store.readPackage(goalId)
         const nonterminal = [...goalPackage.works.values()].filter(
@@ -583,7 +363,6 @@ export function createGoalController(
         if (!candidate) throw new GoalControllerError('Cannot cancel a cyclic Work graph')
         await publishWorkCancellation(store, goalId, candidate)
       }
-
       goalPackage = await store.readPackage(goalId)
       for (const attention of goalPackage.attentions.values()) {
         if (attention.attributes.resolvedAt === null) {
@@ -599,53 +378,80 @@ export function createGoalController(
       return (await store.readPackage(goalId)).goal
     },
     async reopenGoal(goalId, input) {
-      let goalPackage = await store.readPackage(goalId)
-      if (
-        goalPackage.goal.attributes.lifecycle === 'active' &&
-        hasAcceptedGoalInput(goalPackage, input.eventId)
-      ) {
-        await this.ensurePlanning(
-          goalId,
-          `Reassess reopened Goal after Inbox event ${input.eventId}.`,
-        )
-        return (await store.readPackage(goalId)).goal
-      }
-      if (
-        goalPackage.goal.attributes.lifecycle !== 'done' &&
-        goalPackage.goal.attributes.lifecycle !== 'cancelled'
-      ) {
+      const goalPackage = await store.readPackage(goalId)
+      if (!isTerminalGoal(goalPackage.goal)) {
         throw new GoalControllerError('Only a terminal Goal can reopen')
       }
-      if (goalPackage.goal.attributes.lifecycle === 'cancelled') {
-        await this.cancelGoal(goalId)
-        goalPackage = await store.readPackage(goalId)
-      }
-
-      const path = store.paths.goalDocument(goalId)
-      const source = await Bun.file(store.paths.absolute(path)).text()
-      const reopened: GoalDocument = {
+      const next: GoalDocument = {
         ...goalPackage.goal,
         attributes: {
           ...goalPackage.goal.attributes,
           lifecycle: 'active',
           contractRevision: goalPackage.goal.attributes.contractRevision + 1,
         },
+        body: input.contractMarkdown
+          ? normalizeMarkdown(input.contractMarkdown)
+          : goalPackage.goal.body,
       }
-      await store.publishGoal(goalId, {
-        supportingWrites: [],
-        gateWrite: {
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderGoalDocument(reopened),
-        },
-      })
-      await this.ensurePlanning(
-        goalId,
-        input.contractChange ?? `Reassess reopened Goal after Inbox event ${input.eventId}.`,
-      )
-      return (await store.readPackage(goalId)).goal
+      return replaceGoal(store, goalId, next)
     },
   }
+}
+
+function validateDependencies(
+  goalPackage: GoalPackage,
+  workId: string,
+  dependsOn: readonly string[],
+) {
+  for (const dependencyId of dependsOn) {
+    if (dependencyId === workId)
+      throw new GoalControllerError(`Work cannot depend on itself: ${workId}`)
+    const dependency = goalPackage.works.get(dependencyId)
+    if (!dependency) throw new GoalControllerError(`Work dependency is missing: ${dependencyId}`)
+    if (dependency.attributes.status === 'cancelled') {
+      throw new GoalControllerError(`Work cannot depend on cancelled Work: ${dependencyId}`)
+    }
+  }
+}
+
+async function updateOpenWork(
+  store: GoalPackageStore,
+  goalId: string,
+  workId: string,
+  update: (work: WorkDocument) => WorkDocument,
+) {
+  const goalPackage = await store.readPackage(goalId)
+  const work = goalPackage.works.get(workId)
+  if (!work || isWorkTerminal(work.attributes)) {
+    throw new GoalControllerError(`Cannot update missing or terminal Work: ${workId}`)
+  }
+  return publishWork(store, goalId, update(work))
+}
+
+async function publishWork(store: GoalPackageStore, goalId: string, work: WorkDocument) {
+  const path = store.paths.workDocument(goalId, work.attributes.id)
+  const source = await Bun.file(store.paths.absolute(path)).text()
+  await store.publishGoal(goalId, {
+    supportingWrites: [],
+    gateWrite: {
+      path,
+      expectedHash: await hashBytes(new TextEncoder().encode(source)),
+      content: renderWorkDocument(work),
+    },
+  })
+  return work
+}
+
+async function publishWorkCancellation(
+  store: GoalPackageStore,
+  goalId: string,
+  work: WorkDocument,
+) {
+  const next: WorkDocument = {
+    ...work,
+    attributes: { ...work.attributes, status: 'cancelled' },
+  }
+  return publishWork(store, goalId, next)
 }
 
 async function requireGoal(store: GoalPackageStore, goalId: string) {
@@ -655,15 +461,17 @@ async function requireGoal(store: GoalPackageStore, goalId: string) {
 }
 
 async function replaceGoal(store: GoalPackageStore, goalId: string, next: GoalDocument) {
-  const source = await Bun.file(store.paths.absolute(store.paths.goalDocument(goalId))).text()
+  const path = store.paths.goalDocument(goalId)
+  const source = await Bun.file(store.paths.absolute(path)).text()
   await store.publishGoal(goalId, {
     supportingWrites: [],
     gateWrite: {
-      path: store.paths.goalDocument(goalId),
+      path,
       expectedHash: await hashBytes(new TextEncoder().encode(source)),
       content: renderGoalDocument(next),
     },
   })
+  return next
 }
 
 async function resolveAttention(
@@ -673,7 +481,6 @@ async function resolveAttention(
   resolvedAt: Date,
   reason: string,
 ) {
-  if (attention.attributes.resolvedAt !== null) return
   const path = store.paths.attentionDocument(goalId, attention.attributes.id)
   const source = await Bun.file(store.paths.absolute(path)).text()
   const next = parseAttentionDocument(source)
@@ -689,92 +496,6 @@ async function resolveAttention(
   })
 }
 
-async function publishWorkCancellation(
-  store: GoalPackageStore,
-  goalId: string,
-  work: WorkDocument,
-) {
-  const path = store.paths.workDocument(goalId, work.attributes.id)
-  const source = await Bun.file(store.paths.absolute(path)).text()
-  const next: WorkDocument = {
-    ...work,
-    attributes: { ...work.attributes, stage: 'cancelled' },
-  }
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path,
-      expectedHash: await hashBytes(new TextEncoder().encode(source)),
-      content: renderWorkDocument(next),
-    },
-  })
-}
-
-function materialRevisionPlanning(
-  goalPackage: GoalPackage,
-  revision: number,
-  contractChange: string,
-  acceptedInput: PlanningInputAdmission,
-  context: PlanningContext | undefined,
-): WorkDocument {
-  const existing = [...goalPackage.works.values()].find(
-    (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-  )
-  if (existing) {
-    if (!isPlanningWork(existing.attributes)) {
-      throw new GoalControllerError('Open Planning lookup returned Engineering Work')
-    }
-    return {
-      ...existing,
-      attributes: {
-        ...existing.attributes,
-        stage: 'plan',
-        contractRevision: revision,
-        revisionInput: acceptedInput.path,
-        contextRefs: mergeWorkContextRefs(existing.attributes.contextRefs, [
-          { path: acceptedInput.path, purpose: 'Accepted Inbox input' },
-          ...(context?.references ?? []),
-        ]),
-      },
-      body: contractChange.trim(),
-    }
-  }
-
-  const planning = createPlanningWork(goalPackage, revision, contractChange, acceptedInput, context)
-  if (!isPlanningWork(planning.attributes)) {
-    throw new GoalControllerError('Planning builder returned Engineering Work')
-  }
-  planning.attributes.revisionInput = acceptedInput.path
-  return planning
-}
-
-function createPlanningWork(
-  goalPackage: GoalPackage,
-  revision: number,
-  objective: string,
-  acceptedInput: PlanningInputAdmission | undefined,
-  context: PlanningContext | undefined,
-): WorkDocument {
-  return {
-    attributes: {
-      id: nextPlanningWorkId(goalPackage),
-      title: 'Plan current Goal',
-      kind: 'planning',
-      stage: 'plan',
-      notBefore: null,
-      dependsOn: [],
-      contractRevision: revision,
-      evidenceRefs: [],
-      contextRefs: [
-        ...(acceptedInput ? [{ path: acceptedInput.path, purpose: 'Accepted Inbox input' }] : []),
-        ...(context?.references ?? []),
-      ],
-      ownerMessages: [],
-    },
-    body: objective.trim(),
-  }
-}
-
 function mergeWorkContextRefs(
   current: readonly WorkContextRef[],
   additions: readonly WorkContextRef[],
@@ -784,13 +505,10 @@ function mergeWorkContextRefs(
   return [...references.values()]
 }
 
-function hasAcceptedGoalInput(goalPackage: GoalPackage, eventId: string) {
-  return goalPackage.inputs.some((input) => input.attributes.sourceEventId === eventId)
+function isTerminalGoal(goal: GoalDocument) {
+  return goal.attributes.lifecycle === 'done' || goal.attributes.lifecycle === 'cancelled'
 }
 
-function nextPlanningWorkId(goalPackage: GoalPackage) {
-  const count = [...goalPackage.works.values()].filter((work) =>
-    isPlanningWork(work.attributes),
-  ).length
-  return `plan-${String(count + 1).padStart(4, '0')}`
+function normalizeMarkdown(value: string) {
+  return `${value.trimEnd()}\n`
 }

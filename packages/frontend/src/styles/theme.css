@@ -117,20 +117,10 @@
   --color-state-active: var(--color-state-working);
   --color-state-live: var(--color-success);
   --color-state-success: var(--color-success);
-  --color-state-done: var(--color-phase-done);
+  --color-state-done: var(--color-success-300);
   --color-state-warning: var(--color-warning);
   --color-state-danger: var(--color-danger);
   --color-state-info: var(--color-info);
-
-  /* Kanban phases share the same status families. */
-  --color-phase-plan: var(--color-warning-300);
-  --color-phase-build: var(--color-accent-400);
-  --color-phase-review: var(--color-info-300);
-  --color-phase-done: var(--color-success-300);
-  --color-phase-plan-soft: color-mix(in srgb, var(--color-phase-plan) 12%, transparent);
-  --color-phase-build-soft: color-mix(in srgb, var(--color-phase-build) 12.5%, transparent);
-  --color-phase-review-soft: color-mix(in srgb, var(--color-phase-review) 12.5%, transparent);
-  --color-phase-done-soft: color-mix(in srgb, var(--color-phase-done) 12.5%, transparent);
 
   /* Elevation is part of the theme because it controls perceived color depth. */
   --shadow-xs: 0 2px 8px color-mix(in srgb, var(--color-black) 18%, transparent);

@@ -7,7 +7,7 @@ export interface AssistantPageScope {
 }
 
 export function readAssistantPageScope(pathname: string): AssistantPageScope | null {
-  const goal = /^\/projects\/([^/]+)\/(?:board|docs)\/([^/]+)$/.exec(pathname)
+  const goal = /^\/projects\/([^/]+)\/(?:route|docs)\/([^/]+)$/.exec(pathname)
   if (goal?.[1] && goal[2]) {
     return { projectId: decodeURIComponent(goal[1]), goalId: decodeURIComponent(goal[2]) }
   }

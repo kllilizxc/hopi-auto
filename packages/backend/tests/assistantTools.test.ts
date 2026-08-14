@@ -1,2989 +1,486 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { createAssistantStateReader } from '../src/assistant/assistantState'
-import { AssistantToolRequestError } from '../src/assistant/assistantToolRequestError'
-import { type AssistantTools, createAssistantTools } from '../src/assistant/assistantTools'
-import {
-  goalAttentionReference,
-  workspaceAttentionReference,
-} from '../src/domain/attentionReference'
-import {
-  isEngineeringWork,
-  isPlanningWork,
-  parseWorkDocument,
-  renderEvidenceDocument,
-  renderWorkDocument,
-} from '../src/domain/canonicalDocuments'
+import type { AssistantStateSnapshot } from '../src/assistant/assistantState'
+import { createAssistantTools } from '../src/assistant/assistantTools'
+import { renderWorkDocument } from '../src/domain/canonicalDocuments'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
-import { createPreviewManager } from '../src/runtime/previewManager'
-import { type RunAttemptStore, createRunAttemptStore } from '../src/runtime/runAttemptStore'
-import { runStoragePath } from '../src/runtime/runPaths'
-import { createStableWorktreeManager } from '../src/runtime/stableWorktreeManager'
-import { createWorkspaceAttentionController } from '../src/runtime/workspaceAttentionController'
+import type { RunRequest } from '../src/runtime/runRequest'
+import type { WorkCompletionResult, WorkRunRequest } from '../src/scheduler/projectReconciler'
 import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
-import { publishTestWorkAttention } from './helpers/testGoalAttention'
 
-const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-tools')
+const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-tools-wayfinder')
+
+const initialMap = `## Destination
+
+Reach an accepted execution design.
+
+## Notes
+
+Keep the route implementation-neutral.
+
+## Decisions so far
+
+## Not yet specified
+
+The publication boundary remains foggy.
+
+## Out of scope
+
+Visual polish.
+`
+
+const resolvedMap = `## Destination
+
+Reach an accepted execution design.
+
+## Notes
+
+Keep the route implementation-neutral.
+
+## Decisions so far
+
+- [Choose the authority boundary](../work/W-choose-the-authority-boundary.md) — one publisher owns canonical state.
+
+## Not yet specified
+
+## Out of scope
+
+Visual polish.
+`
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
   await mkdir(temporaryRoot, { recursive: true })
 })
 
-afterEach(async () => {
-  await rm(temporaryRoot, { recursive: true, force: true })
-})
+afterEach(() => rm(temporaryRoot, { recursive: true, force: true }))
 
-describe('Assistant HOPI tools', () => {
-  test('gives Project management to public and internal turns of the same Assistant', async () => {
+describe('Assistant Wayfinder tools', () => {
+  test('creates one mapped Goal, then adds and wires precise Decision Work', async () => {
     const fixture = await setup()
-    const repoRoot = await createTestRepo(join(temporaryRoot, 'api'))
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-project',
-      content: 'Add this repository to P-1 as api.',
-    })
+    await fixture.turn('EV-create', 'Find the execution design.')
 
-    const linked = await fixture.tools.executeForEvent('EV-project', 'hopi_manage_project', {
-      change: {
-        kind: 'add_repo',
-        projectId: 'P-1',
-        repo: { repoId: 'api', repoPath: repoRoot },
-      },
-    })
-    expect(linked).toMatchObject({
-      changed: true,
-      value: {
-        effect: { kind: 'add_repo', projectId: 'P-1' },
-        runtimeRefresh: 'after_current_turn',
-        project: {
-          projectId: 'P-1',
-          repos: [
-            { repoId: 'api', primary: false },
-            { repoId: 'primary', primary: true },
-          ],
-        },
-      },
-    })
-    expect(fixture.topologyChangedEventIds).toEqual(['EV-project'])
-    expect((await fixture.home.readProject('P-1')).repos.map((repo) => repo.repoId)).toEqual([
-      'primary',
-      'api',
-    ])
-
-    const repeated = await fixture.tools.executeForEvent('EV-project', 'hopi_manage_project', {
-      change: {
-        kind: 'add_repo',
-        projectId: 'P-1',
-        repo: { repoId: 'api', repoPath: repoRoot },
-      },
-    })
-    expect(repeated).toMatchObject({ changed: false, value: { runtimeRefresh: 'not_needed' } })
-    expect(fixture.topologyChangedEventIds).toEqual(['EV-project'])
-
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-internal-project',
-      content: 'Revalidate the Project after a runtime event.',
-    })
-    const recovered = await fixture.tools.executeForEvent(
-      'EV-internal-project',
-      'hopi_manage_project',
-      {
-        change: { kind: 'recover', projectId: 'P-1' },
-      },
-    )
-    expect(recovered).toMatchObject({
-      changed: true,
-      value: { effect: { kind: 'recover', projectId: 'P-1', eligible: true } },
-    })
-  })
-
-  test('initializes an explicitly named missing repository while adding it to a Project', async () => {
-    const fixture = await setup()
-    const parentRoot = await mkdtemp(join(tmpdir(), 'hopi-assistant-init-'))
-    const repoRoot = join(parentRoot, 'missing-repo')
-    try {
-      await fixture.workspace.receiveEvent({
-        eventId: 'EV-initialize',
-        content: `Add ${repoRoot} to P-1 as generated.`,
-      })
-      const result = await fixture.tools.executeForEvent('EV-initialize', 'hopi_manage_project', {
-        change: {
-          kind: 'add_repo',
-          projectId: 'P-1',
-          repo: { repoId: 'generated', repoPath: repoRoot },
-        },
-      })
-      expect(result).toMatchObject({
-        changed: true,
-        value: {
-          effect: { kind: 'add_repo', projectId: 'P-1' },
-        },
-      })
-      expect(
-        (result.value as { project: { repos: Array<Record<string, unknown>> } }).project.repos,
-      ).toContainEqual({
-        repoId: 'generated',
-        repoPath: await realpath(repoRoot),
-        projectPath: '.',
-        primary: false,
-      })
-      expect(await git(repoRoot, ['branch', '--show-current'])).toBe('main')
-      expect(
-        await fixture.tools.executeForEvent('EV-initialize', 'hopi_manage_project', {
-          change: {
-            kind: 'add_repo',
-            projectId: 'P-1',
-            repo: { repoId: 'generated', repoPath: repoRoot },
-          },
-        }),
-      ).toMatchObject({ changed: false })
-    } finally {
-      await rm(parentRoot, { recursive: true, force: true })
-    }
-  })
-
-  test('supports whole-Project, single-Repo, and complete-set rebinding', async () => {
-    const fixture = await setup()
-    const apiRepo = await createTestRepo(join(temporaryRoot, 'rebind-api'))
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-rebind',
-      content: 'Move the linked repositories to these new paths.',
-    })
-    await fixture.tools.executeForEvent('EV-rebind', 'hopi_manage_project', {
-      change: {
-        kind: 'add_repo',
-        projectId: 'P-1',
-        repo: { repoId: 'api', repoPath: apiRepo },
-      },
-    })
-
-    const movedPrimary = join(temporaryRoot, 'moved-primary')
-    const movedApi = join(temporaryRoot, 'moved-api')
-    await rename(fixture.repoRoot, movedPrimary)
-    await rename(apiRepo, movedApi)
-    expect(
-      await fixture.tools.executeForEvent('EV-rebind', 'hopi_manage_project', {
-        change: {
-          kind: 'rebind_repos',
-          projectId: 'P-1',
-          repos: [
-            { repoId: 'primary', repoPath: movedPrimary },
-            { repoId: 'api', repoPath: movedApi },
-          ],
-        },
-      }),
-    ).toMatchObject({ changed: true })
-
-    const finalPrimary = join(temporaryRoot, 'final-primary')
-    await rename(movedPrimary, finalPrimary)
-    const reboundPrimary = await fixture.tools.executeForEvent('EV-rebind', 'hopi_manage_project', {
-      change: {
-        kind: 'rebind_repos',
-        projectId: 'P-1',
-        repos: [{ repoId: 'primary', repoPath: finalPrimary }],
-      },
-    })
-    expect(reboundPrimary).toMatchObject({ changed: true })
-    expect(
-      (reboundPrimary.value as { project: { repos: unknown[] } }).project.repos,
-    ).toContainEqual({
-      repoId: 'primary',
-      repoPath: finalPrimary,
-      projectPath: '.',
-      primary: true,
-    })
-
-    const finalApi = join(temporaryRoot, 'final-api')
-    await rename(movedApi, finalApi)
-    const reboundApi = await fixture.tools.executeForEvent('EV-rebind', 'hopi_manage_project', {
-      change: {
-        kind: 'rebind_repos',
-        projectId: 'P-1',
-        repos: [{ repoId: 'api', repoPath: finalApi }],
-      },
-    })
-    expect(reboundApi).toMatchObject({ changed: true })
-    expect((reboundApi.value as { project: { repos: unknown[] } }).project.repos).toContainEqual({
-      repoId: 'api',
-      repoPath: finalApi,
-      projectPath: '.',
-      primary: false,
-    })
-    expect(fixture.topologyChangedEventIds).toEqual([
-      'EV-rebind',
-      'EV-rebind',
-      'EV-rebind',
-      'EV-rebind',
-    ])
-  })
-
-  test('lets the same Project Assistant update durable preferences from any wake', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-preference',
-      content: 'Across projects, keep your replies concise.',
-    })
-    const initial = (await fixture.workspace.readWorkspace()).preference
-
-    const result = await fixture.tools.executeForEvent('EV-preference', 'hopi_write_preferences', {
-      content: '# Preferences\n\n- Keep replies concise.\n',
-      expectedDigest: initial.digest,
-    })
-
-    expect(result).toMatchObject({
-      changed: true,
-      value: { path: '.hopi/preference.md', digest: expect.any(String) },
-    })
-    expect((await fixture.workspace.readWorkspace()).preference.content).toContain(
-      'Keep replies concise.',
-    )
-    expect(await fixture.goalStore.listGoalIds()).toEqual([])
-
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-internal-preference',
-      content: 'Invent a preference.',
-    })
-    const internal = await fixture.tools.executeForEvent(
-      'EV-internal-preference',
-      'hopi_write_preferences',
-      {
-        content: '# Preferences\n\n- Updated during internal supervision.\n',
-        expectedDigest: (await fixture.workspace.readWorkspace()).preference.digest,
-      },
-    )
-    expect(internal.changed).toBe(true)
-    expect((await fixture.workspace.readWorkspace()).preference.content).toContain(
-      'Updated during internal supervision.',
-    )
-  })
-
-  test('derives a readable Goal ID when the Assistant omits it', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-readable', content: '优化整体前端样式。' })
-
-    const result = await fixture.tools.executeForEvent('EV-readable', 'hopi_create_goal', {
+    const created = await fixture.tools.executeForEvent('EV-create', 'hopi_create_goal', {
       projectId: 'P-1',
-      title: '优化整体前端样式',
-      objective: '统一并优化整个前端界面。',
-      firstWork: planningFirstWork('规划整体前端样式优化。'),
-    })
-
-    expect(result).toMatchObject({
-      changed: true,
-      value: {
-        effect: { kind: 'goal_created', projectId: 'P-1', goalId: 'G-优化整体前端样式' },
-      },
-    })
-    expect((await fixture.goalStore.readGoal('G-优化整体前端样式'))?.attributes.title).toBe(
-      '优化整体前端样式',
-    )
-    expect(fixture.goalEffects).toEqual([
-      { eventId: 'EV-readable', projectId: 'P-1', goalId: 'G-优化整体前端样式' },
-    ])
-  })
-
-  test('creates a Goal and preserves the source turn as Goal Input', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Create the launch Goal.' })
-
-    const result = await fixture.tools.executeForEvent('EV-1', 'hopi_create_goal', {
-      projectId: 'P-1',
-      goalId: 'G-launch',
-      title: 'Launch',
-      objective: 'Ship the first release.',
-      firstWork: { kind: 'planning' },
-    })
-
-    const goalPackage = await fixture.goalStore.readPackage('G-launch')
-    expect(result).toMatchObject({
-      changed: true,
-      value: { effect: { kind: 'goal_created', goalId: 'G-launch' } },
-    })
-    expect(goalPackage.goal.attributes.title).toBe('Launch')
-    expect(goalPackage.inputs).toHaveLength(1)
-    expect(goalPackage.inputs[0]?.body).toBe('Create the launch Goal.\n')
-    expect(goalPackage.works.get('plan-initial')?.attributes.title).toBe('Plan current Goal')
-    expect(goalPackage.works.get('plan-initial')?.attributes.contextRefs).toEqual([
-      {
-        path: expect.stringContaining('/EV-1.md'),
-        purpose: 'Accepted Inbox input',
-      },
-    ])
-    expect(goalPackage.works.get('plan-initial')?.body).toBe('')
-  })
-
-  test('creates a Goal with one direct Engineering Work instead of initial Planning', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-direct-goal',
-      content: 'Rename the reader entry and preserve every other label.',
-    })
-
-    const result = await fixture.tools.executeForEvent('EV-direct-goal', 'hopi_create_goal', {
-      projectId: 'P-1',
-      goalId: 'G-direct',
-      title: 'Rename the reader entry',
-      objective: 'Use the requested reader-facing title without changing other labels.',
+      goalId: 'G-route',
+      title: 'Find the execution route',
+      objective: 'Make the route clear enough to execute.',
+      mapMarkdown: initialMap,
       firstWork: {
-        kind: 'engineering',
-        title: 'Rename the reader entry',
-        objective: 'Change the reader entry title and preserve every unrelated label.',
-        acceptanceCriteria: [
-          'The reader entry uses the requested title and unrelated labels remain unchanged.',
-        ],
+        kind: 'decision',
+        title: 'Choose the authority boundary',
+        decisionType: 'grilling',
+        question: 'Which component alone may publish canonical state?',
       },
+      references: [],
     })
 
-    const goalPackage = await fixture.goalStore.readPackage('G-direct')
-    const works = [...goalPackage.works.values()]
-    expect(result).toMatchObject({
+    expect(created).toMatchObject({
       changed: true,
       value: {
         effect: {
           kind: 'goal_created',
-          goalId: 'G-direct',
-          workId: 'W-rename-the-reader-entry',
+          workKind: 'decision',
+          workId: 'W-choose-the-authority-boundary',
         },
       },
     })
-    expect(works).toHaveLength(1)
-    expect(works[0]?.attributes).toMatchObject({
-      kind: 'engineering',
-      stage: 'generate',
-      assistantDispatch: expect.stringMatching(/^home:.+\/event:EV-direct-goal$/),
-    })
-    expect(works[0]?.attributes.contextRefs).toEqual([
-      {
-        path: expect.stringContaining('/EV-direct-goal.md'),
-        purpose: 'Accepted Inbox input',
-      },
-    ])
-    expect(goalPackage.inputs).toHaveLength(1)
-  })
 
-  test('replays an inferred direct Goal ID without deriving a suffixed Goal', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-inferred-direct-goal',
-      content: 'Rename the reader entry.',
-    })
-    const args = {
+    await fixture.turn('EV-work', 'This decision follows the authority boundary.')
+    const added = await fixture.tools.executeForEvent('EV-work', 'hopi_create_work', {
       projectId: 'P-1',
-      title: 'Rename the reader entry',
-      objective: 'Use the requested reader-facing title.',
-      firstWork: {
-        kind: 'engineering',
-        title: 'Rename the reader entry',
-        objective: 'Change the reader entry title.',
-        acceptanceCriteria: ['The reader entry uses the requested title.'],
-      },
-    }
-
-    const first = await fixture.tools.executeForEvent(
-      'EV-inferred-direct-goal',
-      'hopi_create_goal',
-      args,
-    )
-    const repeated = await fixture.tools.executeForEvent(
-      'EV-inferred-direct-goal',
-      'hopi_create_goal',
-      args,
-    )
-
-    expect(first).toMatchObject({
-      changed: true,
-      value: { effect: { kind: 'goal_created', goalId: 'G-rename-the-reader-entry' } },
-    })
-    expect(repeated).toMatchObject({
-      changed: false,
-      value: { effect: { kind: 'goal_created', goalId: 'G-rename-the-reader-entry' } },
-    })
-    expect(await fixture.goalStore.listGoalIds()).toEqual(['G-rename-the-reader-entry'])
-  })
-
-  test('directly admits one incremental Engineering Work into an existing Goal', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Guide', objective: 'Improve it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-existing')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-increment',
-      content: 'Add the career-stage option after the existing delivery.',
-    })
-
-    const result = await fixture.tools.executeForEvent('EV-increment', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
+      goalId: 'G-route',
       work: {
-        kind: 'engineering',
-        title: 'Add career-stage option',
-        objective: 'Add the requested career-stage option using the current interaction pattern.',
-        acceptanceCriteria: ['The option is available without changing existing choices.'],
-        dependsOn: ['W-existing'],
+        kind: 'decision',
+        title: 'Choose the integration boundary',
+        decisionType: 'research',
+        question: 'Where should accepted source changes integrate?',
+        dependsOn: ['W-choose-the-authority-boundary'],
       },
+      references: [],
     })
 
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    const created = goalPackage.works.get('W-add-career-stage-option')
+    const goal = await fixture.store.readPackage('G-route')
+    expect(added).toMatchObject({
+      changed: true,
+      value: { effect: { workKind: 'decision', workId: 'W-choose-the-integration-boundary' } },
+    })
+    expect(goal.works.get('W-choose-the-integration-boundary')?.attributes).toMatchObject({
+      decisionType: 'research',
+      dependsOn: ['W-choose-the-authority-boundary'],
+    })
+    expect(
+      await Bun.file(
+        fixture.store.paths.absolute(fixture.store.paths.designIndex('G-route')),
+      ).text(),
+    ).toBe(initialMap)
+  })
+
+  test('keeps the exact Map shape at the canonical publication boundary', async () => {
+    const fixture = await setup()
+    await fixture.turn('EV-invalid', 'Create the map.')
+
+    await expect(
+      fixture.tools.executeForEvent('EV-invalid', 'hopi_create_goal', {
+        projectId: 'P-1',
+        goalId: 'G-invalid',
+        title: 'Invalid map',
+        objective: 'Reject drift.',
+        mapMarkdown: initialMap.replace('## Not yet specified', '## Open questions'),
+        firstWork: {
+          kind: 'decision',
+          title: 'Resolve drift',
+          decisionType: 'research',
+          question: 'What is the valid Map shape?',
+        },
+        references: [],
+      }),
+    ).rejects.toThrow('Wayfinder Map must contain exactly these ordered headings')
+  })
+
+  test('passes only the Run contract to the Worker scheduler', async () => {
+    const fixture = await setup()
+    await fixture.createDirectGoal()
+    await fixture.turn('EV-run', 'Start the implementation Run.')
+    const request = {
+      workspaceMode: 'isolated_write',
+      instructionMarkdown: 'Implement the accepted contract and report evidence.',
+      refs: ['docs/accepted.md'],
+    } satisfies RunRequest
+
+    const result = await fixture.tools.executeForEvent('EV-run', 'hopi_control_work', {
+      projectId: 'P-1',
+      goalId: 'G-direct',
+      workId: 'W-build',
+      action: { kind: 'run', ...request },
+    })
+
+    expect(fixture.runRequests).toEqual([{ goalId: 'G-direct', workId: 'W-build', request }])
+    expect(fixture.runRequests[0]?.request).not.toHaveProperty('kind')
     expect(result).toMatchObject({
       changed: true,
-      value: {
-        effect: {
-          kind: 'engineering_created',
-          goalId: 'G-1',
-          workId: 'W-add-career-stage-option',
-        },
-      },
+      value: { effect: { kind: 'work_run_requested', runDisposition: 'scheduled' } },
     })
-    expect(created?.attributes).toMatchObject({
-      kind: 'engineering',
-      stage: 'generate',
-      dependsOn: ['W-existing'],
-      contractRevision: 1,
-      assistantDispatch: expect.stringMatching(/^home:.+\/event:EV-increment$/),
-    })
-    expect(
-      [...goalPackage.works.values()].filter(
-        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-      ),
-    ).toHaveLength(0)
   })
 
-  test('makes exact direct admission replay idempotent and rejects a second Work for the Input', async () => {
+  test('completes one Decision and updates its Map in one tool action', async () => {
     const fixture = await setup()
-    for (const goalId of ['G-1', 'G-2']) {
-      await fixture.goalStore.createGoal({ goalId, title: goalId, objective: 'Improve it.' })
-      await finishInitialPlanning(fixture.goalStore, goalId)
-    }
-    await fixture.workspace.receiveEvent({ eventId: 'EV-one-work', content: 'Ship one increment.' })
-    const args = {
+    await fixture.createMappedGoal()
+    await fixture.turn('EV-complete', 'Record the accepted answer.')
+
+    const result = await fixture.tools.executeForEvent('EV-complete', 'hopi_control_work', {
       projectId: 'P-1',
-      goalId: 'G-1',
-      work: {
-        kind: 'engineering' as const,
-        title: 'Ship one increment',
-        objective: 'Implement the bounded increment.',
-        acceptanceCriteria: ['The bounded increment works as requested.'],
-      },
-    }
-
-    const first = await fixture.tools.executeForEvent('EV-one-work', 'hopi_create_work', args)
-    const repeated = await fixture.tools.executeForEvent('EV-one-work', 'hopi_create_work', args)
-    expect(first.changed).toBe(true)
-    expect(repeated.changed).toBe(false)
-    expect(
-      [...(await fixture.goalStore.readPackage('G-1')).works.values()].filter(
-        (work) =>
-          isEngineeringWork(work.attributes) &&
-          work.attributes.assistantDispatch?.endsWith('/event:EV-one-work'),
-      ),
-    ).toHaveLength(1)
-
-    await expect(
-      fixture.tools.executeForEvent('EV-one-work', 'hopi_create_work', {
-        ...args,
-        goalId: 'G-2',
-        work: { ...args.work, title: 'Ship another increment' },
-      }),
-    ).rejects.toThrow('Inbox Input already directly admitted Engineering Work')
-  })
-
-  test('serializes concurrent direct admissions and publishes only one Work', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Improve it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await fixture.workspace.receiveEvent({ eventId: 'EV-race', content: 'Apply one change.' })
-    const baseWork = {
-      kind: 'engineering' as const,
-      objective: 'Apply the bounded change.',
-      acceptanceCriteria: ['The bounded change is complete.'],
-    }
-
-    const outcomes = await Promise.allSettled([
-      fixture.tools.executeForEvent('EV-race', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        work: { ...baseWork, title: 'First direct change' },
-      }),
-      fixture.tools.executeForEvent('EV-race', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        work: { ...baseWork, title: 'Second direct change' },
-      }),
-    ])
-
-    expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
-    expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1)
-    expect(
-      [...(await fixture.goalStore.readPackage('G-1')).works.values()].filter(
-        (work) =>
-          isEngineeringWork(work.attributes) &&
-          work.attributes.assistantDispatch?.endsWith('/event:EV-race'),
-      ),
-    ).toHaveLength(1)
-  })
-
-  test('admits an exact Engineering Work independently from current Planning', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Improve it.' })
-    await fixture.workspace.receiveEvent({ eventId: 'EV-guarded', content: 'Add one change.' })
-
-    await fixture.tools.executeForEvent('EV-guarded', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: {
-        kind: 'engineering',
-        title: 'Add one change',
-        objective: 'Apply the bounded change.',
-        acceptanceCriteria: ['The change works as requested.'],
-      },
-    })
-
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.inputs).toHaveLength(1)
-    expect([...goalPackage.works.values()].map((work) => work.attributes.kind).toSorted()).toEqual([
-      'engineering',
-      'planning',
-    ])
-  })
-
-  test('rejects direct admission for inactive Goals and unknown Repo subsets', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Improve it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await fixture.controller.pauseGoal('G-1')
-    await fixture.workspace.receiveEvent({ eventId: 'EV-paused', content: 'Add one change.' })
-    const baseWork = {
-      kind: 'engineering' as const,
-      title: 'Add one change',
-      objective: 'Apply the bounded change.',
-      acceptanceCriteria: ['The change works as requested.'],
-    }
-
-    await expect(
-      fixture.tools.executeForEvent('EV-paused', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        work: baseWork,
-      }),
-    ).rejects.toThrow('requires an active Goal')
-    expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
-
-    await fixture.goalStore.createGoal({ goalId: 'G-2', title: 'Goal 2', objective: 'Improve it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-2')
-    await fixture.workspace.receiveEvent({ eventId: 'EV-repo', content: 'Use another Repo.' })
-    await expect(
-      fixture.tools.executeForEvent('EV-repo', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-2',
-        work: { ...baseWork, repos: ['missing-repo'] },
-      }),
-    ).rejects.toThrow('Unrecognized key')
-    expect((await fixture.goalStore.readPackage('G-2')).inputs).toHaveLength(0)
-  })
-
-  test('atomically adopts only selected Inbox images before initial Planning', async () => {
-    const fixture = await setup()
-    const event = await fixture.workspace.receiveEvent({
-      eventId: 'EV-image',
-      content: 'Recreate this board layout.',
-      images: [
-        new File([pngBytes(1)], 'board.png', { type: 'image/png' }),
-        new File([pngBytes(2)], 'unrelated.png', { type: 'image/png' }),
-      ],
-    })
-    const selectedRef = event.attributes.attachments[0] ?? ''
-    const unselectedRef = event.attributes.attachments[1] ?? ''
-
-    const result = await fixture.tools.executeForEvent('EV-image', 'hopi_create_goal', {
-      projectId: 'P-1',
-      goalId: 'G-image',
-      title: 'Reference board',
-      objective: 'Recreate the board layout.',
-      firstWork: planningFirstWork('Plan how to recreate the selected board reference.'),
-      references: [
-        {
-          attachmentRef: selectedRef,
-          purpose: 'Match the information hierarchy, not the original branding.',
-        },
-      ],
-    })
-
-    const selected = await fixture.workspace.resolveAttachment(selectedRef)
-    const unselected = await fixture.workspace.resolveAttachment(unselectedRef)
-    const assetPath = fixture.goalStore.paths.asset(
-      'G-image',
-      selected?.contentHash ?? '',
-      selected?.fileName ?? '',
-    )
-    const unselectedPath = fixture.goalStore.paths.asset(
-      'G-image',
-      unselected?.contentHash ?? '',
-      unselected?.fileName ?? '',
-    )
-    const goalPackage = await fixture.goalStore.readPackage('G-image')
-    expect(result.value).toMatchObject({ references: [{ path: assetPath }] })
-    expect(await Bun.file(fixture.goalStore.paths.absolute(assetPath)).exists()).toBe(true)
-    expect(await Bun.file(fixture.goalStore.paths.absolute(unselectedPath)).exists()).toBe(false)
-    expect(goalPackage.works.get('plan-initial')?.attributes.contextRefs).toContainEqual({
-      path: assetPath,
-      purpose: 'Match the information hierarchy, not the original branding.',
-    })
-  })
-
-  test('rejects non-portable Assistant-home attachment paths in Goal prose', async () => {
-    const fixture = await setup()
-    const event = await fixture.workspace.receiveEvent({
-      eventId: 'EV-image-path',
-      content: 'Use this screenshot.',
-      images: [new File([pngBytes(9)], 'layout.png', { type: 'image/png' })],
-    })
-    const attachmentRef = event.attributes.attachments[0] ?? ''
-
-    expect(
-      fixture.tools.executeForEvent('EV-image-path', 'hopi_create_goal', {
-        projectId: 'P-1',
-        goalId: 'G-invalid-image-path',
-        title: 'Reference layout',
-        objective: `Recreate ${attachmentRef}.`,
-        firstWork: planningFirstWork('Plan how to recreate the selected layout reference.'),
-        references: [
-          {
-            attachmentRef,
-            purpose: 'Match the layout hierarchy.',
-          },
-        ],
-      }),
-    ).rejects.toThrow('cannot cite non-portable image path')
-    expect(await fixture.goalStore.readGoal('G-invalid-image-path')).toBeNull()
-  })
-
-  test('rejects machine-local absolute image paths in Goal prose', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-local-image-path',
-      content: 'Use the generated reference.',
-    })
-
-    expect(
-      fixture.tools.executeForEvent('EV-local-image-path', 'hopi_create_goal', {
-        projectId: 'P-1',
-        goalId: 'G-local-image-path',
-        title: 'Reference layout',
-        objective: 'Recreate /home/user/.codex/generated_images/reference.png.',
-        firstWork: planningFirstWork('Plan how to recreate the generated layout reference.'),
-      }),
-    ).rejects.toThrow('/home/user/.codex/generated_images/reference.png')
-    expect(await fixture.goalStore.readGoal('G-local-image-path')).toBeNull()
-  })
-
-  test('can adopt an image as design-only context and later reuse it for Planning', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    const event = await fixture.workspace.receiveEvent({
-      eventId: 'EV-image',
-      content: 'Keep this visual reference in the design, then implement it.',
-      images: [new File([pngBytes(3)], 'layout.png', { type: 'image/png' })],
-    })
-    const references = [
-      {
-        attachmentRef: event.attributes.attachments[0] ?? '',
-        purpose: 'Use the compact panel proportions.',
-      },
-    ]
-
-    await fixture.tools.executeForEvent('EV-image', 'hopi_write_design', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      changes: references.map((reference) => ({ kind: 'attachment' as const, ...reference })),
-    })
-    expect(
-      [...(await fixture.goalStore.readPackage('G-1')).works.values()].filter(
-        (work) => work.attributes.stage === 'plan',
-      ),
-    ).toHaveLength(0)
-
-    await fixture.tools.executeForEvent('EV-image', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: { kind: 'planning', mode: 'same_contract' },
-      references,
-    })
-    const planning = [...(await fixture.goalStore.readPackage('G-1')).works.values()].find(
-      (work) => work.attributes.stage === 'plan',
-    )
-    expect(planning?.attributes.contextRefs).toContainEqual({
-      path: expect.stringContaining('/assets/'),
-      purpose: 'Use the compact panel proportions.',
-    })
-  })
-
-  test('reuses a durable image from an earlier public Inbox turn', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const source = await fixture.workspace.receiveEvent({
-      eventId: 'EV-source',
-      content: 'Here is the reference.',
-      images: [new File([pngBytes(4)], 'earlier.png', { type: 'image/png' })],
-    })
-    await fixture.workspace.handleEvent('EV-source', {
-      reply: 'Reference received.',
-      disposition: 'answered',
-    })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-use',
-      content: 'Use the image from my earlier message in this Goal.',
-    })
-
-    await fixture.tools.executeForEvent('EV-use', 'hopi_write_design', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      changes: [
-        {
-          kind: 'attachment',
-          attachmentRef: source.attributes.attachments[0],
-          purpose: 'Reuse the earlier visual hierarchy.',
-        },
-      ],
-    })
-
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.inputs[0]?.attributes.sourceEventId).toBe('EV-use')
-    const attachment = await fixture.workspace.resolveAttachment(
-      source.attributes.attachments[0] ?? '',
-    )
-    const assetPath = fixture.goalStore.paths.asset(
-      'G-1',
-      attachment?.contentHash ?? '',
-      attachment?.fileName ?? '',
-    )
-    expect(await Bun.file(fixture.goalStore.paths.absolute(assetPath)).exists()).toBe(true)
-  })
-
-  test('keeps design writing separate from requesting implementation', async () => {
-    const fixture = await setup({ trackInterrupts: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-1',
-      content: 'Change the design and then implement it.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-
-    await fixture.tools.executeForEvent('EV-1', 'hopi_write_design', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      changes: [
-        {
-          kind: 'document',
-          path: 'theme.md',
-          content: '# Theme\n\nUse ink surfaces.',
-        },
-      ],
-    })
-    expect(fixture.interruptedGoalIds).toEqual(['G-1'])
-
-    await fixture.tools.executeForEvent('EV-1', 'hopi_write_design', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      changes: [
-        {
-          kind: 'document',
-          path: 'theme.md',
-          content: '# Theme\n\nUse ink surfaces.',
-        },
-      ],
-    })
-    expect(fixture.interruptedGoalIds).toEqual(['G-1'])
-
-    let goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(
-      await Bun.file(
-        fixture.goalStore.paths.absolute(`${fixture.goalStore.paths.designRoot('G-1')}/theme.md`),
-      ).text(),
-    ).toContain('Use ink surfaces.')
-    expect(goalPackage.inputs).toHaveLength(1)
-    expect(
-      [...goalPackage.works.values()].filter((work) => work.attributes.stage === 'plan'),
-    ).toHaveLength(0)
-
-    await fixture.tools.executeForEvent('EV-1', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: { kind: 'planning', mode: 'same_contract' },
-    })
-
-    goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.inputs).toHaveLength(1)
-    expect(
-      [...goalPackage.works.values()].filter((work) => work.attributes.stage === 'plan'),
-    ).toHaveLength(1)
-    expect(
-      [...goalPackage.works.values()].find((work) => work.attributes.stage === 'plan')?.attributes
-        .contextRefs,
-    ).toContainEqual({
-      path: expect.stringContaining('/EV-1.md'),
-      purpose: 'Accepted Inbox input',
-    })
-
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-2',
-      content: 'Also preserve the compact layout.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-    await fixture.tools.executeForEvent('EV-2', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: { kind: 'planning', mode: 'same_contract' },
-    })
-    goalPackage = await fixture.goalStore.readPackage('G-1')
-    const openPlanning = [...goalPackage.works.values()].filter(
-      (work) => work.attributes.stage === 'plan',
-    )
-    expect(openPlanning).toHaveLength(1)
-    expect(openPlanning[0]?.attributes.contextRefs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ path: expect.stringContaining('/EV-1.md') }),
-        expect.objectContaining({ path: expect.stringContaining('/EV-2.md') }),
-      ]),
-    )
-  })
-
-  test('interrupts every obsolete Goal Run only after a material contract revision', async () => {
-    const fixture = await setup({ trackInterrupts: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-plan',
-      content: 'Reassess the existing contract.',
-    })
-
-    await fixture.tools.executeForEvent('EV-plan', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: { kind: 'planning', mode: 'same_contract' },
-    })
-    expect(fixture.interruptedGoalIds).toEqual([])
-
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-revise',
-      content: 'Generated diagnostic: Preview startup failed on port 4312.',
-    })
-    await fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: {
-        kind: 'planning',
-        mode: 'new_contract_revision',
-        contractChange: 'Add a new success criterion.',
-      },
-    })
-
-    const revisedGoal = await fixture.goalStore.readGoal('G-1')
-    expect(revisedGoal?.attributes.contractRevision).toBe(2)
-    expect(revisedGoal?.body).toBe('## Objective\n\nShip it.\n')
-    const revisedPackage = await fixture.goalStore.readPackage('G-1')
-    expect(
-      [...revisedPackage.works.values()].find(
-        (work) => isPlanningWork(work.attributes) && work.attributes.contractRevision === 2,
-      )?.body,
-    ).toContain('Add a new success criterion.')
-    expect(
-      revisedPackage.inputs.find((input) => input.attributes.sourceEventId === 'EV-revise')?.body,
-    ).toContain('Preview startup failed on port 4312')
-    expect(fixture.interruptedGoalIds).toEqual(['G-1'])
-  })
-
-  test('recovers a terminal Goal planning conflict within the same Assistant turn', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await fixture.controller.cancelGoal('G-1')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-revise',
-      content: 'Change the accepted outcome.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-
-    await expect(
-      fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        work: {
-          kind: 'planning',
-          mode: 'new_contract_revision',
-          contractChange: 'Change the accepted outcome.',
-        },
-      }),
-    ).rejects.toThrow('Terminal Goal must be explicitly reopened')
-
-    const current = await fixture.tools.executeForEvent('EV-revise', 'hopi_read_state', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-    })
-    expect(current.value).toMatchObject({
-      projects: [
-        {
-          goals: [
-            {
-              goal: { attributes: { id: 'G-1', lifecycle: 'cancelled' } },
-            },
-          ],
-        },
-      ],
-    })
-
-    await fixture.tools.executeForEvent('EV-revise', 'hopi_control_goal', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      action: { kind: 'reopen', contractChange: 'Change the accepted outcome.' },
-    })
-    const reopenedPackage = await fixture.goalStore.readPackage('G-1')
-    expect(reopenedPackage.goal.attributes).toMatchObject({
-      lifecycle: 'active',
-      contractRevision: 2,
-    })
-    expect(
-      [...reopenedPackage.works.values()].filter(
-        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-      ),
-    ).toHaveLength(1)
-    const planned = await fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: {
-        kind: 'planning',
-        mode: 'new_contract_revision',
-        contractChange: 'Change the accepted outcome.',
-      },
-    })
-
-    expect(planned.changed).toBe(true)
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.goal.attributes.lifecycle).toBe('active')
-    expect(goalPackage.inputs).toHaveLength(1)
-  })
-
-  test('interrupts only the current Planner when same-revision input changes Planning authority', async () => {
-    const fixture = await setup({ trackInterrupts: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Plan the current delivery.' })
-    await fixture.tools.executeForEvent('EV-1', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: { kind: 'planning', mode: 'same_contract' },
-    })
-    const planning = [...(await fixture.goalStore.readPackage('G-1')).works.values()].find(
-      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-    )
-    if (!planning) throw new Error('Expected an active Planning Work')
-    expect(fixture.interruptedWorkTargets).toEqual([])
-
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-2',
-      content: 'Include the compact layout in this plan.',
-    })
-    await fixture.tools.executeForEvent('EV-2', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: { kind: 'planning', mode: 'same_contract' },
-    })
-
-    expect(fixture.interruptedGoalIds).toEqual([])
-    expect(fixture.interruptedWorkTargets).toEqual([
-      { goalId: 'G-1', workId: planning.attributes.id },
-    ])
-
-    await fixture.tools.executeForEvent('EV-2', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: { kind: 'planning', mode: 'same_contract' },
-    })
-    expect(fixture.interruptedWorkTargets).toHaveLength(1)
-  })
-
-  test('normalizes an exact canonical design path without creating a nested control root', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Update the design.' })
-    const canonical = '.hopi/docs/goals/G-1/design/index.md'
-
-    const result = await fixture.tools.executeForEvent('EV-1', 'hopi_write_design', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      changes: [
-        { kind: 'document', path: canonical, content: '# Superseded' },
-        { kind: 'document', path: 'index.md', content: '# Current Design' },
-      ],
-    })
-
-    expect(result.value).toMatchObject({ documents: ['index.md'] })
-    expect(
-      await Bun.file(
-        fixture.goalStore.paths.absolute(fixture.goalStore.paths.designIndex('G-1')),
-      ).text(),
-    ).toBe('# Current Design\n')
-    expect(
-      await Bun.file(
-        fixture.goalStore.paths.absolute(
-          `${fixture.goalStore.paths.designRoot('G-1')}/${canonical}`,
-        ),
-      ).exists(),
-    ).toBe(false)
-
-    const state = (
-      await fixture.tools.executeForEvent('EV-1', 'hopi_read_state', { projectId: 'P-1' })
-    ).value as {
-      projects: Array<{
-        goals: Array<{
-          design: Array<{
-            canonicalPath: string
-            path: string
-            hash: string | null
-            excerpt: string
-          }>
-        }>
-      }>
-    }
-    expect(state.projects[0]?.goals[0]?.design).toEqual([
-      expect.objectContaining({
-        canonicalPath: fixture.goalStore.paths.designIndex('G-1'),
-        hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        excerpt: '# Current Design\n',
-      }),
-    ])
-    const serializedGoal = JSON.stringify(state.projects[0]?.goals[0])
-    expect(serializedGoal.indexOf('"design"')).toBeLessThan(serializedGoal.indexOf('"works"'))
-  })
-
-  test('applies Goal controls without direct Kanban transitions', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Pause it.' })
-
-    await fixture.tools.executeForEvent('EV-1', 'hopi_control_goal', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      action: { kind: 'pause' },
-    })
-
-    expect((await fixture.goalStore.readGoal('G-1'))?.attributes.lifecycle).toBe('paused')
-    expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(1)
-  })
-
-  test('requests one explicit Work Run without mutating Attention', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      1,
-      'The runtime invocation ended before producing a result.',
-    )
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-1',
-      content: 'Retry this Work and clear the blocker.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
-      },
-    })
-    const retried = await fixture.tools.executeForEvent('EV-1', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
+      goalId: 'G-route',
+      workId: 'W-choose-the-authority-boundary',
       action: {
-        kind: 'run',
-        profile: 'planner',
-        workspaceMode: 'none',
-        instructionMarkdown: 'Retry this Planning Work and report the current facts.',
-        refs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
-      },
-    })
-    expect(retried.value).toMatchObject({
-      effect: {
-        kind: 'work_run_requested',
-        workId: 'plan-initial',
-        stage: 'plan',
-        runId: 'R-requested-1',
-        runDisposition: 'scheduled',
-      },
-      pendingAttentionRefs: [],
-      settledAttentionRefs: [],
-    })
-    const pendingPackage = await fixture.goalStore.readPackage('G-1')
-    expect(pendingPackage.attentions.get(attention.attributes.id)?.attributes.resolvedAt).toBeNull()
-    expect(pendingPackage.inputs).toHaveLength(0)
-  })
-
-  test('reserves an explicit retry Run without changing Work fields', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      3,
-      'stream disconnected before completion',
-    )
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-operational-retry',
-      content: 'Connectivity recovered. Retry the same Work.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
+        kind: 'complete',
+        decision: 'One deterministic publisher owns canonical state.',
+        mapMarkdown: resolvedMap,
       },
     })
 
-    const retried = await fixture.tools.executeForEvent(
-      'EV-operational-retry',
-      'hopi_control_work',
-      {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        workId: 'plan-initial',
-        action: {
-          kind: 'run',
-          profile: 'planner',
-          workspaceMode: 'none',
-          instructionMarkdown: 'Retry after connectivity recovery and report what happens.',
-          refs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
-        },
-      },
-    )
-
-    expect(retried.value).toMatchObject({
-      effect: {
-        kind: 'work_run_requested',
-        workId: 'plan-initial',
-        stage: 'plan',
-        runId: 'R-requested-1',
-        runDisposition: 'scheduled',
-      },
-      pendingAttentionRefs: [],
-      settledAttentionRefs: [],
-    })
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({ notBefore: null })
-    expect(goalPackage.attentions.get(attention.attributes.id)?.attributes.resolvedAt).toBeNull()
-    expect(goalPackage.inputs).toHaveLength(0)
-  })
-
-  test('does not route an explicit Run request into the controlled Goal as accepted Input', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({
-      goalId: 'G-target',
-      title: 'Target',
-      objective: 'Ship it.',
-    })
-    await fixture.goalStore.createGoal({ goalId: 'G-page', title: 'Page', objective: 'Keep it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-target',
-      'plan-initial',
-      3,
-      'provider recovered after a transient outage',
-    )
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-unrelated-page',
-      content: 'Continue the unrelated page task.',
-      context: { projectId: 'P-1', goalId: 'G-page' },
-    })
-
-    await fixture.tools.executeForEvent('EV-unrelated-page', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-target',
-      workId: 'plan-initial',
-      action: {
-        kind: 'run',
-        profile: 'planner',
-        workspaceMode: 'none',
-        instructionMarkdown: 'Run the unrelated target Work.',
-        refs: [],
-      },
-    })
-
-    const target = await fixture.goalStore.readPackage('G-target')
-    expect(target.inputs).toHaveLength(0)
-    expect(target.attentions.get(attention.attributes.id)?.attributes.resolvedAt).toBeNull()
-    expect((await fixture.goalStore.readPackage('G-page')).inputs).toHaveLength(0)
-  })
-
-  test('settles exact Work Attention when cancellation makes the Work terminal', async () => {
-    const fixture = await setup({ trackInterrupts: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-cancel')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-dependent', ['W-cancel'])
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'W-cancel',
-      'generator',
-      'The current direction cannot continue.',
-    )
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-cancel-work',
-      content: 'Cancel this Work and abandon that direction.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
-      },
-    })
-
-    const cancelled = await fixture.tools.executeForEvent('EV-cancel-work', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-cancel',
-      action: { kind: 'cancel' },
-    })
-
-    expect(cancelled.value).toMatchObject({
-      effect: { kind: 'work_cancelled', stage: 'cancelled' },
-      settledAttentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
-    })
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.works.get('W-cancel')?.attributes.stage).toBe('cancelled')
-    expect(goalPackage.works.get('W-dependent')?.attributes.stage).toBe('cancelled')
-    expect(
-      [...goalPackage.works.values()].filter(
-        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-      ),
-    ).toHaveLength(0)
-    expect(fixture.interruptedWorkTargets).toEqual([
-      { goalId: 'G-1', workId: 'W-cancel' },
-      { goalId: 'G-1', workId: 'W-dependent' },
-    ])
-    expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: expect.any(String),
-      resolutionInput: expect.stringContaining('/EV-cancel-work.md'),
-    })
-  })
-
-  test('cancels nonterminal Planning Work through the same Work control capability', async () => {
-    const fixture = await setup({ trackInterrupts: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-cancel-planning',
-      content: 'This Planning Work is obsolete.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-
-    const cancelled = await fixture.tools.executeForEvent(
-      'EV-cancel-planning',
-      'hopi_control_work',
-      {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        workId: 'plan-initial',
-        action: { kind: 'cancel' },
-      },
-    )
-
-    expect(cancelled.value).toMatchObject({
-      effect: { kind: 'work_cancelled', stage: 'cancelled' },
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).works.get('plan-initial')?.attributes,
-    ).toMatchObject({
-      kind: 'planning',
-      stage: 'cancelled',
-    })
-    expect(fixture.interruptedWorkTargets).toEqual([{ goalId: 'G-1', workId: 'plan-initial' }])
-  })
-
-  test('keeps canonical scheduling fields unchanged when requesting a Run', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-defer-planning',
-      content: 'Run Planning explicitly.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-
-    const deferred = await fixture.tools.executeForEvent('EV-defer-planning', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      action: {
-        kind: 'run',
-        profile: 'planner',
-        workspaceMode: 'none',
-        instructionMarkdown: 'Assess the current Goal now.',
-        refs: [],
-      },
-    })
-
-    expect(deferred.value).toMatchObject({
-      effect: {
-        stage: 'plan',
-        notBefore: null,
-      },
-      settledAttentionRefs: [],
-    })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).works.get('plan-initial')?.attributes,
-    ).toMatchObject({ stage: 'plan', notBefore: null })
-    expect((await fixture.goalStore.readPackage('G-1')).inputs).toHaveLength(0)
-  })
-
-  test('changes Work dependencies and requests a Run without mutating Work prose', async () => {
-    const fixture = await setup({ trackInterrupts: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-base')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-owner')
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-supervise',
-      content: 'Project supervision wake.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-
-    const dependencies = await fixture.tools.executeForEvent('EV-supervise', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-owner',
-      action: { kind: 'set_dependencies', dependsOn: ['W-base'] },
-    })
-    const message = await fixture.tools.executeForEvent('EV-supervise', 'hopi_control_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-owner',
-      action: {
-        kind: 'run',
-        profile: 'generator',
-        workspaceMode: 'isolated_write',
-        instructionMarkdown: 'Use the verified API command recorded in the Project design.',
-        refs: [],
-      },
-    })
-
-    expect(dependencies).toMatchObject({
+    const goal = await fixture.store.readPackage('G-route')
+    expect(result).toMatchObject({
       changed: true,
-      value: {
-        effect: {
-          kind: 'work_dependencies_changed',
-          workId: 'W-owner',
-          dependsOn: ['W-base'],
-        },
-      },
+      value: { effect: { kind: 'work_completion', status: 'done', result: 'completed' } },
     })
-    expect(message).toMatchObject({
-      changed: true,
-      value: {
-        effect: {
-          kind: 'work_run_requested',
-          workId: 'W-owner',
-        },
-      },
-    })
-    const work = (await fixture.goalStore.readPackage('G-1')).works.get('W-owner')
-    expect(work?.attributes.dependsOn).toEqual(['W-base'])
-    expect(work?.attributes.ownerMessages).toEqual([])
-    expect(fixture.interruptedWorkTargets).toEqual([{ goalId: 'G-1', workId: 'W-owner' }])
-  })
-
-  test('starting Planning preserves attached Attention', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      'planner',
-      'The current implementation lineage needs a new represented plan.',
+    expect(goal.works.get('W-choose-the-authority-boundary')?.body).toContain('## Resolution')
+    expect(goal.works.get('W-choose-the-authority-boundary')?.body).toContain(
+      'One deterministic publisher owns canonical state.',
     )
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-replan-attention',
-      content: 'Create a distinct Engineering Work instead of retrying the old lineage.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        attentionRefs: [goalAttentionReference('P-1', 'G-1', attention.attributes.id)],
-      },
-    })
-
-    const planned = await fixture.tools.executeForEvent('EV-replan-attention', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: {
-        kind: 'planning',
-        mode: 'new_contract_revision',
-        contractChange: 'Create a distinct Engineering Work.',
-      },
-    })
-
-    expect(planned.value).toMatchObject({
-      effect: { kind: 'planning_created', workId: 'plan-initial' },
-    })
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    expect(goalPackage.works.get('plan-initial')?.attributes.contextRefs).toContainEqual({
-      path: expect.stringContaining('/EV-replan-attention.md'),
-      purpose: 'Accepted Inbox input',
-    })
-    expect(goalPackage.attentions.get(attention.attributes.id)?.attributes).toMatchObject({
-      resolvedAt: null,
-    })
-  })
-
-  test('rejects the removed implicit Planning Attention settlement option', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      'planner',
-      'The current implementation lineage needs a new represented plan.',
-    )
-    const reference = goalAttentionReference('P-1', 'G-1', attention.attributes.id)
-    await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-preserve-attention',
-      content: 'Record partial context but keep the current question open.',
-      context: { projectId: 'P-1', goalId: 'G-1', attentionRefs: [reference] },
-    })
-
-    await expect(
-      fixture.tools.executeForEvent('EV-preserve-attention', 'hopi_create_work', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        work: { kind: 'planning', mode: 'same_contract' },
-        resolveAttention: false,
-      }),
-    ).rejects.toThrow('resolveAttention')
     expect(
-      (await fixture.goalStore.readPackage('G-1')).attentions.get(attention.attributes.id)
-        ?.attributes.resolvedAt,
-    ).toBeNull()
+      await Bun.file(
+        fixture.store.paths.absolute(fixture.store.paths.designIndex('G-route')),
+      ).text(),
+    ).toBe(resolvedMap)
   })
 
-  test('records one material revision and resolves its Project Attention', async () => {
+  test('uses Work Attention as the HITL claim and keeps it unresolved until a later judgment', async () => {
     const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await createWorkspaceAttentionController(
-      fixture.workspace,
-    ).ensureProjectAttention('P-1', 'The current direction needs a material revision.')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-revise',
-      content: 'The result is poor. Abandon that direction and try the model native task.',
-      context: { projectId: 'P-1', goalId: 'G-other' },
-    })
+    await fixture.createMappedGoal()
+    await fixture.turn('EV-attention', 'Ask me the unresolved boundary question.')
 
-    const planned = await fixture.tools.executeForEvent('EV-revise', 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: {
-        kind: 'planning',
-        mode: 'new_contract_revision',
-        contractChange: 'Replace the prior direction with the model-native task.',
-      },
-    })
-    expect(planned.value).toMatchObject({
-      effect: { kind: 'planning_created', mode: 'new_contract_revision' },
-    })
-    await fixture.tools.executeForEvent('EV-revise', 'hopi_manage_attention', {
+    const created = await fixture.tools.executeForEvent('EV-attention', 'hopi_manage_attention', {
       projectId: 'P-1',
       change: {
-        kind: 'resolve',
-        attentionRef: workspaceAttentionReference(
-          (await fixture.workspace.readWorkspace()).homeId,
-          attention.attributes.id,
-        ),
-        resolution: 'The accepted material revision is now represented by Planning.',
+        kind: 'create',
+        attentionId: 'A-authority',
+        goalId: 'G-route',
+        workId: 'W-choose-the-authority-boundary',
+        summary: 'Choose who owns canonical publication.',
+        body: 'Which component should own the only canonical publication boundary?',
+        refs: [],
       },
     })
-    expect(
-      (await fixture.goalStore.readPackage('G-1')).works.get('plan-initial')?.attributes,
-    ).toMatchObject({ contractRevision: 2 })
-    expect(
-      (await fixture.workspace.readWorkspace()).attentions.get(attention.attributes.id)?.attributes
-        .resolvedAt,
-    ).not.toBeNull()
+
+    const goal = await fixture.store.readPackage('G-route')
+    expect(created).toMatchObject({ changed: true, value: { resolved: false } })
+    expect(goal.attentions.get('A-authority')?.attributes).toMatchObject({
+      resolvedAt: null,
+      target: 'project:P-1/goal:G-route/work:W-choose-the-authority-boundary',
+    })
   })
 
-  test('records Project Attention resolution without treating it as a recovery gate', async () => {
+  test('presents independent Work Attentions together without merging their claims', async () => {
     const fixture = await setup()
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-project-repaired',
-      content: 'I repaired the Project. Resume it.',
+    await fixture.createMappedGoal()
+    await fixture.turn('EV-grilling-round', 'Ask every independent boundary question.')
+    await fixture.tools.executeForEvent('EV-grilling-round', 'hopi_create_work', {
+      projectId: 'P-1',
+      goalId: 'G-route',
+      work: {
+        kind: 'decision',
+        title: 'Choose the retention boundary',
+        decisionType: 'grilling',
+        question: 'How long should canonical history be retained?',
+        dependsOn: [],
+      },
+      references: [],
     })
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-    const attentionId = 'A-project-runtime'
-    const resolution = 'The managed integration root was repaired and verified.'
-    const created = await fixture.tools.executeForEvent(
-      'EV-project-repaired',
+
+    const authority = await fixture.tools.executeForEvent(
+      'EV-grilling-round',
       'hopi_manage_attention',
       {
         projectId: 'P-1',
         change: {
           kind: 'create',
-          attentionId,
-          summary: 'The managed integration root still needs verification.',
-          body: 'The managed integration root is invalid.',
+          attentionId: 'A-authority',
+          goalId: 'G-route',
+          workId: 'W-choose-the-authority-boundary',
+          summary: 'Choose who owns canonical publication.',
+          body: 'Which component should own canonical publication?',
           refs: [],
         },
       },
     )
-    const updated = await fixture.tools.executeForEvent(
-      'EV-project-repaired',
-      'hopi_manage_attention',
-      {
-        projectId: 'P-1',
-        change: {
-          kind: 'update',
-          attentionId,
-          body: 'The managed integration root must be verified.',
-        },
-      },
-    )
-
-    const result = await fixture.tools.executeForEvent(
-      'EV-project-repaired',
-      'hopi_manage_attention',
-      {
-        projectId: 'P-1',
-        change: {
-          kind: 'resolve',
-          attentionRef: workspaceAttentionReference(homeId, attentionId),
-          resolution,
-        },
-      },
-    )
-    const repeated = await fixture.tools.executeForEvent(
-      'EV-project-repaired',
-      'hopi_manage_attention',
-      {
-        projectId: 'P-1',
-        change: {
-          kind: 'resolve',
-          attentionRef: workspaceAttentionReference(homeId, attentionId),
-          resolution,
-        },
-      },
-    )
-    const resolved = (await fixture.workspace.readWorkspace()).attentions.get(attentionId)
-
-    expect(created).toMatchObject({
-      changed: true,
-      value: { attentionId, resolved: false },
-    })
-    expect(updated).toMatchObject({
-      changed: true,
-      value: { attentionId, resolved: false },
-    })
-    expect(result).toMatchObject({
-      changed: true,
-      value: {
-        attentionId,
-        resolved: true,
-        attentionRef: workspaceAttentionReference(homeId, attentionId),
-      },
-    })
-    expect(repeated).toMatchObject({
-      changed: false,
-      value: { attentionId, resolved: true },
-    })
-    expect(resolved?.attributes.resolvedAt).not.toBeNull()
-    expect(resolved?.body).toContain('## Resolution')
-    expect(fixture.restoredProjectIds).toEqual([])
-    expect(fixture.projectDispatchEffects).toEqual([
-      { eventId: 'EV-project-repaired', projectId: 'P-1' },
-      { eventId: 'EV-project-repaired', projectId: 'P-1' },
-      { eventId: 'EV-project-repaired', projectId: 'P-1' },
-      { eventId: 'EV-project-repaired', projectId: 'P-1' },
-    ])
-  })
-
-  test('presents current Attention references while keeping presentation on Attention', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-attention-transfer',
-      content: 'Ask for my release decision.',
-      context: { projectId: 'P-1' },
-    })
-    const created = await fixture.tools.executeForEvent(
-      'EV-attention-transfer',
+    const retention = await fixture.tools.executeForEvent(
+      'EV-grilling-round',
       'hopi_manage_attention',
       {
         projectId: 'P-1',
         change: {
           kind: 'create',
-          attentionId: 'A-release-window',
-          summary: 'Choose the release window.',
-          decisionPrompt: {
-            questions: [
-              {
-                id: 'window',
-                header: 'Release window',
-                question: 'When should this release happen?',
-                options: [
-                  {
-                    id: 'today',
-                    label: 'Today',
-                    description: 'Use the current window.',
-                    recommended: true,
-                  },
-                  {
-                    id: 'tomorrow',
-                    label: 'Tomorrow',
-                    description: 'Use the next window.',
-                  },
-                ],
-                allowOther: true,
-              },
-            ],
-          },
-          body: 'The candidate is ready; the external release window belongs to the operator.',
+          attentionId: 'A-retention',
+          goalId: 'G-route',
+          workId: 'W-choose-the-retention-boundary',
+          summary: 'Choose how long canonical history is retained.',
+          body: 'How long should canonical history be retained?',
           refs: [],
         },
       },
     )
-    const attentionRef = (created.value as { attentionRef: string }).attentionRef
-    const secondCreated = await fixture.tools.executeForEvent(
-      'EV-attention-transfer',
-      'hopi_manage_attention',
-      {
-        projectId: 'P-1',
-        change: {
-          kind: 'create',
-          attentionId: 'A-deployment-owner',
-          summary: 'Choose who will perform the deployment.',
-          body: 'Deployment requires an operator-owned external action.',
-          refs: [],
-        },
-      },
+    const attentionRefs = [authority, retention].map(
+      (result) => (result.value as { attentionRef: string }).attentionRef,
     )
-    const secondAttentionRef = (secondCreated.value as { attentionRef: string }).attentionRef
 
     const presented = await fixture.tools.executeForEvent(
-      'EV-attention-transfer',
+      'EV-grilling-round',
       'hopi_manage_attention',
       {
         projectId: 'P-1',
-        change: {
-          kind: 'present_attention_to_user',
-          attentionRefs: [attentionRef],
-        },
+        change: { kind: 'present_attention_to_user', attentionRefs },
       },
     )
-    const extended = await fixture.tools.executeForEvent(
-      'EV-attention-transfer',
-      'hopi_manage_attention',
-      {
-        projectId: 'P-1',
-        change: {
-          kind: 'present_attention_to_user',
-          attentionRefs: [secondAttentionRef, secondAttentionRef],
-        },
-      },
-    )
-    const repeated = await fixture.tools.executeForEvent(
-      'EV-attention-transfer',
-      'hopi_manage_attention',
-      {
-        projectId: 'P-1',
-        change: {
-          kind: 'present_attention_to_user',
-          attentionRefs: [secondAttentionRef],
-        },
-      },
-    )
-    const event = await fixture.workspace.readEvent('EV-attention-transfer')
-    const attention = (await fixture.workspace.readWorkspace()).attentions.get('A-release-window')
 
+    const goal = await fixture.store.readPackage('G-route')
     expect(presented).toMatchObject({
-      changed: true,
+      summary: 'Presented 2 Attention(s).',
       value: {
-        effect: {
-          kind: 'attention_presentation_staged',
-          attentionRefs: [attentionRef],
-        },
+        effect: { kind: 'attention_presentation_staged', attentionRefs },
       },
     })
-    expect(extended).toMatchObject({
-      changed: true,
-      value: {
-        effect: {
-          attentionRefs: [attentionRef, secondAttentionRef],
-        },
-      },
-    })
-    expect(repeated.changed).toBe(false)
-    expect(event?.attributes.attentionRequest).toEqual({
-      attentionRefs: [attentionRef, secondAttentionRef],
-    })
-    expect(attention?.attributes).toMatchObject({
-      summary: 'Choose the release window.',
-      decisionPrompt: {
-        questions: [expect.objectContaining({ id: 'window' })],
-      },
-    })
-  })
-
-  test('resolves Goal Attention by exact reference and records the current Inbox turn', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      'planner',
-      'Choose recovery.',
+    expect(goal.attentions.get('A-authority')?.attributes.target).toBe(
+      'project:P-1/goal:G-route/work:W-choose-the-authority-boundary',
     )
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-goal-attention',
-      content: 'Resolve the old Goal Attention.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-
-    const result = await fixture.tools.executeForEvent(
-      'EV-goal-attention',
-      'hopi_manage_attention',
-      {
-        projectId: 'P-1',
-        change: {
-          kind: 'resolve',
-          attentionRef: goalAttentionReference('P-1', 'G-1', attention.attributes.id),
-          resolution: 'The current Inbox answer clears the owning condition.',
-        },
-      },
+    expect(goal.attentions.get('A-retention')?.attributes.target).toBe(
+      'project:P-1/goal:G-route/work:W-choose-the-retention-boundary',
     )
-    const goalPackage = await fixture.goalStore.readPackage('G-1')
-    const resolved = goalPackage.attentions.get(attention.attributes.id)
-    expect(result).toMatchObject({
-      changed: true,
-      value: {
-        attentionId: attention.attributes.id,
-        resolved: true,
-        attentionRef: goalAttentionReference('P-1', 'G-1', attention.attributes.id),
-      },
-    })
-    expect(resolved?.attributes.resolvedAt).not.toBeNull()
-    expect(resolved?.attributes.resolutionInput).toContain('EV-goal-attention')
-    const resolutionInput = resolved?.attributes.resolutionInput
-    if (!resolutionInput) throw new Error('Expected Goal Attention resolution Input')
-    expect(await Bun.file(fixture.goalStore.paths.absolute(resolutionInput)).exists()).toBe(true)
-  })
-
-  test('explicitly requests deterministic Project recovery', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-recover-project',
-      content: 'Validate the repaired Project.',
-    })
-
-    const result = await fixture.tools.executeForEvent(
-      'EV-recover-project',
-      'hopi_manage_project',
-      {
-        change: { kind: 'recover', projectId: 'P-1' },
-      },
-    )
-
-    expect(result).toMatchObject({
-      changed: true,
-      value: {
-        effect: { kind: 'recover', projectId: 'P-1', eligible: true },
-      },
-    })
-    expect(fixture.restoredProjectIds).toEqual(['P-1'])
-  })
-
-  test('allows Planning and verified Attention resolution in one Assistant turn', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const attention = await createWorkspaceAttentionController(
-      fixture.workspace,
-    ).ensureProjectAttention('P-1', 'Choose recovery.')
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-no-double-planning',
-      content: 'Reconsider the blocker.',
-      context: { projectId: 'P-1', goalId: 'G-1' },
-    })
-    const token = fixture.tools.issue('EV-no-double-planning')
-    await fixture.tools.execute(token, 'hopi_create_work', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      work: { kind: 'planning', mode: 'same_contract' },
-    })
-
-    await fixture.tools.execute(token, 'hopi_manage_attention', {
-      projectId: 'P-1',
-      change: {
-        kind: 'resolve',
-        attentionRef: workspaceAttentionReference(
-          (await fixture.workspace.readWorkspace()).homeId,
-          attention.attributes.id,
-        ),
-        resolution: 'The new Planning run now represents the blocker.',
-      },
-    })
-    expect(
-      [...(await fixture.goalStore.readPackage('G-1')).works.values()].filter(
-        (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-      ),
-    ).toHaveLength(1)
-    expect(
-      (await fixture.workspace.readWorkspace()).attentions.get(attention.attributes.id)?.attributes
-        .resolvedAt,
-    ).not.toBeNull()
-  })
-
-  test('requires a live per-turn capability for MCP calls', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-1', content: 'Read state.' })
-    const token = fixture.tools.issue('EV-1')
-
-    expect(await fixture.tools.execute(token, 'hopi_read_state', {})).toMatchObject({
-      changed: false,
-    })
-    fixture.tools.revoke(token)
-    await expect(fixture.tools.execute(token, 'hopi_read_state', {})).rejects.toThrow(
-      'invalid or expired',
-    )
-  })
-
-  test('uses page context as the default read-state scope', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'First', objective: 'First.' })
-    await fixture.goalStore.createGoal({ goalId: 'G-2', title: 'Second', objective: 'Second.' })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-1',
-      content: 'What is happening here?',
-      context: { projectId: 'P-1', goalId: 'G-2' },
-    })
-
-    const result = await fixture.tools.executeForEvent('EV-1', 'hopi_read_state', {})
-    const goals = (
-      result.value as {
-        projects: Array<{ goals: Array<{ goal: { attributes: { id: string } } }> }>
-      }
-    ).projects[0]?.goals
-    expect(goals?.map((goal) => goal.goal.attributes.id)).toEqual(['G-2'])
-
-    await expect(
-      fixture.tools.executeForEvent('EV-1', 'hopi_read_state', {
-        projectId: 'H-home',
-      }),
-    ).rejects.toBeInstanceOf(AssistantToolRequestError)
-    await expect(
-      fixture.tools.executeForEvent('EV-1', 'hopi_read_state', {
-        projectId: 'H-home',
-      }),
-    ).rejects.toThrow(
-      'Current page context is P-1 / G-2; omit projectId and goalId to use it exactly',
-    )
-  })
-
-  test('projects cross-Project direct Work back into its source conversation', async () => {
-    const fixture = await setup()
-    const delegatedRepo = await createTestRepo(join(temporaryRoot, 'delegated-repo'))
-    const delegatedLink = await fixture.home.linkProject({
-      projectId: 'P-2',
-      repoPath: delegatedRepo,
-    })
-    const delegatedStore = createGoalPackageStore(
-      delegatedLink.integrationRoot,
-      'P-2',
-      fixture.publisher,
-    )
-    fixture.projects.set('P-2', {
-      projectId: 'P-2',
-      primaryRepoId: delegatedLink.primaryRepoId,
-      repos: delegatedLink.repos,
-      projectRoot: delegatedLink.integrationRoot,
-      sourceRoot: delegatedLink.integrationRoot,
-      store: delegatedStore,
-      controller: createGoalController(delegatedStore, {}),
-      reconciler: {
-        interruptRuns() {},
-        async interruptQueuedRuns() {
-          return 0
-        },
-        liveWorkIds() {
-          return new Set<string>()
-        },
-        async decisionWhenEligible() {
-          return { kind: 'wait' as const, reasons: [] }
-        },
-        async requestWorkRun() {
-          return { runId: 'R-requested-delegation', disposition: 'scheduled' as const }
-        },
-        async completeWork() {
-          throw new Error('Unexpected delegated Work completion')
-        },
-        async completeGoal() {
-          throw new Error('Unexpected delegated Goal completion')
-        },
-      },
-    })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-delegate',
-      content: 'Repair the shared runtime, then return to this Attention.',
-      context: {
-        projectId: 'P-1',
-        goalId: 'G-source',
-        attentionRefs: ['project:P-1/goal:G-source/attention:A-source'],
-      },
-    })
-    const created = await fixture.tools.executeForEvent('EV-delegate', 'hopi_create_goal', {
-      projectId: 'P-2',
-      goalId: 'G-runtime',
-      title: 'Repair shared runtime',
-      objective: 'Repair the shared runtime.',
-      firstWork: {
-        kind: 'engineering',
-        title: 'Repair shared runtime',
-        objective: 'Repair the shared runtime.',
-        acceptanceCriteria: ['The runtime is repaired and verified.'],
-      },
-    })
-    const workId = (created.value as { effect: { workId: string } }).effect.workId
-    await reserveAndStartAttempt(fixture.attempts, {
-      projectId: 'P-2',
-      goalId: 'G-runtime',
-      workId,
-      runId: 'R-delegated',
-      responsibility: 'generator',
-      runRoot: runStoragePath(fixture.homeRoot, 'R-delegated'),
-    })
-
-    const state = await fixture.state.read({ projectId: 'P-1' })
-
-    expect(state.projects).toHaveLength(1)
-    expect(state.delegations).toMatchObject([
-      {
-        sourceProjectId: 'P-1',
-        sourceGoalId: 'G-source',
-        sourceEventId: 'EV-delegate',
-        sourceAttentionRefs: ['project:P-1/goal:G-source/attention:A-source'],
-        targetProjectId: 'P-2',
-        targetGoalId: 'G-runtime',
-        targetWorkId: workId,
-        work: {
-          attributes: {
-            id: workId,
-            kind: 'engineering',
-            stage: 'generate',
-          },
-        },
-        activeRun: {
-          projectId: 'P-2',
-          goalId: 'G-runtime',
-          workId,
-          responsibility: 'generator',
-          runId: 'R-delegated',
-        },
-      },
-    ])
-    expect(state.activeRuns).toContainEqual(
-      expect.objectContaining({
-        projectId: 'P-2',
-        goalId: 'G-runtime',
-        workId,
-        responsibility: 'generator',
-        runId: 'R-delegated',
-        status: 'running',
-        waitReason: null,
-      }),
-    )
-  })
-
-  test('keeps selected checkout state outside the Project state contract', async () => {
-    const fixture = await setup()
-    await fixture.workspace.receiveEvent({ eventId: 'EV-state', content: 'Read state.' })
-
-    const current = await fixture.tools.executeForEvent('EV-state', 'hopi_read_state', {
-      projectId: 'P-1',
-    })
-    expect(current.value).toMatchObject({
-      projects: [{ available: true, repos: [{ repoId: 'primary' }] }],
-    })
-    expect(JSON.stringify(current.value)).not.toContain('delivery')
-
-    await git(fixture.repoRoot, ['switch', '-c', 'local-experiment'])
-    const pending = await fixture.tools.executeForEvent('EV-state', 'hopi_read_state', {
-      projectId: 'P-1',
-    })
-    expect(pending.value).toMatchObject({
-      projects: [{ available: true, repos: [{ repoId: 'primary' }] }],
-    })
-    expect(JSON.stringify(pending.value)).not.toContain('delivery')
-  })
-
-  test('exposes the current C1 source preflight for a nonterminal Engineering Work', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-1')
-    const task = await createStableWorktreeManager().prepare({
-      projectRoot: fixture.goalStore.paths.projectRoot,
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'W-1',
-      repoId: fixture.primaryRepoId,
-      primaryRepoId: fixture.primaryRepoId,
-    })
-    await rm(join(task.path, 'README.md'))
-    await git(task.path, ['add', '.'])
-    await git(task.path, ['commit', '-m', 'delete source file'])
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-candidate',
-      content: 'Inspect the current candidate.',
-    })
-
-    const state = await fixture.tools.executeForEvent('EV-candidate', 'hopi_read_state', {
-      projectId: 'P-1',
-    })
-    expect(state.value).toMatchObject({
-      projects: [
-        {
-          goals: [
-            {
-              works: [
-                {
-                  attributes: { id: 'W-1' },
-                  currentCandidateIntegration: [
-                    {
-                      repoId: fixture.primaryRepoId,
-                      kind: 'observed',
-                      result: { kind: 'ready' },
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    })
-  })
-
-  test('reads bounded public conversation from exactly one Home or Project scope', async () => {
-    const fixture = await setup()
-    const projectUser = await fixture.workspace.receiveEvent({
-      eventId: 'EV-project-history',
-      content: 'PROJECT_CONVERSATION_MARKER',
-      context: { projectId: 'P-1' },
-      receivedAt: new Date('2026-07-11T00:00:01Z'),
-    })
-    await fixture.workspace.handleEvent(projectUser.attributes.id, {
-      reply: 'Project answer.',
-      disposition: 'answered',
-    })
-    const wake = await fixture.workspace.receiveSystemEvent({
-      eventId: 'EV-project-wake',
-      content: 'INTERNAL_WAKE_BRIEF',
-      context: { projectId: 'P-1' },
-      receivedAt: new Date('2026-07-11T00:00:02Z'),
-    })
-    await fixture.workspace.handleEvent(wake.attributes.id, {
-      reply: 'Public project update.',
-      disposition: 'notified',
-      expose: true,
-    })
-    const home = await fixture.workspace.receiveEvent({
-      eventId: 'EV-home-history',
-      content: 'HOME_CONVERSATION_MARKER',
-      receivedAt: new Date('2026-07-11T00:00:03Z'),
-    })
-    await fixture.workspace.handleEvent(home.attributes.id, {
-      reply: 'Home answer.',
-      disposition: 'answered',
-    })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-read-conversation',
-      content: 'Read Project history.',
-      context: { projectId: 'P-1' },
-      receivedAt: new Date('2026-07-11T00:00:04Z'),
-    })
-
-    const projectPage = (
-      await fixture.tools.executeForEvent('EV-read-conversation', 'hopi_read_conversation', {
-        projectId: 'P-1',
-        limit: 1,
-      })
-    ).value as {
-      exchanges: Array<{ source: string; user?: string; assistant: string }>
-      nextBefore: string | null
-    }
-    expect(projectPage.exchanges).toEqual([
-      expect.objectContaining({ source: 'system', assistant: 'Public project update.' }),
-    ])
-    expect(JSON.stringify(projectPage)).not.toContain('INTERNAL_WAKE_BRIEF')
-    expect(JSON.stringify(projectPage)).not.toContain('HOME_CONVERSATION_MARKER')
-    expect(projectPage.nextBefore).not.toBeNull()
-
-    const homePage = (
-      await fixture.tools.executeForEvent('EV-read-conversation', 'hopi_read_conversation', {
-        query: 'HOME_CONVERSATION_MARKER',
-      })
-    ).value as { exchanges: Array<{ user?: string; assistant: string }> }
-    expect(homePage.exchanges).toEqual([
-      expect.objectContaining({ user: 'HOME_CONVERSATION_MARKER\n', assistant: 'Home answer.' }),
-    ])
-  })
-
-  test('reads current control state without inlining durable history', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({
-      goalId: 'G-1',
-      title: 'Goal',
-      objective: 'Ship it.',
-      acceptedInput: {
-        attributes: {
-          sourceHomeId: 'H-1',
-          sourceEventId: 'EV-accepted',
-          sourceDigest: 'a'.repeat(64),
-          attachments: [],
-        },
-        body: 'Use the current repository configuration.\n',
-      },
-    })
-    await fixture.attempts.reserve({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      runId: 'R-live',
-      workHash: 'a'.repeat(64),
-      request: {
-        profile: 'planner',
-        workspaceMode: 'none',
-        instructionMarkdown: 'Inspect current control state.',
-        refs: [],
-      },
-    })
-    expect((await fixture.state.read({ projectId: 'P-1', goalId: 'G-1' })).activeRuns).toEqual([
-      expect.objectContaining({
-        runId: 'R-live',
-        status: 'queued',
-        requestedAt: expect.any(String),
-        startedAt: null,
-        waitReason: null,
-      }),
-    ])
-    const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-live')
-    const attempt = await fixture.attempts.start({
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      runId: 'R-live',
-      responsibility: 'planner',
-      runRoot,
-    })
-    await fixture.goalStore.createGoal({
-      goalId: 'G-2',
-      title: 'Other Goal',
-      objective: 'Run independently.',
-    })
-    const otherAttempt = await reserveAndStartAttempt(fixture.attempts, {
-      projectId: 'P-1',
-      goalId: 'G-2',
-      workId: 'plan-initial',
-      runId: 'R-other-goal',
-      responsibility: 'planner',
-      runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-other-goal'),
-    })
-    await fixture.workspace.receiveEvent({ eventId: 'EV-read', content: 'Inspect current state.' })
-
-    const current = (
-      await fixture.tools.executeForEvent('EV-read', 'hopi_read_state', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-      })
-    ).value as {
-      currentTurn: {
-        eventId: string
-        source: string
-        context: { projectId: string; goalId: string } | null
-        attachments: string[]
-        body: string
-      }
-      activeRuns: Array<{
-        projectId: string
-        goalId: string
-        workId: string
-        responsibility: string
-        runId: string | null
-      }>
-      projects: Array<{
-        goals: Array<{
-          works: Array<{ path: string; body?: unknown }>
-          design?: Array<{ path: string; content?: unknown }>
-          acceptedInputs: Array<{ acceptedInput: string; path: string }>
-          evidence?: unknown
-        }>
-      }>
-    }
-    expect(current.activeRuns).toEqual([
-      expect.objectContaining({
-        projectId: 'P-1',
-        goalId: 'G-1',
-        workId: 'plan-initial',
-        responsibility: 'planner',
-        runId: 'R-live',
-        status: 'running',
-        waitReason: null,
-      }),
-    ])
-    expect(current.currentTurn).toEqual({
-      eventId: 'EV-read',
-      source: 'user',
-      context: null,
-      attachments: [],
-      body: 'Inspect current state.\n',
-    })
-    expect(current).not.toHaveProperty('assistantCodingDefaults')
-    expect(current).not.toHaveProperty('assistantCodingDefaultsInherited')
-    expect(current.projects[0]?.goals[0]?.works).toHaveLength(1)
-    expect(current.projects[0]?.goals[0]?.works[0]?.path).toContain(
-      '.hopi/docs/goals/G-1/work/plan-initial.md',
-    )
-    expect(current.projects[0]?.goals[0]?.works[0]).not.toHaveProperty('body')
-    expect(current.projects[0]?.goals[0]?.design?.[0]).not.toHaveProperty('content')
-    expect(current.projects[0]?.goals[0]?.acceptedInputs).toEqual([
-      expect.objectContaining({
-        acceptedInput: 'Use the current repository configuration.\n',
-        path: expect.stringContaining('/inputs/H-1/EV-accepted.md'),
-      }),
-    ])
-    expect(current.projects[0]?.goals[0]).not.toHaveProperty('evidence')
-
-    await attempt.settle({
-      termination: 'interrupted',
-      reportMarkdown: 'Interrupted during the test.',
-      exitCode: null,
-    })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    const after = (
-      await fixture.tools.executeForEvent('EV-read', 'hopi_read_state', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-      })
-    ).value as {
-      activeRuns: unknown[]
-      projects: Array<{
-        goals: Array<{
-          works: unknown[]
-          latestPlanningOutcome: {
-            attributes: { id: string; stage: string }
-            runtime: { latestAttempt: { status: string } | null }
-          } | null
-        }>
-      }>
-    }
-    expect(after.activeRuns).toEqual([])
-    expect(after.projects[0]?.goals[0]?.works).toEqual([])
-    expect(after.projects[0]?.goals[0]?.latestPlanningOutcome).toMatchObject({
-      attributes: { id: 'plan-initial', stage: 'done' },
-      runtime: { latestAttempt: { status: 'settled', termination: 'interrupted' } },
-    })
-    await otherAttempt.settle({
-      termination: 'interrupted',
-      reportMarkdown: 'Interrupted during test cleanup.',
-      exitCode: null,
-    })
-  })
-
-  test('projects complete canonical references for every open Attention', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const goalAttention = await publishTestWorkAttention(
-      fixture.goalStore,
-      'G-1',
-      'plan-initial',
-      'planner',
-      'Choose recovery.',
-    )
-    await fixture.workspace.receiveEvent({ eventId: 'EV-blocked', content: 'Blocked event.' })
-    const workspaceAttention = await createWorkspaceAttentionController(
-      fixture.workspace,
-    ).ensureEventAttention('EV-blocked', `Inspect the failed event. ${'x'.repeat(2_000)}`)
-    const projectAttention = await createWorkspaceAttentionController(
-      fixture.workspace,
-    ).ensureProjectAttention('P-1', 'Inspect this Project condition.')
-    await fixture.workspace.receiveEvent({ eventId: 'EV-read-refs', content: 'Inspect Attention.' })
-
-    const homeState = (await fixture.tools.executeForEvent('EV-read-refs', 'hopi_read_state', {}))
-      .value as {
-      workspaceAttentions: Array<{
-        id: string
-        projectId: string | null
-        reference: string
-        creationRationale: string
-        inspectionPath: string
-      }>
-      projects: Array<{
-        goals: Array<{
-          goal: { attributes: { id: string }; body?: string }
-          attentions: Array<{
-            reference: string
-            attributes: { id: string }
-            creationRationale: string
-          }>
-        }>
-      }>
-    }
-    const goalState = (
-      await fixture.tools.executeForEvent('EV-read-refs', 'hopi_read_state', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-      })
-    ).value as {
-      workspaceAttentions: Array<{ id: string; projectId: string | null; reference: string }>
-      projects: Array<{
-        goals: Array<{
-          goal: { attributes: { id: string }; body?: string }
-          attentions: Array<{
-            reference: string
-            attributes: { id: string }
-            creationRationale: string
-          }>
-        }>
-      }>
-    }
-    const homeId = (await fixture.workspace.readWorkspace()).homeId
-
-    expect(homeState.workspaceAttentions).toContainEqual(
-      expect.objectContaining({
-        id: workspaceAttention.attributes.id,
-        reference: workspaceAttentionReference(homeId, workspaceAttention.attributes.id),
-      }),
-    )
-    const eventAttentionState = homeState.workspaceAttentions.find(
-      (attention) => attention.id === workspaceAttention.attributes.id,
-    )
-    expect(eventAttentionState?.creationRationale.length).toBeLessThanOrEqual(323)
-    expect(eventAttentionState?.inspectionPath).toBe(
-      join(fixture.homeRoot, fixture.workspace.paths.attention(workspaceAttention.attributes.id)),
-    )
-    expect(homeState.projects[0]?.goals[0]?.goal).not.toHaveProperty('body')
-    expect(homeState.projects[0]?.goals[0]?.attentions).toContainEqual(
-      expect.objectContaining({
-        reference: goalAttentionReference('P-1', 'G-1', goalAttention.attributes.id),
-        attributes: expect.objectContaining({ id: goalAttention.attributes.id }),
-        creationRationale: expect.stringContaining('Choose recovery.'),
-      }),
-    )
-    expect(goalState.workspaceAttentions).toEqual([
-      expect.objectContaining({
-        id: projectAttention.attributes.id,
-        projectId: 'P-1',
-        reference: workspaceAttentionReference(homeId, projectAttention.attributes.id),
-      }),
-    ])
-    expect(goalState.projects[0]?.goals[0]?.goal).not.toHaveProperty('body')
-    expect(goalState.projects[0]?.goals[0]?.attentions).toContainEqual(
-      expect.objectContaining({
-        reference: goalAttentionReference('P-1', 'G-1', goalAttention.attributes.id),
-        attributes: expect.objectContaining({ id: goalAttention.attributes.id }),
-        creationRationale: expect.stringContaining('Choose recovery.'),
-      }),
-    )
-  })
-
-  test('keeps referenced Evidence compact until exact artifacts are requested', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-report')
-    const runRoot = runStoragePath(fixture.homeRoot, 'R-report')
-    const runReportPath = join(runRoot, 'artifacts', '001-report.md')
-    const projectReportPath = join(
-      fixture.goalStore.paths.projectRoot,
-      'reports',
-      'stage-report.md',
-    )
-    await mkdir(join(runRoot, 'artifacts'), { recursive: true })
-    await mkdir(join(projectReportPath, '..'), { recursive: true })
-    await Bun.write(runReportPath, '# Run report\n')
-    await Bun.write(projectReportPath, '# Project report\n')
-
-    const workPath = fixture.goalStore.paths.workDocument('G-1', 'W-report')
-    const workSource = await Bun.file(fixture.goalStore.paths.absolute(workPath)).text()
-    const work = parseWorkDocument(workSource)
-    work.attributes.stage = 'review'
-    work.attributes.evidenceRefs = ['E-report']
-    await fixture.goalStore.publishGoal('G-1', {
-      supportingWrites: [
-        {
-          path: fixture.goalStore.paths.evidenceDocument('G-1', 'E-report'),
-          expectedHash: null,
-          content: renderEvidenceDocument({
-            attributes: {
-              id: 'E-report',
-              createdAt: '2026-07-18T00:00:00Z',
-              producerRun: 'project:P-1/goal:G-1/work:W-report/run:R-report',
-              coordinatorCheck: null,
-              owner: 'project:P-1/goal:G-1/work:W-report',
-              artifacts: ['artifact:R-report/001-report.md', 'reports/stage-report.md'],
-            },
-            body: '## Responsibility Result\n\n- Responsibility: generator\n- Result: success\n\n## Summary\n\nThe full report is attached.\n',
-          }),
-        },
-      ],
-      gateWrite: {
-        path: workPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(workSource)),
-        content: renderWorkDocument(work),
-      },
-    })
-    await fixture.workspace.receiveEvent({ eventId: 'EV-report', content: 'Where is the report?' })
-
-    const scoped = (
-      await fixture.tools.executeForEvent('EV-report', 'hopi_read_state', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-      })
-    ).value as {
-      projects: Array<{
-        goals: Array<{
-          works: Array<{
-            attributes: { id: string }
-            evidence?: {
-              count: number
-              latest: {
-                id: string
-                producerRun: string
-                artifactCount: number
-                path: string
-              } | null
-            }
-          }>
-        }>
-      }>
-    }
-    const compactEvidence = scoped.projects[0]?.goals[0]?.works.find(
-      (candidate) => candidate.attributes.id === 'W-report',
-    )?.evidence
-    expect(compactEvidence).toEqual({
-      count: 1,
-      latest: {
-        id: 'E-report',
-        producerRun: 'project:P-1/goal:G-1/work:W-report/run:R-report',
-        artifactCount: 2,
-        path: fixture.goalStore.paths.absolute(
-          fixture.goalStore.paths.evidenceDocument('G-1', 'E-report'),
-        ),
-      },
-    })
-    expect(JSON.stringify(scoped)).not.toContain('The full report is attached.')
-    expect(JSON.stringify(scoped)).not.toContain(runReportPath)
-    expect(
-      scoped.projects[0]?.goals[0]?.works.find(
-        (candidate) => candidate.attributes.id === 'W-report',
-      )?.attributes,
-    ).not.toHaveProperty('evidenceRefs')
-
-    const detailed = (
-      await fixture.tools.executeForEvent('EV-report', 'hopi_read_state', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        includeEvidence: true,
-      })
-    ).value as {
-      projects: Array<{
-        goals: Array<{
-          works: Array<{
-            attributes: { id: string }
-            evidence?: Array<{
-              historicalResult: string
-              artifacts: Array<{
-                reference: string
-                available: boolean
-                kind?: 'file' | 'directory'
-                fileName?: string
-                inspectionPath?: string
-                operatorUrl?: string
-              }>
-            }>
-          }>
-        }>
-      }>
-    }
-    const evidence = detailed.projects[0]?.goals[0]?.works.find(
-      (candidate) => candidate.attributes.id === 'W-report',
-    )?.evidence
-    expect(evidence?.[0]?.historicalResult).toContain('The full report is attached.')
-    expect(evidence?.[0]).not.toHaveProperty('body')
-    expect(evidence?.[0]?.artifacts).toEqual([
-      {
-        reference: 'artifact:R-report/001-report.md',
-        available: true,
-        kind: 'file',
-        fileName: '001-report.md',
-        inspectionPath: runReportPath,
-        operatorUrl: '/api/projects/P-1/goals/G-1/evidence/E-report/artifacts/0',
-      },
-      {
-        reference: 'reports/stage-report.md',
-        available: true,
-        kind: 'file',
-        fileName: 'stage-report.md',
-        inspectionPath: projectReportPath,
-        operatorUrl: '/api/projects/P-1/goals/G-1/evidence/E-report/artifacts/1',
-      },
-    ])
-
-    const workspaceWide = (
-      await fixture.tools.executeForEvent('EV-report', 'hopi_read_state', { projectId: 'P-1' })
-    ).value as { projects: Array<{ goals: Array<{ works: Array<Record<string, unknown>> }> }> }
-    expect(
-      workspaceWide.projects[0]?.goals[0]?.works.every((candidate) => !('evidence' in candidate)),
-    ).toBe(true)
-  })
-
-  test('returns only the latest finished Planning outcome as compact continuation context', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    const next = await fixture.controller.ensurePlanning('G-1', 'Reassess the current blocker.')
-    const path = fixture.goalStore.paths.workDocument('G-1', next.attributes.id)
-    const source = await Bun.file(fixture.goalStore.paths.absolute(path)).text()
-    const completed = parseWorkDocument(source)
-    completed.attributes.stage = 'done'
-    await fixture.goalStore.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderWorkDocument(completed),
-      },
-    })
-    await fixture.workspace.receiveEvent({
-      eventId: 'EV-latest-planning',
-      content: 'What did Planning conclude?',
-    })
-
-    const state = (
-      await fixture.tools.executeForEvent('EV-latest-planning', 'hopi_read_state', {
-        projectId: 'P-1',
-        goalId: 'G-1',
-      })
-    ).value as {
-      projects: Array<{
-        goals: Array<{
-          works: unknown[]
-          latestPlanningOutcome: { attributes: { id: string; stage: string } } | null
-        }>
-      }>
-    }
-    expect(state.projects[0]?.goals[0]?.works).toEqual([])
-    expect(state.projects[0]?.goals[0]?.latestPlanningOutcome).toMatchObject({
-      attributes: { id: next.attributes.id, stage: 'done' },
-    })
-  })
-
-  test('reads bounded Attempt diagnostics and stable local log paths', async () => {
-    const fixture = await setup({ trackAttemptReads: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-1')
-    await mkdir(runRoot, { recursive: true })
-    const attempt = await reserveAndStartAttempt(fixture.attempts, {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      runId: 'R-1',
-      responsibility: 'planner',
-      runRoot,
-    })
-    await Bun.write(join(runRoot, 'context.md'), '# Context\n')
-    await Bun.write(join(runRoot, 'prompt.md'), '# Prompt\n')
-    await Bun.write(join(runRoot, 'report.md'), 'Planner runtime failed.\n')
-    await Bun.write(join(runRoot, 'transcript.log'), 'stdout: full raw detail\n')
-    await Bun.write(
-      join(runRoot, 'artifacts.json'),
-      `${JSON.stringify({
-        runId: 'R-1',
-        artifacts: [],
-        unavailable: [
-          {
-            reference: '/tmp/proof-bundle',
-            reason: 'Declared Run artifact could not be retained.',
-          },
-        ],
-      })}\n`,
-    )
-    await attempt.settle({
-      termination: 'crashed',
-      reportMarkdown: 'Planner failed.',
-      exitCode: 1,
-    })
-    await fixture.workspace.receiveEvent({ eventId: 'EV-read', content: 'Inspect current state.' })
-
-    const first = await fixture.tools.executeForEvent('EV-read', 'hopi_read_state', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-    })
-    const snapshot = first.value as {
-      stateDigest: string
-      projects: Array<{
-        goals: Array<{
-          works: Array<{
-            runtime: {
-              latestAttempt: { runId: string; status: string } | null
-              attemptCount: number
-              recentAttempts: Array<{
-                runId: string
-                termination: string | null
-                reportMarkdown: string | null
-                artifactPreservation: {
-                  path: string
-                  unavailable: Array<{ reference: string; reason: string }>
-                } | null
-              }>
-              paths: { transcript?: string; events?: string; artifacts?: string }
-            }
-          }>
-        }>
-      }>
-    }
-    const runtime = snapshot.projects.at(0)?.goals.at(0)?.works.at(0)?.runtime
-    if (!runtime) throw new Error('Expected Work runtime diagnostics')
-    expect(snapshot.stateDigest).toMatch(/^[a-f0-9]{64}$/)
-    expect(runtime.latestAttempt).toMatchObject({
-      runId: 'R-1',
-      status: 'settled',
-      termination: 'crashed',
-    })
-    expect(runtime.attemptCount).toBe(1)
-    expect(runtime.recentAttempts).toEqual([
-      expect.objectContaining({
-        runId: 'R-1',
-        termination: 'crashed',
-        reportMarkdown: 'Planner failed.',
-        artifactPreservation: expect.objectContaining({
-          path: join(runRoot, 'artifacts.json'),
-          unavailable: [
-            {
-              reference: '/tmp/proof-bundle',
-              reason: 'Declared Run artifact could not be retained.',
-            },
-          ],
-        }),
-      }),
-    ])
-    expect(runtime.paths.transcript).toBe(join(runRoot, 'transcript.log'))
-    expect(runtime.paths.events).toBe(join(runRoot, 'events.jsonl'))
-    expect(runtime.paths.artifacts).toBe(join(runRoot, 'artifacts.json'))
-    expect(fixture.attemptReads).toEqual({ snapshots: 1, lists: 0, eventReads: 0 })
-
-    await Bun.write(join(runRoot, 'transcript.log'), 'stdout: changed raw diagnostics only\n')
-    const second = await fixture.tools.executeForEvent('EV-read', 'hopi_read_state', {
-      projectId: 'P-1',
-      goalId: 'G-1',
-    })
-    expect((second.value as { stateDigest: string }).stateDigest).toBe(snapshot.stateDigest)
-    expect(fixture.attemptReads).toEqual({ snapshots: 2, lists: 0, eventReads: 0 })
-  })
-
-  test('keeps the latest settled Attempt in the semantic digest while the next Run is active', async () => {
-    const fixture = await setup()
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await finishInitialPlanning(fixture.goalStore, 'G-1')
-    await publishEngineeringWork(fixture.goalStore, 'G-1', 'W-1')
-
-    const startAttempt = async (runId: string, responsibility: 'generator' | 'reviewer') => {
-      const runRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'runs', runId)
-      await mkdir(runRoot, { recursive: true })
-      return reserveAndStartAttempt(fixture.attempts, {
-        projectId: 'P-1',
-        goalId: 'G-1',
-        workId: 'W-1',
-        runId,
-        responsibility,
-        runRoot,
-      })
-    }
-
-    const firstReview = await startAttempt('R-review-1', 'reviewer')
-    await firstReview.settle({
-      termination: 'normal',
-      reportMarkdown: 'Reviewer found a missing required report.',
-      exitCode: 0,
-    })
-    await Bun.sleep(2)
-    const firstRepair = await startAttempt('R-generator-2', 'generator')
-    const first = await fixture.state.readForWake()
-    if (!first) throw new Error('Expected first Assistant state')
-
-    await firstRepair.settle({
-      termination: 'normal',
-      reportMarkdown: 'Generator added the report.',
-      exitCode: 0,
-    })
-    await Bun.sleep(2)
-    const secondReview = await startAttempt('R-review-2', 'reviewer')
-    await secondReview.settle({
-      termination: 'normal',
-      reportMarkdown: 'Reviewer found the report incomplete.',
-      exitCode: 0,
-    })
-    await Bun.sleep(2)
-    await startAttempt('R-generator-3', 'generator')
-    const second = await fixture.state.readForWake()
-    if (!second) throw new Error('Expected second Assistant state')
-
-    expect(first.activeRuns).toEqual([
-      expect.objectContaining({ runId: 'R-generator-2', responsibility: 'generator' }),
-    ])
-    expect(second.activeRuns).toEqual([
-      expect.objectContaining({ runId: 'R-generator-3', responsibility: 'generator' }),
-    ])
-    expect(second.conversationDigests.projects['P-1']).not.toBe(
-      first.conversationDigests.projects['P-1'],
-    )
-  })
-
-  test('reuses an unchanged settled Wake state and invalidates it after an Attempt transition', async () => {
-    const fixture = await setup({ trackAttemptReads: true })
-    await fixture.goalStore.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-
-    const first = await fixture.state.readForWake()
-    const second = await fixture.state.readForWake()
-    expect(second).toBe(first)
-    expect(fixture.attemptReads).toEqual({ snapshots: 1, lists: 0, eventReads: 0 })
-
-    await reserveAndStartAttempt(fixture.attempts, {
-      projectId: 'P-1',
-      goalId: 'G-1',
-      workId: 'plan-initial',
-      runId: 'R-wake-change',
-      responsibility: 'planner',
-      runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', 'R-wake-change'),
-    })
-
-    const changed = await fixture.state.readForWake()
-    expect(changed).not.toBe(first)
-    expect(fixture.attemptReads).toEqual({ snapshots: 2, lists: 0, eventReads: 1 })
   })
 })
 
-async function setup(
-  options: {
-    trackInterrupts?: boolean
-    trackAttemptReads?: boolean
-  } = {},
-) {
+async function setup() {
   const repoRoot = join(temporaryRoot, 'repo')
-  await mkdir(repoRoot, { recursive: true })
-  await git(repoRoot, ['init', '-b', 'main'])
-  await git(repoRoot, ['config', 'user.email', 'hopi@example.test'])
-  await git(repoRoot, ['config', 'user.name', 'HOPI Test'])
-  await Bun.write(join(repoRoot, 'README.md'), '# Repo\n')
-  await git(repoRoot, ['add', '.'])
-  await git(repoRoot, ['commit', '-m', 'initial'])
+  await initRepo(repoRoot)
   const homeRoot = join(temporaryRoot, 'home')
   const publisher = new PublicationCoordinator()
   const home = createAssistantHomeStore(homeRoot, publisher)
   const linked = await home.linkProject({ projectId: 'P-1', repoPath: repoRoot })
   const workspace = createAssistantWorkspaceStore(homeRoot, publisher)
-  const goalStore = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
-  const controller = createGoalController(goalStore, {})
-  const interruptedGoalIds: string[] = []
-  const interruptedWorkTargets: Array<{ goalId: string; workId: string }> = []
-  const restoredProjectIds: string[] = []
-  const topologyChangedEventIds: string[] = []
-  const goalEffects: Array<{ eventId: string; projectId: string; goalId: string }> = []
-  const projectDispatchEffects: Array<{ eventId: string; projectId: string }> = []
-  let requestedRunSequence = 0
-  const projects = new Map([
-    [
-      'P-1',
-      {
-        projectId: 'P-1',
-        primaryRepoId: linked.primaryRepoId,
-        repos: linked.repos,
-        projectRoot: linked.integrationRoot,
-        sourceRoot: linked.integrationRoot,
-        store: goalStore,
-        controller,
-        reconciler: {
-          interruptRuns(goalId?: string, workId?: string) {
-            if (!options.trackInterrupts) return
-            if (goalId && workId) interruptedWorkTargets.push({ goalId, workId })
-            else if (goalId) interruptedGoalIds.push(goalId)
-          },
-          async interruptQueuedRuns() {
-            return 0
-          },
-          liveWorkIds() {
-            return new Set<string>()
-          },
-          async decisionWhenEligible() {
-            return { kind: 'wait' as const, reasons: [] }
-          },
-          async requestWorkRun() {
-            requestedRunSequence += 1
-            return {
-              runId: `R-requested-${requestedRunSequence}`,
-              disposition: 'scheduled' as const,
-            }
-          },
-          async completeWork() {
-            throw new Error('Unexpected Work completion in Assistant tools fixture')
-          },
-          async completeGoal() {
-            throw new Error('Unexpected Goal completion in Assistant tools fixture')
-          },
-        },
-      },
-    ],
-  ])
-  const storedAttempts = createRunAttemptStore(homeRoot)
-  const attemptReads = { snapshots: 0, lists: 0, eventReads: 0 }
-  const attempts: RunAttemptStore = options.trackAttemptReads
-    ? {
-        ...storedAttempts,
-        async snapshot() {
-          attemptReads.snapshots += 1
-          return storedAttempts.snapshot()
-        },
-        async list(...args: Parameters<RunAttemptStore['list']>) {
-          attemptReads.lists += 1
-          return storedAttempts.list(...args)
-        },
-        async readEvents(...args: Parameters<RunAttemptStore['readEvents']>) {
-          attemptReads.eventReads += 1
-          return storedAttempts.readEvents(...args)
-        },
-      }
-    : storedAttempts
-  const state = createAssistantStateReader({
-    homeRoot,
-    workspace,
-    projects,
-    publisher,
-    attempts,
+  const store = createGoalPackageStore(linked.integrationRoot, 'P-1', publisher)
+  const controller = createGoalController(store, {
+    now: () => new Date('2026-08-14T00:00:00.000Z'),
   })
-  const rawTools = createAssistantTools({
+  const runRequests: Array<{ goalId: string; workId: string; request: RunRequest }> = []
+
+  const project = {
+    projectId: 'P-1',
+    projectRoot: linked.integrationRoot,
+    sourceRoot: linked.integrationRoot,
+    primaryRepoId: linked.primaryRepoId,
+    repos: linked.repos,
+    store,
+    controller,
+    reconciler: {
+      interruptRuns() {},
+      async interruptQueuedRuns() {
+        return 0
+      },
+      liveWorkIds() {
+        return new Set<string>()
+      },
+      async decisionWhenEligible() {
+        return { kind: 'wait' as const, reasons: [] }
+      },
+      async requestWorkRun(goalId: string, workId: string, request: RunRequest) {
+        runRequests.push({ goalId, workId, request })
+        return { runId: `R-${runRequests.length}`, disposition: 'scheduled' as const }
+      },
+      async completeWork(
+        goalId: string,
+        workId: string,
+        input: { sourceEventId: string; decision: string; mapMarkdown?: string },
+      ): Promise<WorkCompletionResult> {
+        const goal = await store.readPackage(goalId)
+        const work = goal.works.get(workId)
+        if (!work || work.attributes.kind !== 'decision') throw new Error('Expected Decision Work')
+        const source = await Bun.file(
+          store.paths.absolute(store.paths.workDocument(goalId, workId)),
+        ).text()
+        const completed = {
+          ...work,
+          attributes: { ...work.attributes, status: 'done' as const },
+          body: `${work.body.trimEnd()}\n\n## Resolution\n\nAssistant event: ${input.sourceEventId}\n\n${input.decision}\n`,
+        }
+        await store.publishGoal(goalId, {
+          supportingWrites: input.mapMarkdown
+            ? [
+                {
+                  path: store.paths.designIndex(goalId),
+                  expectedHash: await hashBytes(
+                    new TextEncoder().encode(
+                      await Bun.file(store.paths.absolute(store.paths.designIndex(goalId))).text(),
+                    ),
+                  ),
+                  content: input.mapMarkdown,
+                },
+              ]
+            : [],
+          gateWrite: {
+            path: store.paths.workDocument(goalId, workId),
+            expectedHash: await hashBytes(new TextEncoder().encode(source)),
+            content: renderWorkDocument(completed),
+          },
+        })
+        return { kind: 'completed', commit: null, recoveredUncertainUpdate: false }
+      },
+      async completeGoal() {
+        throw new Error('Unexpected Goal completion')
+      },
+    },
+  }
+
+  const emptyState: AssistantStateSnapshot = {
+    observedAt: '2026-08-14T00:00:00.000Z',
+    stateDigest: 'a'.repeat(64),
+    conversationDigests: { home: 'b'.repeat(64), projects: {} },
+    activeRuns: [],
+    workspaceAttentions: [],
+    projects: [],
+  }
+  const state = {
+    async read() {
+      return emptyState
+    },
+    async readForWake() {
+      return emptyState
+    },
+  }
+  const tools = createAssistantTools({
     home,
     workspace,
+    projects: new Map([['P-1', project]]),
     publisher,
-    preview: createPreviewManager(homeRoot),
-    projects,
-    state,
-    onProjectTopologyChanged: (eventId) => {
-      topologyChangedEventIds.push(eventId)
+    preview: {
+      async recover() {},
+      async start() {
+        throw new Error('Unexpected Preview start')
+      },
+      async stop() {
+        return null
+      },
+      async stopAll() {},
+      inspect() {
+        return null
+      },
     },
-    onProjectRecoveryRequested: async (projectId) => {
-      restoredProjectIds.push(projectId)
+    state,
+    onProjectTopologyChanged() {},
+    async onProjectRecoveryRequested() {
       return { eligible: true }
     },
-    onGoalEffect: (eventId, projectId, goalId) => {
-      goalEffects.push({ eventId, projectId, goalId })
-    },
-    onProjectDispatchEffect: (eventId, projectId) => {
-      projectDispatchEffects.push({ eventId, projectId })
-    },
+    onGoalEffect() {},
+    onProjectDispatchEffect() {},
     onToolEffect() {},
+    now: () => new Date('2026-08-14T00:00:00.000Z'),
   })
-  const tools: AssistantTools = rawTools
+
   return {
-    homeRoot,
-    repoRoot,
-    primaryRepoId: linked.primaryRepoId,
-    home,
-    workspace,
-    goalStore,
-    controller,
-    attempts,
-    attemptReads,
-    state,
+    store,
     tools,
-    interruptedGoalIds,
-    interruptedWorkTargets,
-    restoredProjectIds,
-    topologyChangedEventIds,
-    goalEffects,
-    projectDispatchEffects,
-    projects,
-    publisher,
+    runRequests,
+    turn(eventId: string, content: string) {
+      return workspace.receiveEvent({ eventId, content, context: { projectId: 'P-1' } })
+    },
+    createMappedGoal() {
+      return store.createGoal({
+        goalId: 'G-route',
+        title: 'Find the execution route',
+        objective: 'Make the route clear enough to execute.',
+        mapMarkdown: initialMap,
+        firstWork: {
+          id: 'W-choose-the-authority-boundary',
+          title: 'Choose the authority boundary',
+          kind: 'decision',
+          decisionType: 'grilling',
+          question: 'Which component alone may publish canonical state?',
+        },
+        createdAt: '2026-08-14T00:00:00.000Z',
+      })
+    },
+    createDirectGoal() {
+      return store.createGoal({
+        goalId: 'G-direct',
+        title: 'Build the accepted change',
+        objective: 'Deliver one known change.',
+        firstWork: {
+          id: 'W-build',
+          title: 'Build the change',
+          kind: 'engineering',
+          objective: 'Implement the accepted change.',
+          acceptanceCriteria: ['The accepted behavior works.'],
+        },
+        createdAt: '2026-08-14T00:00:00.000Z',
+      })
+    },
   }
 }
 
-async function finishInitialPlanning(
-  store: ReturnType<typeof createGoalPackageStore>,
-  goalId: string,
-) {
-  const path = store.paths.workDocument(goalId, 'plan-initial')
-  const source = await Bun.file(store.paths.absolute(path)).text()
-  const work = parseWorkDocument(source)
-  work.attributes.stage = 'done'
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path,
-      expectedHash: await hashBytes(new TextEncoder().encode(source)),
-      content: renderWorkDocument(work),
-    },
-  })
-}
-
-async function reserveAndStartAttempt(
-  attempts: RunAttemptStore,
-  input: Parameters<RunAttemptStore['start']>[0],
-) {
-  const workspaceMode =
-    input.responsibility === 'generator'
-      ? ('isolated_write' as const)
-      : input.responsibility === 'reviewer'
-        ? ('read_only' as const)
-        : ('none' as const)
-  await attempts.reserve({
-    projectId: input.projectId,
-    goalId: input.goalId,
-    workId: input.workId,
-    runId: input.runId,
-    workHash: input.workHash ?? 'a'.repeat(64),
-    request: {
-      profile: input.responsibility,
-      workspaceMode,
-      instructionMarkdown: `Exercise ${input.responsibility} Attempt ${input.runId}.`,
-      refs: [],
-    },
-  })
-  return attempts.start(input)
-}
-
-async function publishEngineeringWork(
-  store: ReturnType<typeof createGoalPackageStore>,
-  goalId: string,
-  workId: string,
-  dependsOn: string[] = [],
-) {
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path: store.paths.workDocument(goalId, workId),
-      expectedHash: null,
-      content: renderWorkDocument({
-        attributes: {
-          id: workId,
-          title: `Build ${workId}`,
-          kind: 'engineering',
-          stage: 'generate',
-          notBefore: null,
-          dependsOn,
-          contractRevision: 1,
-          evidenceRefs: [],
-          contextRefs: [],
-          ownerMessages: [],
-        },
-        body: `Implement ${workId}.\n`,
-      }),
-    },
-  })
+async function initRepo(path: string) {
+  await mkdir(path, { recursive: true })
+  for (const args of [
+    ['init', '-b', 'main'],
+    ['config', 'user.email', 'hopi@example.test'],
+    ['config', 'user.name', 'HOPI Test'],
+  ])
+    await git(path, args)
+  await Bun.write(join(path, 'README.md'), '# Repo\n')
+  await git(path, ['add', '.'])
+  await git(path, ['commit', '-m', 'initial'])
 }
 
 async function git(cwd: string, args: string[]) {
@@ -2994,24 +491,4 @@ async function git(cwd: string, args: string[]) {
     child.exited,
   ])
   if (exitCode !== 0) throw new Error(stderr || stdout)
-  return stdout.trim()
-}
-
-async function createTestRepo(path: string) {
-  await mkdir(path, { recursive: true })
-  await git(path, ['init', '-b', 'main'])
-  await git(path, ['config', 'user.email', 'hopi@example.test'])
-  await git(path, ['config', 'user.name', 'HOPI Test'])
-  await Bun.write(join(path, 'README.md'), '# Repo\n')
-  await git(path, ['add', '.'])
-  await git(path, ['commit', '-m', 'initial'])
-  return path
-}
-
-function pngBytes(marker = 0) {
-  return Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, marker])
-}
-
-function planningFirstWork(_objective: string) {
-  return { kind: 'planning' as const }
 }

@@ -15,10 +15,13 @@ test('Assistant settings use the current coding defaults', () => {
   expect(formatCodingDefaults(defaults)).toBe('gpt-5.4 · xhigh')
 })
 
-test('model settings are Home-wide by role and absent from Project cards', async () => {
+test('model settings are Home-wide by agent and absent from Project cards', async () => {
   const source = await Bun.file(new URL('./ProjectHomePage.tsx', import.meta.url)).text()
 
-  expect(source).toContain('Projects share these settings.')
+  expect(source).toContain('Configure the Home-wide models used for conversation and bounded execution.')
+  expect(source).toContain("{ label: 'Assistant', value: 'assistant' }")
+  expect(source).toContain("{ label: 'Worker', value: 'worker' }")
+  expect(source).toContain("{ label: 'Max', value: 'max' }")
   expect(source).not.toContain('updateProjectSettings')
   expect(source).not.toContain('project-model-row')
   expect(source).not.toContain('Project default')

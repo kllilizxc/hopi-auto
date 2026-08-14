@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import {
-  goalBoardQueryKey,
   goalDocsQueryKey,
+  goalRouteQueryKey,
   infiniteMessageHistoryQueryKey,
   workAttemptEventsQueryKey,
   workAttemptsQueryKey,
@@ -9,11 +9,11 @@ import {
 import { mergeTailIntoMessageHistory } from './messageStreamCache'
 
 test('navigation prefetch and mounted views share canonical query keys', () => {
-  expect(goalBoardQueryKey('project', 'goal')).toEqual([
+  expect(goalRouteQueryKey('project', 'goal')).toEqual([
     'mvp-goal',
     'project',
     'goal',
-    'board',
+    'route',
   ])
   expect(goalDocsQueryKey('project', 'goal')).toEqual([
     'mvp-goal',

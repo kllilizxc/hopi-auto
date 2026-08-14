@@ -1,4 +1,4 @@
-import type { AppSnapshot, GoalBoardDetail, GoalDetail, GoalDocsDetail } from './apiTypes'
+import type { AppSnapshot, GoalDetail, GoalDocsDetail, GoalRouteDetail } from './apiTypes'
 
 export const CANONICAL_POLL_INTERVAL_MS = 2_000
 export const ACTIVE_STREAM_POLL_INTERVAL_MS = 1_000
@@ -33,7 +33,7 @@ export function shellPollInterval(query: QueryWithData<AppSnapshot>) {
     : SETTLED_POLL_INTERVAL_MS
 }
 
-export function boardPollInterval(query: QueryWithData<GoalBoardDetail>) {
+export function routePollInterval(query: QueryWithData<GoalRouteDetail>) {
   return query.state.data?.goal.lifecycle === 'active'
     ? CANONICAL_POLL_INTERVAL_MS
     : SETTLED_POLL_INTERVAL_MS

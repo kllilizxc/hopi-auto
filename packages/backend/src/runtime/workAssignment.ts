@@ -1,6 +1,7 @@
 import type { WorkDocument, WorkOwnerMessage } from '../domain/canonicalDocuments'
 import { renderWorkDocument } from '../domain/canonicalDocuments'
 import { hashBytes } from '../publication/publisher'
+import type { RunAttemptSummary } from './runAttemptStore'
 
 export async function workAssignmentHash(work: WorkDocument) {
   const assignment = {
@@ -12,6 +13,26 @@ export async function workAssignmentHash(work: WorkDocument) {
     },
   }
   return hashBytes(new TextEncoder().encode(renderWorkDocument(assignment)))
+}
+
+export async function currentSettledWorkIds(
+  works: Iterable<WorkDocument>,
+  attemptsByWork: ReadonlyMap<string, readonly RunAttemptSummary[]>,
+) {
+  const hashes = new Map(
+    await Promise.all(
+      [...works].map(async (work) => [work.attributes.id, await workAssignmentHash(work)] as const),
+    ),
+  )
+  return new Set(
+    [...attemptsByWork]
+      .filter(([workId, attempts]) =>
+        attempts.some(
+          (attempt) => attempt.status === 'settled' && attempt.workHash === hashes.get(workId),
+        ),
+      )
+      .map(([workId]) => workId),
+  )
 }
 
 export function appendProjectOwnerMessage(

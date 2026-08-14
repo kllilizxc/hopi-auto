@@ -1,379 +1,218 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import {
-  parseGoalDocument,
   parseWorkDocument,
-  renderGoalDocument,
   renderInputDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
-import { GoalPackageNotFoundError, GoalPackageValidationError } from '../src/domain/goalPackage'
+import { GoalPackageValidationError } from '../src/domain/goalPackage'
 import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
 import type { PublicationRoot } from '../src/publication/types'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'goal-package-store')
+const map = `## Destination
+
+Choose the durable execution model.
+
+## Notes
+
+Keep one publication path.
+
+## Decisions so far
+
+## Not yet specified
+
+How source changes should be reviewed.
+
+## Out of scope
+
+UI polish.
+`
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
   await mkdir(temporaryRoot, { recursive: true })
 })
 
-afterEach(async () => {
-  await rm(temporaryRoot, { recursive: true, force: true })
-})
+afterEach(() => rm(temporaryRoot, { recursive: true, force: true }))
 
-describe('createGoalPackageStore', () => {
-  test('distinguishes an absent Goal root from an incomplete Goal package', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-
-    await expect(store.readPackage('G-missing')).rejects.toBeInstanceOf(GoalPackageNotFoundError)
-
-    const workPath = store.paths.workDocument('G-incomplete', 'W-1')
-    await mkdir(dirname(store.paths.absolute(workPath)), { recursive: true })
-    await Bun.write(
-      store.paths.absolute(workPath),
-      renderWorkDocument({
-        attributes: {
-          id: 'W-1',
-          title: 'Orphan Work',
-          kind: 'planning',
-          stage: 'plan',
-          notBefore: null,
-          dependsOn: [],
-          contractRevision: 1,
-          evidenceRefs: [],
-          contextRefs: [],
-          ownerMessages: [],
-        },
-        body: 'Incomplete package.\n',
-      }),
-    )
-    await expect(store.readPackage('G-incomplete')).rejects.toBeInstanceOf(
-      GoalPackageValidationError,
-    )
-  })
-
-  test('creates Goal, design, and Planning Work through the initial Planning gate', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-
+describe('GoalPackageStore', () => {
+  test('creates a Decision-first Goal as Map plus exactly one Decision Work', async () => {
+    const store = setup()
     const goalPackage = await store.createGoal({
       goalId: 'G-1',
-      title: 'Align HOPI with the MVP',
-      objective: 'Replace every removed workflow authority.',
-      constraints: ['Never mutate a user checkout.'],
-      successCriteria: ['All MVP acceptance scenarios pass.'],
-      priority: 10,
-      firstPlanningWork: {
-        title: 'Plan the MVP alignment',
-        objective: 'Decide how to replace the removed workflow authority safely.',
-        acceptanceCriteria: ['The plan is sufficient to publish the Engineering Work DAG.'],
+      title: 'Choose the execution model',
+      objective: 'Reach one durable execution model.',
+      mapMarkdown: map,
+      firstWork: {
+        id: 'W-boundary',
+        title: 'Choose the publication boundary',
+        kind: 'decision',
+        decisionType: 'grilling',
+        question: 'Which component alone may publish accepted source changes?',
       },
+      createdAt: '2026-08-14T00:00:00.000Z',
     })
 
-    expect(goalPackage.goal.attributes).toEqual({
-      id: 'G-1',
-      title: 'Align HOPI with the MVP',
-      lifecycle: 'active',
-      priority: 10,
-      contractRevision: 1,
+    expect([...goalPackage.works]).toHaveLength(1)
+    expect(goalPackage.works.get('W-boundary')?.attributes).toMatchObject({
+      kind: 'decision',
+      decisionType: 'grilling',
+      status: 'open',
+      createdAt: '2026-08-14T00:00:00.000Z',
     })
-    expect([...goalPackage.works.values()].map((work) => work.attributes)).toEqual([
-      expect.objectContaining({ id: 'plan-initial', kind: 'planning', stage: 'plan' }),
-    ])
-    expect(goalPackage.goal.body).toContain('## Constraints\n\n- Never mutate a user checkout.')
-    expect(goalPackage.goal.body).toContain(
-      '## Success Criteria\n\n- All MVP acceptance scenarios pass.',
-    )
-    expect(goalPackage.goal.body).not.toContain('## Non-Goals')
-    const planning = [...goalPackage.works.values()][0]
-    expect(planning?.attributes.title).toBe('Plan the MVP alignment')
-    expect(planning?.body).toContain('Decide how to replace the removed workflow authority safely.')
-    expect(planning?.body).toContain('The plan is sufficient to publish the Engineering Work DAG.')
-    expect(await Bun.file(store.paths.absolute(store.paths.designIndex('G-1'))).text()).toContain(
-      '## Current Design',
-    )
-    expect(await Bun.file(join(temporaryRoot, '.hopi/docs/goals/G-1/todo.yml')).exists()).toBe(
+    expect(goalPackage.works.get('W-boundary')?.body).toContain('## Question')
+    expect(await Bun.file(store.paths.absolute(store.paths.designIndex('G-1'))).text()).toBe(map)
+  })
+
+  test('creates a clear Goal directly with one Engineering Work and no Map', async () => {
+    const store = setup()
+    const goalPackage = await store.createGoal({
+      goalId: 'G-direct',
+      title: 'Fix route copy',
+      objective: 'Correct one known label.',
+      firstWork: {
+        id: 'W-fix',
+        title: 'Correct the route label',
+        kind: 'engineering',
+        objective: 'Replace the incorrect label.',
+        acceptanceCriteria: ['The Route view shows the accepted wording.'],
+      },
+      createdAt: '2026-08-14T00:00:00.000Z',
+    })
+
+    expect(goalPackage.works.get('W-fix')?.attributes.kind).toBe('engineering')
+    expect(await Bun.file(store.paths.absolute(store.paths.designIndex('G-direct'))).exists()).toBe(
       false,
     )
   })
 
-  test('creates a new Goal through one Assistant-dispatched Engineering gate', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-
-    const goalPackage = await store.createGoal({
-      goalId: 'G-direct',
-      title: 'Direct delivery',
-      objective: 'Deliver one bounded change.',
-      acceptedInput: {
-        attributes: {
-          sourceHomeId: 'H-1',
-          sourceEventId: 'EV-1',
-          sourceDigest: 'a'.repeat(64),
-          attachments: [],
+  test('rejects inconsistent first-Work and Map shapes', async () => {
+    const store = setup()
+    await expect(
+      store.createGoal({
+        goalId: 'G-no-map',
+        title: 'Unclear Goal',
+        objective: 'Find a route.',
+        firstWork: {
+          id: 'W-question',
+          title: 'Resolve scope',
+          kind: 'decision',
+          decisionType: 'research',
+          question: 'What is the supported scope?',
         },
-        body: 'Deliver one bounded change.\n',
-      },
-      initialEngineeringWork: {
-        id: 'W-direct',
-        title: 'Deliver the bounded change',
-        objective: 'Implement the accepted bounded change.',
-        acceptanceCriteria: ['The bounded change works as requested.'],
-        assistantDispatch: 'home:H-1/event:EV-1',
-      },
-    })
-
-    expect([...goalPackage.works.values()]).toHaveLength(1)
-    expect(goalPackage.works.get('W-direct')?.attributes).toMatchObject({
-      kind: 'engineering',
-      stage: 'generate',
-      assistantDispatch: 'home:H-1/event:EV-1',
-    })
-    expect(goalPackage.works.get('W-direct')?.attributes.contextRefs).toEqual([
-      {
-        path: store.paths.inputDocument('G-direct', 'H-1', 'EV-1'),
-        purpose: 'Accepted Inbox input',
-      },
-    ])
-    expect(goalPackage.works.has('plan-initial')).toBe(false)
+      }),
+    ).rejects.toThrow('requires mapMarkdown')
+    await expect(
+      store.createGoal({
+        goalId: 'G-extra-map',
+        title: 'Clear Goal',
+        objective: 'Make the known change.',
+        mapMarkdown: map,
+        firstWork: engineering('W-known'),
+      }),
+    ).rejects.toThrow('does not create a Map')
   })
 
-  test('keeps Assistant dispatch provenance immutable', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
+  test('rejects a Map that drifts from the one Wayfinder document shape', async () => {
+    const store = setup()
+
+    await expect(
+      store.createGoal({
+        goalId: 'G-invalid-map',
+        title: 'Explore a route',
+        objective: 'Resolve the unknowns.',
+        mapMarkdown: map.replace('## Not yet specified', '## Open questions'),
+        firstWork: {
+          id: 'W-research',
+          title: 'Research the boundary',
+          kind: 'decision',
+          decisionType: 'research',
+          question: 'What boundary is supported?',
+        },
+      }),
+    ).rejects.toThrow('Wayfinder Map must contain exactly these ordered headings')
+  })
+
+  test('enforces the DAG and terminal Work immutability', async () => {
+    const store = setup()
     await store.createGoal({
-      goalId: 'G-direct',
-      title: 'Direct delivery',
-      objective: 'Deliver one bounded change.',
-      acceptedInput: {
-        attributes: {
-          sourceHomeId: 'H-1',
-          sourceEventId: 'EV-1',
-          sourceDigest: 'a'.repeat(64),
-          attachments: [],
-        },
-        body: 'Deliver one bounded change.\n',
-      },
-      initialEngineeringWork: {
-        id: 'W-direct',
-        title: 'Deliver the bounded change',
-        objective: 'Implement the accepted bounded change.',
-        acceptanceCriteria: ['The bounded change works as requested.'],
-        assistantDispatch: 'home:H-1/event:EV-1',
-      },
+      goalId: 'G-1',
+      title: 'Ship route',
+      objective: 'Ship the route.',
+      firstWork: engineering('W-1'),
+      createdAt: '2026-08-14T00:00:00.000Z',
     })
-    const path = store.paths.workDocument('G-direct', 'W-direct')
+    await publishNewWork(store, 'G-1', engineeringDocument('W-2', ['W-1']))
+    await expect(
+      publishNewWork(store, 'G-1', engineeringDocument('W-cycle', ['W-cycle'])),
+    ).rejects.toThrow('Work dependency cycle')
+
+    const path = store.paths.workDocument('G-1', 'W-1')
     const source = await Bun.file(store.paths.absolute(path)).text()
-    const work = parseWorkDocument(source)
-    if (work.attributes.kind !== 'engineering') throw new Error('Expected Engineering Work')
-    work.attributes.assistantDispatch = undefined
-
-    await expect(
-      store.publishGoal('G-direct', {
-        supportingWrites: [],
-        gateWrite: {
-          path,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderWorkDocument(work),
-        },
-      }),
-    ).rejects.toBeInstanceOf(GoalPackageValidationError)
-    expect(
-      parseWorkDocument(await Bun.file(store.paths.absolute(path)).text()).attributes,
-    ).toHaveProperty('assistantDispatch', 'home:H-1/event:EV-1')
+    const completed = parseWorkDocument(source)
+    completed.attributes.status = 'done'
+    await publishReplacement(store, 'G-1', path, source, completed)
+    const terminalSource = await Bun.file(store.paths.absolute(path)).text()
+    const rewritten = parseWorkDocument(terminalSource)
+    rewritten.body += '\nRewritten after completion.\n'
+    await expect(publishReplacement(store, 'G-1', path, terminalSource, rewritten)).rejects.toThrow(
+      'terminal Work is immutable',
+    )
   })
 
-  test('rejects a second nonterminal Planning Work without publishing it', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-    const created = await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    expect(created.goal.body).not.toContain('## Constraints')
-    expect(created.goal.body).not.toContain('## Non-Goals')
-    expect(created.goal.body).not.toContain('## Success Criteria')
-    expect(created.works.get('plan-initial')?.body).not.toContain('Ship it.')
-    const secondPlanningPath = store.paths.workDocument('G-1', 'plan-second')
-
-    await expect(
-      publisher.publish({
-        root: store.paths.publicationRoot,
-        supportingWrites: [],
-        gateWrite: {
-          path: secondPlanningPath,
-          expectedHash: null,
-          content: renderWorkDocument({
-            attributes: {
-              id: 'plan-second',
-              title: 'Plan again',
-              kind: 'planning',
-              stage: 'plan',
-              notBefore: null,
-              dependsOn: [],
-              contractRevision: 1,
-              evidenceRefs: [],
-              contextRefs: [],
-              ownerMessages: [],
-            },
-            body: 'Plan again.\n',
-          }),
-        },
-        validateCandidate: async (candidate) => {
-          const { readAndValidateGoalPackage } = await import('../src/domain/goalPackage')
-          await readAndValidateGoalPackage(candidate, store.paths, 'G-1')
-        },
-      }),
-    ).rejects.toBeInstanceOf(GoalPackageValidationError)
-
-    expect(await Bun.file(store.paths.absolute(secondPlanningPath)).exists()).toBe(false)
-  })
-
-  test('rejects Planning Work more than one revision ahead of its Goal', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const planningPath = store.paths.workDocument('G-1', 'plan-initial')
-    const currentSource = await Bun.file(store.paths.absolute(planningPath)).text()
-    const planning = parseWorkDocument(currentSource)
-    planning.attributes.contractRevision = 3
-
-    await expect(
-      publisher.publish({
-        root: store.paths.publicationRoot,
-        supportingWrites: [],
-        gateWrite: {
-          path: planningPath,
-          expectedHash: await hashBytes(new TextEncoder().encode(currentSource)),
-          content: renderWorkDocument(planning),
-        },
-        validateCandidate: async (candidate) => {
-          const { readAndValidateGoalPackage } = await import('../src/domain/goalPackage')
-          await readAndValidateGoalPackage(candidate, store.paths, 'G-1')
-        },
-      }),
-    ).rejects.toThrow('invalid contractRevision')
-
-    expect(await Bun.file(store.paths.absolute(planningPath)).text()).toBe(currentSource)
-  })
-
-  test('keeps routed Inputs byte-immutable after their first publication', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const inputPath = store.paths.inputDocument('G-1', 'H-1', 'EV-1')
-    const inputSource = renderInputDocument({
+  test('keeps accepted Inputs byte-immutable', async () => {
+    const store = setup()
+    await store.createGoal({
+      goalId: 'G-1',
+      title: 'Ship route',
+      objective: 'Ship the route.',
+      firstWork: engineering('W-1'),
+    })
+    const path = store.paths.inputDocument('G-1', 'H-1', 'EV-1')
+    const content = renderInputDocument({
       attributes: {
         sourceHomeId: 'H-1',
         sourceEventId: 'EV-1',
         sourceDigest: 'a'.repeat(64),
         attachments: [],
       },
-      body: 'Original user instruction.\n',
+      body: 'Original words.\n',
     })
     await store.publishGoal('G-1', {
-      supportingWrites: [{ path: inputPath, expectedHash: null, content: inputSource }],
+      supportingWrites: [{ path, expectedHash: null, content }],
     })
-
     await expect(
       store.publishGoal('G-1', {
         supportingWrites: [
           {
-            path: inputPath,
-            expectedHash: await hashBytes(new TextEncoder().encode(inputSource)),
-            content: inputSource.replace('Original', 'Rewritten'),
+            path,
+            expectedHash: await hashBytes(new TextEncoder().encode(content)),
+            content: content.replace('Original', 'Rewritten'),
           },
         ],
       }),
-    ).rejects.toThrow('Input is immutable')
-
-    expect(await Bun.file(store.paths.absolute(inputPath)).text()).toBe(inputSource)
+    ).rejects.toBeInstanceOf(GoalPackageValidationError)
   })
 
-  test('allows current dependency edges on nonterminal Work to be rewired', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const planningPath = store.paths.workDocument('G-1', 'plan-initial')
-    const planningSource = await Bun.file(store.paths.absolute(planningPath)).text()
-    const planning = parseWorkDocument(planningSource)
-    planning.attributes.stage = 'done'
-    const firstWork = engineeringWork('W-1', [])
-    const secondWork = engineeringWork('W-2', ['W-1'])
-    const secondWorkPath = store.paths.workDocument('G-1', 'W-2')
-
-    await store.publishGoal('G-1', {
-      supportingWrites: [
-        {
-          path: store.paths.workDocument('G-1', 'W-1'),
-          expectedHash: null,
-          content: renderWorkDocument(firstWork),
-        },
-        {
-          path: secondWorkPath,
-          expectedHash: null,
-          content: renderWorkDocument(secondWork),
-        },
-      ],
-      gateWrite: {
-        path: planningPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(planningSource)),
-        content: renderWorkDocument(planning),
-      },
-    })
-
-    const secondSource = await Bun.file(store.paths.absolute(secondWorkPath)).text()
-    secondWork.attributes.dependsOn = []
-    await store.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path: secondWorkPath,
-        expectedHash: await hashBytes(new TextEncoder().encode(secondSource)),
-        content: renderWorkDocument(secondWork),
-      },
-    })
-    expect(
-      parseWorkDocument(await Bun.file(store.paths.absolute(secondWorkPath)).text()).attributes
-        .dependsOn,
-    ).toEqual([])
-  })
-
-  test('keeps the original Goal statement immutable even across revisions', async () => {
-    const publisher = new PublicationCoordinator()
-    const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const goalPath = store.paths.goalDocument('G-1')
-    const source = await Bun.file(store.paths.absolute(goalPath)).text()
-    const goal = parseGoalDocument(source)
-    goal.body += '\nNew success criterion.\n'
-
-    await expect(
-      store.publishGoal('G-1', {
-        supportingWrites: [],
-        gateWrite: {
-          path: goalPath,
-          expectedHash: await hashBytes(new TextEncoder().encode(source)),
-          content: renderGoalDocument(goal),
-        },
-      }),
-    ).rejects.toThrow('Goal identity, title, and original statement are immutable')
-  })
-
-  test('reuses the Coordinator reconciliation snapshot until publication changes', async () => {
+  test('caches a reconciliation snapshot until publication advances', async () => {
     const publisher = new CountingPublicationCoordinator()
     const writer = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
-    await writer.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
+    await writer.createGoal({
+      goalId: 'G-1',
+      title: 'Ship route',
+      objective: 'Ship the route.',
+      firstWork: engineering('W-1'),
+    })
     const reader = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
     publisher.snapshotTreeReads = 0
-
     const [first, concurrent] = await Promise.all([
       reader.readReconciliationSnapshot(),
       reader.readReconciliationSnapshot(),
     ])
-    expect([...first.keys()]).toEqual(['G-1'])
     expect(concurrent).toBe(first)
-    expect([...(await reader.readReconciliationSnapshot()).keys()]).toEqual(['G-1'])
     expect(publisher.snapshotTreeReads).toBe(1)
 
     await publisher.publish({
@@ -387,27 +226,33 @@ describe('createGoalPackageStore', () => {
       ],
       validateCandidate() {},
     })
-    expect([...(await reader.readReconciliationSnapshot()).keys()]).toEqual(['G-1'])
+    await reader.readReconciliationSnapshot()
     expect(publisher.snapshotTreeReads).toBe(2)
   })
 })
 
-class CountingPublicationCoordinator extends PublicationCoordinator {
-  snapshotTreeReads = 0
+function setup() {
+  return createGoalPackageStore(temporaryRoot, 'P-1', new PublicationCoordinator())
+}
 
-  override snapshotTreeAtGeneration(root: PublicationRoot, prefix = '') {
-    this.snapshotTreeReads += 1
-    return super.snapshotTreeAtGeneration(root, prefix)
+function engineering(id: string) {
+  return {
+    id,
+    title: `Build ${id}`,
+    kind: 'engineering' as const,
+    objective: `Implement ${id}.`,
+    acceptanceCriteria: [`${id} is verified.`],
   }
 }
 
-function engineeringWork(id: string, dependsOn: string[]) {
+function engineeringDocument(id: string, dependsOn: string[] = []) {
   return {
     attributes: {
       id,
       title: `Build ${id}`,
       kind: 'engineering' as const,
-      stage: 'generate' as const,
+      status: 'open' as const,
+      createdAt: '2026-08-14T00:00:00.000Z',
       notBefore: null,
       dependsOn,
       contractRevision: 1,
@@ -416,5 +261,46 @@ function engineeringWork(id: string, dependsOn: string[]) {
       ownerMessages: [],
     },
     body: `Implement ${id}.\n`,
+  }
+}
+
+async function publishNewWork(
+  store: ReturnType<typeof createGoalPackageStore>,
+  goalId: string,
+  work: ReturnType<typeof engineeringDocument>,
+) {
+  return store.publishGoal(goalId, {
+    supportingWrites: [],
+    gateWrite: {
+      path: store.paths.workDocument(goalId, work.attributes.id),
+      expectedHash: null,
+      content: renderWorkDocument(work),
+    },
+  })
+}
+
+async function publishReplacement(
+  store: ReturnType<typeof createGoalPackageStore>,
+  goalId: string,
+  path: string,
+  source: string,
+  work: ReturnType<typeof parseWorkDocument>,
+) {
+  return store.publishGoal(goalId, {
+    supportingWrites: [],
+    gateWrite: {
+      path,
+      expectedHash: await hashBytes(new TextEncoder().encode(source)),
+      content: renderWorkDocument(work),
+    },
+  })
+}
+
+class CountingPublicationCoordinator extends PublicationCoordinator {
+  snapshotTreeReads = 0
+
+  override snapshotTreeAtGeneration(root: PublicationRoot, prefix = '') {
+    this.snapshotTreeReads += 1
+    return super.snapshotTreeAtGeneration(root, prefix)
   }
 }

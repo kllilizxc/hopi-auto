@@ -1,11 +1,9 @@
-import type { Responsibility } from './roleContextStager'
 import type { RunAttemptDiagnostics } from './runAttemptDiagnostics'
 import type { RunTermination } from './runRequest'
 
 export interface RunCostEntry {
   workId: string
   runId: string
-  responsibility: Responsibility
   status: 'queued' | 'running' | 'settled'
   termination: RunTermination | null
   diagnostics: RunAttemptDiagnostics

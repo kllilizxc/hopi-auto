@@ -181,7 +181,6 @@ describe('Assistant wake trigger', () => {
           projectId: 'P-1',
           goalId: 'G-1',
           workId: 'W-1',
-          responsibility: 'generator',
           runId: 'R-1',
           status: 'running',
           requestedAt: '2026-07-25T00:00:00.000Z',
@@ -217,19 +216,6 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(1)
   })
 
-  test('wakes immediately for a published Planning outcome before Engineering dispatch', async () => {
-    const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
-    fixture.setSnapshot(planningOutcomeSnapshot())
-
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
-    await fixture.wake.waitForIdle()
-
-    const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
-    expect(event?.attributes.context?.projectId).toBe('P-1')
-    expect(event?.body).toContain('attempt:P-1:G-1:planning:R-plan-1:normal')
-  })
-
   test('publishes a state edge without requiring a cached speaking Session', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
@@ -240,20 +226,20 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.workspace.readWorkspace()).events.size).toBe(1)
   })
 
-  test('wakes for each published Reviewer reject while the repair Generator is active', async () => {
+  test('wakes for a settled Work while another Work is active', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
 
-    fixture.setSnapshot(reviewerRejectSnapshot('R-review-1', 'R-generator-2', '6'))
+    fixture.setSnapshot(settlementSnapshot('R-settled-1', 'R-active-1', '6'))
     expect(await fixture.wake.observe({ settled: false })).toBe('started')
     await fixture.wake.waitForIdle()
 
-    fixture.setSnapshot(reviewerRejectSnapshot('R-review-2', 'R-generator-3', '7'))
+    fixture.setSnapshot(settlementSnapshot('R-settled-2', 'R-active-2', '7'))
     expect(await fixture.wake.observe({ settled: false })).toBe('deferred')
     expect((await fixture.wake.listRuns()).length).toBe(1)
 
     const firstEvent = [...(await fixture.workspace.readWorkspace()).events.values()][0]
-    if (!firstEvent) throw new Error('Expected first Reviewer reject wake')
+    if (!firstEvent) throw new Error('Expected first settlement wake')
     await fixture.workspace.handleEvent(firstEvent.attributes.id, {
       reply: 'Observed.',
       disposition: 'silent',
@@ -264,21 +250,21 @@ describe('Assistant wake trigger', () => {
     expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
-  test('wakes again when the repair Generator has another settled interruption', async () => {
+  test('wakes again for a later settled Run identity', async () => {
     const fixture = await setup(['P-1'])
     expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
 
-    fixture.setSnapshot(reviewerRejectSnapshot('R-review-1', 'R-generator-2', '6'))
+    fixture.setSnapshot(settlementSnapshot('R-settled-1', 'R-active-1', '6'))
     expect(await fixture.wake.observe({ settled: false })).toBe('started')
     await fixture.wake.waitForIdle()
     const firstEvent = [...(await fixture.workspace.readWorkspace()).events.values()][0]
-    if (!firstEvent) throw new Error('Expected Reviewer reject wake')
+    if (!firstEvent) throw new Error('Expected settlement wake')
     await fixture.workspace.handleEvent(firstEvent.attributes.id, {
       reply: 'Observed.',
       disposition: 'silent',
     })
 
-    fixture.setSnapshot(reviewerRejectSnapshot('R-review-1', 'R-generator-3', '7'))
+    fixture.setSnapshot(settlementSnapshot('R-settled-2', 'R-active-2', '7'))
     expect(await fixture.wake.observe({ settled: false })).toBe('started')
     await fixture.wake.waitForIdle()
 
@@ -393,7 +379,6 @@ function snapshot(
       projects: projectDigests,
     },
     activeRuns: [],
-    delegations: [],
     workspaceAttentions: overrides.workspaceAttentions ?? [],
     projects: projectIds.map((projectId) => ({
       projectId,
@@ -446,9 +431,9 @@ function snapshotAttention(id: string, projectId: string) {
   }
 }
 
-function reviewerRejectSnapshot(
-  reviewerRunId: string,
-  generatorRunId: string,
+function settlementSnapshot(
+  settledRunId: string,
+  activeRunId: string,
   digestCharacter: string,
 ): AssistantStateSnapshot {
   const current = snapshot(['P-1'], {
@@ -460,9 +445,8 @@ function reviewerRejectSnapshot(
       {
         projectId: 'P-1',
         goalId: 'G-1',
-        workId: 'W-1',
-        responsibility: 'generator',
-        runId: generatorRunId,
+        workId: 'W-active',
+        runId: activeRunId,
         status: 'running',
         requestedAt: '2026-07-25T00:00:00.000Z',
         startedAt: '2026-07-25T00:00:00.000Z',
@@ -502,37 +486,45 @@ function reviewerRejectSnapshot(
             acceptedInputs: [],
             design: [],
             attentions: [],
-            latestPlanningOutcome: null,
             works: [
               {
                 attributes: {
-                  id: 'W-1',
-                  title: 'Work',
-                  kind: 'engineering',
-                  stage: 'generate',
+                  id: 'W-settled',
+                  title: 'Resolved question',
+                  kind: 'decision',
+                  decisionType: 'research',
+                  status: 'open',
+                  createdAt: '2026-07-25T00:00:00.000Z',
                   notBefore: null,
                   dependsOn: [],
                   contractRevision: 1,
+                  evidenceRefs: [],
+                  contextRefs: [],
+                  ownerMessages: [],
                 },
-                path: '/tmp/G-1/works/W-1.md',
+                path: '/tmp/G-1/works/W-settled.md',
                 projection: null,
                 runtime: runtime([
-                  attempt(generatorRunId, 'generator', 'running', null, null),
-                  attempt(
-                    `${generatorRunId}-interrupted`,
-                    'generator',
-                    'settled',
-                    'interrupted',
-                    'The Generator Run was interrupted.',
-                  ),
-                  attempt(
-                    reviewerRunId,
-                    'reviewer',
-                    'settled',
-                    'normal',
-                    'Reviewer found changes that need another Build Run.',
-                  ),
+                  attempt(settledRunId, 'settled', 'normal', 'The Worker resolved the question.'),
                 ]),
+              },
+              {
+                attributes: {
+                  id: 'W-active',
+                  title: 'Active implementation',
+                  kind: 'engineering',
+                  status: 'open',
+                  createdAt: '2026-07-25T00:00:00.000Z',
+                  notBefore: null,
+                  dependsOn: [],
+                  contractRevision: 1,
+                  evidenceRefs: [],
+                  contextRefs: [],
+                  ownerMessages: [],
+                },
+                path: '/tmp/G-1/works/W-active.md',
+                projection: null,
+                runtime: runtime([attempt(activeRunId, 'running', null, null)]),
               },
             ],
           },
@@ -542,68 +534,14 @@ function reviewerRejectSnapshot(
   }
 }
 
-function planningOutcomeSnapshot(): AssistantStateSnapshot {
-  const current = reviewerRejectSnapshot('R-unused-review', 'R-unused-generator', '8')
-  const project = current.projects[0]
-  const goal = project?.goals[0]
-  if (!project || !goal) throw new Error('Missing planning snapshot Project')
-  return {
-    ...current,
-    activeRuns: [],
-    projects: [
-      {
-        ...project,
-        goals: [
-          {
-            ...goal,
-            latestPlanningOutcome: {
-              attributes: {
-                id: 'plan-initial',
-                title: 'Plan current Goal',
-                kind: 'planning',
-                stage: 'done',
-                notBefore: null,
-                dependsOn: [],
-                contractRevision: 1,
-              },
-              path: '/tmp/G-1/works/plan-initial.md',
-              runtime: runtime([
-                attempt(
-                  'R-plan-1',
-                  'planner',
-                  'settled',
-                  'normal',
-                  'Planner reported the recommended Work boundary.',
-                ),
-              ]),
-              evidence: {
-                count: 1,
-                latest: {
-                  id: 'E-R-plan-1',
-                  producerRun: 'R-plan-1',
-                  artifactCount: 0,
-                  path: '/tmp/G-1/evidence/E-R-plan-1.md',
-                },
-              },
-            },
-            works: [],
-          },
-        ],
-      },
-    ],
-  }
-}
-
 function attempt(
   runId: string,
-  responsibility: AssistantStateRecentAttempt['responsibility'],
   status: AssistantStateRecentAttempt['status'],
   termination: AssistantStateRecentAttempt['termination'],
   reportMarkdown: string | null,
 ): AssistantStateRecentAttempt {
   return {
     runId,
-    responsibility,
     status,
     termination,
     startedAt: '2026-07-25T00:00:00.000Z',
@@ -615,7 +553,7 @@ function attempt(
 
 function runtime(recentAttempts: AssistantStateRecentAttempt[]): AssistantStateRuntime {
   return {
-    activeResponsibility: null,
+    active: recentAttempts.some((attempt) => attempt.status === 'running'),
     latestAttempt: null,
     attemptCount: recentAttempts.length,
     recentAttempts,

@@ -10,7 +10,6 @@ import {
 import type {
   AssistantStateEvidenceDetail,
   AssistantStateGoalSnapshot,
-  AssistantStatePlanningOutcome,
   AssistantStateProjectSnapshot,
   AssistantStateRuntime,
   AssistantStateSnapshot,
@@ -28,7 +27,9 @@ export function assistantStateProjection(
     workspaceAttentions: scope.projectId
       ? snapshot.workspaceAttentions.filter((attention) => attention.projectId === scope.projectId)
       : snapshot.workspaceAttentions.map(compactWorkspaceAttentionIndex),
-    projects: snapshot.projects.map(compactProjectStateIndex),
+    projects: snapshot.projects.map((project) =>
+      compactProjectStateIndex(project, scope.goalId !== undefined),
+    ),
   }
 }
 
@@ -86,7 +87,7 @@ function compactWorkspaceAttentionIndex(value: AssistantStateWorkspaceAttention)
   return { ...rest, creationRationale: boundedStateText(body, 320) }
 }
 
-function compactProjectStateIndex(value: AssistantStateProjectSnapshot) {
+function compactProjectStateIndex(value: AssistantStateProjectSnapshot, includeWorkBody: boolean) {
   return {
     projectId: value.projectId,
     ...(value.label ? { label: value.label } : {}),
@@ -94,7 +95,7 @@ function compactProjectStateIndex(value: AssistantStateProjectSnapshot) {
     available: value.available,
     releaseHead: value.releaseHead,
     repos: value.repos.map(compactRepoStateIndex),
-    goals: value.goals.map(compactGoalStateIndex),
+    goals: value.goals.map((goal) => compactGoalStateIndex(goal, includeWorkBody)),
   }
 }
 
@@ -106,17 +107,13 @@ function compactRepoStateIndex(value: AssistantStateProjectSnapshot['repos'][num
   }
 }
 
-function compactGoalStateIndex(value: AssistantStateGoalSnapshot) {
+function compactGoalStateIndex(value: AssistantStateGoalSnapshot, includeWorkBody: boolean) {
   return {
     goal: compactDocumentStateIndex(value.goal),
     acceptedInputs: value.acceptedInputs.map(compactGoalInputStateIndex),
     design: value.design.map(compactDesignStateIndex),
     attentions: value.attentions.map(compactGoalAttentionStateIndex),
-    latestPlanningOutcome:
-      value.latestPlanningOutcome === null
-        ? null
-        : compactWorkStateIndex(value.latestPlanningOutcome, false),
-    works: value.works.map((work) => compactWorkStateIndex(work, true)),
+    works: value.works.map((work) => compactWorkStateIndex(work, true, includeWorkBody)),
   }
 }
 
@@ -154,12 +151,14 @@ function compactGoalAttentionStateIndex(value: AssistantStateGoalSnapshot['atten
 }
 
 function compactWorkStateIndex(
-  value: AssistantStateWorkSnapshot | AssistantStatePlanningOutcome,
+  value: AssistantStateWorkSnapshot,
   includeSummary: boolean,
+  includeBody: boolean,
 ) {
   return {
     attributes: value.attributes,
     path: value.path,
+    ...(includeBody ? { body: boundedStateText(value.body, 4_000) } : {}),
     ...('projection' in value && value.projection ? { projection: value.projection } : {}),
     ...('candidateIntegration' in value && value.candidateIntegration
       ? { currentCandidateIntegration: value.candidateIntegration }
@@ -182,7 +181,6 @@ function compactRuntimeStateIndex(value: AssistantStateRuntime, includeSummary: 
   const latestAttempt = value.latestAttempt
     ? {
         runId: value.latestAttempt.runId,
-        responsibility: value.latestAttempt.responsibility,
         status: value.latestAttempt.status,
         termination: value.latestAttempt.termination,
         ...(includeSummary && value.latestAttempt.reportMarkdown
@@ -191,12 +189,11 @@ function compactRuntimeStateIndex(value: AssistantStateRuntime, includeSummary: 
       }
     : null
   return {
-    activeResponsibility: value.activeResponsibility,
+    active: value.active,
     latestAttempt,
     attemptCount: value.attemptCount,
     recentAttempts: value.recentAttempts.slice(0, 3).map((attempt) => ({
       runId: attempt.runId,
-      responsibility: attempt.responsibility,
       status: attempt.status,
       termination: attempt.termination,
       startedAt: attempt.startedAt,

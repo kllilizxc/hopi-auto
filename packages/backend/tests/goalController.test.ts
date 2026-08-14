@@ -1,12 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  parseWorkDocument,
-  renderInputDocument,
-  renderWorkDocument,
-} from '../src/domain/canonicalDocuments'
-import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+import { parseWorkDocument, renderInputDocument } from '../src/domain/canonicalDocuments'
+import { PublicationCoordinator } from '../src/publication/publisher'
 import { createGoalController } from '../src/runtime/goalController'
 import { createGoalPackageStore } from '../src/storage/goalPackageStore'
 
@@ -17,385 +13,158 @@ beforeEach(async () => {
   await mkdir(temporaryRoot, { recursive: true })
 })
 
-afterEach(async () => {
-  await rm(temporaryRoot, { recursive: true, force: true })
-})
+afterEach(() => rm(temporaryRoot, { recursive: true, force: true }))
 
 describe('GoalController', () => {
-  test('keeps reused Planning prose model-owned', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-
-    await controller.ensurePlanning('G-1', 'Assess the first trigger.')
-    const first = (await store.readPackage('G-1')).works.get('plan-initial')
-
-    await controller.ensurePlanning('G-1', 'Reconcile the latest accepted instruction.')
-    const latest = (await store.readPackage('G-1')).works.get('plan-initial')
-    expect(latest?.body).toBe(first?.body)
-  })
-
-  test('Pause and Resume retain lifecycle simplicity and ensure Planning before activation', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const initialPlanning = await markPlanningDone(store, 'G-1', 'plan-initial')
-
-    await expect(controller.pauseGoal('G-1')).resolves.toMatchObject({
-      attributes: { lifecycle: 'paused' },
-    })
-    const resumed = await controller.resumeGoal('G-1')
-    const goalPackage = await store.readPackage('G-1')
-
-    expect(resumed.attributes.lifecycle).toBe('active')
-    expect(initialPlanning.attributes.stage).toBe('done')
-    expect(
-      [...goalPackage.works.values()].filter(
-        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-      ),
-    ).toHaveLength(1)
-  })
-
-  test('installs current Planning and leaves prior Engineering authority stale', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await markPlanningDone(store, 'G-1', 'plan-initial')
-    await publishEngineering(store, 'G-1', {
-      id: 'W-1',
-      stage: 'review',
+  test('creates both Work kinds and validates dependencies against the current DAG', async () => {
+    const { store, controller } = await setup()
+    const decision = await controller.createWork('G-1', {
+      kind: 'decision',
+      title: 'Choose the visual hierarchy',
+      decisionType: 'prototype',
+      question: 'Which route composition is readable at a glance?',
       dependsOn: [],
     })
-
-    const revised = await controller.applyMaterialInstruction('G-1', {
-      contractChange: 'Add a measurable latency criterion before implementation continues.',
-      acceptedInput: acceptedInput(store, 'EV-revise'),
+    const engineering = await controller.createWork('G-1', {
+      kind: 'engineering',
+      title: 'Implement the chosen hierarchy',
+      objective: 'Implement the accepted route composition.',
+      acceptanceCriteria: ['The route reads from left to right.'],
+      dependsOn: [decision.attributes.id],
     })
-    const goalPackage = await store.readPackage('G-1')
 
-    expect(revised.attributes.contractRevision).toBe(2)
-    expect(revised.body).toBe('## Objective\n\nShip it.\n')
-    expect(goalPackage.works.get('W-1')?.attributes).toMatchObject({
-      stage: 'review',
-      contractRevision: 1,
-    })
-    const currentPlanning = [...goalPackage.works.values()].find(
-      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-    )
-    expect(currentPlanning?.attributes.contractRevision).toBe(2)
-    expect(currentPlanning?.body).toContain(
-      'Add a measurable latency criterion before implementation continues.',
-    )
-
-    const repeated = await controller.applyMaterialInstruction('G-1', {
-      contractChange: 'Add a measurable latency criterion before implementation continues.',
-      acceptedInput: acceptedInput(store, 'EV-revise', false),
-    })
-    expect(repeated.attributes.contractRevision).toBe(2)
+    expect(decision.attributes.kind).toBe('decision')
+    expect(engineering.attributes.dependsOn).toEqual([decision.attributes.id])
+    await expect(
+      controller.setWorkDependencies('G-1', decision.attributes.id, [engineering.attributes.id]),
+    ).rejects.toThrow('Work dependency cycle')
   })
 
-  test('applies a material revision after its Inbox Input was already accepted', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const inputPath = store.paths.inputDocument('G-1', 'H-1', 'EV-revise')
-    const inputWrite = {
-      path: inputPath,
-      expectedHash: null,
-      content: renderInputDocument({
-        attributes: {
-          sourceHomeId: 'H-1',
-          sourceEventId: 'EV-revise',
-          sourceDigest: 'a'.repeat(64),
-          attachments: [],
-        },
-        body: 'Use a local Project Preview assembled from all linked services.\n',
-      }),
-    }
-    await controller.ensurePlanning('G-1', 'Assess the current contract.', {
-      path: inputPath,
-      write: inputWrite,
+  test('revises the current Goal contract and leaves older Work visibly stale', async () => {
+    const { store, controller } = await setup()
+    const original = (await store.readPackage('G-1')).works.get('W-root')
+    const input = acceptedInput(store, 'EV-revise')
+    const revised = await controller.reviseContract('G-1', {
+      contractMarkdown: '## Objective\n\nShip the route with keyboard navigation.\n',
+      acceptedInput: input,
     })
-
-    const revised = await controller.applyMaterialInstruction('G-1', {
-      contractChange: 'Exercise all linked services in the local Project Preview.',
-      acceptedInput: { path: inputPath, write: null },
-    })
-    const goalPackage = await store.readPackage('G-1')
-    const planning = [...goalPackage.works.values()].find(
-      (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-    )
 
     expect(revised.attributes.contractRevision).toBe(2)
-    expect(planning?.attributes.contractRevision).toBe(2)
-    expect(planning?.body).toContain('Exercise all linked services in the local Project Preview.')
-    expect(planning?.body).not.toContain('Reassess accepted Inbox event')
-
-    const repeated = await controller.applyMaterialInstruction('G-1', {
-      contractChange: 'Exercise all linked services in the local Project Preview.',
-      acceptedInput: { path: inputPath, write: null },
-    })
-    expect(repeated.attributes.contractRevision).toBe(2)
-  })
-
-  test('consumes next-revision Work support left before the Goal revision gate', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    const path = store.paths.workDocument('G-1', 'plan-initial')
-    const source = await Bun.file(store.paths.absolute(path)).text()
-    const staged = parseWorkDocument(source)
-    staged.attributes.contractRevision = 2
-    await store.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderWorkDocument(staged),
-      },
-    })
-
-    const goal = await controller.applyMaterialInstruction('G-1', {
-      contractChange: 'Adopt the revised requirement.',
-      acceptedInput: acceptedInput(store, 'EV-recover'),
-    })
-
-    expect(goal.attributes.contractRevision).toBe(2)
+    expect((await store.readPackage('G-1')).works.get('W-root')).toEqual(original)
     expect(
-      (await store.readPackage('G-1')).works.get('plan-initial')?.attributes.contractRevision,
-    ).toBe(2)
+      await Bun.file(
+        store.paths.absolute(store.paths.inputDocument('G-1', 'H-1', 'EV-revise')),
+      ).exists(),
+    ).toBe(true)
   })
 
-  test('guards cancellation first and then cancels dependents before prerequisites', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await markPlanningDone(store, 'G-1', 'plan-initial')
-    await publishEngineering(store, 'G-1', {
-      id: 'W-1',
-      stage: 'generate',
-      dependsOn: [],
-    })
-    await publishEngineering(store, 'G-1', {
-      id: 'W-2',
-      stage: 'generate',
-      dependsOn: ['W-1'],
-    })
+  test('pause/resume do not manufacture Work and terminal reopen increments revision', async () => {
+    const { store, controller } = await setup()
+    const before = [...(await store.readPackage('G-1')).works.keys()]
+    await controller.pauseGoal('G-1')
+    await controller.resumeGoal('G-1')
+    expect([...(await store.readPackage('G-1')).works.keys()]).toEqual(before)
 
     await controller.cancelGoal('G-1')
-    const goalPackage = await store.readPackage('G-1')
+    const reopened = await controller.reopenGoal('G-1', {
+      eventId: 'EV-reopen',
+      contractMarkdown: '## Objective\n\nReopen with a revised destination.\n',
+    })
+    expect(reopened.attributes).toMatchObject({ lifecycle: 'active', contractRevision: 2 })
+  })
 
-    expect(goalPackage.goal.attributes.lifecycle).toBe('cancelled')
-    expect([...goalPackage.works.values()].map((work) => work.attributes.stage).sort()).toEqual([
-      'cancelled',
-      'cancelled',
-      'done',
+  test('cancels a dependency subtree in dependent-first order', async () => {
+    const { store, controller } = await setup()
+    const second = await controller.createWork('G-1', {
+      kind: 'engineering',
+      title: 'Second Work',
+      objective: 'Second.',
+      acceptanceCriteria: ['Second complete.'],
+      dependsOn: ['W-root'],
+    })
+    const third = await controller.createWork('G-1', {
+      kind: 'decision',
+      title: 'Third Work',
+      decisionType: 'research',
+      question: 'What does the second Work reveal?',
+      dependsOn: [second.attributes.id],
+    })
+
+    const cancelled = await controller.cancelWork('G-1', 'W-root')
+    expect(cancelled.map((work) => work.attributes.id)).toEqual([
+      third.attributes.id,
+      second.attributes.id,
+      'W-root',
     ])
-    await expect(controller.cancelGoal('G-1')).resolves.toMatchObject({
-      attributes: { lifecycle: 'cancelled' },
-    })
-  })
-
-  test('cancels one Engineering dependency subtree without changing Goal planning', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await markPlanningDone(store, 'G-1', 'plan-initial')
-    await publishEngineering(store, 'G-1', {
-      id: 'W-1',
-      stage: 'generate',
-      dependsOn: [],
-    })
-    await publishEngineering(store, 'G-1', {
-      id: 'W-2',
-      stage: 'generate',
-      dependsOn: ['W-1'],
-    })
-
-    const cancelled = await controller.cancelWork('G-1', 'W-1')
-    const goalPackage = await store.readPackage('G-1')
-
-    expect(cancelled.map((work) => work.attributes.id)).toEqual(['W-2', 'W-1'])
-    expect(goalPackage.goal.attributes.lifecycle).toBe('active')
-    expect(goalPackage.works.get('W-1')?.attributes.stage).toBe('cancelled')
-    expect(goalPackage.works.get('W-2')?.attributes.stage).toBe('cancelled')
     expect(
-      [...goalPackage.works.values()].filter(
-        (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
+      [...(await store.readPackage('G-1')).works.values()].every(
+        (work) => work.attributes.status === 'cancelled',
       ),
-    ).toHaveLength(0)
+    ).toBe(true)
   })
 
-  test('cancels one nonterminal Planning Work', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-
-    const cancelled = await controller.cancelWork('G-1', 'plan-initial')
-    const goalPackage = await store.readPackage('G-1')
-
-    expect(cancelled.map((work) => work.attributes.id)).toEqual(['plan-initial'])
-    expect(goalPackage.goal.attributes.lifecycle).toBe('active')
-    expect(goalPackage.works.get('plan-initial')?.attributes).toMatchObject({
-      kind: 'planning',
-      stage: 'cancelled',
-    })
-  })
-
-  test('changes nonterminal dependencies and rejects a cyclic graph', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await markPlanningDone(store, 'G-1', 'plan-initial')
-    await publishEngineering(store, 'G-1', {
-      id: 'W-1',
-      stage: 'generate',
-      dependsOn: [],
-    })
-    await publishEngineering(store, 'G-1', {
-      id: 'W-2',
-      stage: 'generate',
-      dependsOn: [],
-    })
-
-    await expect(controller.setWorkDependencies('G-1', 'W-2', ['W-1'])).resolves.toMatchObject({
-      attributes: { dependsOn: ['W-1'] },
-    })
-    await expect(controller.setWorkDependencies('G-1', 'W-1', ['W-2'])).rejects.toThrow(
-      'Engineering Work dependency cycle includes W-1',
-    )
-
-    const goalPackage = await store.readPackage('G-1')
-    expect(goalPackage.works.get('W-1')?.attributes.dependsOn).toEqual([])
-    expect(goalPackage.works.get('W-2')?.attributes.dependsOn).toEqual(['W-1'])
-  })
-
-  test('appends a source-traced message to nonterminal Work', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-
-    const updated = await controller.appendWorkMessage('G-1', 'plan-initial', {
+  test('schedules Work, records guidance idempotently, and lets Attention claim it', async () => {
+    const { store, controller } = await setup()
+    const scheduled = await controller.setWorkNotBefore('G-1', 'W-root', '2026-08-15T00:00:00.000Z')
+    expect(scheduled.attributes.notBefore).toBe('2026-08-15T00:00:00.000Z')
+    await controller.appendWorkMessage('G-1', 'W-root', {
       sourceEventId: 'EV-guidance',
-      content: 'Check the current API response before changing the contract.',
+      content: 'Preserve the one-path C1 boundary.',
     })
-
-    expect(updated.attributes.ownerMessages).toEqual([
-      {
-        recordedAt: '2026-07-11T00:00:00.000Z',
-        sourceEventId: 'EV-guidance',
-        content: 'Check the current API response before changing the contract.',
-      },
-    ])
-  })
-
-  test('repeats an already durable Work cancellation without creating Planning', async () => {
-    const { store, controller } = setup()
-    await store.createGoal({ goalId: 'G-1', title: 'Goal', objective: 'Ship it.' })
-    await markPlanningDone(store, 'G-1', 'plan-initial')
-    await publishEngineering(store, 'G-1', {
-      id: 'W-1',
-      stage: 'generate',
-      dependsOn: [],
+    await controller.appendWorkMessage('G-1', 'W-root', {
+      sourceEventId: 'EV-guidance',
+      content: 'Preserve the one-path C1 boundary.',
     })
-    const path = store.paths.workDocument('G-1', 'W-1')
-    const source = await Bun.file(store.paths.absolute(path)).text()
-    const work = parseWorkDocument(source)
-    work.attributes.stage = 'cancelled'
-    await store.publishGoal('G-1', {
-      supportingWrites: [],
-      gateWrite: {
-        path,
-        expectedHash: await hashBytes(new TextEncoder().encode(source)),
-        content: renderWorkDocument(work),
-      },
+    const attention = await controller.createAttention('P-1', 'G-1', 'W-root', {
+      attentionId: 'A-choice',
+      summary: 'Choose a route density.',
+      body: 'Should the graph optimize for breadth or detail?',
     })
-
-    expect(await controller.cancelWork('G-1', 'W-1')).toEqual([])
-    const goalPackage = await store.readPackage('G-1')
-    expect(
-      [...goalPackage.works.values()].filter(
-        (candidate) =>
-          candidate.attributes.kind === 'planning' && candidate.attributes.stage === 'plan',
-      ),
-    ).toHaveLength(0)
+    const work = parseWorkDocument(
+      await Bun.file(store.paths.absolute(store.paths.workDocument('G-1', 'W-root'))).text(),
+    )
+    expect(work.attributes.ownerMessages).toHaveLength(1)
+    expect(attention.attributes.target).toBe('project:P-1/goal:G-1/work:W-root')
   })
 })
 
-function setup() {
-  const publisher = new PublicationCoordinator()
-  const store = createGoalPackageStore(temporaryRoot, 'P-1', publisher)
+async function setup() {
+  const store = createGoalPackageStore(temporaryRoot, 'P-1', new PublicationCoordinator())
+  await store.createGoal({
+    goalId: 'G-1',
+    title: 'Ship route',
+    objective: 'Ship the current route.',
+    firstWork: {
+      id: 'W-root',
+      title: 'Build the route',
+      kind: 'engineering',
+      objective: 'Build the route.',
+      acceptanceCriteria: ['The route is usable.'],
+    },
+    createdAt: '2026-08-14T00:00:00.000Z',
+  })
   const controller = createGoalController(store, {
-    now: () => new Date('2026-07-11T00:00:00Z'),
+    now: () => new Date('2026-08-14T01:00:00.000Z'),
   })
   return { store, controller }
 }
 
-function acceptedInput(
-  store: ReturnType<typeof createGoalPackageStore>,
-  eventId: string,
-  includeWrite = true,
-) {
+function acceptedInput(store: ReturnType<typeof createGoalPackageStore>, eventId: string) {
   const path = store.paths.inputDocument('G-1', 'H-1', eventId)
   return {
     path,
-    write: includeWrite
-      ? {
-          path,
-          expectedHash: null,
-          content: renderInputDocument({
-            attributes: {
-              sourceHomeId: 'H-1',
-              sourceEventId: eventId,
-              sourceDigest: 'a'.repeat(64),
-              attachments: [],
-            },
-            body: 'Apply the accepted contract change.\n',
-          }),
-        }
-      : null,
-  }
-}
-
-async function publishEngineering(
-  store: ReturnType<typeof createGoalPackageStore>,
-  goalId: string,
-  input: {
-    id: string
-    stage: 'generate' | 'review'
-    dependsOn: string[]
-  },
-) {
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path: store.paths.workDocument(goalId, input.id),
+    write: {
+      path,
       expectedHash: null,
-      content: renderWorkDocument({
+      content: renderInputDocument({
         attributes: {
-          id: input.id,
-          title: `Build ${input.id}`,
-          kind: 'engineering',
-          stage: input.stage,
-          notBefore: null,
-          dependsOn: input.dependsOn,
-          contractRevision: 1,
-          evidenceRefs: [],
-          contextRefs: [],
-          ownerMessages: [],
+          sourceHomeId: 'H-1',
+          sourceEventId: eventId,
+          sourceDigest: 'a'.repeat(64),
+          attachments: [],
         },
-        body: `Implement ${input.id}.\n`,
+        body: 'Revise the accepted destination.\n',
       }),
     },
-  })
-}
-
-async function markPlanningDone(
-  store: ReturnType<typeof createGoalPackageStore>,
-  goalId: string,
-  workId: string,
-) {
-  const path = store.paths.workDocument(goalId, workId)
-  const source = await Bun.file(store.paths.absolute(path)).text()
-  const planning = parseWorkDocument(source)
-  planning.attributes.stage = 'done'
-  await store.publishGoal(goalId, {
-    supportingWrites: [],
-    gateWrite: {
-      path,
-      expectedHash: await hashBytes(new TextEncoder().encode(source)),
-      content: renderWorkDocument(planning),
-    },
-  })
-  return planning
+  }
 }

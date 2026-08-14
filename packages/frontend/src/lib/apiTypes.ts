@@ -1,14 +1,5 @@
 export type GoalLifecycle = 'active' | 'paused' | 'done' | 'cancelled'
-export type KanbanColumn = 'Plan' | 'Build' | 'Review' | 'Done'
-export type WorkBadge =
-  | 'Needs you'
-  | 'Waiting for Assistant'
-  | 'working'
-  | 'scheduled'
-  | 'queued'
-  | 'waiting'
-export type Responsibility = 'planner' | 'generator' | 'reviewer'
-export type ConfigurableAgentRole = 'assistant' | Responsibility
+export type ConfigurableAgent = 'assistant' | 'worker'
 export type RunAttemptStatus = 'queued' | 'running' | 'settled'
 export type RunTermination =
   | 'normal'
@@ -18,7 +9,7 @@ export type RunTermination =
   | 'timed_out'
 export type RunWorkspaceMode = 'none' | 'read_only' | 'isolated_write'
 export type CodingAgentTransport = 'codex' | 'claude' | 'opencode'
-export type CodingReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+export type CodingReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export type ProjectCodingDefaults =
   | {
@@ -31,7 +22,7 @@ export type ProjectCodingDefaults =
       model?: string
     }
 
-export interface AgentRoleCodingSettings {
+export interface AgentCodingSettings {
   codingDefaults: ProjectCodingDefaults
   inherited: boolean
   configurable: boolean
@@ -292,14 +283,13 @@ export interface AssistantFeedChanges {
 export interface AppSnapshot {
   home: {
     homeId: string
-    agentRoleCodingDefaults: Record<ConfigurableAgentRole, AgentRoleCodingSettings>
+    agentCodingDefaults: Record<ConfigurableAgent, AgentCodingSettings>
   }
   projects: ProjectSummary[]
   attentions: AttentionView[]
   activeRuns: Array<{
     key: string
     runId: string
-    responsibility: Responsibility
     status: 'queued' | 'running'
     requestedAt: string
     startedAt: string | null
@@ -314,23 +304,29 @@ export interface AgentPlanItem {
   completed: boolean
 }
 
-export interface AgentPlanSnapshot {
-  transport: AgentRuntimeTransport
-  planId: string
-  status: 'active' | 'completed'
-  items: AgentPlanItem[]
-  vendorEventType?: string
-}
-
-export interface WorkAgentPlan extends AgentPlanSnapshot {
-  runId: string
-}
+export type WorkKind = 'decision' | 'engineering'
+export type WorkStatus = 'open' | 'done' | 'cancelled'
+export type DecisionType = 'research' | 'prototype' | 'grilling' | 'task'
+export type TaskMode = 'afk' | 'hitl'
+export type WorkRouteState =
+  | 'done'
+  | 'cancelled'
+  | 'needs_user'
+  | 'running'
+  | 'queued'
+  | 'scheduled'
+  | 'waiting_assistant'
+  | 'blocked'
+  | 'ready'
 
 export interface WorkView {
   id: string
   title: string
-  kind: 'planning' | 'engineering'
-  stage: 'plan' | 'generate' | 'review' | 'done' | 'cancelled'
+  kind: WorkKind
+  status: WorkStatus
+  createdAt: string
+  decisionType?: DecisionType
+  taskMode?: TaskMode
   notBefore: string | null
   dependsOn: string[]
   contractRevision: number
@@ -338,11 +334,9 @@ export interface WorkView {
   runAttemptCount: number
   completedAt: string | null
   body: string
-  agentPlan: WorkAgentPlan | null
   activeAttempt: {
     key: string
     runId: string
-    responsibility: Responsibility
     status: 'queued' | 'running'
     requestedAt: string
     startedAt: string | null
@@ -351,16 +345,25 @@ export interface WorkView {
   blockedBy: string | null
   projection: {
     workId: string
-    column: KanbanColumn | null
-    cancelled: boolean
+    state: WorkRouteState
     ready: boolean
-    responsibility: Responsibility | null
-    primaryBadge: WorkBadge | null
-    failedPredicates: string[]
+    failedPredicates: Array<
+      | 'terminal'
+      | 'goal_not_active'
+      | 'project_ineligible'
+      | 'stale_contract_revision'
+      | 'dependency_incomplete'
+      | 'dependency_cancelled'
+      | 'not_before'
+      | 'attention'
+      | 'settled_run'
+      | 'live_run'
+      | 'queued_run'
+    >
   }
 }
 
-export type WorkCardView = Omit<WorkView, 'body'>
+export type WorkRouteView = Omit<WorkView, 'body'>
 
 export interface WorkDocumentView {
   id: string
@@ -377,7 +380,6 @@ export interface RunAttemptSummary {
   goalId: string
   workId: string
   runId: string
-  responsibility: Responsibility
   workspaceMode: RunWorkspaceMode
   instructionMarkdown: string
   refs: string[]
@@ -456,7 +458,6 @@ export interface GoalExecutionCost {
   goalId: string
   summary: RunCostSummary
   byWork: Array<{ workId: string; summary: RunCostSummary }>
-  byResponsibility: Array<{ responsibility: Responsibility; summary: RunCostSummary }>
   runs: Array<RunAttemptSummary & { diagnostics: RunAttemptDiagnostics }>
 }
 
@@ -525,11 +526,25 @@ export interface GoalDetail {
   evidence: EvidenceView[]
 }
 
-export interface GoalBoardDetail {
+export interface GoalRouteDetail {
   projectId: string
   goal: GoalDetail['goal']
-  works: WorkCardView[]
-  attentions: AttentionSummaryView[]
+  works: WorkRouteView[]
+  route: {
+    destination: {
+      goalId: string
+      title: string
+      lifecycle: GoalLifecycle
+    }
+    nodes: WorkRouteView[]
+    edges: Array<{ from: string; to: string }>
+    completedDecisionCount: number
+    completedEngineeringCount: number
+    focusWorkId: string | null
+    mapPath: string | null
+    fogSummary: string | null
+  }
+  attentions: AttentionView[]
   projectAttention: AttentionView | null
 }
 

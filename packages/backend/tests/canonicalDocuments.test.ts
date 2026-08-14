@@ -1,163 +1,84 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  parseAttentionDocument,
   parseEvidenceDocument,
-  parseGoalDocument,
-  parseInputDocument,
   parseWorkDocument,
-  renderAttentionDocument,
   renderEvidenceDocument,
-  renderGoalDocument,
-  renderInputDocument,
   renderWorkDocument,
 } from '../src/domain/canonicalDocuments'
 import { MarkdownDocumentError } from '../src/domain/markdownDocument'
 
-describe('canonical Markdown documents', () => {
-  test('round-trips minimal Goal and Work control fields with free Markdown bodies', () => {
-    const goalSource = renderGoalDocument({
-      attributes: {
-        id: 'G-1',
-        title: 'Ship the MVP',
-        lifecycle: 'active',
-        priority: 10,
-        contractRevision: 1,
-      },
-      body: '## Objective\n\nShip the documented MVP.\n',
-    })
-    const workSource = renderWorkDocument({
-      attributes: {
-        id: 'W-1',
-        title: 'Plan the Goal',
-        kind: 'planning',
-        stage: 'plan',
-        notBefore: null,
-        dependsOn: [],
-        contractRevision: 1,
-        evidenceRefs: [],
-        contextRefs: [],
-        ownerMessages: [],
-      },
-      body: '## Objective\n\nClarify and plan.\n',
-    })
+const common = {
+  status: 'open' as const,
+  createdAt: '2026-08-14T00:00:00Z',
+  notBefore: null,
+  dependsOn: [],
+  contractRevision: 1,
+  evidenceRefs: [],
+  contextRefs: [],
+  ownerMessages: [],
+}
 
-    expect(parseGoalDocument(goalSource)).toMatchObject({
-      attributes: { id: 'G-1', lifecycle: 'active' },
-      body: '## Objective\n\nShip the documented MVP.\n',
-    })
-    expect(parseWorkDocument(workSource)).toMatchObject({
-      attributes: { id: 'W-1', kind: 'planning', stage: 'plan' },
-      body: '## Objective\n\nClarify and plan.\n',
-    })
+describe('canonical Wayfinder documents', () => {
+  test('round-trips Decision and Engineering Work without stages', () => {
+    const decision = parseWorkDocument(
+      renderWorkDocument({
+        attributes: {
+          ...common,
+          id: 'W-question',
+          title: 'Choose storage',
+          kind: 'decision',
+          decisionType: 'grilling',
+        },
+        body: '## Question\n\nWhich durability boundary matters?\n',
+      }),
+    )
+    const engineering = parseWorkDocument(
+      renderWorkDocument({
+        attributes: { ...common, id: 'W-build', title: 'Build it', kind: 'engineering' },
+        body: '## Objective\n\nBuild the accepted design.\n',
+      }),
+    )
+
+    expect(decision.attributes).toMatchObject({ kind: 'decision', decisionType: 'grilling' })
+    expect(engineering.attributes).toMatchObject({ kind: 'engineering', status: 'open' })
+    expect(decision.attributes).not.toHaveProperty('stage')
   })
 
-  test('round-trips Input, Attention, and Evidence without semantic action fields', () => {
-    const input = parseInputDocument(
-      renderInputDocument({
-        attributes: {
-          sourceHomeId: 'H-1',
-          sourceEventId: 'EV-1',
-          sourceDigest: 'a'.repeat(64),
-          attachments: ['asset:requirements.png'],
-        },
-        body: 'Implement the accepted design exactly.\n',
-      }),
-    )
-    const attention = parseAttentionDocument(
-      renderAttentionDocument({
-        attributes: {
-          id: 'A-1',
-          target: 'project:P-1/goal:G-1/work:W-1',
-          createdAt: '2026-07-11T00:00:00Z',
-          resolvedAt: null,
-          summary: 'Choose the storage format.',
-        },
-        body: '## Needs you\n\nChoose the storage format.\n',
-      }),
-    )
-    const evidence = parseEvidenceDocument(
-      renderEvidenceDocument({
-        attributes: {
-          id: 'E-1',
-          createdAt: '2026-07-11T00:00:00Z',
-          producerRun: 'project:P-1/goal:G-1/work:W-1/run:R-1',
-          coordinatorCheck: null,
-          owner: 'project:P-1/goal:G-1/work:W-1',
-          artifacts: ['artifact:test-log'],
-        },
-        body: '## Verification\n\nAll focused checks pass.\n',
-      }),
-    )
-
-    expect(input.attributes).not.toHaveProperty('actions')
-    expect(attention.attributes).not.toHaveProperty('evidenceRefs')
-    expect(attention.attributes).not.toHaveProperty('revisitAt')
-    expect(evidence.attributes.producerRun).toContain('/run:R-1')
-  })
-
-  test('rejects illegal Work discriminators and duplicated control references', () => {
+  test('requires Task mode and rejects unsupported Work kinds', () => {
     expect(() =>
-      parseWorkDocument(`---
-id: W-1
-title: Plan
-kind: planning
-stage: generate
-notBefore: null
-dependsOn: []
-contractRevision: 1
-evidenceRefs: []
----
-Body
-`),
+      parseWorkDocument(
+        renderWorkDocument({
+          attributes: {
+            ...common,
+            id: 'W-task',
+            title: 'Manual prerequisite',
+            kind: 'decision',
+            decisionType: 'task',
+          } as never,
+          body: '## Question\n\nComplete the prerequisite.\n',
+        }),
+      ),
+    ).toThrow('Task Decision requires taskMode')
+    expect(() =>
+      parseWorkDocument('---\nid: W-unknown\ntitle: Unknown\nkind: analysis\n---\nUnknown\n'),
     ).toThrow(MarkdownDocumentError)
-
-    expect(() =>
-      parseWorkDocument(`---
-id: W-1
-title: Build
-kind: engineering
-stage: generate
-notBefore: null
-dependsOn: [W-0, W-0]
-contractRevision: 1
-evidenceRefs: []
----
-Body
-`),
-    ).toThrow('references must be unique')
-  })
-
-  test('reports the exact invalid Work field instead of a union-level error', () => {
-    expect(() =>
-      parseWorkDocument(`---
-id: W-1
-title: Build
-kind: engineering
-stage: implementation
-notBefore: null
-dependsOn: []
-contractRevision: 1
-evidenceRefs: []
----
-Body
-`),
-    ).toThrow('stage: Invalid enum value')
   })
 
   test('requires exactly one Evidence producer authority', () => {
-    const source = `---
-id: E-1
-createdAt: 2026-07-11T00:00:00Z
-producerRun: null
-coordinatorCheck: null
-owner: project:P-1/goal:G-1
-artifacts: []
----
-Body
-`
-
-    expect(() => parseEvidenceDocument(source)).toThrow(
-      'exactly one producerRun or coordinatorCheck',
-    )
+    expect(() =>
+      parseEvidenceDocument(
+        renderEvidenceDocument({
+          attributes: {
+            id: 'E-1',
+            createdAt: '2026-08-14T00:00:00Z',
+            producerRun: null,
+            coordinatorCheck: null,
+            owner: 'project:P-1/goal:G-1',
+            artifacts: [],
+          },
+          body: 'Evidence.\n',
+        }),
+      ),
+    ).toThrow('exactly one producerRun or coordinatorCheck')
   })
 })

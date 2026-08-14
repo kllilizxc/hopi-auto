@@ -1,880 +1,160 @@
-# HOPI MVP Document Model
+# HOPI Canonical Document Model
 
-Status: forward document and authority reference
-Last updated: 2026-07-29
+Status: storage authority
+Last updated: 2026-08-14
 
-> [Project Owner And Attention](./mvp_project_owner.md) owns the minimal Project Attention document
-> and immutable original Goal statement. Only the current schemas described here are readable.
-> A public Inbox `attentionRequest` contains only canonical Attention references.
+Canonical Markdown is the durable source of product truth. Runtime JSON records execution facts;
+provider sessions and projections are disposable caches. There is one current schema only.
 
-This document owns the file-native layout, canonical document schemas, field authority, references,
-and document-local invariants for [the HOPI MVP design](./mvp_design.md). Execution behavior belongs
-to [the execution design](./mvp_execution.md), lifecycle visualization to
-[the state machine](./mvp_state_machine.md), and publication mechanics to
-[the publish protocol ADR](./mvp_publish_protocol.md).
+The current Home schema epoch is `3`. It starts with the Wayfinder-native Goal / Decision Work /
+Engineering Work model and generic Attempts. Earlier Homes are rejected and must be discarded;
+there is no runtime compatibility or migration path.
 
-## File-Native Layout
-
-### Assistant home
+## Goal package
 
 ```text
-<hopi-home>/.hopi/
-  home.yml
-  projects.yml
-  preference.md
-  docs/
-    assistant/
-      attachments/
-        <contentHash>/
-          <fileName>
-      inbox/
-        <eventId>.md
-    attention/
-      <attentionId>.md
-  runtime/
-    agent-adapters.json
-    assistant/
-      sessions/
-        home.json
-        projects/
-          <projectId>.json
-      turns/
-        <eventId>/
-          turn.json
-          events.jsonl
-          transcript.log
-      receipts/
-      wakes/
-        cursors/
-        runs/
-          <wakeId>/
-            wake.json
-            prompt.md
-            events.jsonl
-            transcript.log
-    delivery/
-    leases/
-    index/
+.hopi/goals/<goalId>/
+  goal.md
+  design/
+    index.md                 # optional Wayfinder Map
+    <supporting-design>.md
+  inputs/<sourceHomeId>/<eventId>.md
+  work/<workId>.md
+  attention/<attentionId>.md
+  evidence/**
 ```
 
-`preference.md` is the one canonical user-preference document for this Assistant Home. It is free
-Markdown containing only durable defaults that should apply across Projects. It has no record
-schema, item lifecycle, or separate history model; an empty document means no stored defaults.
-Explicit instructions in the current turn and
-Project- or Goal-local authority override these defaults.
+`goal.md`, Work, Attention, Inputs, and design documents publish through the existing guarded
+publication root. Runtime attempts are stored under Assistant Home and reference canonical ids.
 
-Speaking Assistant reads the current document on every turn and is its sole writer. Writes replace
-the complete normalized document under an expected content digest, so normal publication provides
-optimistic concurrency without adding preference IDs or a preference database. The model decides
-whether feedback expresses a reusable default; one-off direction and Project-specific rules stay in
-conversation or the existing Project/Goal documents. Updating this document alone has no Goal,
-Planning, Wake, or notification effect.
+## `goal.md`
 
-Managed Git checkouts are deliberately outside Assistant home and outside the selected checkout:
-
-```text
-<repo-parent>/.hopi-worktrees/<repo-name>/
-  projects/<projectId>/
-    integration/
-    work/<goalId>/<workId>/
-```
-
-An inbox event is conceptually `pending | handled`.
-
-Its exact MVP front matter is:
+Frontmatter:
 
 ```yaml
-id: EV-1
-receivedAt: 2026-07-11T09:00:00Z
-status: pending
-source: user
-visibility: public
-sourceDigest: <sha256>
-attachments: []
-context:
-  projectId: P-1
-  goalId: G-1
-  attentionRefs:
-    - project:P-1/goal:G-1/attention:A-1
-  replyTo: home:H-1/event:EV-question
-handledAt: null
-reply: null
-disposition: null
+id: G-...
+title: ...
+lifecycle: active | paused | done | cancelled
+priority: 0
+contractRevision: 1
 ```
 
-`source` is `user | system`; `visibility` is `public | internal`. New operator turns are exactly
-`source: user, visibility: public`. Wake creates exactly
-`source: system, visibility: internal`. Every field shown by the current schema is required;
-documents from another schema are rejected rather than defaulted or migrated.
+Body is free Markdown, conventionally containing Objective, Constraints, Non-Goals, and Success
+Criteria. The body is the current contract. A material instruction replaces or edits it and
+increments `contractRevision` in the same guarded publication.
 
-`context` is optional. `projectId` and `goalId` appear together when the turn has a UI location.
-`attentionRefs` contains zero or more complete canonical delivery identities:
+The id and title are immutable. Accepted Inputs preserve the original words, so the contract body
+does not need to be immutable.
 
-- Goal-local: `project:<projectId>/goal:<goalId>/attention:<attentionId>`
-- workspace: `home:<homeId>/attention:<attentionId>`
+## `design/index.md`
 
-`replyTo` is present only on an explicit operator reply created from the Assistant message's Reply
-control. It identifies the exact handled public Assistant request event and requires matching
-`attentionRefs`. An ordinary message sent from the same Project or Goal may carry location context,
-but never guesses this pointer from currently open Attention.
-
-A Wake turn may contain only `attentionRefs`; a normal Goal-page turn may contain only the
-Project/Goal pair; and one turn may contain both. Writes use only complete canonical Attention
-references. Context is conversational and delivery correlation only; it grants no mutation
-authority.
-`handledAt` and the free non-control `disposition` string are null while pending and present while
-handled. A public handled turn also has a non-empty `reply`; an internal handled turn may keep
-`reply: null` when the Assistant intentionally has no operator update. The Markdown body is the
-lossless received content or internal wake brief. Identity, `source`, `receivedAt`, digest,
-attachments, context, and body are immutable. The
-source digest covers the deterministically newline-normalized body and ordered attachment references.
-For speaking turns, `answered` means no tool event was observed and `tools-used` means at least one
-was observed. Neither value is proof of a side effect; canonical documents and tool results own that
-truth.
-Visibility is also immutable except for one transition: when an internal system turn
-finishes, Coordinator publishes `internal -> public` atomically with any non-empty final reply.
-`present_attention_to_user` stages exact Attention references on the pending turn; no staged request
-remains internal. The UI renders current summaries and choices from those Attention documents rather
-than parsing the final reply. Visibility never moves back and a user-sourced turn can never become
-internal.
-
-- Public input is acknowledged only after the event document is durable; an internal handoff also
-  becomes eligible only after its event document is durable.
-- The event is the immutable receipt authority for received content and attachment references.
-- It also owns the ordinary Assistant reply and disposition. HOPI tools, not reply prose or page
-  context, create Project or Goal effects.
-- A turn may call no tools, one tool, or tools targeting more than one Goal. The Inbox event stores
-  no single-destination route state.
-- Targeted Attention is an internal durable request for speaking-Assistant management. It is not
-  user-visible until speaking revalidates, cannot safely resolve it, and publishes one reply.
-- Processing failure that cannot be repaired creates targeted Attention for the event.
-- Ordinary and Needs-you replies live in the speaking conversation. External webhook delivery may
-  mirror that exact public reply; raw Attention never uses an out-of-band user path.
-- Internal Wake turns are absent from the conversation projection. If promoted, the projection
-  shows only the speaking thread's reply and does not invent a user message for the Wake brief.
-
-A public-turn image is first stored as an immutable, content-addressed Assistant-home file under
-`docs/assistant/attachments/`. Its Inbox `attachments` entry is the canonical Home-relative file
-reference, never a browser-supplied absolute path. The content hash in the path is verified whenever
-the file is resolved. The image bytes are supporting content and the Inbox event is their durable
-receipt gate, so an acknowledged turn never names a missing upload. Unsupported media, size-limit
-violations, and path traversal fail before the turn is accepted.
-
-This receipt storage does not make an image part of a Project or Goal. It preserves the exact
-conversation input for replay and lets Assistant inspect the current turn. Only a later explicit
-Goal-targeted HOPI tool call may adopt selected attachments as Goal references. Accepted image input
-may enter Goal, design, and Work prose only through the resulting Goal-local asset path;
-Assistant-home paths and machine-local absolute image paths are never canonical authority. This
-does not prohibit Project-relative source image paths or ordinary remote URLs.
-
-`runtime/assistant/sessions/home.json` and
-`runtime/assistant/sessions/projects/<projectId>.json` are rebuildable vendor-session caches, not
-conversation authority:
-
-```json
-{
-  "scope": "project:P-example",
-  "transport": "opencode",
-  "sessionId": "vendor-session-id",
-  "contractDigest": "sha256",
-  "runtimeDigest": "sha256"
-}
-```
-
-Only `codex | claude | opencode` is accepted. HOPI selects the cache from immutable Inbox scope and
-resumes it only when scope, transport, the initial Assistant context digest, and the stable-workspace
-runtime digest match. The context digest covers the stable Assistant contract and current durable
-preference digest. A missing, invalid, or nonmatching cache starts a new vendor session from the
-same initial context and ordered bounded Inbox history; it does not alter or synthesize canonical
-turns.
-An adapter may discard an already selected cache during a turn only when the vendor explicitly
-reports that session missing or invalid. Provider, quota, authentication, model, and process
-failures do not invalidate the selected session and therefore do not rebuild conversation history.
-Per-turn `events.jsonl` stores normalized live
-Assistant, tool-call, tool-result, status, and error events. `transcript.log` preserves process
-output for debugging after exact inherited secret values are redacted.
-
-Every runtime `events.jsonl` uses newline as its record durability boundary. A concurrent reader
-omits the sole non-newline-terminated tail and sees it on a later read after append completes.
-Runtime records are diagnostic or rebuildable, so one malformed manifest, session, cursor, or event
-is reported with its path and omitted without hiding healthy sibling records. Canonical documents
-under `docs/` and managed Project release trees remain strict authority and fail validation rather
-than being skipped.
-
-Each `runtime/assistant/wakes/runs/<wakeId>/wake.json` records a disposable Wake publication's
-state digest, timing, and terminal runtime outcome. Its prompt, normalized events, and raw transcript
-exist only for diagnostics. Wake directories are not canonical conversation history and may be
-removed. Only a submitted internal Inbox brief survives runtime cleanup. There is no durable
-Wake queue or Wake lifecycle document.
-
-Workspace Attention lives under Assistant home. Its location replaces a stored `scope` field.
-It is used for inbox, project, or invalid-package problems without a safe Goal-local writer.
-It uses the same five control fields as Goal-local Attention except that `target` is non-null and
-must be exactly `home:<homeId>/event:<eventId>` or `project:<projectId>`.
-
-`home.yml` is created once during Assistant-home initialization and owns immutable `homeId` plus the
-single global `schemaEpoch`. It is required before Coordinator starts and travels with every lossless
-Assistant-home export; the filesystem path of Assistant home is only a current machine binding.
-Every canonical and runtime record below that Home belongs to the same epoch. A missing or different
-epoch stops startup. HOPI has no compatibility readers or field defaults.
-
-An epoch change is an offline replacement boundary, never a runtime compatibility branch. With the
-Coordinator stopped, the operator either:
-
-- runs the version-specific migration supplied for that epoch, which first backs up every file it
-  will rewrite, validates the complete replacement state, and flips `home.yml` last; or
-- runs `bun run reset:home -- --home <hopi-home> --apply --confirm <absolute-hopi-home>` to discard
-  the old Home and its managed refs.
-
-Version-specific migrations do not remain in readers and do not make mixed-epoch state valid.
-`reset:home` never changes a selected user checkout's branch, HEAD, index, or working tree.
-
-Each `projects.yml` link owns `{ projectId, label?, primaryRepoId, repos }`. `label` is
-optional Home-local presentation metadata: trimmed non-empty Unicode text up to 80 characters. It
-does not participate in Project identity or Repo topology, and duplicate labels are valid. Each Repo
-entry owns a stable Project-local `repoId`, its current-machine `repoPath` Git-checkout locator, and
-an optional portable `projectPath` relative to the Git root. Replacing or clearing `label` publishes
-only this Home-owned document; clearing removes the field. Missing `projectPath` means `.`. The same
-Git Repo may occur in several Projects, while duplicate Git identities remain invalid inside one
-Project.
-Coordinator derives a Project-qualified Repo-adjacent managed integration path, then resolves the
-Project's source scope inside that managed worktree from `projectPath`. The primary managed root
-remains the canonical Project document root. `repoPath` supplies the Git object database and initial
-HEAD only; HOPI never writes its branch, index, or working tree.
-
-```yaml
-projects:
-  - projectId: product-a
-    label: Storefront
-    primaryRepoId: web
-    repos:
-      - repoId: web
-        repoPath: /home/operator/Code/product-web
-        projectPath: apps/storefront
-      - repoId: api
-        repoPath: /home/operator/Code/product-api
-```
-
-`project.yml`, Goal documents, and runtime indexes do not duplicate model settings.
-
-`runtime/agent-adapters.json.assistant` owns the Home-wide speaking Assistant. It uses the Codex,
-Claude, or OpenCode transport shapes and runs from
-the Assistant runtime root. It never inherits a Project link. UI updates preserve fields supported
-by the selected transport so advanced binary/profile/permission settings are not silently lost;
-switching transport installs that transport's current defaults. `process` is
-allowed only for responsibility adapters and is not a configurable Assistant transport.
-
-`runtime/agent-adapters.json.roles` may separately override `planner`, `generator`, and `reviewer`.
-The Home agent-settings panel edits these existing role entries rather than introducing a second
-settings document. A missing role entry means inherit Home `defaults`; removing a role override
-restores that fallback. Role settings affect only future responsibility Runs and never rewrite a
-Project link, Goal, Work, or active Run command.
-
-Both documents accept only their current strict schemas. Engineering Work contains no Repo subset
-because Project Repo membership is the execution environment.
-
-After a Repo or Assistant-home move, explicit Repo rebind repairs Git's managed-worktree
-administration, relocates the Project-qualified Repo-adjacent managed root when needed, validates its
-release projection, then changes the machine-local binding.
-A single moved Repo and a complete moved Repo set use the same operation; the complete form requires
-exactly the existing stable Repo IDs and publishes `projects.yml` only after every target validates.
-This lets several stale old paths recover together without weakening duplicate-Git-identity checks.
-A missing primary managed integration root is not reconstructed from Git because its uncheckpointed
-canonical documents may be newer than the ref; that loss remains Project Attention.
-
-The managed root's `project.yml` remains authority for Project identity, Repo membership, and each
-portable `projectPath`; the local link must match it after missing paths normalize to `.`.
-If the release ref or project file is missing, corrupt, or disagrees, the home link still supplies
-the canonical project target for workspace Attention; it never guesses or replaces identity.
-
-### Managed project root
-
-```text
-<repo-parent>/.hopi-worktrees/<repo-name>/projects/<projectId>/integration/
-  AGENTS.md
-  .hopi/
-    project.yml
-    docs/
-      index.md
-      tech-debt.md
-      goals/
-        <goalId>/
-          goal.md
-          assets/
-            <contentHash>/
-              <fileName>
-          design/
-            index.md
-            <topic>.md
-          inputs/
-            <sourceHomeId>/
-              <eventId>.md
-          work/
-            <workId>.md
-          attention/
-            <attentionId>.md
-          evidence/
-            <evidenceId>.md
-```
-
-Assistant-home state and runtime data live outside every linked Repo and outside the HOPI source
-checkout. `HOPI_HOME` selects their owner directory; when it is unset the production server uses
-`$XDG_DATA_HOME/hopi`, or `~/.local/share/hopi` when `XDG_DATA_HOME` is unset. Integration and task
-worktrees live under the Repo-adjacent root above. The managed
-integration worktree is stable rather than disposable
-because ordinary canonical document publications may precede their next Git checkpoint. Canonical
-Project documents, `project.yml`, Project-qualified release refs, and task branch refs travel with a
-lossless Project relocation. User preferences travel with Assistant Home instead; Project-specific operating
-rules remain in Project docs or Repo-local `AGENTS.md`.
-
-A `Project × Goal` address whose Goal root contains no files is absent and public APIs report it as
-not found. Once any file exists below that Goal root, `goal.md` and the rest of the Goal package
-contract are mandatory; missing authority is corruption rather than absence. This distinction keeps
-stale or cross-Project Board addresses from becoming server faults without hiding partial canonical
-publication or filesystem damage.
-
-Each responsibility dispatch uses one globally identified runtime directory. Project, Goal, Work,
-and responsibility already belong in `attempt.json`; repeating them as filesystem ancestry adds no
-identity or isolation:
-
-```text
-<hopi-home>/.hopi/runtime/runs/<runId>/
-  context.md
-  prompt.md
-  result.json
-  attempt.json
-  events.jsonl
-  transcript.log
-  artifacts.json
-  artifacts/
-  scratch/
-```
-
-`attempt.json` records the responsibility, timing, process result, Coordinator application, and the
-small execution identity resolved for that one Run: transport, configured model, and Codex reasoning
-effort when applicable. RoleRunner
-captures this identity before launching the process, so a later Home role model change cannot rewrite
-history. Queued Attempts have no execution identity; a started Attempt captures the current
-transport, model, and applicable reasoning effort. `events.jsonl` is an append-only stream of normalized
-model messages and tool events used by the Work-detail UI. `transcript.log` preserves each
-stdout/stderr line before vendor normalization or display truncation, except that exact values from
-secret-like inherited environment variables are replaced before persistence. These files are runtime
-observability, not canonical authority.
-The Goal/Work execution-cost view is computed from these records at read time. Vendor-reported usage
-remains vendor-reported, paired tool-event timestamps support observed tool duration, and the
-remaining Attempt wall time is explicitly approximate model/overhead time. The projection is not
-written back into Goal, Work, Evidence, or retry state.
-`scratch/` is a disposable writable temp root exposed to the responsibility process. It lets build
-tools and short-lived local services operate inside the existing Run capability without granting
-another source root; it is never source, Evidence, or Preview state. Reusable tool caches live at
-`<hopi-home>/.hopi/cache/`, outside every Run. Before applying a valid result, Coordinator keeps a
-Project-relative source entry portable as-is only when it already exists in the current managed
-release. A candidate-only or ignored entry is not assumed to survive C1 and is retained like any
-other Run output. Every file in the Run artifact output directory is retained automatically; an
-explicitly declared Run-local file or directory is handled as one artifact subtree. Retained entries
-are copied into the Run's `artifacts/`, their shape and original diagnostic locations are recorded in
-`artifacts.json`, and their references become
-`artifact:<runId>/<artifactName>`. Proposal entries are discovered only from `proposal/` and never
-become Evidence artifacts. Evidence may contain either portable form but never an absolute local
-path. Preservation diagnostics remain runtime facts available to later responsibility and Assistant
-turns; they do not create a second Evidence-validity state machine. Once the responsibility process
-is gone and its proof is preserved, Coordinator
-removes `scratch/`; terminal scratch left by a process crash is removed during restart recovery.
-On restart, a current manifest still marked `running` becomes `interrupted`; Coordinator never
-reattaches its child. Runtime Attempt records are the only invocation and recovery count.
-
-Semantic and operational recovery use these existing Attempt records without making them canonical
-Work semantics. A failed Attempt records the settled Work assignment fingerprint: the canonical Work
-content excluding append-only `evidenceRefs`. While that fingerprint still matches the current Work
-assignment, Reconciler pauses automatic redispatch and Wake asks Assistant to judge the next
-action. Adding execution history alone therefore cannot make the same assignment runnable again.
-Coordinator does not derive Attention, an operational episode, or a retry counter from failure
-history.
-
-`project.yml` owns the stable Project ID, primary Repo ID, portable Repo membership and
-`projectPath` values, and the current secondary release commits. Canonical absolute local filesystem
-paths remain solely in Assistant-home `projects.yml`; runtime diagnostics may record the machine-
-local source from which a portable artifact was preserved.
-The primary Repo's release commit is the `project.yml`-containing C1 itself and is therefore implicit;
-embedding its own hash would be self-referential. The integration target is derived as
-`hopi/project/<projectId>/release`, not editable Project configuration. Goal completion means the
-primary C1 and every secondary managed release projection are verified. User checkouts are outside
-completion and recovery.
-
-Root `AGENTS.md` is the model-readable project context entrypoint. It may describe stable repository
-structure, responsibilities, commands, constraints, and links to deeper authoritative documents,
-but it owns no HOPI lifecycle or scheduling fact. The kernel never parses its prose.
-
-Planner bootstrap and responsibility context behavior belong to
-[the execution design](./mvp_execution.md#fixed-responsibility-passes). Existing `AGENTS.md` content
-has no automatic control effect.
-
-Goals may reference ordinary supporting files anywhere appropriate in the project. Adopted user
-images use `assets/<contentHash>/<fileName>` so retries are idempotent and the Goal remains portable.
-No `notes`, `assets`, `archive`, or other supporting-file convention has lifecycle, eligibility, or
-Kanban semantics.
-
-## Document Authority
-
-### `goal.md`
-
-`goal.md` owns:
-
-- Goal identity and title
-- lifecycle: `active | paused | done | cancelled`
-- priority, which is the only durable scheduling priority
-- `contractRevision`
-- objective, constraints, and non-goals
-- success criteria
-
-It does not store current focus, a workflow status, or completion prose. Current focus is a read-only
-projection derived from nonterminal Work, open Attention, and live Attempts: operator Attention
-comes first, followed by Assistant management, a currently running responsibility, then remaining
-Work. This ordering changes only presentation and never eligibility or scheduling. Final Planning
-Evidence records completion detail.
-
-Material changes to objective, deliverable scope, constraints, non-goals, success criteria, or a
-decision that changes expected behavior increment `contractRevision`. Explicit reopen also
-increments it. Priority, lifecycle alone, Work decomposition, retry, findings, and `notBefore`
-do not.
-
-A new Goal is active and includes exactly one explicitly selected first Work: either Planning Work,
-or one Assistant-dispatched Engineering Work at `generate`. The admission caller authors the Work
-title, objective, and acceptance criteria; Coordinator supplies only structural fields such as ID,
-initial stage, revision, dependency invariants, and dispatch provenance. Direct Engineering
-admission does not assert that the Work completes the Goal; it only removes an unnecessary initial
-Planning pass. A
-non-active Goal cannot retain a Coordinator reservation:
-Coordinator interrupts that Goal's running Attempts without disturbing other Goals. Pause therefore
-prevents new dispatch, interrupts running passes, and rejects any racing result publication or
-integration. An interrupted pass may preserve isolated artifacts and Attempt diagnostics but
-cannot advance canonical Work while paused. Material instructions may update a paused contract
-without implicitly resuming it.
-
-Resume ensures current Planning Work. Reopen increments the contract revision when required, ensures
-Planning Work, and never revives terminal Work.
-
-Goal cancellation installs the Goal `cancelled` guard first, then cancels nonterminal Work and
-resolves superseded Goal-local Attention. After a process crash, ordinary Reconciler cleanup follows
-from the still-blocking Goal guard; startup has no cancellation-specific recovery path.
-Cancellation preserves branches, Inputs, Evidence, and history and never silently reverts
-integrated code. A workspace Attention whose target became irrelevant is resolved in a separate
-idempotent Assistant-home publication. Attention target is immutable; a continuing problem at a
-different root creates a new Attention.
-
-### `design/**`
-
-`design/index.md` is the shared Wayfinding map: a low-resolution index rather than the store of each
-decision's detail. Topic files and retained Reports hold substantial rationale and evidence. The
-recommended body follows the Wayfinder convention:
+The file is optional. It exists only when the Goal needs progressive wayfinding. Its exact shape is:
 
 ```markdown
 ## Destination
 
+<one or two lines describing what reaching the end of this map means>
+
 ## Notes
+
+<domain, skills, standing preferences, and explicit execution override if any>
 
 ## Decisions so far
 
+- [<closed Decision title>](link) — <one-line gist of its resolution>
+
 ## Not yet specified
 
+<in-scope fog that cannot yet be phrased as a precise question>
+
 ## Out of scope
+
+<consciously excluded work and links to any closed mis-scoped tickets>
 ```
 
-`Destination` orients each planning session to the current Goal without duplicating its contract.
-`Decisions so far` links each resolved decision ticket by name with a one-line gist; the linked Report
-or topic document owns the answer. `Not yet specified` holds in-scope fog that cannot yet be phrased
-as a precise question. `Out of scope` records what lies beyond the destination and never graduates
-unless the destination changes. Current Planning authority and its explicit Run instruction carry
-the frontier ticket rather than restating its answer in the map.
+The Map is an index. It never repeats full resolutions, lists open tickets, or becomes scheduler
+input. A clear, small Goal has no Map and may start directly with Engineering Work.
 
-HOPI parses none of this prose. Clear Goals need no map ceremony, and design documents never own
-lifecycle, stage, Attention resolution, dependency, or runtime state.
+## `inputs/**`
 
-When Assistant adopts an Inbox image for a Goal, it copies the immutable bytes to Goal-local
-`assets/`. Work selects the asset explicitly through `contextRefs`, whose caller-authored purpose
-travels with that Work; there is no parallel image registry or machine-maintained Markdown section.
-If a machine-local image is useful, Assistant must first adopt its durable Inbox attachment rather
-than write the absolute path into Goal authority.
+An accepted user or system input is immutable after first publication. Its path is stable and can
+be referenced from Goal and Work. Contract revision changes never alter prior Inputs.
 
-Goal-local design is the HOPI design surface shown in the UI and a living planning input, not an
-approval workflow. A user may instruct Assistant to revise any of these documents. Assistant and
-Planner interpret the instruction against the current Goal and decide whether the result is
-documentation-only, changes the Goal contract, requires replanning, or requires Engineering Work.
-When implementation is needed, established design is written before Planner exposes that Work.
+## `work/<workId>.md`
 
-The file path or fact that a design document changed has no automatic control effect. Coordinator
-does not watch design edits to increment `contractRevision`, create Planning Work, or invalidate
-Engineering Work. Models propose any required control-document changes under the ordinary Goal and
-publication rules. There is no design status, `approvedAt`, per-document revision, or fixed
-doc-to-work trigger mapping.
-
-Assistant writes design through the HOPI design tool. That tool changes only the named Markdown
-documents plus any Inbox images explicitly adopted in the same call. If implementation or
-reassessment is needed, Assistant separately calls the Planning tool; there is no hidden file-presence
-signal, unchanged `goal.md` convention, or automatic doc-to-code trigger.
-
-### `inputs/<sourceHomeId>/<eventId>.md`
-
-This immutable Goal-local Input owns the instruction accepted by a HOPI tool for the Goal. It contains
-`sourceHomeId`, `sourceEventId`, `sourceDigest`, a lossless copy of the received content, and
-durable attachment references. Only deterministic encoding normalization is allowed; semantic
-normalization, summarization, or intent extraction belongs to model interpretation and never
-replaces the original content.
-
-Input keeps the original Assistant-home references so its digest still proves exactly what was
-received. A Goal-local copy and its purpose are supporting design context, not a rewrite of Input.
-
-The Inbox event remains authority for what was received. Goal Input is authority that a HOPI tool
-accepted that turn as instruction inside this Goal. Its qualified path and matching digest are the
-cross-root receipt that the Goal effect is durable. The same source event may therefore have one
-Input in each explicitly targeted Goal. A digest mismatch is invalid rather than
-last-writer-wins. Corrections create a new event and Input.
-
-### `work/<workId>.md`
-
-Each Work document owns one durable unit of execution.
-
-Example engineering Work:
+Shared frontmatter:
 
 ```yaml
----
-id: W-12
-title: Harden expedition scene re-entry
-kind: engineering
-stage: generate
+id: W-...
+title: ...
+kind: decision | engineering
+status: open | done | cancelled
+createdAt: 2026-08-14T00:00:00.000Z
 notBefore: null
-dependsOn: [W-11]
-contractRevision: 4
+dependsOn: []
+contractRevision: 1
 evidenceRefs: []
-assistantDispatch: home:H-1/event:EV-42
----
+contextRefs: []
+ownerMessages: []
 ```
 
-`assistantDispatch` is optional immutable provenance. It appears only when speaking Assistant
-directly admits the Work and identifies the accepted Inbox Input that consumed that Input's one
-direct-Work allowance. Planner-created Work omits it; Planner may not add, remove, or change it on
-an existing Work. This is not a workflow mode, authorship role, or completion marker.
-
-The body owns the current execution objective, context, acceptance criteria, and relevant
-references. Findings, observed results, and completion proof live in immutable Evidence and are
-linked rather than copied into Work history.
-
-When delivery persists the same fact in several Project artifacts, design names one canonical owner
-and a one-way derivation path. This does not require one monolithic file: different facts may have
-different owners in different documents or data files. Reports, summaries, API responses, and UI
-models may remain stored for auditability or efficient reading, but they are materialized projections,
-not peer authorities. Acceptance proves that each projection can be regenerated or reconciled from
-its owner instead of making duplicated values mutually attest to one another.
-
-This ownership is recorded in ordinary design prose and Work acceptance only when omission would be
-materially ambiguous; it adds no frontmatter, artifact registry, or schema-mapping DSL. At a
-deterministic persistence boundary, a closed accepted schema with unknown fields rejected is
-preferred to an open-ended list of forbidden aliases. When an external or nondeterministic fact
-cannot be recomputed, its bounded source snapshot, digest, or cited Evidence owns the fact and the
-derived claim points back to it.
-
-Valid stages:
-
-| `kind` | Stages | Terminal |
-| --- | --- | --- |
-| `planning` | `plan | done | cancelled` | `done | cancelled` |
-| `engineering` | `generate | review | done | cancelled` | `done | cancelled` |
-
-Running, queued, scheduled, and blocked are projections. Dispatch creates a runtime Run but does
-not change stage.
-
-Planning Work omits engineering Git fields. For engineering Work:
-
-- `assistantDispatch`, when present, is the canonical Inbox event reference for the one direct Work
-  admitted from that Input; uniqueness is enforced across every Goal linked to the Home
-- branch paths derive from Project, Goal, and Work identity; worktree paths derive from the Repo
-  binding plus Goal and Work identity
-- each Repo task branch HEAD is its current source checkpoint and is not copied into Work front matter
-- a missing disposable task checkout may be rebuilt from that Repo's stable branch
-- before dispatch, Coordinator synchronizes the stable branch with the latest Repo release while
-  preserving its checkpointed Work delta; this computed projection has no document field
-- a plan that must discard the current Work delta creates a distinct Engineering Work identity;
-  neither a contract rewrite nor retry resets the old branch
-- `evidenceRefs` is an append-only ordered list of consumed Run and supporting Evidence; it
-  does not map criteria through a schema or replace model judgment
-- `contextRefs` is the explicit ordered set of canonical Input, asset, or supporting-document paths
-  selected for this Work; each entry carries only its path and caller-authored purpose
-- `ownerMessages` is the ordered set of timestamped, source-traced Project Owner messages; these are
-  structured assignment context rather than machine-maintained sections in the Work body
-
-The qualified Work identity derives each task branch and the one primary C1. Primary history must
-contain exactly one reachable commit whose qualified Work trailer equals that identity exactly, and
-that commit's tree must contain the engineering Work at `done`. Prefix or substring matches between
-Work IDs are invalid. Secondary component commits are named by Repo and producer trailers but are
-not independent C1 gates. Coordinator verifies the primary relation and the release manifest against
-every linked Repo. Branch HEAD remains checkpoint authority but never owns Work stage or completion.
-
-#### Planning Work invariant
-
-Each Goal has at most one nonterminal Planning Work. A planning trigger reuses it if present and
-merges explicit `contextRefs`; otherwise it creates a stable ID from the triggering event or planning
-cause. `revisionInput`, when present, records the canonical Input that caused the current material
-contract revision and must also appear in `contextRefs`; it is provenance for idempotency, not a
-semantic classification. A material contract revision may replace the whole free-form Planning
-assignment supplied by that operation, but the kernel never searches for or rewrites Markdown
-sections.
-
-The initial Planning Work is a minimal ownership envelope. Current Goal authority already states the
-outcome, and `contextRefs` names accepted Input and image authority without copying either into a
-machine-maintained body section. Generic Planner responsibility belongs to the role capability
-envelope, not repeated acceptance boilerplate in every Work. Goal creation omits empty optional
-constraints, non-goals, and success-criteria sections instead of storing placeholder text. The Goal
-contract and verbatim Input remain separate first-class documents because normalization and source
-provenance are different facts.
-
-The Planning Work carries only the current decision ticket, not a complete future roadmap. Its
-Report may expose new tickets or clear some fog, but Assistant updates the map and selects the next
-frontier ticket after observing current facts. The kernel does not derive future Planning Runs from
-headings or Report prose.
-
-Triggers include Goal creation with a Planning first Work, material contract change, resume,
-reopen, an explicit speaking-Assistant planning request after Attention, and an active Goal with no
-nonterminal Work. A stale Run result is not a planning trigger because it has no authority to change
-the Goal or Work.
-
-Clarification and final assessment remain model judgment inside the same Planning Work. The
-document model adds no `clarify` or completion stage, approval flag, structured question, or
-criteria-mapping field. A targeted question leaves Planning Work at `plan`; final Planner `success`
-with no nonterminal Engineering Work is the semantic completion judgment. Coordinator atomically
-changes Planning Work to `done` and Goal lifecycle to `done` after structural verification. Detailed
-Planner behavior belongs to
-[the execution design](./mvp_execution.md#planner).
-
-Planning Work is ordinary schedulable Work, not a Goal-wide lock. Same-revision Planning and
-Engineering may coexist; each Run is admitted only from its own current Work authority and exact
-selected hashes. If Planner changes authority used by an admitted Run, that Run is interrupted when
-possible and its racing result still fails the semantic publication guard.
-
-A material Goal revision is the global authority boundary. Existing nonterminal Engineering Work
-keeps the revision it was planned against and therefore becomes ineligible without changing its
-stage, branch, or history. Planner may bring a retained Work to the current revision, reset it to
-`generate`, cancel it, or leave it visibly stale while another route proceeds. Coordinator does not
-reject an otherwise valid plan merely because stale Work remains; readiness keeps that Work
-ineligible and later model judgment may resolve it. A completed or cancelled Planning Work is
-historical and never reopened.
-
-If another trigger arrives during Planner execution, the same Planning Work is updated. The old
-Run may preserve artifacts but fails its semantic guard.
-
-#### Dependencies and cancellation
-
-`dependsOn` is the only causal-order and conflict-avoidance graph between Engineering Work. Only a
-dependency at `done` satisfies an edge. References must exist in the same Goal, edges remain after
-completion, and cycles are invalid. Planning Work is not a second dependency graph.
-
-An Engineering Work row is a current execution commitment. Its objective and acceptance must already
-be stable enough to act on. `dependsOn` may order such commitments, but it must not represent an
-unanswered semantic decision or reserve a placeholder for work whose contract still depends on new
-evidence. A downstream Work may be created before its dependency finishes only when every allowed
-dependency result leaves that downstream contract valid; otherwise it remains beyond the current
-frontier rather than becoming placeholder Work.
-
-If Planner cannot establish that two writers are independent, it orders them. Missed overlap is
-contained by task branches and handled by deterministic integration rejection and repair or
-replanning.
-
-Adding a dependency to materialized nonterminal engineering Work sets it to `generate`,
-invalidates active or unaccepted output, preserves its branch, and requires synchronization with
-the latest integration target after dependencies finish. Coordinator performs that synchronization
-before the next pass and preserves the Work delta. If accepted Planning instead forbids reuse of
-that delta, Planner assigns a new Work identity rather than asking Assistant to rebuild or reset the
-existing branch.
-
-Directly cancelling Work with nonterminal dependents first cancels those current dependents, then
-cancels the selected Work. Planner may instead atomically rewire nonterminal `dependsOn` edges and
-cancel only Work made obsolete by the accepted plan. The Planner publication may update that Work's
-contract and explanation at the same boundary; the resulting cancelled document is its immutable
-terminal snapshot. Both paths must leave an acyclic current DAG, and nonterminal Work may not depend
-on cancelled Work. After durable cancellation, Coordinator interrupts every affected live Run.
-Repeating the same direct cancellation is idempotent. Cancellation changes only an execution route: it
-neither changes the Goal contract nor requests Planning. If the Goal still requires the cancelled
-outcome, later Planning may legitimately create a different Work identity. Removing that outcome
-from scope is a material Goal revision instead.
-
-#### Time and revision
-
-`notBefore` is the Work dispatch time gate. Null means eligible now; a future instant delays
-dispatch. Attention may separately record one `revisitAt` for a future Assistant observation; it
-does not change Work readiness. There are no Goal schedules, recurring schedules, or time-wait
-documents.
-
-Each Work records the Goal contract revision it was planned against. Output from an older revision
-is never applied. A material Goal revision leaves existing nonterminal Engineering Work at the old
-revision so readiness exposes the real authority mismatch; Planner decides whether to retain,
-reset, or cancel each route.
-
-The publication protocol permits one non-semantic intermediate form: the open Planning Work may be
-staged at exactly the next Goal revision before the Goal revision gate is written. Consumers treat
-it as unconsumed support and never as eligible Work. Existing Engineering Work remains at its prior
-revision across the Goal gate until Planner republishes or cancels it.
-
-A result whose semantic guard is already stale remains Run-local Attempt history; it creates no
-canonical Evidence and no planning request. Canonical unconsumed Evidence can still exist when a
-process stops after its supporting write but before its Work gate, and remains provenance only.
-
-#### Recovery history
-
-Durable Attempt records are the sole source for queued execution, invocation count, responsibility,
-result, application, timing, model, diagnostics, and interruption history. Work does not duplicate
-an `attempts` counter or retry budget. The ordered `evidenceRefs` retains consumed canonical Evidence
-for model repair context.
-
-Reviewer `reject` and deterministic pre-C1 integration rejection return Engineering Work from
-`review` to `generate`; the corresponding Attempt and Evidence already record why. Explicit
-`continue` does not rewrite history. It is audited by the durable Assistant turn and queued Attempt;
-it does not create Goal Input or settle Attention.
-
-A timed Assistant-selected continuation uses Work `notBefore`. Conditions the current responsibility cannot
-resolve may be returned explicitly as targeted Attention. A process crash before the Work gate may
-leave unconsumed Evidence. Runtime failure remains Attempt history and does not
-create Attention or a hidden retry episode. An Attention-producing outcome intentionally leaves Work
-unchanged and starts a new Run only after Attention resolves. HOPI never reconstructs either old
-transition. Terminal Work remains in `work/`.
-
-### `attention/<attentionId>.md`
-
-Attention is the durable model for a condition requiring Assistant judgment. There is no separate
-decision entity, blocker entity, ownership field, notification state, or retry state.
+Decision frontmatter additionally contains:
 
 ```yaml
----
-id: A-W12-storage-format
-target: project:P-1/goal:G-4/work:W-12
-createdAt: 2026-07-10T09:00:00Z
-resolvedAt: null
-resolutionInput: null
-summary: Choose the storage format for the current Work.
-decisionPrompt: null
----
+decisionType: research | prototype | grilling | task
+taskMode: afk | hitl          # required only for task
 ```
 
-`target` is exactly one canonical project, Goal, or Work reference. `summary` is the concise
-operator-facing explanation, the Markdown body is complete Agent context, and `decisionPrompt`
-optionally describes one or more user choices. Attention is open exactly when `resolvedAt` is null;
-there is no duplicate status.
+Decision body:
 
-An ordinary Project state event records every currently actionable Assistant-owned Attention as an
-exact canonical reference. These references are responsibility facts, not suggested actions. At turn
-admission HOPI snapshots each referenced Attention and its canonical target. The event can settle
-only after every responsibility still owned at admission has a changed canonical successor state.
-The comparison is structural and does not parse Assistant prose. An Attention already presented to
-the operator, deferred to a future revisit, or backed by a queued or running target Work is not
-reintroduced as an actionable responsibility by an unrelated state event.
+```markdown
+## Question
 
-`createdAt` is the Coordinator's publication timestamp, not model-authored time. Responsibility
-proposals carry the parseable placeholder declared by the proposal capability schema; Coordinator
-replaces it while publishing every new targeted Attention. The body and identity remain model output.
-Responsibility-created Attention starts with `revisitAt: null`; only the Project Assistant chooses a
-future observation through its Attention capability. This keeps time and execution ownership in the
-deterministic persistence boundary without a second clock protocol.
+<one precise question sized for one agent session>
 
-Storage location derives ownership:
+## Resolution
 
-- Goal-local Attention may target its owning Goal or one Work inside it.
-- Assistant-home Attention may target one event or linked project. Goal and Work problems belong
-  in Goal-local Attention while the project root is writable.
+<present only after resolution; the answer and links to evidence or assets>
+```
 
-A new targeted Attention produced by Planner, Generator, or Reviewer always targets that Run's
-owning Work with the exact canonical reference
-`project:<projectId>/goal:<goalId>/work:<workId>`. Coordinator supplies that exact value in the Run
-contract and validates it before publication. A canonical document path such as
-`.hopi/docs/goals/<goalId>/work/<workId>.md` is not an Attention target and is never accepted as an
-alias. Goal-targeted documents remain readable as Goal-wide control facts, but responsibilities do
-not choose between Goal and Work scope.
+Engineering body is free Markdown, conventionally Objective and Acceptance Criteria. Completion
+may append a Completion Decision and delivery references.
 
-The model may resolve event-target Workspace Attention from an answer document diff. Project-target
-Attention requires deterministic repair validation before resolution; reply prose alone cannot
-declare a Project root healthy.
+`dependsOn` may reference either Work kind in the same Goal and current contract revision. It is a
+real DAG: references must exist, self edges and cycles are rejected, and cancelled dependencies do
+not satisfy readiness.
 
-Because workspace project-target Attention is reserved for an invalid or unwritable root,
-Assistant home permits at most one such open Attention per project. Repeated detection reuses the
-unchanged notification; after resolution, a later recurrence creates a new ID.
+Work status moves only from `open` to `done` or `cancelled`. Running, queued, waiting for user,
+blocked, and ready are projections, not stored statuses.
 
-Targeted Attention has exactly one immutable target. A Goal or project target covers its contained
-nonterminal Work. A problem affecting unrelated roots creates one Attention per root; their bodies
-may link each other, but that correlation owns no control state. One responsibility Run may publish
-several independent targeted Attentions atomically. Work and inbox events do not copy a blocking
-field.
+## Attempts
 
-The body is free Markdown. It contains the observed condition and enough context for Assistant to
-judge the next action; Coordinator neither requires headings nor parses strategy from the prose.
+Attempt is the sole Run record. The immutable request contains:
 
-The canonical identity is `(projectId, goalId, attentionId)` for Goal-local Attention and
-`(homeId, attentionId)` for workspace Attention. Inbox correlation always stores the complete
-reference because local IDs may repeat across Goals or homes. The operator-visible notification
-payload is immutable from creation. Resolution may append its answering Input or clearing Evidence
-in the Markdown resolution section without changing the delivered notification. A materially
-different operator message resolves the old Attention as superseded and creates a new ID.
-Assistant mutation uses these canonical identities directly: create names a canonical Project,
-Goal, or Work target; edit or resolution names the complete canonical Attention reference. The tool
-locates Assistant-home versus Goal-package storage from that identity rather than exposing separate
-Attention APIs.
+```yaml
+workspaceMode: none | read_only | isolated_write
+instructionMarkdown: ...
+refs: []
+```
 
-Resolving targeted Attention and applying its effects uses one publication when `resolvedAt` is its
-only gate; it installs supporting effects first and the resolution last. Any additional gate is a
-separate publication. A cross-root answer uses the receipt sequence defined under Canonical
-Publication. In its project phase, effects precede Goal Input, and Goal-local Attention resolution
-is the final unblocking gate after that receipt.
+Lifecycle is `queued`, `running`, then `settled`. Settlement separately records a termination fact
+(`normal`, `cancelled`, `interrupted`, `crashed`, or `timed_out`), timestamps, natural-language
+Report, usage, diagnostics, and candidate source commits where applicable.
 
-`present_attention_to_user` stages complete open Attention references on the pending Assistant
-turn. The handled public reply exposes each referenced Attention's `summary` and optional
-`decisionPrompt`; it does not mutate the Attention or scheduling state. Only the explicit Reply
-action creates a user turn with `replyTo` and those exact references. The Assistant then judges the
-answer against current facts and applies or resolves the Attention explicitly. Ordinary page
-context never infers Attention references.
+There is no profile, responsibility, lane, stage, or shared provider session in Attempt authority.
 
-The optional provider-neutral webhook configured by `HOPI_ATTENTION_WEBHOOK_URL` mirrors that
-handled public Assistant reply; it never delivers raw Attention.
-`webhookDeliveredAt` on the Inbox event is its separate durable acknowledgement. Webhook delivery is
-at least once: a crash after the transport accepts the reply but before `webhookDeliveredAt` may
-repeat the same event identity. Retry timing remains disposable runtime state, so no notification
-ledger or exactly-once outbox is added.
+## Attention
 
-### `evidence/**`
+Attention is an unresolved operator dependency with a canonical target. A Work-targeted Attention
+claims HITL Decision Work until resolved. Attention never mutates the Work directly; the Assistant
+uses the reply to make a later explicit judgment.
 
-Evidence is immutable. Its front matter is a minimal provenance envelope containing stable
-identity, creation time, qualified `producerRun` or Coordinator check, owning Goal or Work, and
-referenced artifacts.
+One public Assistant turn may present several open Attentions and one operator reply may reference
+that whole set. This is presentation grouping only: each Attention retains its own target,
+resolution, and claim lifecycle.
 
-The Evidence body is free Markdown containing facts needed to defend an outcome, such as diffs,
-commits, tests, runtime verification, Reviewer findings, integration results, or limitations.
-For responsibility Runs it is the exact validated result summary. Result kind remains structured
-Attempt/transition data; projections never parse a `Result` line or `Summary` heading from the body.
-Evidence existence alone does not consume a Run result. A result becomes consumed only when Work
-canonically appends its Evidence to `evidenceRefs`; the qualified `producerRun` on referenced
-Evidence then prevents that Run from affecting Work again. Evidence left unreferenced by a process
-crash is preserved, but a later attempt uses a new Run rather than recovering the old transition.
+## Projection
 
-For an Engineering responsibility, staged authority includes every Work reachable from the owning
-Work through `dependsOn` and all Evidence named by those Works' append-only `evidenceRefs`. HOPI
-resolves portable Run artifact references from that selected Evidence into one Run-local read-only
-manifest. This is a projection of existing canonical Evidence and immutable Run storage, not a new
-document type or a second source of truth.
-
-The product derives one read-only browser URL from the immutable identity
-`(Project, Goal, Evidence, artifact index)`. Resolution starts from that exact canonical Evidence
-entry and may reach either preserved Run storage or a reviewed Project-relative file in a managed
-integration root. The URL is only a transport projection: it creates no artifact registry, permits
-no arbitrary filesystem path, and never replaces the Evidence reference as authority. Missing or
-ambiguous files fail closed instead of opening a guessed location. Known image, media, document, and
-data formats use their browser-safe media type; unknown or executable content remains inert text.
-
-Corrections create new Evidence and may reference the superseded Evidence; existing Evidence is
-never edited into a different claim. Raw transcripts are runtime data, and a success claim backed
-only by a transcript is incomplete. `evidenceRefs` owns durable reachability and Run-result
-consumption, but no criteria mapping. Criteria-to-Evidence mapping remains semantic model judgment,
-not a kernel DSL.
-
-### Audit and supporting files
-
-The durable audit view is derived from canonical documents, immutable Inputs, Evidence, Attention,
-and available Git history. Ordinary document publications do not wait for a Git commit; Coordinator
-creates audit commits in the background and at critical checkpoints such as C1. Runtime Run records
-enrich developer diagnostics when available but are not required for reconstruction. There is no
-canonical Goal journal or archive lifecycle. Ordinary supporting files are allowed and may be
-linked from canonical documents, but their names and locations carry no control semantics.
+The route API derives nodes and edges from the Goal package plus current Attempts and Attentions.
+It may return a focus node and collapsed terminal counts, but those fields are not persisted back to
+the package.

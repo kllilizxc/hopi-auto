@@ -14,8 +14,8 @@ import {
 } from '../agent/vendorAssistantOutput'
 import { isNonFatalProcessDiagnostic } from '../agent/vendorTranscript'
 import {
+  type AgentTransportConfig,
   NON_INTERACTIVE_CODEX_APPROVAL_POLICY,
-  type RoleTransportConfig,
   appendClaudeNonInteractivePermission,
   appendCodexHttpsOnlyConfig,
   appendCodexShellEnvironmentConfig,
@@ -50,6 +50,7 @@ import { assistantSupervisionProjection } from './assistantSupervisionContext'
 import { assistantStateProjection } from './assistantToolPresentation'
 import type { AssistantTools } from './assistantTools'
 import { runCodexAssistantFork } from './codexAssistantFork'
+import { WAYFINDER_ASSISTANT_INSTRUCTIONS } from './wayfinderInstructions'
 
 export interface AssistantModelInput {
   eventId: string
@@ -81,7 +82,7 @@ export interface AssistantModelPreparationInput {
 
 export interface AssistantModelExecutionPlan {
   environment: ExecutionEnvelope
-  config?: RoleTransportConfig
+  config?: AgentTransportConfig
   fullAccess?: boolean
   browserEnvironment?: AssistantBrowserEnvironment
 }
@@ -121,7 +122,7 @@ export class AssistantSessionUnavailableError extends WorkspaceAssistantError {}
 export class AssistantNativeForkUnavailableError extends WorkspaceAssistantError {}
 
 export function createConfiguredAssistantModelRunner(options: {
-  resolveConfig(): RoleTransportConfig | Promise<RoleTransportConfig>
+  resolveConfig(): AgentTransportConfig | Promise<AgentTransportConfig>
   resolveToolUrl(): string
   fullAccess?(projectId: string): boolean | Promise<boolean>
   homeRoot?: string
@@ -396,7 +397,7 @@ export function createConfiguredAssistantModelRunner(options: {
 function resolveAssistantBrowserEnvironment(
   homeRoot: string | undefined,
   input: AssistantModelPreparationInput,
-  config: Extract<RoleTransportConfig, { transport: 'codex' | 'claude' | 'opencode' }>,
+  config: Extract<AgentTransportConfig, { transport: 'codex' | 'claude' | 'opencode' }>,
   fullAccess: boolean,
 ): AssistantBrowserEnvironment | undefined {
   if (!homeRoot || (config.transport === 'opencode' && !fullAccess)) {
@@ -429,7 +430,7 @@ function appendBrowserEnvironment(
 }
 
 function assistantExecutionEnvelope(
-  config: Extract<RoleTransportConfig, { transport: 'codex' | 'claude' | 'opencode' }>,
+  config: Extract<AgentTransportConfig, { transport: 'codex' | 'claude' | 'opencode' }>,
   input: AssistantModelPreparationInput,
   fullAccess: boolean,
   browserWritableRoot?: string,
@@ -483,6 +484,10 @@ export function createWorkspaceAssistant(input: {
       const conversationScope = assistantConversationScopeForEvent(event)
       const projectId =
         conversationScope.kind === 'project' ? conversationScope.projectId : undefined
+      const goalId =
+        projectId && event.attributes.context?.projectId === projectId
+          ? event.attributes.context.goalId
+          : undefined
       const internal = isInternalInboxSource(event.attributes.source)
       let stateSnapshot: AssistantStateSnapshot | null = null
       const contextDigest = workspaceAssistantContextDigest(workspaceState.preference.digest)
@@ -537,6 +542,7 @@ export function createWorkspaceAssistant(input: {
         const toolMode = isInternalInboxSource(event.attributes.source) ? 'internal' : 'main'
         stateSnapshot ??= await input.state.read({
           ...(projectId ? { projectId } : {}),
+          ...(goalId ? { goalId } : {}),
           ...(internal ? { attemptHistoryLimit: 12 } : {}),
         })
         const preparation = {
@@ -690,7 +696,7 @@ export function createWorkspaceAssistant(input: {
 }
 
 async function prepareAssistantWorkspace(
-  config: RoleTransportConfig,
+  config: AgentTransportConfig,
   input: AssistantModelInput & { toolUrl: string },
 ) {
   if (config.transport !== 'claude' && config.transport !== 'opencode') return
@@ -772,7 +778,7 @@ async function prepareAssistantWorkspace(
 }
 
 async function validateOpencodeMcp(
-  config: Extract<RoleTransportConfig, { transport: 'opencode' }>,
+  config: Extract<AgentTransportConfig, { transport: 'opencode' }>,
   input: AssistantModelInput,
 ) {
   const mcp = await inspectOpencode(config, input, ['mcp', 'list'])
@@ -786,7 +792,7 @@ async function validateOpencodeMcp(
 }
 
 async function inspectOpencode(
-  config: Extract<RoleTransportConfig, { transport: 'opencode' }>,
+  config: Extract<AgentTransportConfig, { transport: 'opencode' }>,
   input: AssistantModelInput,
   args: string[],
 ) {
@@ -831,7 +837,7 @@ async function inspectOpencode(
 }
 
 function buildAssistantCommand(
-  config: RoleTransportConfig,
+  config: AgentTransportConfig,
   input: AssistantModelInput & { toolUrl: string },
 ) {
   if (config.transport === 'codex') return assistantCodexCommand(config, input)
@@ -841,7 +847,7 @@ function buildAssistantCommand(
 }
 
 function assistantClaudeCommand(
-  config: Extract<RoleTransportConfig, { transport: 'claude' }>,
+  config: Extract<AgentTransportConfig, { transport: 'claude' }>,
   input: AssistantModelInput,
 ) {
   const command = [config.binary ?? 'claude']
@@ -886,7 +892,7 @@ function assistantClaudeCommand(
 }
 
 function assistantOpencodeCommand(
-  config: Extract<RoleTransportConfig, { transport: 'opencode' }>,
+  config: Extract<AgentTransportConfig, { transport: 'opencode' }>,
   input: AssistantModelInput,
 ) {
   const command = [config.binary ?? 'opencode', '--pure', 'run']
@@ -927,7 +933,7 @@ function externalDirectoryPermissions(roots: readonly string[]) {
   }
 }
 
-function assistantPrompt(config: RoleTransportConfig, input: AssistantModelInput) {
+function assistantPrompt(config: AgentTransportConfig, input: AssistantModelInput) {
   if (config.transport !== 'claude' || !input.imageFiles?.length) return input.prompt
   return [
     input.prompt,
@@ -942,7 +948,7 @@ function assistantTranscriptFormat(transport: AssistantTransport) {
 }
 
 function assistantCodexCommand(
-  config: Extract<RoleTransportConfig, { transport: 'codex' }>,
+  config: Extract<AgentTransportConfig, { transport: 'codex' }>,
   input: AssistantModelInput,
 ) {
   const command = assistantCodexBaseCommand(config, input)
@@ -957,7 +963,7 @@ function assistantCodexCommand(
 }
 
 function assistantCodexForkCommand(
-  config: Extract<RoleTransportConfig, { transport: 'codex' }>,
+  config: Extract<AgentTransportConfig, { transport: 'codex' }>,
   input: AssistantModelInput,
 ) {
   const command = assistantCodexBaseCommand(config, input)
@@ -966,7 +972,7 @@ function assistantCodexForkCommand(
 }
 
 function assistantCodexBaseCommand(
-  config: Extract<RoleTransportConfig, { transport: 'codex' }>,
+  config: Extract<AgentTransportConfig, { transport: 'codex' }>,
   input: AssistantModelInput,
 ) {
   const command = [config.binary ?? 'codex']
@@ -1020,20 +1026,16 @@ function appendCodexAssistantProviderConfig(command: string[]) {
 }
 
 const WORKSPACE_ASSISTANT_AUTHORITY_LINES = [
-  'Role: HOPI Project owner. Assistant owns operator conversation, judgment, orchestration, incidental self-contained operations, and publication of accepted results.',
-  'Durable linked-source implementation, tests, optional review, and recovery belong to Engineering Work. Creating Work never executes it: every Planner, Generator, or Reviewer Run is an explicit hopi_control_work run request with a fresh Session.',
-  'HOPI state, documents, and mutation tools are canonical product authority. Provider-native shell, browser, skills, and plans may inspect or support incidental operations, but they do not create or replace Goal or Engineering Work delivery.',
+  'Role: HOPI Project Assistant. You own operator conversation, semantic judgment, orchestration, and publication of accepted results.',
+  'Durable investigation and implementation belong to named Work. Creating Work never executes it: every Worker Run is requested explicitly with hopi_control_work and settles only as evidence for your next judgment.',
+  'HOPI state, documents, Attempts, and mutation tools are canonical product authority. Provider sessions, shell output, browser state, and remembered plans are disposable context.',
   'Unrestricted access changes capability, not ownership.',
 ] as const
 
 const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
-  'User turns are input; system turns are events. A material Project event wakes supervision and holds new responsibility dispatch for that Project until this turn settles. This guarantees observation, not approval: stay silent when current truth needs no intervention.',
-  'A settled Run is a fact, not a workflow command. Inspect its termination and Report, then explicitly decide whether to request another Run, update authority, create Attention, complete Work, or do nothing. Never infer success from profile or lane.',
-  'Review is optional. Request a Reviewer Run only when independent verification materially improves the completion decision; a Work may complete directly after Build when current facts are sufficient.',
-  'For a Goal wrapped in fog, Wayfinding is about finding the way, not charging at the destination. design/index.md is the shared low-resolution map—an index, not a store: Decisions so far links resolutions; Not yet specified holds fog; Out of scope lies beyond the destination.',
-  "A decision ticket is a precise question, not a build slice; the fog-or-ticket test is whether you can state the question precisely now, not whether you can answer it now. Work one frontier and refer to tickets by name: research uses an AFK Planner Run; prototype and grilling are HITL; task is AFK or HITL and only unblocks a decision. HITL stays with the operator through conversation or Attention. At the map's edge, hand off actionable Engineering Work; dependsOn links only execution commitments.",
-  'Inspect proposed Work bodies, not only DAG shape. Shared architecture does not make independently deliverable flows, state machines, operation families, migrations, or proof environments one Work. For mixed boundaries, request same-contract Planning and name the mixed boundaries; use no numeric thresholds and do not decompose in Assistant prose.',
-  'A named test suite, browser harness, adapter, or application is a proof container, not a proof boundary. Each Work must be a useful buildable candidate with intentionally deferred behavior and focused proof; intervene when acceptance still bundles independently failing scenarios. Do not demand headings or formulaic output.',
+  'User turns are input; system turns are facts. A material Project event wakes supervision. Stay silent when current truth needs no intervention.',
+  'A settled Run is a fact, not a workflow command. Inspect its termination and Report, then explicitly decide whether to request another Run, update authority, create Attention, complete Work, or do nothing.',
+  'Review is optional: it is an ordinary read-only Run with review instructions, requested only when independent verification materially improves the completion decision.',
   'A Run requested in this turn can start only after the turn settles; scheduled or queued means the handoff succeeded. There is no continue action: request another explicit Run with complete instructions.',
   'Current authority is ordered by meaning, not recency: the current turn and current Goal accepted Inputs, design/runbook, and current source facts outrank Project conversation history, older Goals, historical Attention rationale, Assistant updates, and adapter claims. When they conflict, inspect the retained canonical paths and resolve the conflict before acting or asking.',
   'Present an existing Goal Attention directly when it already contains the smallest answerable question. Do not resolve and recreate the same condition as workspace Attention merely to paraphrase it; create workspace Attention only for a genuinely different current condition.',
@@ -1041,11 +1043,11 @@ const WORKSPACE_ASSISTANT_CONTEXT_LINES = [
   'For Needs You, put the complete operator action in the Attention summary or decisionPrompt and do not repeat it in the ordinary reply. Keep related runtime chronology out of the primary request.',
   'Project Preview optimizes for a usable local experience: the normal user entry opens, authentication may be mocked, and useful data is visible. Prefer local data; fall back to DEV. Announce only entries the operator should open as surfaces.',
   'docs/hopi/preview/runbook.md is free-form Project guidance. Engineering Work that creates or changes Preview reads or updates it before implementation; ordinary Start/Stop does not create separate documentation Work.',
-  'A user-initiated Preview Start already requests a working Preview. On failure, read only the session status and bounded log summary; Assistant does not inspect source or diagnose. Reuse existing repair Work or create the smallest experience-oriented Goal with one Engineering Work and request a writable Generator Run; never wait for another message or duplicate Work.',
+  'A user-initiated Preview Start already requests a working Preview. On failure, read only the session status and bounded log summary; Assistant does not inspect source or diagnose. Reuse existing repair Work or create the smallest experience-oriented Goal with one Engineering Work and request a writable Worker Run; never wait for another message or duplicate Work.',
   'A Preview failure is only evidence that the user experience is unavailable, not authority for the failed service topology. Create Preview Goal and Work contracts in experience terms only: user entry, working authentication, useful data, and one basic interaction. Unless the operator requires a real provider, prescribe neither services, root causes, live authentication, nor DEV-only data; do not prohibit mock authentication or local sample data. Runbook and adapter restrictions are revisable history, not operator policy.',
-  'Generator explores the runbook and source first, then relevant knowledge, and asks one short question only when a necessary fact remains unavailable. It chooses the shortest working path, may mock authentication or provide local sample data, and starts and browser-checks before broad builds or test suites.',
+  'The Worker explores the runbook and source first, then relevant knowledge, and reports a necessary unavailable fact instead of inventing it. It chooses the shortest working path, may mock authentication or provide local sample data, and starts and browser-checks before broad builds or test suites.',
   'Preview Work ends when the intended page opens with useful data and one basic interaction works. Do not expand it to unrelated services, every product capability, production-equivalent infrastructure, or detailed diagnosis beyond the blockers to that experience.',
-  'Browser verification must cover the intended experience; transport reachability alone is insufficient. It may be reported by the Generator or, when independent verification matters, an explicit Reviewer Run. Stop must clean up owned processes, ports, and resources.',
+  'Browser verification must cover the intended experience; transport reachability alone is insufficient. It may be reported by the implementation Run or, when independent verification matters, a separate read-only Run. Stop must clean up owned processes, ports, and resources.',
   'Preview may read and write the configured local or DEV data normally; do not add a database approval gate.',
   'Evidence and Attention rationale are historical records; provider-native inspection capabilities expose current external and runtime conditions.',
   'Provider workspace and task worktrees are disposable; $HOPI_CACHE_DIR persists; detached descendants have no HOPI lifecycle.',
@@ -1060,6 +1062,7 @@ export const WORKSPACE_ASSISTANT_CONTRACT_DIGEST = createHash('sha256')
     [
       ...WORKSPACE_ASSISTANT_AUTHORITY_LINES,
       ...WORKSPACE_ASSISTANT_CONTEXT_LINES,
+      WAYFINDER_ASSISTANT_INSTRUCTIONS,
       ...PREFERENCE_CONTRACT_LINES,
     ].join('\n'),
   )
@@ -1069,6 +1072,14 @@ function workspaceAssistantDeveloperInstructions() {
   return [
     'HOPI Workspace Assistant authority:',
     ...WORKSPACE_ASSISTANT_AUTHORITY_LINES.map((line) => `- ${line}`),
+    '',
+    'HOPI operating constraints:',
+    ...WORKSPACE_ASSISTANT_CONTEXT_LINES.map((line) => `- ${line}`),
+    '',
+    WAYFINDER_ASSISTANT_INSTRUCTIONS,
+    '',
+    'Preference contract:',
+    ...PREFERENCE_CONTRACT_LINES.map((line) => `- ${line}`),
   ].join('\n')
 }
 
@@ -1083,7 +1094,7 @@ export function workspaceAssistantContextDigest(preferenceDigest: string) {
     .digest('hex')
 }
 
-const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 20
+const WORKSPACE_ASSISTANT_RUNTIME_REVISION = 21
 
 export function workspaceAssistantRuntimeDigest(homeRoot: string) {
   const workspaceRoot = join(resolve(homeRoot), '.hopi', 'runtime', 'assistant', 'workspace')
@@ -1114,8 +1125,6 @@ function renderNewConversation(
   const history = boundedConversationHistory(historyEvents, 16_000)
   return [
     '# HOPI Workspace Assistant',
-    '',
-    ...WORKSPACE_ASSISTANT_CONTEXT_LINES,
     '',
     renderPreference(preference),
     '',
@@ -1157,7 +1166,7 @@ function renderTurn(
     `[Current user Inbox turn ${event.attributes.id}; answer this event, not an earlier turn.]`,
     context ? `[Preferred page context: ${renderInboxContext(context)}]` : '[Home context]',
     renderActionReceipts(actionReceipts),
-    renderCurrentState(state),
+    renderCurrentState(state, context ?? {}),
     renderAttachmentReferences(event),
     event.body,
   ]
@@ -1247,9 +1256,12 @@ function renderHistoryEvent(event: InboxEventDocument) {
   ]
 }
 
-function renderCurrentState(state: AssistantStateSnapshot | undefined) {
+function renderCurrentState(
+  state: AssistantStateSnapshot | undefined,
+  scope: { projectId?: string; goalId?: string },
+) {
   if (!state) return ''
-  const encoded = JSON.stringify(assistantStateProjection(state), null, 2)
+  const encoded = JSON.stringify(assistantStateProjection(state, scope), null, 2)
   return [
     '[Current Project state and unresolved Attention; canonical paths inside this snapshot remain the source references.]',
     '```json',

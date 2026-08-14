@@ -8,12 +8,10 @@ import {
   orderProjectsByRecency,
   projectCompletionIdentities,
   readGoalRouteState,
-  readGoalViewState,
   readRecentGoalId,
   readRecentGoals,
   readRecentProjects,
   readSeenProjectCompletions,
-  rememberGoalViewState,
   rememberRecentGoal,
   rememberRecentProject,
   rememberSeenProjectCompletions,
@@ -23,17 +21,17 @@ import {
 } from './goalScope'
 
 describe('Goal routes', () => {
-  test('builds board and design routes from stable scoped identity', () => {
+  test('builds Route and design routes from stable scoped identity', () => {
     const scope = { projectId: 'project alpha', goalId: 'goal/1' }
 
     expect(buildProjectRoute(scope.projectId)).toBe('/projects/project%20alpha')
-    expect(buildGoalRoute(scope, 'board')).toBe('/projects/project%20alpha/board/goal%2F1')
+    expect(buildGoalRoute(scope, 'route')).toBe('/projects/project%20alpha/route/goal%2F1')
     expect(buildGoalRoute(scope, 'docs')).toBe('/projects/project%20alpha/docs/goal%2F1')
-    expect(buildGoalRoute(null, 'board')).toBe('/projects')
+    expect(buildGoalRoute(null, 'route')).toBe('/projects')
   })
 
   test('reads only Goal-scoped product routes', () => {
-    expect(readGoalRouteState('/projects/P-1/board/G-1')).toEqual({
+    expect(readGoalRouteState('/projects/P-1/route/G-1')).toEqual({
       projectId: 'P-1',
       goalId: 'G-1',
     })
@@ -256,31 +254,4 @@ describe('recent workspace navigation', () => {
     ).not.toThrow()
   })
 
-  test('keeps presentation state isolated by Project and Goal', () => {
-    const values = new Map<string, string>()
-    const storage: GoalPreferenceStorage = {
-      getItem: (key) => values.get(key) ?? null,
-      setItem: (key, value) => values.set(key, value),
-    }
-
-    rememberGoalViewState(
-      'P-1',
-      'G-1',
-      { expandedWorkIds: ['work-a', 'work-b', 'work-a'], mobileLane: 'Review' },
-      storage,
-    )
-
-    expect(readGoalViewState('P-1', 'G-1', storage)).toEqual({
-      expandedWorkIds: ['work-a', 'work-b'],
-      mobileLane: 'Review',
-    })
-    expect(readGoalViewState('P-1', 'G-2', storage)).toEqual({
-      expandedWorkIds: [],
-      mobileLane: null,
-    })
-    expect(readGoalViewState('P-2', 'G-1', storage)).toEqual({
-      expandedWorkIds: [],
-      mobileLane: null,
-    })
-  })
 })

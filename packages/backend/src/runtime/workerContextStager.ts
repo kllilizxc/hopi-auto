@@ -5,7 +5,6 @@ import { ASSISTANT_PREFERENCE_PATH, readAssistantPreference } from '../domain/as
 import { goalAttentionTarget, workAttentionTarget } from '../domain/attentionTarget'
 import {
   type WorkOwnerMessage,
-  isEngineeringWork,
   isWorkTerminal,
   parseAttentionDocument,
   parseEvidenceDocument,
@@ -25,45 +24,40 @@ import {
   hasManagedBrowserConfiguration,
   resolveBrowserHarnessBackendCommand,
 } from './browserEnvironment'
-import { renderContextManifest, renderResponsibilityPrompt } from './roleContextRendering'
 import { parsePortableArtifactReference } from './runArtifacts'
 import { runStoragePath, runtimeCacheRoot } from './runPaths'
 import type { RunWorkspaceMode } from './runRequest'
 import { type SourceMergePreflightResult, inspectSourceMerge } from './sourceMergePreflight'
+import { renderContextManifest, renderWorkerPrompt } from './workerContextRendering'
 
-export const RESPONSIBILITIES = ['planner', 'generator', 'reviewer'] as const
-export type Responsibility = (typeof RESPONSIBILITIES)[number]
-
-export interface PrepareRoleContextInput {
+export interface PrepareWorkerContextInput {
   projectRoot: string
   projectPath?: string
   projectId: string
   goalId: string
   workId: string
   runId: string
-  responsibility: Responsibility
   workspaceMode: RunWorkspaceMode
   instructionMarkdown: string
   refs: readonly string[]
   primaryRepoId: string
-  repoRoots: readonly RoleRepoRoot[]
+  repoRoots: readonly WorkerRepoRoot[]
   apiOrigin?: string
   runtimeScratchDir?: string
   previousAttempt?: {
     runId: string
-    responsibility: Responsibility
     termination: string
     reportMarkdown: string
   }
 }
 
-export interface RoleRepoRoot {
+export interface WorkerRepoRoot {
   repoId: string
   path: string
   primary: boolean
 }
 
-export interface RoleContextBundle extends TransportContextBundle {
+export interface WorkerContextBundle extends TransportContextBundle {
   runRoot: string
   contextRoot: string
   authorityRoot: string
@@ -82,20 +76,20 @@ export interface RoleContextBundle extends TransportContextBundle {
   bootstrapSourceRoot?: string
   agentsPath?: string
   operatorPreferenceFile?: string
-  repoRoots: readonly RoleRepoRoot[]
+  repoRoots: readonly WorkerRepoRoot[]
   reposFile: string
 }
 
-export interface RoleContextStager {
-  prepare(input: PrepareRoleContextInput): Promise<RoleContextBundle>
+export interface WorkerContextStager {
+  prepare(input: PrepareWorkerContextInput): Promise<WorkerContextBundle>
 }
 
-export class RoleContextStagingError extends Error {}
+export class WorkerContextStagingError extends Error {}
 
-export function createRoleContextStager(
+export function createWorkerContextStager(
   homeRoot: string,
   publisher: PublicationCoordinator,
-): RoleContextStager {
+): WorkerContextStager {
   const absoluteHomeRoot = resolve(homeRoot)
 
   return {
@@ -188,18 +182,10 @@ export function createRoleContextStager(
       const parsedGoal = parseGoalDocument(decode(goalFile.content))
       const parsedWork = parseWorkDocument(decode(workFile.content))
       if (parsedWork.attributes.id !== input.workId) {
-        throw new RoleContextStagingError(
+        throw new WorkerContextStagingError(
           `Work path ${workPath} owns ${parsedWork.attributes.id}, expected ${input.workId}`,
         )
       }
-      if (input.responsibility !== 'planner') {
-        if (!isEngineeringWork(parsedWork.attributes)) {
-          throw new RoleContextStagingError(
-            `${input.responsibility} requires Engineering Work ${input.workId}`,
-          )
-        }
-      }
-
       const referencedImages = collectReferencedImages(parsedWork, paths, input.goalId)
       const availableReferencedImages = new Set(
         [...referencedImages].filter((imagePath) => {
@@ -223,14 +209,8 @@ export function createRoleContextStager(
           ]),
         ),
       })
-      const guardPrefixes =
-        input.responsibility === 'planner'
-          ? [paths.goalRoot(input.goalId)]
-          : [paths.designRoot(input.goalId)]
-      const authorityFiles =
-        input.responsibility === 'planner'
-          ? selectPlannerAuthorityFiles(input, snapshot.files, paths, parsedWork)
-          : snapshot.files.filter((file) => Object.hasOwn(guardFiles, file.path))
+      const guardPrefixes = [paths.designRoot(input.goalId)]
+      const authorityFiles = snapshot.files.filter((file) => Object.hasOwn(guardFiles, file.path))
       const evidencePaths = authorityFiles
         .filter((file) => file.path.startsWith(`${paths.evidenceRoot(input.goalId)}/`))
         .map((file) => file.path)
@@ -268,10 +248,7 @@ export function createRoleContextStager(
         unavailableMaterial,
         repairView,
       )
-      const operatorPreference =
-        input.responsibility === 'planner'
-          ? await snapshotOperatorPreference(publisher, absoluteHomeRoot)
-          : undefined
+      const operatorPreference = await snapshotOperatorPreference(publisher, absoluteHomeRoot)
       const operatorPreferenceFile = operatorPreference
         ? join(contextRoot, 'operator', 'preference.md')
         : undefined
@@ -299,7 +276,7 @@ export function createRoleContextStager(
 
       const agentsFile = snapshot.files.find((file) => file.path === paths.agentsPath)
       let bootstrapSourceRoot: string | undefined
-      if (input.responsibility === 'planner' && agentsFile?.content === null) {
+      if (agentsFile?.content === null) {
         bootstrapSourceRoot = join(contextRoot, 'source')
         await stageTrackedSource(projectRoot, releaseHead, bootstrapSourceRoot, paths.projectPath)
       }
@@ -352,7 +329,7 @@ export function createRoleContextStager(
       )
       await Bun.write(
         promptFile,
-        renderResponsibilityPrompt(
+        renderWorkerPrompt(
           input,
           {
             contextFile,
@@ -435,34 +412,34 @@ async function snapshotOperatorPreference(publisher: PublicationCoordinator, hom
   return readAssistantPreference(content ? new TextDecoder().decode(content) : null)
 }
 
-function normalizeRepoRoots(repoRoots: readonly RoleRepoRoot[], primaryRepoId: string) {
+function normalizeRepoRoots(repoRoots: readonly WorkerRepoRoot[], primaryRepoId: string) {
   const normalized = repoRoots.map((repo) => {
     assertStableId(repo.repoId, 'repoId')
     return { ...repo, path: resolve(repo.path) }
   })
   if (normalized.length === 0) {
-    throw new RoleContextStagingError('Responsibility Repo workspace must not be empty')
+    throw new WorkerContextStagingError('Worker Repo workspace must not be empty')
   }
   if (new Set(normalized.map((repo) => repo.repoId)).size !== normalized.length) {
-    throw new RoleContextStagingError('Responsibility Repo workspace contains duplicate Repo IDs')
+    throw new WorkerContextStagingError('Worker Repo workspace contains duplicate Repo IDs')
   }
   const primary = normalized.filter((repo) => repo.primary)
   if (primary.length > 1 || (primary[0] && primary[0].repoId !== primaryRepoId)) {
-    throw new RoleContextStagingError(`Responsibility workspace primary must be ${primaryRepoId}`)
+    throw new WorkerContextStagingError(`Worker workspace primary must be ${primaryRepoId}`)
   }
   return normalized
 }
 
-function requiredPrimaryRepoRoot(repoRoots: readonly RoleRepoRoot[], primaryRepoId: string) {
+function requiredPrimaryRepoRoot(repoRoots: readonly WorkerRepoRoot[], primaryRepoId: string) {
   const primary =
     repoRoots.find((repo) => repo.primary) ??
     repoRoots.find((repo) => repo.repoId === primaryRepoId) ??
     repoRoots[0]
-  if (!primary) throw new RoleContextStagingError('Responsibility Repo workspace must not be empty')
+  if (!primary) throw new WorkerContextStagingError('Worker Repo workspace must not be empty')
   return primary.path
 }
 
-async function discoverRepoGuidance(repoRoots: readonly RoleRepoRoot[]) {
+async function discoverRepoGuidance(repoRoots: readonly WorkerRepoRoot[]) {
   const candidates = repoRoots.map((repo) => ({
     repoId: repo.repoId,
     path: join(repo.path, 'AGENTS.md'),
@@ -481,7 +458,7 @@ async function discoverRepoGuidance(repoRoots: readonly RoleRepoRoot[]) {
 function normalizeApiOrigin(value: string) {
   const url = new URL(value)
   if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.origin === 'null') {
-    throw new RoleContextStagingError(`Invalid HOPI API origin: ${value}`)
+    throw new WorkerContextStagingError(`Invalid HOPI API origin: ${value}`)
   }
   return url.origin
 }
@@ -524,7 +501,7 @@ function collectDependencyContext(
     visited.add(workId)
     const dependency = workById.get(workId)
     if (!dependency) {
-      throw new RoleContextStagingError(`Dependency Work is missing from authority: ${workId}`)
+      throw new WorkerContextStagingError(`Dependency Work is missing from authority: ${workId}`)
     }
     workPaths.add(dependency.path)
     for (const evidencePath of selectedEvidencePaths(dependency.document, paths, goalId)) {
@@ -633,7 +610,7 @@ async function projectEvidenceArtifacts(
     artifacts.map(async (artifact, index) => {
       const parsed = parsePortableArtifactReference(artifact.reference)
       if (!parsed) {
-        throw new RoleContextStagingError(
+        throw new WorkerContextStagingError(
           `Invalid portable Evidence artifact reference: ${artifact.reference}`,
         )
       }
@@ -679,7 +656,7 @@ interface CandidateInspection {
 }
 
 async function inspectCurrentCandidate(
-  repoRoots: readonly RoleRepoRoot[],
+  repoRoots: readonly WorkerRepoRoot[],
   releaseRef: string,
   scratchRoot: string,
 ): Promise<CandidateInspection> {
@@ -731,15 +708,11 @@ async function inspectCurrentCandidate(
 }
 
 function selectGuardFiles(
-  input: PrepareRoleContextInput,
+  input: PrepareWorkerContextInput,
   files: readonly PublicationSnapshotFile[],
   paths: ReturnType<typeof createGoalPackagePaths>,
   work: ReturnType<typeof parseWorkDocument>,
 ) {
-  if (input.responsibility === 'planner') {
-    return Object.freeze(Object.fromEntries(files.map((file) => [file.path, file.hash])))
-  }
-
   const goalRoot = paths.goalRoot(input.goalId)
   const goalTarget = goalAttentionTarget(input.projectId, input.goalId)
   const workTarget = workAttentionTarget(input.projectId, input.goalId, input.workId)
@@ -772,7 +745,7 @@ function selectGuardFiles(
     if (dependencyWork.has(file.path) || referencedEvidence.has(file.path)) return true
     if (file.path.startsWith(`${paths.workRoot(input.goalId)}/`) && file.content) {
       const candidate = parseWorkDocument(decode(file.content)).attributes
-      return candidate.kind === 'planning' && !isWorkTerminal(candidate)
+      return candidate.kind === 'decision' && !isWorkTerminal(candidate)
     }
     if (file.path.startsWith(`${paths.attentionRoot(input.goalId)}/`) && file.content) {
       const attention = parseAttentionDocument(decode(file.content)).attributes
@@ -794,62 +767,6 @@ function selectedEvidencePaths(
   return work.attributes.evidenceRefs.map((evidenceId) =>
     paths.evidenceDocument(goalId, evidenceId),
   )
-}
-
-function selectPlannerAuthorityFiles(
-  input: PrepareRoleContextInput,
-  files: readonly PublicationSnapshotFile[],
-  paths: ReturnType<typeof createGoalPackagePaths>,
-  owningWork: ReturnType<typeof parseWorkDocument>,
-) {
-  const goalRoot = paths.goalRoot(input.goalId)
-  const workRoot = `${paths.workRoot(input.goalId)}/`
-  const inputRoot = `${paths.inputsRoot(input.goalId)}/`
-  const attentionRoot = `${paths.attentionRoot(input.goalId)}/`
-  const evidenceRoot = `${paths.evidenceRoot(input.goalId)}/`
-  const selectedWorkPaths = new Set([paths.workDocument(input.goalId, input.workId)])
-  const selectedEvidenceFiles = new Set<string>()
-  const selectedContextPaths = new Set(
-    owningWork.attributes.contextRefs.map((reference) => reference.path),
-  )
-  const owningWorkTarget = workAttentionTarget(input.projectId, input.goalId, input.workId)
-  const latestResolvedAttention = latestResolvedAttentionForTarget(
-    files,
-    attentionRoot,
-    owningWorkTarget,
-  )
-
-  for (const file of files) {
-    if (!file.content || !file.path.startsWith(workRoot)) continue
-    const work = parseWorkDocument(decode(file.content))
-    if (work.attributes.kind !== 'engineering' && work.attributes.id !== input.workId) continue
-    selectedWorkPaths.add(file.path)
-    for (const reference of work.attributes.contextRefs) selectedContextPaths.add(reference.path)
-    for (const evidencePath of selectedEvidencePaths(work, paths, input.goalId)) {
-      selectedEvidenceFiles.add(evidencePath)
-    }
-  }
-
-  const acceptedInputs = selectedAcceptedInputPaths(inputRoot, owningWork)
-  if (latestResolvedAttention?.document.attributes.resolutionInput) {
-    acceptedInputs.add(latestResolvedAttention.document.attributes.resolutionInput)
-  }
-
-  return files.filter((file) => {
-    if (!file.path.startsWith(`${goalRoot}/`)) return true
-    if (file.path === paths.goalDocument(input.goalId)) return true
-    if (file.path.startsWith(`${paths.designRoot(input.goalId)}/`)) return true
-    if (selectedContextPaths.has(file.path)) return true
-    if (selectedWorkPaths.has(file.path)) return true
-    if (acceptedInputs.has(file.path)) return true
-    if (selectedEvidenceFiles.has(file.path)) return true
-    if (file.path === latestResolvedAttention?.path) return true
-    if (file.path.startsWith(attentionRoot) && file.content) {
-      return parseAttentionDocument(decode(file.content)).attributes.resolvedAt === null
-    }
-    if (file.path.startsWith(evidenceRoot) || file.path.startsWith(inputRoot)) return false
-    return false
-  })
 }
 
 function selectedAcceptedInputPaths(inputRoot: string, work: ReturnType<typeof parseWorkDocument>) {
@@ -891,7 +808,7 @@ export interface RunAssignment {
     path: string
     title: string
     kind: string
-    stage: string
+    status: string
     body: string
     contextRefs: Array<{ path: string; purpose: string }>
     ownerMessages: WorkOwnerMessage[]
@@ -906,11 +823,11 @@ export interface RunAssignment {
   repairView: {
     candidate: CandidateInspection
   } | null
-  previousAttempt: PrepareRoleContextInput['previousAttempt'] | null
+  previousAttempt: PrepareWorkerContextInput['previousAttempt'] | null
 }
 
 function createRunAssignment(
-  input: PrepareRoleContextInput,
+  input: PrepareWorkerContextInput,
   paths: ReturnType<typeof createGoalPackagePaths>,
   goal: ReturnType<typeof parseGoalDocument>,
   work: ReturnType<typeof parseWorkDocument>,
@@ -922,22 +839,19 @@ function createRunAssignment(
   const byPath = new Map(authorityFiles.map((file) => [file.path, file]))
   const goalPath = paths.goalDocument(input.goalId)
   const workPath = paths.workDocument(input.goalId, input.workId)
-  const acceptedInputs =
-    input.responsibility === 'planner'
-      ? work.attributes.contextRefs.flatMap((reference) => {
-          if (!reference.path.startsWith(`${paths.inputsRoot(input.goalId)}/`)) return []
-          const file = byPath.get(reference.path)
-          if (!file?.content) return []
-          const document = parseInputDocument(decode(file.content))
-          return [
-            {
-              path: file.path,
-              sourceEventId: document.attributes.sourceEventId,
-              body: document.body,
-            },
-          ]
-        })
-      : []
+  const acceptedInputs = work.attributes.contextRefs.flatMap((reference) => {
+    if (!reference.path.startsWith(`${paths.inputsRoot(input.goalId)}/`)) return []
+    const file = byPath.get(reference.path)
+    if (!file?.content) return []
+    const document = parseInputDocument(decode(file.content))
+    return [
+      {
+        path: file.path,
+        sourceEventId: document.attributes.sourceEventId,
+        body: document.body,
+      },
+    ]
+  })
   const latestEvidenceId = work.attributes.evidenceRefs.at(-1)
   const latestEvidencePath = latestEvidenceId
     ? paths.evidenceDocument(input.goalId, latestEvidenceId)
@@ -965,7 +879,7 @@ function createRunAssignment(
       path: workPath,
       title: work.attributes.title,
       kind: work.attributes.kind,
-      stage: work.attributes.stage,
+      status: work.attributes.status,
       body: work.body,
       contextRefs: [...work.attributes.contextRefs],
       ownerMessages: [...work.attributes.ownerMessages],
@@ -992,13 +906,13 @@ async function stableAuthoritySnapshot(
       return { ...snapshot, releaseHead: before }
     }
   }
-  throw new RoleContextStagingError('Integration target changed repeatedly while staging context')
+  throw new WorkerContextStagingError('Integration target changed repeatedly while staging context')
 }
 
 function requiredSnapshotFile(files: readonly PublicationSnapshotFile[], path: string) {
   const file = files.find((candidate) => candidate.path === path)
   if (!file?.content || !file.hash) {
-    throw new RoleContextStagingError(`Required canonical context is missing: ${path}`)
+    throw new WorkerContextStagingError(`Required canonical context is missing: ${path}`)
   }
   return file as PublicationSnapshotFile & {
     content: Uint8Array
@@ -1008,7 +922,7 @@ function requiredSnapshotFile(files: readonly PublicationSnapshotFile[], path: s
 
 function requiredHash(file: PublicationSnapshotFile, path: string) {
   if (!file.hash) {
-    throw new RoleContextStagingError(`Required canonical context has no hash: ${path}`)
+    throw new WorkerContextStagingError(`Required canonical context has no hash: ${path}`)
   }
   return file.hash
 }
@@ -1068,7 +982,7 @@ async function gitBytes(cwd: string, args: string[]) {
     child.exited,
   ])
   if (exitCode !== 0) {
-    throw new RoleContextStagingError(`git ${args.join(' ')} failed in ${cwd}: ${stderr.trim()}`)
+    throw new WorkerContextStagingError(`git ${args.join(' ')} failed in ${cwd}: ${stderr.trim()}`)
   }
   return new Uint8Array(stdout)
 }
@@ -1087,29 +1001,29 @@ function safeJoin(root: string, relativePath: string) {
     normalized.startsWith('../') ||
     relativePath.includes('\\')
   ) {
-    throw new RoleContextStagingError(`Unsafe staged path: ${relativePath}`)
+    throw new WorkerContextStagingError(`Unsafe staged path: ${relativePath}`)
   }
   return join(root, ...relativePath.split('/'))
 }
 
 function normalizeGitPath(path: string) {
   if (path.startsWith('/') || path.includes('\\')) {
-    throw new RoleContextStagingError(`Unsafe Git path: ${path}`)
+    throw new WorkerContextStagingError(`Unsafe Git path: ${path}`)
   }
   const normalized = posix.normalize(path)
   if (normalized !== path || normalized.startsWith('../')) {
-    throw new RoleContextStagingError(`Unsafe Git path: ${path}`)
+    throw new WorkerContextStagingError(`Unsafe Git path: ${path}`)
   }
   return normalized
 }
 
 function assertStableId(value: string, label: string) {
   if (!STABLE_ID_PATTERN.test(value)) {
-    throw new RoleContextStagingError(`Invalid ${label}: ${value}`)
+    throw new WorkerContextStagingError(`Invalid ${label}: ${value}`)
   }
 }
 
 function decode(content: Uint8Array | null) {
-  if (!content) throw new RoleContextStagingError('Missing staged document content')
+  if (!content) throw new WorkerContextStagingError('Missing staged document content')
   return new TextDecoder().decode(content)
 }

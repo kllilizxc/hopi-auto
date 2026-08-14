@@ -99,14 +99,14 @@ const opencodeTransportSchema = commonTransportSchema.extend({
   variant: z.string().min(1).optional(),
 })
 
-export const roleTransportConfigSchema = z.union([
+export const agentTransportConfigSchema = z.union([
   processTransportSchema,
   codexTransportSchema,
   claudeTransportSchema,
   opencodeTransportSchema,
 ])
 
-export type RoleTransportConfig = z.infer<typeof roleTransportConfigSchema>
+export type AgentTransportConfig = z.infer<typeof agentTransportConfigSchema>
 
 const HOPI_CODEX_HTTPS_PROVIDER = 'hopi_chatgpt_https'
 const NON_INTERACTIVE_CLAUDE_TOOLS = ['EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion']
@@ -151,12 +151,12 @@ export interface ConfiguredTransportInvocation {
   runId: string
   stepId: string
   taskRef?: string
-  role?: string
+  agent?: string
   projectId?: string
 }
 
 export async function resolveConfiguredTransportCommand(options: {
-  config: RoleTransportConfig
+  config: AgentTransportConfig
   bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
   session?: VendorSession | null
@@ -167,13 +167,13 @@ export async function resolveConfiguredTransportCommand(options: {
   workspaceMode?: RunWorkspaceMode
 }): Promise<TransportCommand> {
   if ((options.bundle.imageFiles?.length ?? 0) > 0 && 'cmd' in options.config) {
-    throw new Error('process responsibility transport does not support HOPI image inputs')
+    throw new Error('process Worker transport does not support HOPI image inputs')
   }
   const env = {
     ...buildTransportEnv(options.bundle, options.input),
     ...(options.config.transport === 'claude' ? await readClaudeProviderEnvironment() : {}),
   }
-  const executionEnvelope = responsibilityExecutionEnvelope(options)
+  const executionEnvelope = workerExecutionEnvelope(options)
   const assignment = injectExecutionEnvelope(
     await Bun.file(options.bundle.promptFile).text(),
     executionEnvelope,
@@ -199,7 +199,7 @@ export async function resolveConfiguredTransportCommand(options: {
   const prompt =
     options.continuationPrompt ??
     (savedSession
-      ? await responsibilityContinuationPrompt(
+      ? await workerContinuationPrompt(
           assignment,
           options.input,
           assignmentSnapshotFile,
@@ -387,8 +387,8 @@ export async function resolveConfiguredTransportCommand(options: {
   }
 }
 
-function responsibilityExecutionEnvelope(options: {
-  config: RoleTransportConfig
+function workerExecutionEnvelope(options: {
+  config: AgentTransportConfig
   bundle: TransportContextBundle
   input: ConfiguredTransportInvocation
   fullAccess?: boolean
@@ -404,7 +404,7 @@ function responsibilityExecutionEnvelope(options: {
       transport,
       mode: 'unrestricted',
       runtimeWorkspace: displayExecutionPath(runtimeWorkspace, options.bundle),
-      runtimeWorkspaceRole: 'responsibility workspace',
+      runtimeWorkspaceRole: 'worker workspace',
       runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
       readableRoots: ['*'],
       writableRoots: ['*'],
@@ -423,7 +423,7 @@ function responsibilityExecutionEnvelope(options: {
       transport,
       mode: 'provider-managed',
       runtimeWorkspace: displayExecutionPath(runtimeWorkspace, options.bundle),
-      runtimeWorkspaceRole: 'responsibility workspace',
+      runtimeWorkspaceRole: 'worker workspace',
       runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
       readableRoots: null,
       writableRoots: null,
@@ -447,7 +447,7 @@ function responsibilityExecutionEnvelope(options: {
     transport,
     mode: codexReadOnly ? 'read-only' : 'bounded',
     runtimeWorkspace: displayExecutionPath(runtimeWorkspace, options.bundle),
-    runtimeWorkspaceRole: 'responsibility workspace',
+    runtimeWorkspaceRole: 'worker workspace',
     runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable',
     readableRoots: [...new Set(readableRoots)].map((path) =>
       displayExecutionPath(path, options.bundle),
@@ -487,7 +487,7 @@ function externalDirectoryPermissions(roots: readonly string[]) {
   }
 }
 
-async function responsibilityContinuationPrompt(
+async function workerContinuationPrompt(
   assignment: string,
   input: ConfiguredTransportInvocation,
   snapshotFile: string,
@@ -495,9 +495,9 @@ async function responsibilityContinuationPrompt(
 ) {
   if (refreshAssignment) {
     return [
-      '# Re-ground Responsibility Session',
+      '# Re-ground Worker Session',
       '',
-      `Current responsibility: ${input.role ?? input.stepId}. Current Work: ${input.taskRef ?? input.stepId}.`,
+      `Current Worker: ${input.agent ?? input.stepId}. Current Work: ${input.taskRef ?? input.stepId}.`,
       'The complete current assignment below replaces the remembered assignment.',
       '',
       assignment,
@@ -508,9 +508,9 @@ async function responsibilityContinuationPrompt(
     .catch(() => '')
   const changes = previous ? changedAssignmentSections(previous, assignment) : [assignment]
   return [
-    '# Continue Responsibility Session',
+    '# Continue Worker Session',
     '',
-    `Current responsibility: ${input.role ?? input.stepId}. Current Work: ${input.taskRef ?? input.stepId}.`,
+    `Current Worker: ${input.agent ?? input.stepId}. Current Work: ${input.taskRef ?? input.stepId}.`,
     previous
       ? changes.length > 0
         ? 'Each section below replaces the remembered section with the same identifier.'
@@ -605,7 +605,7 @@ function buildTransportEnv(bundle: TransportContextBundle, input: ConfiguredTran
     ...(input.projectId ? { HOPI_PROJECT_ID: input.projectId } : {}),
     ...(input.taskRef ? { HOPI_WORK_ID: input.taskRef } : {}),
     ...(input.taskRef ? { HOPI_TASK_REF: input.taskRef } : {}),
-    ...(input.role ? { HOPI_ROLE: input.role } : {}),
+    ...(input.agent ? { HOPI_AGENT: input.agent } : {}),
   }
 }
 
@@ -639,7 +639,7 @@ function placeholderValues(options: {
     PROJECT_ID: options.input.projectId ?? '',
     WORK_ID: options.input.taskRef ?? '',
     TASK_REF: options.input.taskRef ?? '',
-    ROLE: options.input.role ?? '',
+    AGENT: options.input.agent ?? '',
     RUN_ID: options.input.runId,
     STEP_ID: options.input.stepId,
   }

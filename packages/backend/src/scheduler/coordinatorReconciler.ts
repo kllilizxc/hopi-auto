@@ -7,7 +7,6 @@ import {
 } from '../domain/assistantWorkspaceDocuments'
 import type { AttentionDeliveryWorker } from '../runtime/attentionDelivery'
 import { recordProjectSystemEvent } from '../runtime/projectSystemEvent'
-import type { Responsibility } from '../runtime/roleContextStager'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import type { ProjectReconciler } from './projectReconciler'
@@ -24,7 +23,7 @@ export interface CoordinatorReconcilerOptions {
   assistant: WorkspaceAssistant
   wake: AssistantWake
   projects: readonly CoordinatorProjectRuntime[]
-  concurrency: Readonly<Record<Responsibility, number>>
+  concurrency: number
   delivery?: AttentionDeliveryWorker
   now?: () => Date
   reconcileRetryBaseMs?: number
@@ -91,7 +90,7 @@ export function createCoordinatorReconciler(
   const retryBaseMs = options.reconcileRetryBaseMs ?? COORDINATOR_RETRY_BASE_MS
   const retryMaxMs = options.reconcileRetryMaxMs ?? COORDINATOR_RETRY_MAX_MS
   const eligibleProjects = new Set(options.projects.map((project) => project.projectId))
-  const reservations = new Map<string, { responsibility: Responsibility; promise: Promise<void> }>()
+  const reservations = new Map<string, { promise: Promise<void> }>()
   const assistantActive = new Map<string, ActiveAssistantTurn>()
   const assistantTurnBarriers = new Map<string, AssistantTurnBarrier>()
   const projectsAwaitingSettlementObservation = new Map<string, number>()
@@ -368,11 +367,11 @@ export function createCoordinatorReconciler(
     }
 
     const observedSettlementProjects = new Map(projectsAwaitingSettlementObservation)
-    const settlementObservation = await observePendingResponsibilitySettlements()
+    const settlementObservation = await observePendingWorkerSettlements()
     if (settlementObservation === 'started') return { kind: 'idle' }
 
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
-    const runCounts = reservationRunCounts(reservations)
+    const runCount = reservations.size
     const candidates: GoalCandidate[] = []
     let nextWakeAt: number | null = null
     for (const project of options.projects) {
@@ -402,12 +401,7 @@ export function createCoordinatorReconciler(
           }
           const decision = await project.reconciler.decisionWhenEligible(goalId, goalPackage, {
             projectEligible: true,
-            liveRunWorkIds: liveWorkIds,
-            runCapacity: {
-              planner: runCounts.planner < options.concurrency.planner,
-              generator: runCounts.generator < options.concurrency.generator,
-              reviewer: runCounts.reviewer < options.concurrency.reviewer,
-            },
+            runningWorkIds: liveWorkIds,
             now: now(),
           })
           candidates.push({
@@ -439,7 +433,7 @@ export function createCoordinatorReconciler(
       ([projectId, generation]) => observedSettlementProjects.get(projectId) !== generation,
     )
     if (settlementAddedDuringScan) {
-      const observation = await observePendingResponsibilitySettlements()
+      const observation = await observePendingWorkerSettlements()
       if (observation === 'started') return { kind: 'idle' }
     }
 
@@ -453,11 +447,7 @@ export function createCoordinatorReconciler(
       try {
         await deterministic.project.reconciler.reconcileGoal(deterministic.goalId, {
           projectEligible: true,
-          runCapacity: {
-            planner: false,
-            generator: false,
-            reviewer: false,
-          },
+          workerCapacity: false,
         })
       } catch (error) {
         eligibleProjects.delete(deterministic.project.projectId)
@@ -475,27 +465,21 @@ export function createCoordinatorReconciler(
     }
 
     let started = 0
-    const reserved = { ...runCounts }
+    let reserved = runCount
     for (const candidate of candidates) {
       if (candidate.decision.kind !== 'dispatch') continue
       if (!eligibleProjects.has(candidate.project.projectId)) continue
       if (goalDispatchBlocked(candidate.project.projectId, candidate.goalId)) continue
-      const responsibility = candidate.decision.responsibility
       const workId = candidate.decision.workId
-      const limit = options.concurrency[responsibility]
-      if (reserved[responsibility] >= limit) continue
+      if (reserved >= options.concurrency) continue
       const key = `${candidate.project.projectId}/${candidate.goalId}/${workId}`
       if (reservations.has(key)) continue
-      reserved[responsibility] += 1
+      reserved += 1
       markProjectActivity(candidate.project.projectId)
       const promise = candidate.project.reconciler
         .reconcileGoal(candidate.goalId, {
           projectEligible: true,
-          runCapacity: {
-            planner: responsibility === 'planner',
-            generator: responsibility === 'generator',
-            reviewer: responsibility === 'reviewer',
-          },
+          workerCapacity: true,
         })
         .then(async (result) => {
           if (result.kind === 'run_settled') {
@@ -524,7 +508,7 @@ export function createCoordinatorReconciler(
             error,
           )
         })
-      reservations.set(key, { responsibility, promise })
+      reservations.set(key, { promise })
       started += 1
     }
     if (started > 0) {
@@ -561,7 +545,7 @@ export function createCoordinatorReconciler(
     return barrier
   }
 
-  async function observePendingResponsibilitySettlements() {
+  async function observePendingWorkerSettlements() {
     if (projectsAwaitingSettlementObservation.size === 0) return null
     const observedProjects = [...projectsAwaitingSettlementObservation]
     const result = await options.wake.observe({
@@ -678,14 +662,6 @@ function assistantEventScopeKey(event: { attributes: Pick<InboxEventAttributes, 
 
 function inboxSourceRank(source: InboxEventAttributes['source']) {
   return source === 'user' ? 0 : 1
-}
-
-function reservationRunCounts(
-  reservations: ReadonlyMap<string, { responsibility: Responsibility }>,
-) {
-  const counts: Record<Responsibility, number> = { planner: 0, generator: 0, reviewer: 0 }
-  for (const entry of reservations.values()) counts[entry.responsibility] += 1
-  return counts
 }
 
 function errorMessage(error: unknown) {

@@ -2,14 +2,8 @@ import { expect, test } from 'bun:test'
 
 const scrollSurfaceChecks = [
   {
-    file: '../../pages/BoardView.tsx',
-    patterns: [
-      /<AppScrollShadow\s+className="kanban-scroll"/,
-      /<AppScrollShadow className="kanban-cards"/,
-      /<AppScrollShadow className="fact-grid work-fact-strip"/,
-      /<AppScrollShadow className="work-contract-pane"/,
-      /<AppScrollShadow className="attempt-list"/,
-    ],
+    file: '../../pages/route/WorkDetailModal.tsx',
+    patterns: [/<AppScrollShadow className="route-work-contract"/],
   },
   {
     file: '../AssistantPanel.tsx',

@@ -4,8 +4,8 @@ import type { ProjectCodingReasoningEffort } from '../domain/projectCodingDefaul
 import { BoundedLineTail } from '../runtime/boundedLineTail'
 import { ensureManagedBrowser } from '../runtime/browserEnvironment'
 import { createProcessGroupTerminator } from '../runtime/processGroup'
-import type { Responsibility, RoleContextBundle } from '../runtime/roleContextStager'
 import type { RunTermination, RunWorkspaceMode } from '../runtime/runRequest'
+import type { WorkerContextBundle } from '../runtime/workerContextStager'
 import { createEnvironmentSecretRedactor } from './environmentSecretRedactor'
 import {
   type PersistentProcessTranscriptNormalizer,
@@ -19,81 +19,80 @@ import {
 } from './vendorAssistantOutput'
 import { type ProcessTranscriptFormat, isNonFatalProcessDiagnostic } from './vendorTranscript'
 import {
-  type RoleTransportConfig,
+  type AgentTransportConfig,
   resolveConfiguredTransportCommand,
   withNativeCompactionEnabled,
 } from './vendorTransport'
 
-export interface ResponsibilitySession extends VendorSession {
+export interface WorkerSession extends VendorSession {
   executionKey: string
 }
 
-export interface RoleRunInput {
+export interface WorkerRunInput {
   projectId: string
   goalId: string
   workId: string
   runId: string
-  responsibility: Responsibility
   workspaceMode: RunWorkspaceMode
   cwd: string
   sourceRoots?: readonly string[]
-  context: RoleContextBundle
-  session?: ResponsibilitySession | null
+  context: WorkerContextBundle
+  session?: WorkerSession | null
   refreshAssignment?: boolean
   signal?: AbortSignal
 }
 
-export interface RoleRunResult {
+export interface WorkerRunResult {
   reportMarkdown: string
   artifacts: readonly string[]
   exitCode: number | null
   termination: RunTermination
 }
 
-export interface RoleExecutionIdentity {
+export interface WorkerExecutionIdentity {
   transport: AgentTranscriptTransport
   model: string | null
   reasoningEffort: ProjectCodingReasoningEffort | null
 }
 
-export interface RoleRunObserver {
+export interface WorkerRunObserver {
   onEvent?(event: AgentRuntimeEvent): Promise<void> | void
-  onExecution?(execution: RoleExecutionIdentity): Promise<void> | void
+  onExecution?(execution: WorkerExecutionIdentity): Promise<void> | void
   onHeartbeat?(): Promise<void> | void
-  onSession?(session: ResponsibilitySession): Promise<void> | void
+  onSession?(session: WorkerSession): Promise<void> | void
   onSessionInvalid?(): Promise<void> | void
 }
 
-export interface RoleRunner {
-  run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult>
+export interface WorkerRunner {
+  run(input: WorkerRunInput, observer?: WorkerRunObserver): Promise<WorkerRunResult>
 }
 
-export interface ConfiguredRoleRunnerOptions {
-  resolveConfig(input: RoleRunInput): RoleTransportConfig | Promise<RoleTransportConfig>
-  fullAccess?(input: RoleRunInput): boolean | Promise<boolean>
+export interface ConfiguredWorkerRunnerOptions {
+  resolveConfig(input: WorkerRunInput): AgentTransportConfig | Promise<AgentTransportConfig>
+  fullAccess?(input: WorkerRunInput): boolean | Promise<boolean>
   prepareManagedBrowser?(homeRoot: string): Promise<unknown>
   heartbeatMs?: number
 }
 
-export class ConfiguredRoleRunner implements RoleRunner {
-  private readonly resolveConfig: ConfiguredRoleRunnerOptions['resolveConfig']
-  private readonly fullAccess: NonNullable<ConfiguredRoleRunnerOptions['fullAccess']>
+export class ConfiguredWorkerRunner implements WorkerRunner {
+  private readonly resolveConfig: ConfiguredWorkerRunnerOptions['resolveConfig']
+  private readonly fullAccess: NonNullable<ConfiguredWorkerRunnerOptions['fullAccess']>
   private readonly prepareManagedBrowser: NonNullable<
-    ConfiguredRoleRunnerOptions['prepareManagedBrowser']
+    ConfiguredWorkerRunnerOptions['prepareManagedBrowser']
   >
   private readonly heartbeatMs: number
 
-  constructor(options: ConfiguredRoleRunnerOptions) {
+  constructor(options: ConfiguredWorkerRunnerOptions) {
     this.resolveConfig = options.resolveConfig
     this.fullAccess = options.fullAccess ?? (() => false)
     this.prepareManagedBrowser = options.prepareManagedBrowser ?? ensureManagedBrowser
     this.heartbeatMs = options.heartbeatMs ?? 10_000
   }
 
-  async run(input: RoleRunInput, observer?: RoleRunObserver): Promise<RoleRunResult> {
+  async run(input: WorkerRunInput, observer?: WorkerRunObserver): Promise<WorkerRunResult> {
     const config = await this.resolveConfig(input)
     const fullAccess = input.workspaceMode === 'isolated_write' && (await this.fullAccess(input))
-    await observer?.onExecution?.(roleExecutionIdentity(config))
+    await observer?.onExecution?.(workerExecutionIdentity(config))
     if (input.context.browserHarnessCommand && input.context.browserHome) {
       try {
         await this.prepareManagedBrowser(input.context.browserHome)
@@ -102,7 +101,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
       }
     }
     const transport = resumableTransport(config)
-    const executionKey = roleSessionExecutionKey(config, fullAccess, input.cwd)
+    const executionKey = workerSessionExecutionKey(config, fullAccess, input.cwd)
     const session =
       transport &&
       input.session?.transport === transport &&
@@ -115,7 +114,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
         level: 'info',
         role: 'coordinator',
         content:
-          'Configured responsibility execution boundary changed; starting a new Session while retaining its workspace.',
+          'Configured Worker execution boundary changed; starting a new Session while retaining its workspace.',
       })
       await observer?.onSessionInvalid?.()
     }
@@ -138,8 +137,8 @@ export class ConfiguredRoleRunner implements RoleRunner {
           goalKey: input.goalId,
           taskRef: input.workId,
           runId: input.runId,
-          stepId: input.responsibility,
-          role: input.responsibility,
+          stepId: input.workId,
+          agent: 'worker',
         },
         session,
         fullAccess,
@@ -164,7 +163,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
         kind: 'message',
         level: 'info',
         role: 'coordinator',
-        content: `Resuming the existing ${input.responsibility} Session for this Work.`,
+        content: 'Resuming the existing Worker Session for this Run.',
       })
     }
 
@@ -175,10 +174,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
         await observer?.onSessionInvalid?.()
       }
     } catch (error) {
-      return factualResult(
-        'crashed',
-        `Unable to run ${input.responsibility}: ${errorMessage(error)}`,
-      )
+      return factualResult('crashed', `Unable to run Worker: ${errorMessage(error)}`)
     }
     const processFailure = executionFailure(input, execution)
     if (processFailure) return processFailure
@@ -187,7 +183,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
     if (workflowBefore !== workflowAfter || workflowAfter !== '') {
       return factualResult(
         'crashed',
-        `${input.responsibility} modified canonical .hopi content in its task worktree`,
+        'Worker modified canonical .hopi content in its task worktree',
         execution.exitCode,
       )
     }
@@ -201,7 +197,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
       reportFromFile ||
       factualReport(
         'normal',
-        `${input.responsibility} exited normally without a final natural-language response.`,
+        'Worker exited normally without a final natural-language response.',
         execution.exitCode,
       )
     await Bun.write(input.context.reportFile, `${reportMarkdown.trim()}\n`)
@@ -214,7 +210,7 @@ export class ConfiguredRoleRunner implements RoleRunner {
   }
 }
 
-function roleExecutionIdentity(config: RoleTransportConfig): RoleExecutionIdentity {
+function workerExecutionIdentity(config: AgentTransportConfig): WorkerExecutionIdentity {
   if ('cmd' in config) return { transport: 'process', model: null, reasoningEffort: null }
   return {
     transport: config.transport,
@@ -223,13 +219,13 @@ function roleExecutionIdentity(config: RoleTransportConfig): RoleExecutionIdenti
   }
 }
 
-function resumableTransport(config: RoleTransportConfig): AssistantTransport | null {
+function resumableTransport(config: AgentTransportConfig): AssistantTransport | null {
   if ('cmd' in config) return null
   return config.transport
 }
 
-export function roleSessionExecutionKey(
-  config: RoleTransportConfig,
+export function workerSessionExecutionKey(
+  config: AgentTransportConfig,
   fullAccess = false,
   sessionCwd?: string,
 ): string | null {
@@ -281,14 +277,13 @@ export function roleSessionExecutionKey(
 
 type ProcessExecution = Awaited<ReturnType<typeof executeProcess>>
 
-function executionFailure(input: RoleRunInput, execution: ProcessExecution): RoleRunResult | null {
+function executionFailure(
+  input: WorkerRunInput,
+  execution: ProcessExecution,
+): WorkerRunResult | null {
   if (input.signal?.aborted) {
     const termination = abortedTermination(input.signal)
-    return factualResult(
-      termination,
-      `${input.responsibility} Run was ${termination}.`,
-      execution.exitCode,
-    )
+    return factualResult(termination, `Worker Run was ${termination}.`, execution.exitCode)
   }
   if (execution.terminalError) {
     return factualResult(
@@ -306,8 +301,7 @@ function executionFailure(input: RoleRunInput, execution: ProcessExecution): Rol
   return null
 }
 
-async function workflowDocumentStatus(input: RoleRunInput) {
-  if (input.responsibility === 'planner') return ''
+async function workflowDocumentStatus(input: WorkerRunInput) {
   const roots = input.sourceRoots?.length ? input.sourceRoots : [input.cwd]
   const statuses = await Promise.all(
     roots.map(async (root) => {
@@ -408,21 +402,21 @@ async function consumeLines(
 
 function requireExecutionKey(executionKey: string | null) {
   if (!executionKey) {
-    throw new Error('A resumable responsibility transport requires an execution key')
+    throw new Error('A resumable Worker transport requires an execution key')
   }
   return executionKey
 }
 
 async function executeProcess(
   command: Awaited<ReturnType<typeof resolveConfiguredTransportCommand>>,
-  input: RoleRunInput,
-  observer: RoleRunObserver | undefined,
+  input: WorkerRunInput,
+  observer: WorkerRunObserver | undefined,
   heartbeatMs: number,
   transcriptFile: string,
-  session: ResponsibilitySession | null,
+  session: WorkerSession | null,
   executionKey: string | null,
 ) {
-  const tempDir = await mkdtemp('/tmp/hopi-role-')
+  const tempDir = await mkdtemp('/tmp/hopi-worker-')
   try {
     return await executeProcessWithTempDir(
       command,
@@ -441,11 +435,11 @@ async function executeProcess(
 
 async function executeProcessWithTempDir(
   command: Awaited<ReturnType<typeof resolveConfiguredTransportCommand>>,
-  input: RoleRunInput,
-  observer: RoleRunObserver | undefined,
+  input: WorkerRunInput,
+  observer: WorkerRunObserver | undefined,
   heartbeatMs: number,
   transcriptFile: string,
-  session: ResponsibilitySession | null,
+  session: WorkerSession | null,
   executionKey: string | null,
   tempDir: string,
 ) {
@@ -489,7 +483,7 @@ async function executeProcessWithTempDir(
   await observer?.onHeartbeat?.()
   const heartbeat = setInterval(() => {
     void Promise.resolve(observer?.onHeartbeat?.()).catch((error) =>
-      console.error('[role heartbeat error]', error),
+      console.error('[worker heartbeat error]', error),
     )
   }, heartbeatMs)
   const stderr = new BoundedLineTail()
@@ -587,17 +581,17 @@ async function executeProcessWithTempDir(
 }
 
 async function emitLine(
-  observer: RoleRunObserver | undefined,
+  observer: WorkerRunObserver | undefined,
   transcriptNormalizer: PersistentProcessTranscriptNormalizer,
   format: ProcessTranscriptFormat,
   stream: 'stdout' | 'stderr',
-  input: RoleRunInput,
+  _input: WorkerRunInput,
   line: string,
 ) {
   const events = await transcriptNormalizer.normalize({
     format,
     stream,
-    role: input.responsibility,
+    role: 'worker',
     line,
   })
   for (const event of events) {
@@ -609,7 +603,7 @@ function factualResult(
   termination: RunTermination,
   detail: string,
   exitCode: number | null = null,
-): RoleRunResult {
+): WorkerRunResult {
   return {
     reportMarkdown: factualReport(termination, detail, exitCode),
     artifacts: [],

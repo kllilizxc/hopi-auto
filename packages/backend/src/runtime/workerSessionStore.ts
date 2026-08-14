@@ -1,9 +1,8 @@
 import { mkdir, rename, rm, symlink } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
-import type { ResponsibilitySession } from '../agent/RoleRunner'
+import type { WorkerSession } from '../agent/WorkerRunner'
 import { stableIdSchema } from '../domain/stableId'
-import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
 
 const vendorSessionSchema = z
   .object({
@@ -25,49 +24,41 @@ const sessionManifestSchema = z
   })
   .strict()
 
-export interface ResponsibilitySessionKey {
+export interface WorkerSessionKey {
   projectId: string
   goalId: string
   workId: string
   runId: string
-  responsibility: Responsibility
 }
 
-export interface ResponsibilityWorkKey {
+export interface WorkerKey {
   projectId: string
   goalId: string
   workId: string
 }
 
-export interface ResponsibilitySessionState {
+export interface WorkerSessionState {
   contractRevision: number
   assignmentHash: string
   runtimeDigest: string
-  session: ResponsibilitySession | null
+  session: WorkerSession | null
   workspaceDir: string
 }
 
-export interface ResponsibilitySessionScope {
+export interface WorkerSessionScope {
   contractRevision: number
   assignmentHash: string
   runtimeDigest: string
 }
 
-export interface ResponsibilitySessionStore {
-  open(
-    key: ResponsibilitySessionKey,
-    scope: ResponsibilitySessionScope,
-  ): Promise<ResponsibilitySessionState>
-  write(
-    key: ResponsibilitySessionKey,
-    scope: ResponsibilitySessionScope,
-    session: ResponsibilitySession,
-  ): Promise<void>
-  invalidateVendor(key: ResponsibilitySessionKey, scope: ResponsibilitySessionScope): Promise<void>
-  clearWork(key: ResponsibilityWorkKey): Promise<void>
+export interface WorkerSessionStore {
+  open(key: WorkerSessionKey, scope: WorkerSessionScope): Promise<WorkerSessionState>
+  write(key: WorkerSessionKey, scope: WorkerSessionScope, session: WorkerSession): Promise<void>
+  invalidateVendor(key: WorkerSessionKey, scope: WorkerSessionScope): Promise<void>
+  clearWork(key: WorkerKey): Promise<void>
 }
 
-export async function bindResponsibilitySessionRunView(
+export async function bindWorkerSessionRunView(
   workspaceDir: string,
   runRoot: string,
 ): Promise<string> {
@@ -88,27 +79,26 @@ export async function bindResponsibilitySessionRunView(
   return current
 }
 
-export function createResponsibilitySessionStore(homeRoot: string): ResponsibilitySessionStore {
-  const root = join(resolve(homeRoot), '.hopi', 'runtime', 'responsibility-sessions')
+export function createWorkerSessionStore(homeRoot: string): WorkerSessionStore {
+  const root = join(resolve(homeRoot), '.hopi', 'runtime', 'worker-sessions')
 
-  const normalizedKey = (key: ResponsibilityWorkKey) => ({
+  const normalizedKey = (key: WorkerKey) => ({
     projectId: stableIdSchema.parse(key.projectId),
     goalId: stableIdSchema.parse(key.goalId),
     workId: stableIdSchema.parse(key.workId),
   })
 
-  const workRoot = (key: ResponsibilityWorkKey) => {
+  const workRoot = (key: WorkerKey) => {
     const normalized = normalizedKey(key)
     return join(root, normalized.projectId, normalized.goalId, normalized.workId)
   }
 
-  const assignmentPaths = (key: ResponsibilitySessionKey, scope: ResponsibilitySessionScope) => {
+  const assignmentPaths = (key: WorkerSessionKey, scope: WorkerSessionScope) => {
     const contractRevision = z.number().int().positive().parse(scope.contractRevision)
     const assignmentHash = assignmentHashSchema.parse(scope.assignmentHash)
     const runtimeDigest = runtimeDigestSchema.parse(scope.runtimeDigest)
-    const responsibility = z.enum(RESPONSIBILITIES).parse(key.responsibility)
     const runId = stableIdSchema.parse(key.runId)
-    const assignmentRoot = join(workRoot(key), responsibility, `assignment-${assignmentHash}`)
+    const assignmentRoot = join(workRoot(key), `assignment-${assignmentHash}`)
     const runtimeRoot = join(assignmentRoot, `runtime-${runtimeDigest}`)
     const runRoot = join(runtimeRoot, `run-${runId}`)
     return {
@@ -125,7 +115,7 @@ export function createResponsibilitySessionStore(homeRoot: string): Responsibili
     contractRevision: number,
     assignmentHash: string,
     runtimeDigest: string,
-    session: ResponsibilitySession | null,
+    session: WorkerSession | null,
   ) => {
     const manifest = sessionManifestSchema.parse({
       contractRevision,

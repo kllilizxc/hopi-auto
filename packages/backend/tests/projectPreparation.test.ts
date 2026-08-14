@@ -231,7 +231,7 @@ describe('ProjectPreparer', () => {
     }
   })
 
-  test('does not run over uncheckpointed Generator source', async () => {
+  test('does not run over uncheckpointed Worker source', async () => {
     const fixture = await createFixture()
     await writeAdapter(fixture.repo, 'throw new Error("must not run")')
     await git(fixture.repo, ['add', '.'])

@@ -12,7 +12,7 @@ import {
   workspaceAttentionProjectId,
 } from '../domain/assistantWorkspaceDocuments'
 import { goalAttentionReference, workspaceAttentionReference } from '../domain/attentionReference'
-import { type AttentionDocument, isPlanningWork } from '../domain/canonicalDocuments'
+import type { AttentionDocument } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
 import { type CursorPageRequest, paginateItems } from '../presentation/cursorPage'
 import { type MvpRuntime, requireProject } from '../runtime/mvpRuntime'
@@ -149,8 +149,7 @@ export function goalCompletionProjection(
   const evidence = [...goalPackage.works.values()]
     .filter(
       (work) =>
-        isPlanningWork(work.attributes) &&
-        work.attributes.stage === 'done' &&
+        work.attributes.status === 'done' &&
         work.attributes.contractRevision === goal.contractRevision,
     )
     .flatMap((work) =>

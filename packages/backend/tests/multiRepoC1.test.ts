@@ -2,7 +2,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
+import { parseWorkDocument } from '../src/domain/canonicalDocuments'
 import { projectReleaseRef } from '../src/domain/project'
 import {
   parseProjectDocument,
@@ -83,7 +83,7 @@ describe('multi-Repo C1', () => {
         'show',
         `${result.commit}:${fixture.store.paths.workDocument('goal-1', 'W-1')}`,
       ]),
-    ).toContain('stage: done')
+    ).toContain('status: done')
   })
 
   test('rejects a secondary source conflict and a changed task head before primary C1', async () => {
@@ -192,37 +192,16 @@ async function createFixture(changedRepoIds: string[]) {
   )
 
   const store = createGoalPackageStore(linked.integrationRoot, 'project-1', publisher)
-  await store.createGoal({ goalId: 'goal-1', title: 'Goal', objective: 'Ship value 2.' })
-  const planningPath = store.paths.workDocument('goal-1', 'plan-initial')
-  const planningSource = await Bun.file(store.paths.absolute(planningPath)).text()
-  const planning = parseWorkDocument(planningSource)
-  planning.attributes.stage = 'done'
-  await store.publishGoal('goal-1', {
-    supportingWrites: [
-      {
-        path: store.paths.workDocument('goal-1', 'W-1'),
-        expectedHash: null,
-        content: renderWorkDocument({
-          attributes: {
-            id: 'W-1',
-            title: 'Build value 2',
-            kind: 'engineering',
-            stage: 'generate',
-            notBefore: null,
-            dependsOn: [],
-            contractRevision: 1,
-            evidenceRefs: [],
-            contextRefs: [],
-            ownerMessages: [],
-          },
-          body: '## Acceptance Criteria\n\n- every affected Repo value equals 2.\n',
-        }),
-      },
-    ],
-    gateWrite: {
-      path: planningPath,
-      expectedHash: await hashBytes(new TextEncoder().encode(planningSource)),
-      content: renderWorkDocument(planning),
+  await store.createGoal({
+    goalId: 'goal-1',
+    title: 'Goal',
+    objective: 'Ship value 2.',
+    firstWork: {
+      id: 'W-1',
+      title: 'Build value 2',
+      kind: 'engineering',
+      objective: 'Set every affected Repo value to 2.',
+      acceptanceCriteria: ['Every affected Repo value equals 2.'],
     },
   })
 
@@ -303,7 +282,7 @@ async function createFixture(changedRepoIds: string[]) {
       const workPath = store.paths.workDocument('goal-1', 'W-1')
       const source = await Bun.file(store.paths.absolute(workPath)).text()
       const completedWork = parseWorkDocument(source)
-      completedWork.attributes.stage = 'done'
+      completedWork.attributes.status = 'done'
       completedWork.body = `${completedWork.body.trim()}\n\n## Completion decision\n\nShip all current task heads.\n`
       return {
         goalId: 'goal-1',

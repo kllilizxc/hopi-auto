@@ -3,47 +3,36 @@ import type { GoalDocument, WorkDocument } from '../src/domain/canonicalDocument
 import type { GoalPackage } from '../src/domain/goalPackage'
 import { decideGoalReconciliation } from '../src/scheduler/reconcileDecision'
 
-describe('decideGoalReconciliation', () => {
-  test('waits when Work has no explicitly queued Attempt', () => {
-    expect(decide(packageWith([work('W-1', 'engineering', 'generate')]))).toEqual({
-      kind: 'wait',
-      reasons: ['no_queued_run'],
+describe('deterministic reconciliation', () => {
+  test('starts only an explicitly queued Run', () => {
+    expect(decide(packageWith([work('W-1')]))).toEqual({ kind: 'wait', reasons: [] })
+    expect(decide(packageWith([work('W-1')]), { queuedWorkIds: new Set(['W-1']) })).toEqual({
+      kind: 'dispatch',
+      workId: 'W-1',
     })
   })
 
-  test('dispatches the profile recorded by the queued Attempt, not the Work stage', () => {
+  test('will not dispatch queued Work before its dependency', () => {
     expect(
-      decide(packageWith([work('W-1', 'engineering', 'generate')]), {
-        queuedRunProfiles: new Map([['W-1', 'reviewer']]),
+      decide(packageWith([work('W-1'), work('W-2', ['W-1'])]), {
+        queuedWorkIds: new Set(['W-2']),
       }),
-    ).toEqual({ kind: 'dispatch', workId: 'W-1', responsibility: 'reviewer' })
+    ).toEqual({ kind: 'wait', reasons: ['dependency_incomplete', 'queued_run'] })
   })
 
-  test('does not dispatch an explicit Run while its dependency is incomplete', () => {
+  test('rechecks scheduling after a Run was queued', () => {
+    const scheduled = work('W-1')
+    scheduled.attributes.notBefore = '2026-08-15T00:00:00Z'
     expect(
-      decide(
-        packageWith([
-          work('W-1', 'engineering', 'generate'),
-          work('W-2', 'engineering', 'generate', ['W-1']),
-        ]),
-        { queuedRunProfiles: new Map([['W-2', 'generator']]) },
-      ),
-    ).toEqual({ kind: 'wait', reasons: ['no_queued_run', 'dependency_incomplete'] })
+      decide(packageWith([scheduled]), {
+        queuedWorkIds: new Set(['W-1']),
+        now: new Date('2026-08-14T00:00:00Z'),
+      }),
+    ).toEqual({ kind: 'wait', reasons: ['not_before', 'queued_run'] })
   })
 
-  test('waits for inactive Goals and ineligible Projects', () => {
-    const goalPackage = packageWith([work('W-1', 'engineering', 'generate')])
-    goalPackage.goal.attributes.lifecycle = 'paused'
-    expect(decide(goalPackage)).toEqual({ kind: 'wait', reasons: ['goal_paused'] })
-    goalPackage.goal.attributes.lifecycle = 'active'
-    expect(decide(goalPackage, { projectEligible: false })).toEqual({
-      kind: 'wait',
-      reasons: ['project_ineligible'],
-    })
-  })
-
-  test('finishes cancellation deterministically without creating a Run', () => {
-    const goalPackage = packageWith([work('W-1', 'engineering', 'generate')])
+  test('finishes cancellation without inventing a Worker Run', () => {
+    const goalPackage = packageWith([work('W-1')])
     goalPackage.goal.attributes.lifecycle = 'cancelled'
     expect(decide(goalPackage)).toEqual({ kind: 'finish_cancellation' })
   })
@@ -59,10 +48,9 @@ function decide(
     goalPackage,
     runtime: {
       projectEligible: true,
-      liveRunWorkIds: new Set(),
-      queuedRunProfiles: new Map(),
-      settledRunWorkIds: new Set(),
-      runCapacity: { planner: true, generator: true, reviewer: true },
+      runningWorkIds: new Set(),
+      queuedWorkIds: new Set(),
+      settledWorkIds: new Set(),
       ...overrides,
     },
   })
@@ -82,23 +70,21 @@ function packageWith(works: WorkDocument[]): GoalPackage {
   }
 }
 
-function work(
-  id: string,
-  kind: 'planning' | 'engineering',
-  stage: 'plan' | 'generate' | 'review' | 'done',
-  dependsOn: string[] = [],
-): WorkDocument {
-  const common = {
-    id,
-    title: id,
-    notBefore: null,
-    dependsOn,
-    contractRevision: 1,
-    evidenceRefs: [],
-    contextRefs: [],
-    ownerMessages: [],
+function work(id: string, dependsOn: string[] = []): WorkDocument {
+  return {
+    attributes: {
+      id,
+      title: id,
+      kind: 'engineering',
+      status: 'open',
+      createdAt: '2026-08-14T00:00:00Z',
+      notBefore: null,
+      dependsOn,
+      contractRevision: 1,
+      evidenceRefs: [],
+      contextRefs: [],
+      ownerMessages: [],
+    },
+    body: 'Build it.\n',
   }
-  return kind === 'planning'
-    ? { attributes: { ...common, kind, stage: stage as 'plan' | 'done' }, body: '' }
-    : { attributes: { ...common, kind, stage: stage as 'generate' | 'review' | 'done' }, body: '' }
 }

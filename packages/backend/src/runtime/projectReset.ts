@@ -370,7 +370,7 @@ async function inspectRuntimeState(
         removedEventIds.includes(manifest.handoffEventId)),
   )
   const paths = [
-    join(runtimeRoot, 'responsibility-sessions', projectId),
+    join(runtimeRoot, 'worker-sessions', projectId),
     join(runtimeRoot, 'worktrees', projectId),
     join(runtimeRoot, 'preview', projectId),
     join(assistantRoot, 'sessions', 'projects', `${projectId}.json`),

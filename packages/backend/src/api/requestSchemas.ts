@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { WORKFLOW_ROLE_KEYS } from '../agent/adapterConfig'
+import { AGENT_KEYS } from '../agent/adapterConfig'
 import {
   normalizeInboxAttentionReferences,
   parseAttentionReference,
@@ -51,21 +51,14 @@ export const projectSchema = projectIdentitySchema
 
 export const rebindProjectSchema = z.object({ repos: z.array(projectRepoSchema).min(1) }).strict()
 
-export const agentRoleSettingsSchema = z
+export const agentSettingsSchema = z
   .object({ codingDefaults: projectCodingDefaultsInputSchema.nullable() })
   .strict()
 
 export const projectAgentAccessSchema = z.object({ fullAccess: z.boolean() }).strict()
 
-export const CONFIGURABLE_AGENT_ROLES = ['assistant', ...WORKFLOW_ROLE_KEYS] as const
-export const configurableAgentRoleSchema = z.enum(CONFIGURABLE_AGENT_ROLES)
-
-export const goalSchema = z.object({
-  goalId: stableIdSchema.optional(),
-  title: z.string().trim().min(1),
-  objective: z.string().trim().min(1),
-  priority: z.number().int().optional(),
-})
+export const CONFIGURABLE_AGENTS = AGENT_KEYS
+export const configurableAgentSchema = z.enum(CONFIGURABLE_AGENTS)
 
 export const inboxSchema = z
   .object({

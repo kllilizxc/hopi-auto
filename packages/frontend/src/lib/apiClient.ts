@@ -2,9 +2,9 @@ import type {
   AppSnapshot,
   AssistantFeedChanges,
   AssistantFeedPage,
-  ConfigurableAgentRole,
+  ConfigurableAgent,
   CursorPage,
-  GoalBoardDetail,
+  GoalRouteDetail,
   GoalDetail,
   GoalDocsDetail,
   GoalDocumentView,
@@ -102,24 +102,27 @@ export function readGoal(projectId: string, goalId: string) {
   return apiRequest<GoalDetail>(goalPath(projectId, goalId))
 }
 
-export async function readGoalBoard(projectId: string, goalId: string) {
-  return requireGoalBoardDetail(
-    await apiRequest<unknown>(`${goalPath(projectId, goalId)}?view=board`),
+export async function readGoalRoute(projectId: string, goalId: string) {
+  return requireGoalRouteDetail(
+    await apiRequest<unknown>(`${goalPath(projectId, goalId)}?view=route`),
   )
 }
 
-export function requireGoalBoardDetail(value: unknown): GoalBoardDetail {
+export function requireGoalRouteDetail(value: unknown): GoalRouteDetail {
   if (
     !isRecord(value) ||
     typeof value.projectId !== 'string' ||
     !isRecord(value.goal) ||
     !Array.isArray(value.works) ||
+    !isRecord(value.route) ||
+    !Array.isArray(value.route.nodes) ||
+    !Array.isArray(value.route.edges) ||
     !Array.isArray(value.attentions) ||
     (value.projectAttention !== null && !isRecord(value.projectAttention))
   ) {
-    throw new Error('Goal board projection is incomplete. Waiting for a fresh backend response.')
+    throw new Error('Goal route projection is incomplete. Waiting for a fresh backend response.')
   }
-  return value as unknown as GoalBoardDetail
+  return value as unknown as GoalRouteDetail
 }
 
 export function readGoalExecutionCost(projectId: string, goalId: string) {
@@ -247,11 +250,11 @@ export function rebindProjectRepos(
   })
 }
 
-export function updateAgentRoleSettings(
-  role: ConfigurableAgentRole,
+export function updateAgentSettings(
+  agent: ConfigurableAgent,
   codingDefaults: ProjectCodingDefaults | null,
 ) {
-  return apiRequest<AppSnapshot>(`/api/agent-roles/${encodeURIComponent(role)}/settings`, {
+  return apiRequest<AppSnapshot>(`/api/agents/${encodeURIComponent(agent)}/settings`, {
     method: 'PATCH',
     body: { codingDefaults },
   })

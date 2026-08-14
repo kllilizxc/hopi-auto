@@ -102,7 +102,7 @@ async function commitCheckpoint(
     input.worktreePath,
     ['-c', 'core.hooksPath=/dev/null', 'commit', ...extraArgs, '--no-gpg-sign', '-m', message],
     {
-      GIT_AUTHOR_NAME: 'HOPI Generator',
+      GIT_AUTHOR_NAME: 'HOPI Worker',
       GIT_AUTHOR_EMAIL: 'hopi@local',
       GIT_COMMITTER_NAME: 'HOPI Coordinator',
       GIT_COMMITTER_EMAIL: 'hopi@local',

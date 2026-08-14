@@ -21,7 +21,7 @@ export function createCompletionStructureVerifier(
   return {
     async verify(goalId, goalPackage) {
       for (const work of goalPackage.works.values()) {
-        if (!isEngineeringWork(work.attributes) || work.attributes.stage !== 'done') continue
+        if (!isEngineeringWork(work.attributes) || work.attributes.status !== 'done') continue
         const workReference = workAttentionTarget(store.paths.projectId, goalId, work.attributes.id)
         const records = (
           await listIntegrationRecords(

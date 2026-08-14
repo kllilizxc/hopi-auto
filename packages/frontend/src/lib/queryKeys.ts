@@ -1,5 +1,5 @@
-export function goalBoardQueryKey(projectId: string | undefined, goalId: string | undefined) {
-  return ['mvp-goal', projectId, goalId, 'board'] as const
+export function goalRouteQueryKey(projectId: string | undefined, goalId: string | undefined) {
+  return ['mvp-goal', projectId, goalId, 'route'] as const
 }
 
 export function goalDocsQueryKey(projectId: string | undefined, goalId: string | undefined) {

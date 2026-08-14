@@ -1161,8 +1161,8 @@ function validateIntegrationDocumentDelta(
   if (
     !currentWork ||
     !isEngineeringWork(currentWork.attributes) ||
-    currentWork.attributes.stage === 'done' ||
-    currentWork.attributes.stage === 'cancelled' ||
+    currentWork.attributes.status === 'done' ||
+    currentWork.attributes.status === 'cancelled' ||
     !nextWork ||
     JSON.stringify(nextWork) !== JSON.stringify(input.completedWork)
   ) {
@@ -1194,7 +1194,7 @@ function validateCurrentCompletionAuthority(
     throw new C1IntegrationError(`Engineering Work is missing or terminal: ${input.workId}`)
   }
   const incompleteDependency = work.attributes.dependsOn.find(
-    (dependencyId) => current.works.get(dependencyId)?.attributes.stage !== 'done',
+    (dependencyId) => current.works.get(dependencyId)?.attributes.status !== 'done',
   )
   if (incompleteDependency) {
     throw new C1IntegrationError(`Dependency is not done: ${incompleteDependency}`)
@@ -1240,7 +1240,7 @@ function validateInput(_store: GoalPackageStore, input: C1CompletionInput) {
   if (
     input.workId !== input.completedWork.attributes.id ||
     !isEngineeringWork(input.completedWork.attributes) ||
-    input.completedWork.attributes.stage !== 'done' ||
+    input.completedWork.attributes.status !== 'done' ||
     !input.sourceEventId.trim() ||
     !input.decision.trim()
   ) {

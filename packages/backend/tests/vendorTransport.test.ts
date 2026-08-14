@@ -2,11 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
-  type RoleTransportConfig,
+  type AgentTransportConfig,
+  agentTransportConfigSchema,
   appendCodexHttpsOnlyConfig,
   appendCodexShellEnvironmentConfig,
   resolveConfiguredTransportCommand,
-  roleTransportConfigSchema,
   withNativeCompactionEnabled,
 } from '../src/agent/vendorTransport'
 
@@ -33,8 +33,7 @@ const input = {
   runId: 'run-1',
   stepId: 'step-1',
   taskRef: 'T-1',
-  taskKind: 'engineering' as const,
-  role: 'generator' as const,
+  agent: 'worker',
 }
 
 describe('resolveConfiguredTransportCommand', () => {
@@ -60,7 +59,7 @@ describe('resolveConfiguredTransportCommand', () => {
   })
 
   test('rejects an OpenCode model without its provider namespace', () => {
-    const parsed = roleTransportConfigSchema.safeParse({
+    const parsed = agentTransportConfigSchema.safeParse({
       transport: 'opencode',
       cwdMode: 'root',
       model: 'gemini-3.1-pro-preview',
@@ -75,7 +74,7 @@ describe('resolveConfiguredTransportCommand', () => {
   })
 
   test('builds a codex exec command that reads the bundled prompt from stdin', async () => {
-    await rm('/tmp/run/scratch/role-outcome.schema.json', { force: true })
+    await rm('/tmp/run/scratch/worker-outcome.schema.json', { force: true })
     await Bun.write(bundle.promptFile, '# prompt for codex\n')
 
     const command = await resolveConfiguredTransportCommand({
@@ -87,7 +86,7 @@ describe('resolveConfiguredTransportCommand', () => {
         approvalPolicy: 'never',
         model: 'gpt-5-codex',
         reasoningEffort: 'xhigh',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle,
       input,
       workspaceMode: 'isolated_write',
@@ -122,10 +121,10 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
     expect(command.finalOutputFile).toBe('/tmp/run/scratch/vendor-report.md')
     expect(command.cmd).not.toContain('--output-schema')
-    expect(await Bun.file('/tmp/run/scratch/role-outcome.schema.json').exists()).toBe(false)
+    expect(await Bun.file('/tmp/run/scratch/worker-outcome.schema.json').exists()).toBe(false)
   })
 
-  test('uses one resolved execution envelope in the responsibility prompt', async () => {
+  test('uses one resolved execution envelope in the Worker prompt', async () => {
     await Bun.write(bundle.promptFile, '# assignment\n\n__HOPI_EXECUTION_ENVELOPE__\n')
 
     const command = await resolveConfiguredTransportCommand({
@@ -178,7 +177,7 @@ describe('resolveConfiguredTransportCommand', () => {
         cwdMode: 'root',
         sandbox: 'workspace-write',
         approvalPolicy: 'never',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle: {
         ...bundle,
         imageFiles: ['/tmp/screen-1.png', '/tmp/screen-2.webp'],
@@ -209,8 +208,8 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
   })
 
-  test('resumes a Codex responsibility session with the current assignment', async () => {
-    await Bun.write(bundle.promptFile, '# current generator assignment\n')
+  test('resumes a Codex Worker session with the current assignment', async () => {
+    await Bun.write(bundle.promptFile, '# current Worker assignment\n')
 
     const command = await resolveConfiguredTransportCommand({
       config: {
@@ -220,10 +219,10 @@ describe('resolveConfiguredTransportCommand', () => {
         sandbox: 'workspace-write',
         approvalPolicy: 'never',
         model: 'gpt-5-codex',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle,
       input,
-      session: { transport: 'codex', sessionId: 'thread-generator' },
+      session: { transport: 'codex', sessionId: 'thread-worker' },
       workspaceMode: 'isolated_write',
     })
 
@@ -244,12 +243,12 @@ describe('resolveConfiguredTransportCommand', () => {
       '--skip-git-repo-check',
       ...codexReportCaptureArgs(),
       '--json',
-      'thread-generator',
+      'thread-worker',
       '-',
     ])
     expect(command.sessionTransport).toBe('codex')
-    expect(command.stdin).toContain('Current responsibility: generator. Current Work: T-1.')
-    expect(command.stdin).toContain('# current generator assignment')
+    expect(command.stdin).toContain('Current Worker: worker. Current Work: T-1.')
+    expect(command.stdin).toContain('# current Worker assignment')
     expect(command.stdin).not.toContain('Retain valid prior discovery')
   })
 
@@ -269,7 +268,7 @@ describe('resolveConfiguredTransportCommand', () => {
         `<!-- HOPI_ASSIGNMENT_SECTION_END:${id} -->`,
       ].join('\n')
     const previous = [
-      '# HOPI Responsibility Run',
+      '# HOPI Worker Run',
       '',
       section('primary-task', '## Primary Task\n\nStable contract.'),
       section(
@@ -292,7 +291,7 @@ describe('resolveConfiguredTransportCommand', () => {
         },
         bundle: scopedBundle,
         input,
-        session: { transport: 'codex', sessionId: 'thread-generator' },
+        session: { transport: 'codex', sessionId: 'thread-worker' },
       })
 
       expect(changed.stdin).toContain('## Supporting Authority')
@@ -313,7 +312,7 @@ describe('resolveConfiguredTransportCommand', () => {
         },
         bundle: scopedBundle,
         input,
-        session: { transport: 'codex', sessionId: 'thread-generator' },
+        session: { transport: 'codex', sessionId: 'thread-worker' },
       })
       expect(unchanged.stdin).toContain('No assignment section changed')
       expect(unchanged.stdin).not.toContain('## Primary Task')
@@ -323,7 +322,7 @@ describe('resolveConfiguredTransportCommand', () => {
     }
   })
 
-  test('re-grounds a rejected Generator Session with the complete current assignment', async () => {
+  test('re-grounds a Worker Session with the complete current assignment', async () => {
     const root = join('/tmp', `hopi-vendor-reground-${crypto.randomUUID()}`)
     await mkdir(root, { recursive: true })
     const scopedBundle = {
@@ -360,11 +359,11 @@ describe('resolveConfiguredTransportCommand', () => {
         },
         bundle: scopedBundle,
         input,
-        session: { transport: 'codex', sessionId: 'thread-generator' },
+        session: { transport: 'codex', sessionId: 'thread-worker' },
         refreshAssignment: true,
       })
 
-      expect(command.stdin).toContain('# Re-ground Responsibility Session')
+      expect(command.stdin).toContain('# Re-ground Worker Session')
       expect(command.stdin).toContain('Complete current Work.')
       expect(command.stdin).toContain('Current rejection.')
       expect(command.stdin).toContain('Current result contract.')
@@ -378,19 +377,19 @@ describe('resolveConfiguredTransportCommand', () => {
     }
   })
 
-  test('uses the stable responsibility view for every current-Run environment path', async () => {
+  test('uses the stable Worker view for every current-Run environment path', async () => {
     const runRoot = '/tmp/hopi/runtime/runs/R-current'
-    const runViewRoot = '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace/current'
+    const runViewRoot = '/tmp/hopi/runtime/worker-sessions/T-1/workspace/current'
     const scopedBundle = {
       ...bundle,
       runRoot,
       runViewRoot,
-      runtimeScratchDir: '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace',
+      runtimeScratchDir: '/tmp/hopi/runtime/worker-sessions/T-1/workspace',
       authorityRoot: `${runRoot}/context/authority`,
       reportFile: `${runRoot}/report.md`,
       primaryRepoRoot: '/tmp/project/worktree',
       extraReadableRoots: ['/tmp/project/worktree'],
-      extraWritableRoots: [runRoot, '/tmp/hopi/runtime/responsibility-sessions/reviewer/workspace'],
+      extraWritableRoots: [runRoot, '/tmp/hopi/runtime/worker-sessions/T-1/workspace'],
     }
     await Bun.write(bundle.promptFile, '# assignment\n\n__HOPI_EXECUTION_ENVELOPE__\n')
 
@@ -401,7 +400,7 @@ describe('resolveConfiguredTransportCommand', () => {
         permissionMode: 'dontAsk',
       },
       bundle: scopedBundle,
-      input: { ...input, role: 'reviewer' },
+      input,
       runtimeWorkspace: scopedBundle.runtimeScratchDir,
     })
 
@@ -416,7 +415,7 @@ describe('resolveConfiguredTransportCommand', () => {
     })
   })
 
-  test('makes Claude image directories accessible to the responsibility', async () => {
+  test('makes Claude image directories accessible to the Worker', async () => {
     await Bun.write(bundle.promptFile, '# prompt for claude with images\n')
 
     const command = await resolveConfiguredTransportCommand({
@@ -424,7 +423,7 @@ describe('resolveConfiguredTransportCommand', () => {
         transport: 'claude',
         cwdMode: 'worktree',
         permissionMode: 'dontAsk',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
       input,
     })
@@ -441,13 +440,13 @@ describe('resolveConfiguredTransportCommand', () => {
         transport: 'claude',
         cwdMode: 'worktree',
         permissionMode: 'dontAsk',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle: {
         ...bundle,
         extraReadableRoots: ['/tmp/integration'],
         extraWritableRoots: ['/tmp/run'],
       },
-      input: { ...input, role: 'reviewer' },
+      input,
     })
 
     expect(command.cmd).toContain('/tmp/integration')
@@ -466,13 +465,13 @@ describe('resolveConfiguredTransportCommand', () => {
         cwdMode: 'worktree',
         sandbox: 'workspace-write',
         approvalPolicy: 'never',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle: {
         ...bundle,
         extraReadableRoots: ['/tmp/integration'],
         extraWritableRoots: ['/tmp/run'],
       },
-      input: { ...input, role: 'reviewer' },
+      input,
       workspaceMode: 'read_only',
     })
 
@@ -491,15 +490,12 @@ describe('resolveConfiguredTransportCommand', () => {
         cwdMode: 'worktree',
         sandbox: 'workspace-write',
         approvalPolicy: 'never',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle: {
         ...bundle,
         extraWritableRoots: ['/tmp/project/.hopi/docs/goals/goal-1'],
       },
-      input: {
-        ...input,
-        role: 'planner',
-      },
+      input,
       workspaceMode: 'isolated_write',
     })
 
@@ -523,40 +519,21 @@ describe('resolveConfiguredTransportCommand', () => {
     ])
   })
 
-  test('grants every workspace-write responsibility network access', async () => {
-    for (const role of ['planner', 'generator', 'reviewer']) {
-      await Bun.write(bundle.promptFile, `# prompt for ${role}\n`)
-
-      const command = await resolveConfiguredTransportCommand({
-        config: {
-          transport: 'codex',
-          binary: '/usr/local/bin/codex',
-          cwdMode: 'worktree',
-          sandbox: 'workspace-write',
-          approvalPolicy: 'never',
-        } satisfies RoleTransportConfig,
-        bundle: { ...bundle, apiOrigin: undefined },
-        input: { ...input, role },
-        workspaceMode: 'isolated_write',
-      })
-
-      expect(command.cmd).toEqual([
-        '/usr/local/bin/codex',
-        ...codexHttpsOnlyArgs(),
-        '-a',
-        'never',
-        '-c',
-        'sandbox_workspace_write.network_access=true',
-        'exec',
-        '--ignore-user-config',
-        '--skip-git-repo-check',
-        '-s',
-        'workspace-write',
-        ...codexReportCaptureArgs(),
-        '--json',
-        '-',
-      ])
-    }
+  test('grants a workspace-write Worker network access', async () => {
+    await Bun.write(bundle.promptFile, '# prompt for Worker\n')
+    const command = await resolveConfiguredTransportCommand({
+      config: {
+        transport: 'codex',
+        binary: '/usr/local/bin/codex',
+        cwdMode: 'worktree',
+        sandbox: 'workspace-write',
+        approvalPolicy: 'never',
+      } satisfies AgentTransportConfig,
+      bundle: { ...bundle, apiOrigin: undefined },
+      input,
+      workspaceMode: 'isolated_write',
+    })
+    expect(command.cmd).toContain('sandbox_workspace_write.network_access=true')
   })
 
   test('builds a claude print command that reads the bundled prompt from stdin', async () => {
@@ -569,7 +546,7 @@ describe('resolveConfiguredTransportCommand', () => {
         cwdMode: 'worktree',
         permissionMode: 'dontAsk',
         model: 'sonnet',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle,
       input,
       workspaceMode: 'isolated_write',
@@ -610,8 +587,8 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.finalOutputFile).toBeUndefined()
   })
 
-  test('resumes a Claude responsibility session', async () => {
-    await Bun.write(bundle.promptFile, '# current reviewer assignment\n')
+  test('resumes a Claude Worker session', async () => {
+    await Bun.write(bundle.promptFile, '# current Worker assignment\n')
 
     const command = await resolveConfiguredTransportCommand({
       config: {
@@ -619,16 +596,16 @@ describe('resolveConfiguredTransportCommand', () => {
         binary: '/usr/local/bin/claude',
         cwdMode: 'worktree',
         permissionMode: 'dontAsk',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle,
-      input: { ...input, role: 'reviewer' },
-      session: { transport: 'claude', sessionId: 'claude-reviewer' },
+      input,
+      session: { transport: 'claude', sessionId: 'claude-worker' },
     })
 
     expect(command.cmd).toContain('--resume')
-    expect(command.cmd).toContain('claude-reviewer')
+    expect(command.cmd).toContain('claude-worker')
     expect(command.sessionTransport).toBe('claude')
-    expect(command.stdin).toContain('# current reviewer assignment')
+    expect(command.stdin).toContain('# current Worker assignment')
   })
 
   test('builds an opencode run command that reads the prompt from stdin', async () => {
@@ -642,7 +619,7 @@ describe('resolveConfiguredTransportCommand', () => {
         model: 'openai/gpt-5',
         agent: 'builder',
         variant: 'high',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle,
       input,
     })
@@ -680,7 +657,7 @@ describe('resolveConfiguredTransportCommand', () => {
       config: {
         transport: 'opencode',
         cwdMode: 'worktree',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle: { ...bundle, imageFiles: ['/tmp/reference.png'] },
       input,
     })
@@ -697,17 +674,17 @@ describe('resolveConfiguredTransportCommand', () => {
     expect(command.stdin).toBe('# prompt for opencode with images\n')
   })
 
-  test('resumes an OpenCode responsibility session', async () => {
-    await Bun.write(bundle.promptFile, '# current planner assignment\n')
+  test('resumes an OpenCode Worker session', async () => {
+    await Bun.write(bundle.promptFile, '# current Worker assignment\n')
 
     const command = await resolveConfiguredTransportCommand({
       config: {
         transport: 'opencode',
         cwdMode: 'root',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle,
-      input: { ...input, role: 'planner' },
-      session: { transport: 'opencode', sessionId: 'opencode-planner' },
+      input,
+      session: { transport: 'opencode', sessionId: 'opencode-worker' },
     })
 
     expect(command.cmd).toEqual([
@@ -717,14 +694,14 @@ describe('resolveConfiguredTransportCommand', () => {
       '--format',
       'json',
       '--session',
-      'opencode-planner',
+      'opencode-worker',
     ])
     expect(command.sessionTransport).toBe('opencode')
-    expect(command.stdin).toContain('# current planner assignment')
+    expect(command.stdin).toContain('# current Worker assignment')
   })
 
   test('keeps vendor approvals non-interactive, live sessions available, and full access sandbox-only', async () => {
-    await Bun.write(bundle.promptFile, '# responsibility\n\n__HOPI_EXECUTION_ENVELOPE__\n')
+    await Bun.write(bundle.promptFile, '# Worker\n\n__HOPI_EXECUTION_ENVELOPE__\n')
 
     const boundedCodex = await resolveConfiguredTransportCommand({
       config: {
@@ -835,7 +812,7 @@ describe('resolveConfiguredTransportCommand', () => {
         cmd: ['bun', '-e', 'console.log("ok")'],
         cwdMode: 'root',
         baseRef: 'main',
-      } satisfies RoleTransportConfig,
+      } satisfies AgentTransportConfig,
       bundle,
       input,
     })
@@ -866,7 +843,7 @@ describe('resolveConfiguredTransportCommand', () => {
         HOPI_GOAL_ID: input.goalKey,
         HOPI_WORK_ID: input.taskRef,
         HOPI_TASK_REF: input.taskRef,
-        HOPI_ROLE: input.role,
+        HOPI_AGENT: input.agent,
         HOPI_RUN_ID: input.runId,
         HOPI_STEP_ID: input.stepId,
       },

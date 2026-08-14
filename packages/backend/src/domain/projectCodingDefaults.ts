@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const CODING_AGENT_TRANSPORTS = ['codex', 'claude', 'opencode'] as const
-export const CODING_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
+export const CODING_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export type ProjectCodingAgentTransport = (typeof CODING_AGENT_TRANSPORTS)[number]
 export type ProjectCodingReasoningEffort = (typeof CODING_REASONING_EFFORTS)[number]

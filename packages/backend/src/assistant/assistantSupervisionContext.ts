@@ -31,13 +31,12 @@ export function assistantMaterialWakeKeys(snapshot: AssistantStateSnapshot) {
           `goal-attention:${projectId}:${goalId}:${attention.attributes.id}:${attention.attributes.createdAt}`,
         )
       }
-      collectRuntimeWakeKeys(keys, projectId, goalId, goal.latestPlanningOutcome)
       for (const work of goal.works) {
         const workId = work.attributes.id
         collectRuntimeWakeKeys(keys, projectId, goalId, work, workId)
-        const stage = work.attributes.stage
-        if (stage === 'done' || stage === 'cancelled') {
-          keys.push(`work-terminal:${projectId}:${goalId}:${workId}:${stage}`)
+        const status = work.attributes.status
+        if (status === 'done' || status === 'cancelled') {
+          keys.push(`work-terminal:${projectId}:${goalId}:${workId}:${status}`)
         }
       }
     }
@@ -67,7 +66,7 @@ function collectRuntimeWakeKeys(
   projectId: string,
   goalId: string,
   value: { runtime: AssistantStateRuntime } | null,
-  workId = 'planning',
+  workId: string,
 ) {
   if (!value) return
   const latestTerminal = value.runtime.recentAttempts.find(
@@ -100,27 +99,20 @@ function compactGoal(goal: AssistantStateGoalSnapshot) {
       excerpt: boundedText(document.excerpt, 4_000),
     })),
     attentions: goal.attentions,
-    latestPlanningOutcome: goal.latestPlanningOutcome
-      ? compactWork(goal.latestPlanningOutcome)
-      : null,
     works: goal.works.map(compactWork),
   }
 }
 
-function compactWork(
-  value: AssistantStateWorkSnapshot | AssistantStateGoalSnapshot['latestPlanningOutcome'],
-) {
-  if (!value) return null
+function compactWork(value: AssistantStateWorkSnapshot) {
   return {
     attributes: value.attributes,
     path: value.path,
-    body: boundedText('body' in value && typeof value.body === 'string' ? value.body : '', 4_000),
     ...('projection' in value && value.projection ? { projection: value.projection } : {}),
     ...('candidateIntegration' in value && value.candidateIntegration
       ? { candidateIntegration: value.candidateIntegration }
       : {}),
     runtime: {
-      activeResponsibility: value.runtime.activeResponsibility,
+      active: value.runtime.active,
       attemptCount: value.runtime.attemptCount,
       stale: value.runtime.stale,
       lastActivityAt: value.runtime.lastActivityAt,

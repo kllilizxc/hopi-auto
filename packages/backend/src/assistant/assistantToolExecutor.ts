@@ -10,16 +10,11 @@ import {
   workspaceAttentionReference,
 } from '../domain/attentionReference'
 import { parseWorkAttentionTarget } from '../domain/attentionTarget'
-import {
-  type WorkDocument,
-  isEngineeringWork,
-  isPlanningWork,
-  isWorkTerminal,
-} from '../domain/canonicalDocuments'
-import { inboxEventReference } from '../domain/inboxEventReference'
+import { isDecisionWork } from '../domain/canonicalDocuments'
 import type { LinkedProject } from '../domain/project'
 import { resolveProjectPath } from '../domain/projectPath'
 import { deriveReadableId } from '../domain/stableId'
+import { assertWayfinderMap } from '../domain/wayfinderMap'
 import { type PublicationCoordinator, hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
 import { type PreviewManager, readProjectReleaseHeads } from '../runtime/previewManager'
@@ -36,10 +31,8 @@ import {
   currentBytes,
   dependentWorkIds,
   designPath,
-  ensurePlanningWithRunInvalidation,
   equalBytes,
   goalInputAdmission,
-  initialGoalBody,
   isTerminalWork,
   newInputWrite,
   normalizeMarkdown,
@@ -48,7 +41,6 @@ import {
   requireGoal,
   requireProject,
   resolveGoalAttention,
-  standardPlanningObjective,
 } from './assistantGoalToolSupport'
 import type { AssistantStateReader } from './assistantState'
 import {
@@ -83,7 +75,6 @@ export interface AssistantToolExecutionOptions {
 
 export function createAssistantToolExecutor(options: AssistantToolExecutionOptions) {
   const commands = options.commands ?? createCommandRunner(options.home)
-  const assistantDispatchQueues = new Map<string, Promise<void>>()
   const now = options.now ?? (() => new Date())
 
   async function assertPresentableAttentionReferences(
@@ -100,80 +91,30 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
     const workspace = await options.workspace.readWorkspace()
     for (const reference of references) {
       const parsed = parseAttentionReference(reference)
-      if (!parsed) {
-        throw new AssistantToolRequestError(`Invalid canonical Attention reference: ${reference}`)
-      }
+      if (!parsed) throw new AssistantToolRequestError(`Invalid Attention reference: ${reference}`)
       if (parsed.scope === 'workspace') {
-        if (parsed.homeId !== workspace.homeId) {
-          throw new AssistantToolRequestError(
-            `Attention belongs to another Assistant Home: ${reference}`,
-          )
-        }
         const attention = workspace.attentions.get(parsed.attentionId)
         if (
+          parsed.homeId !== workspace.homeId ||
           !attention ||
           workspaceAttentionProjectId(attention) !== projectId ||
           attention.attributes.resolvedAt !== null
         ) {
-          throw new AssistantToolRequestError(
-            `Attention is not open in the current Project: ${reference}`,
-          )
+          throw new AssistantToolRequestError(`Attention is not open in this Project: ${reference}`)
         }
         continue
       }
       if (parsed.projectId !== projectId) {
-        throw new AssistantToolRequestError(
-          `Attention is outside the current Project: ${reference}`,
-        )
+        throw new AssistantToolRequestError(`Attention is outside this Project: ${reference}`)
       }
       const project = requireProject(options.projects, parsed.projectId)
-      const goalPackage = await project.store.readPackage(parsed.goalId)
-      const attention = goalPackage.attentions.get(parsed.attentionId)
+      const attention = (await project.store.readPackage(parsed.goalId)).attentions.get(
+        parsed.attentionId,
+      )
       if (!attention || attention.attributes.resolvedAt !== null) {
-        throw new AssistantToolRequestError(
-          `Attention is not open in the current Project: ${reference}`,
-        )
+        throw new AssistantToolRequestError(`Attention is not open in this Project: ${reference}`)
       }
     }
-  }
-
-  async function serializeAssistantDispatch<T>(
-    dispatchReference: string,
-    action: () => Promise<T>,
-  ): Promise<T> {
-    const previous = assistantDispatchQueues.get(dispatchReference) ?? Promise.resolve()
-    let release: () => void = () => {}
-    const current = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const queued = previous.then(() => current)
-    assistantDispatchQueues.set(dispatchReference, queued)
-    await previous
-    try {
-      return await action()
-    } finally {
-      release()
-      if (assistantDispatchQueues.get(dispatchReference) === queued) {
-        assistantDispatchQueues.delete(dispatchReference)
-      }
-    }
-  }
-
-  async function findAssistantDispatch(dispatchReference: string) {
-    for (const project of options.projects.values()) {
-      for (const goalId of await project.store.listGoalIds()) {
-        const goalPackage = await project.store.readPackage(goalId)
-        for (const work of goalPackage.works.values()) {
-          if (
-            isEngineeringWork(work.attributes) &&
-            work.attributes.assistantDispatch === dispatchReference
-          ) {
-            return { project, goalId, work }
-          }
-        }
-      }
-    }
-    return null
   }
 
   async function cancelWorkAndSettle(
@@ -187,9 +128,7 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
     if (!work) throw new AssistantToolRequestError(`Work not found: ${workId}`)
     const admission = await goalInputAdmission(options.workspace, project.store, goalId, event)
     const affectedWorkIds = dependentWorkIds(before, workId)
-    if (work.attributes.stage !== 'cancelled') {
-      await project.controller.cancelWork(goalId, workId)
-    }
+    if (work.attributes.status !== 'cancelled') await project.controller.cancelWork(goalId, workId)
     for (const affectedWorkId of affectedWorkIds) {
       project.reconciler.interruptRuns(goalId, affectedWorkId)
       await project.reconciler.interruptQueuedRuns(goalId, affectedWorkId)
@@ -199,9 +138,7 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
     let inputWrite = admission.write
     for (const attention of cancelledPackage.attentions.values()) {
       if (attention.attributes.resolvedAt !== null) continue
-      const target = attention.attributes.target
-        ? parseWorkAttentionTarget(attention.attributes.target)
-        : null
+      const target = parseWorkAttentionTarget(attention.attributes.target)
       if (
         !target ||
         target.projectId !== project.projectId ||
@@ -211,53 +148,23 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
       ) {
         continue
       }
-      if (
-        await resolveGoalAttention(
-          project.store,
-          goalId,
-          attention.attributes.id,
-          `Work ${target.workId} was cancelled and will no longer run.`,
-          { ...admission, write: inputWrite },
-          now(),
-        )
-      ) {
+      const changed = await resolveGoalAttention(
+        project.store,
+        goalId,
+        attention.attributes.id,
+        `Work ${target.workId} was cancelled.`,
+        { ...admission, write: inputWrite },
+        now(),
+      )
+      if (changed) {
         settledRefs.push(goalAttentionReference(project.projectId, goalId, attention.attributes.id))
+        inputWrite = null
       }
-      inputWrite = null
     }
-    if (settledRefs.length === 0 && inputWrite) {
+    if (inputWrite) {
       await project.store.publishGoal(goalId, { supportingWrites: [], gateWrite: inputWrite })
     }
-    return {
-      affectedWorkIds: [...affectedWorkIds].toSorted(),
-      settledRefs: settledRefs.toSorted(),
-    }
-  }
-
-  async function postWorkActionState(
-    project: AssistantToolProject,
-    goalId: string,
-    includeCoordinatorDecision: boolean,
-  ) {
-    const goalPackage = await project.store.readPackage(goalId)
-    const remainingNonterminalWorkIds = [...goalPackage.works.values()]
-      .filter((work) => !isWorkTerminal(work.attributes))
-      .map((work) => work.attributes.id)
-      .toSorted()
-    const state = {
-      goalLifecycle: goalPackage.goal.attributes.lifecycle,
-      remainingNonterminalWorkIds,
-    }
-    if (!includeCoordinatorDecision) return state
-
-    const coordinatorDecisionWhenEligible = await project.reconciler.decisionWhenEligible(
-      goalId,
-      goalPackage,
-    )
-    return {
-      ...state,
-      coordinatorDecisionWhenEligible,
-    }
+    return { affectedWorkIds: [...affectedWorkIds].toSorted(), settledRefs: settledRefs.toSorted() }
   }
 
   async function currentWorkResult(input: {
@@ -265,33 +172,17 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
     goalId: string
     workId: string
     kind: 'work_run_requested' | 'work_cancelled'
+    runRequest?: WorkRunRequest
     affectedWorkIds?: readonly string[]
     settledRefs?: readonly string[]
-    pendingRefs?: readonly string[]
-    runRequest?: WorkRunRequest
   }): Promise<AssistantToolResult> {
-    const currentPackage = await input.project.store.readPackage(input.goalId)
-    const currentWork = currentPackage.works.get(input.workId)
-    if (!currentWork) throw new Error(`Work not found after control: ${input.workId}`)
-    const runRequest = input.kind === 'work_run_requested' ? input.runRequest : undefined
-    const changed = runRequest ? runRequest.disposition === 'scheduled' : true
-    const postActionState = await postWorkActionState(
-      input.project,
-      input.goalId,
-      input.kind === 'work_cancelled',
-    )
-    const cancellationConsequence =
-      input.kind === 'work_cancelled' && 'coordinatorDecisionWhenEligible' in postActionState
-        ? ` Goal ${input.goalId} is ${postActionState.goalLifecycle} with ${postActionState.remainingNonterminalWorkIds.length} remaining nonterminal Work; its eligible Coordinator decision is ${postActionState.coordinatorDecisionWhenEligible.kind}.`
-        : ''
+    const current = (await input.project.store.readPackage(input.goalId)).works.get(input.workId)
+    if (!current) throw new Error(`Work not found after mutation: ${input.workId}`)
+    const changed = input.runRequest ? input.runRequest.disposition === 'scheduled' : true
     return {
-      summary: runRequest
-        ? runRequest.disposition === 'already_active'
-          ? `Work ${input.workId} is already running as ${runRequest.runId}.`
-          : runRequest.disposition === 'already_scheduled'
-            ? `Work ${input.workId} is already scheduled as ${runRequest.runId}.`
-            : `Scheduled Work ${input.workId} as ${runRequest.runId}.`
-        : `${input.kind} applied to Work ${input.workId}.${cancellationConsequence}`,
+      summary: input.runRequest
+        ? `${input.runRequest.disposition === 'scheduled' ? 'Scheduled' : 'Found'} Run ${input.runRequest.runId} for ${input.workId}.`
+        : `Cancelled Work ${input.workId}.`,
       changed,
       value: {
         effect: {
@@ -299,16 +190,13 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
           projectId: input.project.projectId,
           goalId: input.goalId,
           workId: input.workId,
+          status: current.attributes.status,
           affectedWorkIds: input.affectedWorkIds ?? [input.workId],
-          stage: currentWork.attributes.stage,
-          notBefore: currentWork.attributes.notBefore,
-          ...(runRequest
-            ? { runId: runRequest.runId, runDisposition: runRequest.disposition }
+          ...(input.runRequest
+            ? { runId: input.runRequest.runId, runDisposition: input.runRequest.disposition }
             : {}),
         },
-        postActionState,
         settledAttentionRefs: input.settledRefs ?? [],
-        pendingAttentionRefs: input.pendingRefs ?? [],
       },
     }
   }
@@ -323,40 +211,28 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
     if (event.attributes.status !== 'pending') {
       throw new AssistantToolRequestError(`Inbox turn is already handled: ${eventId}`)
     }
+
     switch (name) {
       case 'hopi_read_state': {
         const args = parseAssistantToolArguments(name, input)
-        const context = event.attributes.context
-        const projectId = args.projectId ?? context?.projectId
+        const projectId = args.projectId ?? event.attributes.context?.projectId
         const goalId =
           args.goalId ??
-          (projectId && projectId === context?.projectId ? context.goalId : undefined)
-        let state: ReturnType<typeof assistantStateProjection>
-        try {
-          const snapshot = await options.state.read({
-            ...(projectId ? { projectId } : {}),
-            ...(goalId ? { goalId } : {}),
-            ...(args.includeEvidence ? { includeEvidence: true } : {}),
-          })
-          state = assistantStateProjection(snapshot, { projectId, goalId })
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error)
-          const pageContext = context?.projectId
-            ? ` Current page context is ${context.projectId}${context.goalId ? ` / ${context.goalId}` : ''}; omit projectId and goalId to use it exactly.`
-            : ''
-          const message = `${detail}.${pageContext}`
-          if (error instanceof AssistantToolRequestError) {
-            throw new AssistantToolRequestError(message)
-          }
-          throw new Error(message)
-        }
+          (projectId === event.attributes.context?.projectId
+            ? event.attributes.context?.goalId
+            : undefined)
+        const snapshot = await options.state.read({
+          ...(projectId ? { projectId } : {}),
+          ...(goalId ? { goalId } : {}),
+          ...(args.includeEvidence ? { includeEvidence: true } : {}),
+        })
         return {
           summary: 'Read current HOPI state.',
           changed: false,
           value: {
-            ...state,
+            ...assistantStateProjection(snapshot, { projectId, goalId }),
             currentTurn: {
-              eventId: event.attributes.id,
+              eventId,
               source: event.attributes.source,
               context: event.attributes.context ?? null,
               attachments: [...event.attributes.attachments],
@@ -374,15 +250,9 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         const workspace = await options.workspace.readWorkspace()
         const page = readPublicConversationPage([...workspace.events.values()], scope, args)
         return {
-          summary: `Read ${page.exchanges.length} durable public Assistant exchange${page.exchanges.length === 1 ? '' : 's'}.`,
+          summary: `Read ${page.exchanges.length} public exchanges.`,
           changed: false,
-          value: {
-            scope:
-              scope.kind === 'home'
-                ? { kind: 'home' }
-                : { kind: 'project', projectId: scope.projectId },
-            ...page,
-          },
+          value: { scope, ...page },
         }
       }
       case 'hopi_manage_project': {
@@ -393,15 +263,11 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
           const result = await options.onProjectRecoveryRequested(change.projectId)
           return {
             summary: result.eligible
-              ? `Project ${change.projectId} passed recovery validation and is eligible for execution.`
-              : `Project ${change.projectId} remains ineligible after recovery validation.`,
+              ? `Project ${change.projectId} is eligible.`
+              : `Project ${change.projectId} remains ineligible.`,
             changed: result.eligible,
             value: {
-              effect: {
-                kind: 'recover',
-                projectId: change.projectId,
-                eligible: result.eligible,
-              },
+              effect: { kind: 'recover', projectId: change.projectId, eligible: result.eligible },
               ...(result.error ? { error: result.error } : {}),
             },
           }
@@ -409,59 +275,41 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         const before = await options.home.listProjects()
         let project: LinkedProject
         let operation: Awaited<ReturnType<CommandRunner['executeProjectRebind']>> | undefined
-        switch (change.kind) {
-          case 'create':
-            project = await withPreparedProjectRepositories(change.repos, (repos) =>
-              options.home.linkProject({
-                ...(change.projectId ? { projectId: change.projectId } : {}),
-                ...(change.label ? { label: change.label } : {}),
-                primaryRepoId: change.primaryRepoId,
-                repos,
-              }),
-            )
-            break
-          case 'add_repo':
-            project = await withPreparedProjectRepositories([change.repo], ([repo]) => {
-              if (!repo) throw new Error('Prepared Repo is missing')
-              return options.home.linkRepo({ projectId: change.projectId, ...repo })
-            })
-            break
-          case 'rebind_repos': {
-            operation = await commands.executeProjectRebind({
-              projectId: change.projectId,
-              repos: change.repos,
-            })
-            project = operation.result.project
-            break
-          }
+        if (change.kind === 'create') {
+          project = await withPreparedProjectRepositories(change.repos, (repos) =>
+            options.home.linkProject({
+              ...(change.projectId ? { projectId: change.projectId } : {}),
+              ...(change.label ? { label: change.label } : {}),
+              primaryRepoId: change.primaryRepoId,
+              repos,
+            }),
+          )
+        } else if (change.kind === 'add_repo') {
+          project = await withPreparedProjectRepositories([change.repo], ([repo]) => {
+            if (!repo) throw new Error('Prepared Repo is missing')
+            return options.home.linkRepo({ projectId: change.projectId, ...repo })
+          })
+        } else {
+          operation = await commands.executeProjectRebind({
+            projectId: change.projectId,
+            repos: change.repos,
+          })
+          project = operation.result.project
         }
-        const previous = before.find((candidate) => candidate.projectId === project.projectId)
-        const changed = !sameProjectTopology(previous, project)
+        const changed = !sameProjectTopology(
+          before.find((candidate) => candidate.projectId === project.projectId),
+          project,
+        )
         if (changed) await options.onProjectTopologyChanged(eventId, project)
         return {
           summary: changed
-            ? `Updated Project ${project.projectId} topology.`
-            : `Project ${project.projectId} topology was already current.`,
+            ? `Updated Project ${project.projectId}.`
+            : `Project ${project.projectId} was already current.`,
           changed,
           value: {
             effect: { kind: change.kind, projectId: project.projectId },
             project: presentProjectTopology(project),
-            ...(operation
-              ? {
-                  operation: {
-                    operationId: operation.result.operationId,
-                    command: operation.result.command,
-                    status: operation.result.status,
-                    plan: {
-                      summary: operation.plan.summary,
-                      effects: operation.plan.effects,
-                      warnings: operation.plan.warnings,
-                    },
-                    recoveryPaths: operation.result.recoveryPaths,
-                    followUpWarnings: operation.result.followUpWarnings,
-                  },
-                }
-              : {}),
+            ...(operation ? { operation: operation.result } : {}),
             runtimeRefresh: changed ? 'after_current_turn' : 'not_needed',
           },
         }
@@ -471,132 +319,24 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         const result = await options.workspace.writePreference(args.content, args.expectedDigest)
         return {
           summary: result.changed
-            ? 'Updated durable user preferences.'
-            : 'User preferences were already current.',
+            ? 'Updated durable preferences.'
+            : 'Preferences were already current.',
           changed: result.changed,
-          value: {
-            path: options.workspace.paths.preference,
-            digest: result.preference.digest,
-          },
+          value: { path: options.workspace.paths.preference, digest: result.preference.digest },
         }
       }
       case 'hopi_create_goal': {
         const args = parseAssistantToolArguments(name, input)
         assertPortableGoalText('Goal title', args.title)
         assertPortableGoalText('Goal objective', args.objective)
+        if (args.mapMarkdown !== undefined) validateWayfinderMapRequest(args.mapMarkdown)
         const project = requireProject(options.projects, args.projectId)
         const goalId =
           args.goalId ?? deriveReadableId('G', args.title, await project.store.listGoalIds())
-        const firstWork = args.firstWork
-        if (firstWork.kind === 'engineering') {
-          assertPortableGoalText('Engineering Work title', firstWork.title)
-          assertPortableGoalText('Engineering Work objective', firstWork.objective)
-          for (const criterion of firstWork.acceptanceCriteria) {
-            assertPortableGoalText('Engineering Work acceptance criterion', criterion)
-          }
-          const initialWork = {
-            title: firstWork.title,
-            objective: firstWork.objective,
-            acceptanceCriteria: firstWork.acceptanceCriteria,
-          }
-          const workspace = await options.workspace.readWorkspace()
-          const dispatchReference = inboxEventReference(workspace.homeId, eventId)
-          return serializeAssistantDispatch(dispatchReference, async () => {
-            const dispatched = await findAssistantDispatch(dispatchReference)
-            const targetGoalId = args.goalId ?? dispatched?.goalId ?? goalId
-            options.onGoalEffect(eventId, project.projectId, targetGoalId)
-            if (
-              dispatched &&
-              (dispatched.project.projectId !== project.projectId ||
-                dispatched.goalId !== targetGoalId)
-            ) {
-              throw new AssistantToolRequestError(
-                `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}`,
-              )
-            }
-            const existing = await project.store.readGoal(targetGoalId)
-            if (
-              existing &&
-              (existing.attributes.title !== args.title ||
-                existing.body !== initialGoalBody(args.objective))
-            ) {
-              throw new AssistantToolRequestError(
-                `Goal ${targetGoalId} already exists with different content`,
-              )
-            }
-            const admission = await goalInputAdmission(
-              options.workspace,
-              project.store,
-              targetGoalId,
-              event,
-              false,
-            )
-            const references = await prepareGoalReferences(
-              options.workspace,
-              project.store,
-              targetGoalId,
-              args.references,
-            )
-            let work: WorkDocument
-            if (existing) {
-              if (!dispatched) {
-                throw new AssistantToolRequestError(
-                  `Goal ${targetGoalId} already exists; use hopi_create_work for a new instruction`,
-                )
-              }
-              work = await project.controller.admitAssistantEngineeringWork(targetGoalId, {
-                ...initialWork,
-                dependsOn: [],
-                assistantDispatch: dispatchReference,
-                acceptedInput: admission,
-                context: {
-                  supportingWrites: references.writes,
-                  references: references.planning,
-                },
-              })
-            } else {
-              await project.store.createGoal({
-                goalId: targetGoalId,
-                title: args.title,
-                objective: args.objective,
-                priority: args.priority,
-                acceptedInput: admission.document,
-                supportingWrites: references.writes,
-                planningReferences: references.planning,
-                initialEngineeringWork: {
-                  id: deriveReadableId('W', initialWork.title, []),
-                  ...initialWork,
-                  assistantDispatch: dispatchReference,
-                },
-              })
-              const created = [
-                ...(await project.store.readPackage(targetGoalId)).works.values(),
-              ].find(
-                (candidate) =>
-                  isEngineeringWork(candidate.attributes) &&
-                  candidate.attributes.assistantDispatch === dispatchReference,
-              )
-              if (!created) throw new Error('Direct initial Engineering Work was not published')
-              work = created
-            }
-            return {
-              summary: `Created Goal ${targetGoalId} with direct Engineering Work ${work.attributes.id}; initial Planning was explicitly skipped.`,
-              changed: !dispatched,
-              value: {
-                effect: {
-                  kind: 'goal_created',
-                  projectId: project.projectId,
-                  goalId: targetGoalId,
-                  workId: work.attributes.id,
-                  workKind: 'engineering',
-                },
-                references: references.planning,
-              },
-            }
-          })
-        }
         options.onGoalEffect(eventId, project.projectId, goalId)
-        const existing = await project.store.readGoal(goalId)
+        if (await project.store.readGoal(goalId)) {
+          throw new AssistantToolRequestError(`Goal already exists: ${goalId}`)
+        }
         const admission = await goalInputAdmission(
           options.workspace,
           project.store,
@@ -610,74 +350,41 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
           goalId,
           args.references,
         )
-        let planningChanged = false
-        if (!existing) {
-          await project.store.createGoal({
-            goalId,
-            title: args.title,
-            objective: args.objective,
-            priority: args.priority,
-            acceptedInput: admission.document,
-            supportingWrites: references.writes,
-            planningReferences: references.planning,
-          })
-        } else if (
-          existing.attributes.title !== args.title ||
-          existing.body !== initialGoalBody(args.objective)
-        ) {
-          throw new AssistantToolRequestError(
-            `Goal ${goalId} already exists with different content`,
-          )
-        } else {
-          const goalPackage = await project.store.readPackage(goalId)
-          const openPlanning = [...goalPackage.works.values()].find(
-            (work) => work.attributes.kind === 'planning' && work.attributes.stage === 'plan',
-          )
-          if (openPlanning) {
-            planningChanged = !openPlanning.attributes.contextRefs.some(
-              (reference) => reference.path === admission.path,
-            )
-            await project.controller.ensurePlanning(
-              goalId,
-              standardPlanningObjective(eventId),
-              admission,
-              {
-                supportingWrites: references.writes,
-                references: references.planning,
-              },
-            )
-          } else if (admission.write) {
-            throw new AssistantToolRequestError(
-              `Goal ${goalId} already exists; use hopi_create_work or reopen it for a new instruction`,
-            )
-          }
-        }
-        const planningWork = [...(await project.store.readPackage(goalId)).works.values()].find(
-          (work) => work.attributes.kind === 'planning',
-        )
-        if (!planningWork) throw new Error('Initial Planning Work was not published')
+        const firstWorkId = deriveReadableId('W', args.firstWork.title, [])
+        await project.store.createGoal({
+          goalId,
+          title: args.title,
+          objective: args.objective,
+          constraints: args.constraints,
+          nonGoals: args.nonGoals,
+          successCriteria: args.successCriteria,
+          priority: args.priority,
+          acceptedInput: admission.document,
+          supportingWrites: references.writes,
+          references: references.references,
+          mapMarkdown: args.mapMarkdown,
+          firstWork:
+            args.firstWork.kind === 'decision'
+              ? { id: firstWorkId, ...args.firstWork }
+              : { id: firstWorkId, ...args.firstWork },
+        })
         return {
-          summary: `Created Goal ${goalId} with Planning Work ${planningWork.attributes.id}.`,
-          changed:
-            !existing ||
-            Boolean(admission.write) ||
-            planningChanged ||
-            references.writes.length > 0,
+          summary: `Created Goal ${goalId} with ${args.firstWork.kind} Work ${firstWorkId}.`,
+          changed: true,
           value: {
             effect: {
               kind: 'goal_created',
               projectId: project.projectId,
               goalId,
-              workId: planningWork.attributes.id,
-              workKind: 'planning',
+              workId: firstWorkId,
+              workKind: args.firstWork.kind,
             },
-            references: references.planning,
+            references: references.references,
           },
         }
       }
       case 'hopi_create_work': {
         const args = parseAssistantToolArguments(name, input)
-        const requestedWork = args.work
         const project = requireProject(options.projects, args.projectId)
         options.onGoalEffect(eventId, project.projectId, args.goalId)
         await requireGoal(project.store, args.goalId)
@@ -693,131 +400,50 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
           args.goalId,
           args.references,
         )
-        if (requestedWork.kind === 'planning') {
-          let planning: WorkDocument
-          if (requestedWork.mode === 'new_contract_revision') {
-            assertPortableGoalText('Goal contract change', requestedWork.contractChange)
-            await project.controller.applyMaterialInstruction(args.goalId, {
-              contractChange: requestedWork.contractChange,
-              acceptedInput: admission,
-              planningContext: {
-                supportingWrites: references.writes,
-                references: references.planning,
-              },
-            })
-            project.reconciler.interruptRuns(args.goalId)
-            const current = await project.store.readPackage(args.goalId)
-            const activePlanning = [...current.works.values()].find(
-              (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-            )
-            if (!activePlanning) {
-              throw new Error(`Planning Work was not created for ${args.goalId}`)
-            }
-            planning = activePlanning
-          } else {
-            planning = await ensurePlanningWithRunInvalidation(
-              project,
-              args.goalId,
-              standardPlanningObjective(eventId),
-              admission,
-              { supportingWrites: references.writes, references: references.planning },
-            )
-          }
-          return {
-            summary: `Created Planning Work ${planning.attributes.id} for ${args.goalId}.`,
-            changed: true,
-            value: {
-              effect: {
-                kind: 'planning_created',
-                projectId: project.projectId,
-                goalId: args.goalId,
-                workId: planning.attributes.id,
-                mode: requestedWork.mode,
-              },
-              references: references.planning,
-            },
-          }
-        }
-        assertPortableGoalText('Engineering Work title', requestedWork.title)
-        assertPortableGoalText('Engineering Work objective', requestedWork.objective)
-        for (const criterion of requestedWork.acceptanceCriteria) {
-          assertPortableGoalText('Engineering Work acceptance criterion', criterion)
-        }
-        const workspace = await options.workspace.readWorkspace()
-        const dispatchReference = inboxEventReference(workspace.homeId, eventId)
-        return serializeAssistantDispatch(dispatchReference, async () => {
-          const dispatched = await findAssistantDispatch(dispatchReference)
-          if (
-            dispatched &&
-            (dispatched.project.projectId !== project.projectId ||
-              dispatched.goalId !== args.goalId)
-          ) {
-            throw new AssistantToolRequestError(
-              `Inbox Input already directly admitted Engineering Work ${dispatched.work.attributes.id} in ${dispatched.project.projectId}/${dispatched.goalId}`,
-            )
-          }
-          const work = await project.controller.admitAssistantEngineeringWork(args.goalId, {
-            title: requestedWork.title,
-            objective: requestedWork.objective,
-            acceptanceCriteria: requestedWork.acceptanceCriteria,
-            dependsOn: requestedWork.dependsOn,
-            assistantDispatch: dispatchReference,
-            acceptedInput: admission,
-            context: {
-              supportingWrites: references.writes,
-              references: references.planning,
-            },
-          })
-          return {
-            summary: `Created Engineering Work ${work.attributes.id} for ${args.goalId}.`,
-            changed: !dispatched,
-            value: {
-              effect: {
-                kind: 'engineering_created',
-                projectId: project.projectId,
-                goalId: args.goalId,
-                workId: work.attributes.id,
-              },
-              references: references.planning,
-            },
-          }
+        const work = await project.controller.createWork(args.goalId, {
+          ...args.work,
+          acceptedInput: admission,
+          context: { supportingWrites: references.writes, references: references.references },
         })
+        return {
+          summary: `Created ${work.attributes.kind} Work ${work.attributes.id}.`,
+          changed: true,
+          value: {
+            effect: {
+              kind: 'work_created',
+              projectId: project.projectId,
+              goalId: args.goalId,
+              workId: work.attributes.id,
+              workKind: work.attributes.kind,
+            },
+            references: references.references,
+          },
+        }
       }
       case 'hopi_write_design': {
         const args = parseAssistantToolArguments(name, input)
-        const documentChanges = args.changes.filter(
-          (change): change is Extract<(typeof args.changes)[number], { kind: 'document' }> =>
-            change.kind === 'document',
-        )
-        const attachmentChanges = args.changes.filter(
-          (change): change is Extract<(typeof args.changes)[number], { kind: 'attachment' }> =>
-            change.kind === 'attachment',
-        )
-        for (const write of documentChanges)
-          assertPortableGoalText(`Design ${write.path}`, write.content)
         const project = requireProject(options.projects, args.projectId)
         options.onGoalEffect(eventId, project.projectId, args.goalId)
         await requireGoal(project.store, args.goalId)
+        const documents = args.changes.filter((change) => change.kind === 'document')
+        const attachments = args.changes.filter((change) => change.kind === 'attachment')
         const references = await prepareGoalReferences(
           options.workspace,
           project.store,
           args.goalId,
-          attachmentChanges,
+          attachments,
         )
         const supportingWrites: PublicationWrite[] = [...references.writes]
-        const normalizedWrites = new Map(
-          documentChanges.map((write) => [designPath(write.path, args.goalId), write.content]),
-        )
-        for (const [relative, source] of normalizedWrites) {
+        const paths: string[] = []
+        for (const document of documents) {
+          assertPortableGoalText(`Design ${document.path}`, document.content)
+          const relative = designPath(document.path, args.goalId)
+          if (relative === 'index.md') validateWayfinderMapRequest(document.content)
           const path = `${project.store.paths.designRoot(args.goalId)}/${relative}`
           const current = await currentBytes(project.store, path)
-          const content = new TextEncoder().encode(normalizeMarkdown(source))
+          const content = new TextEncoder().encode(normalizeMarkdown(document.content))
+          paths.push(relative)
           if (current && equalBytes(current, content)) continue
-          if (supportingWrites.some((write) => write.path === path)) {
-            throw new AssistantToolRequestError(
-              `Design write conflicts with adopted reference document: ${path}`,
-            )
-          }
           supportingWrites.push({
             path,
             expectedHash: current ? await hashBytes(current) : null,
@@ -830,15 +456,14 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
             supportingWrites,
             ...(inputWrite ? { gateWrite: inputWrite } : {}),
           })
-          project.reconciler.interruptRuns(args.goalId)
         }
         return {
-          summary: `Updated ${normalizedWrites.size} design document(s) for ${args.goalId}.`,
+          summary: `Updated ${paths.length} design document(s).`,
           changed: supportingWrites.length > 0 || Boolean(inputWrite),
           value: {
             effect: { kind: 'design_changed', projectId: project.projectId, goalId: args.goalId },
-            documents: [...normalizedWrites.keys()],
-            references: references.planning,
+            documents: paths,
+            references: references.references,
           },
         }
       }
@@ -850,12 +475,16 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         const work = goalPackage.works.get(args.workId)
         if (!work) throw new AssistantToolRequestError(`Work not found: ${args.workId}`)
         if (args.action.kind === 'run') {
-          const runRequest = await project.reconciler.requestWorkRun(args.goalId, args.workId, {
-            profile: args.action.profile,
+          const request = {
             workspaceMode: args.action.workspaceMode,
             instructionMarkdown: args.action.instructionMarkdown,
             refs: args.action.refs,
-          })
+          }
+          const runRequest = await project.reconciler.requestWorkRun(
+            args.goalId,
+            args.workId,
+            request,
+          )
           return currentWorkResult({
             project,
             goalId: args.goalId,
@@ -865,42 +494,44 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
           })
         }
         if (args.action.kind === 'complete') {
+          if (args.action.mapMarkdown !== undefined) {
+            if (!isDecisionWork(work.attributes))
+              throw new AssistantToolRequestError('Only Decision completion may update the Map')
+            validateWayfinderMapRequest(args.action.mapMarkdown)
+          }
+          if (isDecisionWork(work.attributes)) {
+            const mapFile = Bun.file(
+              project.store.paths.absolute(project.store.paths.designIndex(args.goalId)),
+            )
+            if ((await mapFile.exists()) && args.action.mapMarkdown === undefined) {
+              throw new AssistantToolRequestError(
+                'Decision completion in a mapped Goal must update the Map atomically',
+              )
+            }
+          }
           const completion = await project.reconciler.completeWork(args.goalId, args.workId, {
             sourceEventId: eventId,
             decision: args.action.decision,
+            mapMarkdown: args.action.mapMarkdown,
           })
-          const changed = completion.kind === 'integrated' || completion.kind === 'completed'
-          const current = await project.store.readPackage(args.goalId)
-          const completed = current.works.get(args.workId)
-          const reason = 'reason' in completion ? completion.reason : undefined
+          const current = (await project.store.readPackage(args.goalId)).works.get(args.workId)
           return {
-            summary:
-              completion.kind === 'rejected' || completion.kind === 'blocked'
-                ? `Work ${args.workId} was not completed: ${completion.reason}`
-                : completion.kind === 'blocked_after_boundary'
-                  ? `Work ${args.workId} C1 moved to ${completion.commit}, but projection recovery is required: ${completion.reason}`
-                  : `Work ${args.workId} completion ${completion.kind}.`,
-            changed,
+            summary: `Work ${args.workId} completion ${completion.kind}.`,
+            changed: completion.kind === 'integrated' || completion.kind === 'completed',
             value: {
               effect: {
                 kind: 'work_completion',
                 projectId: project.projectId,
                 goalId: args.goalId,
                 workId: args.workId,
-                status: completion.kind,
-                stage: completed?.attributes.stage ?? work.attributes.stage,
+                status: current?.attributes.status ?? work.attributes.status,
+                result: completion.kind,
                 commit: 'commit' in completion ? completion.commit : null,
-                ...(reason ? { reason } : {}),
               },
             },
           }
         }
         if (args.action.kind === 'set_dependencies') {
-          if (!isEngineeringWork(work.attributes)) {
-            throw new AssistantToolRequestError(
-              `Only Engineering Work can have dependencies: ${args.workId}`,
-            )
-          }
           const changed =
             JSON.stringify(work.attributes.dependsOn) !== JSON.stringify(args.action.dependsOn)
           const current = await project.controller.setWorkDependencies(
@@ -913,7 +544,7 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
             await project.reconciler.interruptQueuedRuns(args.goalId, args.workId)
           }
           return {
-            summary: `Dependencies updated for Work ${args.workId}.`,
+            summary: `Updated dependencies for ${args.workId}.`,
             changed,
             value: {
               effect: {
@@ -922,6 +553,27 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
                 goalId: args.goalId,
                 workId: args.workId,
                 dependsOn: current.attributes.dependsOn,
+              },
+            },
+          }
+        }
+        if (args.action.kind === 'set_not_before') {
+          const changed = work.attributes.notBefore !== args.action.notBefore
+          const current = await project.controller.setWorkNotBefore(
+            args.goalId,
+            args.workId,
+            args.action.notBefore,
+          )
+          return {
+            summary: `Updated schedule for ${args.workId}.`,
+            changed,
+            value: {
+              effect: {
+                kind: 'work_schedule_changed',
+                projectId: project.projectId,
+                goalId: args.goalId,
+                workId: args.workId,
+                notBefore: current.attributes.notBefore,
               },
             },
           }
@@ -941,6 +593,7 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         options.onGoalEffect(eventId, project.projectId, args.goalId)
         let goal = await requireGoal(project.store, args.goalId)
         let changed = false
+        let inputRecorded = false
         switch (args.action.kind) {
           case 'complete':
             if (goal.attributes.lifecycle !== 'done') {
@@ -951,42 +604,49 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
               changed = true
             }
             break
+          case 'revise_contract': {
+            assertPortableGoalText('Goal contract', args.action.contractMarkdown)
+            const admission = await goalInputAdmission(
+              options.workspace,
+              project.store,
+              args.goalId,
+              event,
+            )
+            goal = await project.controller.reviseContract(args.goalId, {
+              contractMarkdown: args.action.contractMarkdown,
+              acceptedInput: admission,
+            })
+            changed = true
+            inputRecorded = true
+            project.reconciler.interruptRuns(args.goalId)
+            await project.reconciler.interruptQueuedRuns(args.goalId)
+            break
+          }
           case 'pause':
             if (goal.attributes.lifecycle === 'active') {
-              await project.controller.pauseGoal(args.goalId)
+              goal = await project.controller.pauseGoal(args.goalId)
               changed = true
-            } else if (goal.attributes.lifecycle !== 'paused') {
-              throw new AssistantToolRequestError(
-                `Goal ${args.goalId} cannot be paused from ${goal.attributes.lifecycle}`,
-              )
             }
             break
           case 'resume':
             if (goal.attributes.lifecycle === 'paused') {
-              await project.controller.resumeGoal(args.goalId)
+              goal = await project.controller.resumeGoal(args.goalId)
               changed = true
-            } else if (goal.attributes.lifecycle !== 'active') {
-              throw new AssistantToolRequestError(
-                `Goal ${args.goalId} cannot be resumed from ${goal.attributes.lifecycle}`,
-              )
             }
             break
           case 'cancel':
             if (goal.attributes.lifecycle !== 'cancelled') {
-              await project.controller.cancelGoal(args.goalId)
+              goal = await project.controller.cancelGoal(args.goalId)
               changed = true
             }
             break
           case 'reopen':
             if (goal.attributes.lifecycle !== 'active') {
-              if (args.action.contractChange) {
-                assertPortableGoalText('Goal contract change', args.action.contractChange)
-              }
-              await project.controller.reopenGoal(args.goalId, {
+              if (args.action.contractMarkdown)
+                assertPortableGoalText('Goal contract', args.action.contractMarkdown)
+              goal = await project.controller.reopenGoal(args.goalId, {
                 eventId,
-                ...(args.action.contractChange
-                  ? { contractChange: args.action.contractChange }
-                  : {}),
+                contractMarkdown: args.action.contractMarkdown,
               })
               changed = true
             }
@@ -998,18 +658,11 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
             }
             break
         }
-        if (changed && args.action.kind !== 'set_priority') {
-          goal = await requireGoal(project.store, args.goalId)
-        }
-        const inputChanged = await publishInput(
-          options.workspace,
-          project.store,
-          args.goalId,
-          event,
-        )
+        if (!inputRecorded)
+          inputRecorded = await publishInput(options.workspace, project.store, args.goalId, event)
         return {
           summary: `${args.action.kind} applied to Goal ${args.goalId}.`,
-          changed: changed || inputChanged,
+          changed: changed || inputRecorded,
           value: {
             effect: {
               kind: `goal_${args.action.kind}`,
@@ -1018,6 +671,7 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
             },
             lifecycle: goal.attributes.lifecycle,
             priority: goal.attributes.priority,
+            contractRevision: goal.attributes.contractRevision,
           },
         }
       }
@@ -1027,50 +681,55 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         options.onProjectDispatchEffect(eventId, project.projectId)
         const change = args.change
         const state = await options.workspace.readWorkspace()
-        const target = `project:${project.projectId}`
         if (change.kind === 'present_attention_to_user') {
-          const requestedReferences = [...new Set(change.attentionRefs)]
-          await assertPresentableAttentionReferences(event, project.projectId, requestedReferences)
-          const previousReferences = new Set(event.attributes.attentionRequest?.attentionRefs ?? [])
+          const references = [...new Set(change.attentionRefs)]
+          await assertPresentableAttentionReferences(event, project.projectId, references)
           const staged = await options.workspace.stageAttentionRequest(eventId, {
-            attentionRefs: requestedReferences,
+            attentionRefs: references,
           })
-          const attentionRefs = staged.attributes.attentionRequest?.attentionRefs ?? []
           return {
-            summary: `Presented ${attentionRefs.length} Attention${attentionRefs.length === 1 ? '' : 's'} to the user through this turn.`,
-            changed: requestedReferences.some((reference) => !previousReferences.has(reference)),
+            summary: `Presented ${references.length} Attention(s).`,
+            changed: true,
             value: {
               effect: {
                 kind: 'attention_presentation_staged',
-                attentionRefs,
+                attentionRefs: staged.attributes.attentionRequest?.attentionRefs ?? [],
               },
             },
           }
         }
+        if (change.kind === 'create' && change.goalId && change.workId) {
+          options.onGoalEffect(eventId, project.projectId, change.goalId)
+          const attention = await project.controller.createAttention(
+            project.projectId,
+            change.goalId,
+            change.workId,
+            {
+              attentionId: change.attentionId,
+              summary: change.summary,
+              decisionPrompt: change.decisionPrompt,
+              body: withReferences(change.body, change.refs),
+            },
+          )
+          return {
+            summary: `Created Work Attention ${attention.attributes.id}.`,
+            changed: true,
+            value: {
+              attentionId: attention.attributes.id,
+              resolved: false,
+              attentionRef: goalAttentionReference(
+                project.projectId,
+                change.goalId,
+                attention.attributes.id,
+              ),
+            },
+          }
+        }
+        const target = `project:${project.projectId}`
         if (change.kind === 'create') {
           const attentionId = change.attentionId ?? `A-${crypto.randomUUID()}`
-          const existing = state.attentions.get(attentionId)
-          if (existing) {
-            if (
-              workspaceAttentionProjectId(existing) === project.projectId &&
-              existing.attributes.resolvedAt === null &&
-              existing.attributes.summary === change.summary &&
-              JSON.stringify(existing.attributes.decisionPrompt ?? null) ===
-                JSON.stringify(change.decisionPrompt ?? null) &&
-              existing.body.trim() === change.body.trim()
-            ) {
-              return {
-                summary: `Project Attention ${attentionId} was already current.`,
-                changed: false,
-                value: {
-                  attentionId,
-                  resolved: false,
-                  attentionRef: workspaceAttentionReference(state.homeId, attentionId),
-                },
-              }
-            }
+          if (state.attentions.has(attentionId))
             throw new AssistantToolRequestError(`Attention already exists: ${attentionId}`)
-          }
           const timestamp = now().toISOString()
           const attention: WorkspaceAttentionDocument = {
             attributes: {
@@ -1097,21 +756,10 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
         }
         if (change.kind === 'update') {
           const attention = state.attentions.get(change.attentionId)
-          if (!attention || workspaceAttentionProjectId(attention) !== project.projectId) {
+          if (!attention || workspaceAttentionProjectId(attention) !== project.projectId)
             throw new AssistantToolRequestError(
               `Project Attention not found: ${change.attentionId}`,
             )
-          }
-          if (
-            change.body === undefined &&
-            change.refs === undefined &&
-            change.summary === undefined &&
-            change.decisionPrompt === undefined
-          ) {
-            throw new AssistantToolRequestError(
-              'Attention update requires summary, decisionPrompt, body, or refs',
-            )
-          }
           const updated = await options.workspace.updateAttention(change.attentionId, {
             ...(change.body !== undefined ? { body: change.body } : {}),
             ...(change.refs !== undefined ? { refs: [...new Set([target, ...change.refs])] } : {}),
@@ -1128,71 +776,53 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
               attentionId: change.attentionId,
               resolved: updated.attributes.resolvedAt !== null,
               attentionRef: workspaceAttentionReference(state.homeId, change.attentionId),
-              updatedAt: updated.attributes.updatedAt,
             },
           }
         }
-
-        const parsedReference = parseAttentionReference(change.attentionRef)
-        if (!parsedReference) {
+        const parsed = parseAttentionReference(change.attentionRef)
+        if (!parsed)
           throw new AssistantToolRequestError(`Invalid Attention reference: ${change.attentionRef}`)
-        }
-        if (parsedReference.scope === 'goal') {
-          if (parsedReference.projectId !== project.projectId) {
-            throw new AssistantToolRequestError(
-              `Attention is outside Project ${project.projectId}: ${change.attentionRef}`,
-            )
-          }
+        if (parsed.scope === 'goal') {
+          if (parsed.projectId !== project.projectId)
+            throw new AssistantToolRequestError('Attention is outside this Project')
           const admission = await goalInputAdmission(
             options.workspace,
             project.store,
-            parsedReference.goalId,
+            parsed.goalId,
             event,
           )
           const changed = await resolveGoalAttention(
             project.store,
-            parsedReference.goalId,
-            parsedReference.attentionId,
+            parsed.goalId,
+            parsed.attentionId,
             change.resolution,
             admission,
             now(),
           )
           return {
-            summary: `Resolved Goal Attention ${parsedReference.attentionId}.`,
+            summary: `Resolved Goal Attention ${parsed.attentionId}.`,
             changed,
             value: {
-              attentionId: parsedReference.attentionId,
+              attentionId: parsed.attentionId,
               resolved: true,
               attentionRef: change.attentionRef,
               resolutionInput: admission.path,
             },
           }
         }
-
-        if (parsedReference.homeId !== state.homeId) {
-          throw new AssistantToolRequestError(
-            `Attention is outside the current Home: ${change.attentionRef}`,
-          )
-        }
-        const attention = state.attentions.get(parsedReference.attentionId)
-        if (!attention || workspaceAttentionProjectId(attention) !== project.projectId) {
-          throw new AssistantToolRequestError(
-            `Project Attention not found: ${parsedReference.attentionId}`,
-          )
-        }
+        if (parsed.homeId !== state.homeId)
+          throw new AssistantToolRequestError('Attention is outside this Home')
+        const attention = state.attentions.get(parsed.attentionId)
+        if (!attention || workspaceAttentionProjectId(attention) !== project.projectId)
+          throw new AssistantToolRequestError(`Project Attention not found: ${parsed.attentionId}`)
         const changed = attention.attributes.resolvedAt === null
-        if (changed) {
-          await options.workspace.resolveAttention(
-            parsedReference.attentionId,
-            change.resolution,
-            now(),
-          )
-        }
+        if (changed)
+          await options.workspace.resolveAttention(parsed.attentionId, change.resolution, now())
         return {
-          summary: `Resolved Project Attention ${parsedReference.attentionId}.`,
+          summary: `Resolved Project Attention ${parsed.attentionId}.`,
           changed,
           value: {
-            attentionId: parsedReference.attentionId,
+            attentionId: parsed.attentionId,
             resolved: true,
             attentionRef: change.attentionRef,
           },
@@ -1201,32 +831,6 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
       case 'hopi_control_preview': {
         const args = parseAssistantToolArguments(name, input)
         const project = requireProject(options.projects, args.projectId)
-        if (args.operation === 'start') {
-          const repoRoots = project.repos.map((repo) => ({
-            repoId: repo.repoId,
-            path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
-          }))
-          const result = await options.preview.start({
-            projectId: project.projectId,
-            projectRoot: project.sourceRoot,
-            requestedBy: 'assistant',
-            releaseHeads: await readProjectReleaseHeads(
-              project.projectId,
-              project.repos.map((repo) => ({
-                repoId: repo.repoId,
-                path: repo.integrationRoot,
-              })),
-            ),
-            primaryRepoId: project.primaryRepoId,
-            repoRoots,
-            runtimeInputs: args.runtimeInputs,
-          })
-          return {
-            summary: `Preview start requested for ${project.projectId}.`,
-            changed: true,
-            value: result,
-          }
-        }
         if (args.operation === 'stop') {
           const result = await options.preview.stop(project.projectId)
           return {
@@ -1235,10 +839,40 @@ export function createAssistantToolExecutor(options: AssistantToolExecutionOptio
             value: result,
           }
         }
-        throw new AssistantToolRequestError(
-          `Unsupported Preview operation: ${args.operation satisfies never}`,
-        )
+        const result = await options.preview.start({
+          projectId: project.projectId,
+          projectRoot: project.sourceRoot,
+          requestedBy: 'assistant',
+          releaseHeads: await readProjectReleaseHeads(
+            project.projectId,
+            project.repos.map((repo) => ({ repoId: repo.repoId, path: repo.integrationRoot })),
+          ),
+          primaryRepoId: project.primaryRepoId,
+          repoRoots: project.repos.map((repo) => ({
+            repoId: repo.repoId,
+            path: resolveProjectPath(repo.integrationRoot, repo.projectPath),
+          })),
+          runtimeInputs: args.runtimeInputs,
+        })
+        return {
+          summary: `Preview start requested for ${project.projectId}.`,
+          changed: true,
+          value: result,
+        }
       }
     }
   }
+}
+
+function validateWayfinderMapRequest(markdown: string) {
+  try {
+    assertWayfinderMap(markdown)
+  } catch (error) {
+    throw new AssistantToolRequestError(error instanceof Error ? error.message : String(error))
+  }
+}
+
+function withReferences(body: string, references: readonly string[]) {
+  if (references.length === 0) return body
+  return `${body.trim()}\n\n## References\n\n${references.map((reference) => `- ${reference}`).join('\n')}`
 }

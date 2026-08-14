@@ -25,7 +25,7 @@ export interface AssistantToolProject {
     completeWork(
       goalId: string,
       workId: string,
-      input: { sourceEventId: string; decision: string },
+      input: { sourceEventId: string; decision: string; mapMarkdown?: string },
     ): Promise<WorkCompletionResult>
     completeGoal(
       goalId: string,

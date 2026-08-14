@@ -2,8 +2,8 @@ import { expect, test } from 'bun:test'
 import {
   readAssistantFeedChanges,
   readState,
-  requireGoalBoardDetail,
-  updateAgentRoleSettings,
+  requireGoalRouteDetail,
+  updateAgentSettings,
 } from './apiClient'
 
 test('turns a transport failure into an actionable backend recovery message', async () => {
@@ -19,24 +19,25 @@ test('turns a transport failure into an actionable backend recovery message', as
   }
 })
 
-test('rejects incomplete Goal board projections instead of inventing empty Attention facts', () => {
+test('rejects incomplete Goal Route projections instead of inventing graph or Attention facts', () => {
   expect(() =>
-    requireGoalBoardDetail({
+    requireGoalRouteDetail({
       projectId: 'P-1',
       goal: { id: 'G-1' },
       works: [],
       projectAttention: null,
     }),
-  ).toThrow('Goal board projection is incomplete')
+  ).toThrow('Goal route projection is incomplete')
 
   const projection = {
     projectId: 'P-1',
     goal: { id: 'G-1' },
     works: [],
+    route: { nodes: [], edges: [] },
     attentions: [],
     projectAttention: null,
   }
-  expect(requireGoalBoardDetail(projection)).toBe(projection)
+  expect(requireGoalRouteDetail(projection)).toBe(projection)
 })
 
 test('requests mutable Assistant changes from the independent synchronization cursor', async () => {
@@ -65,16 +66,16 @@ test('requests mutable Assistant changes from the independent synchronization cu
   )
 })
 
-test('updates one workflow role through the unified agent settings API', async () => {
+test('updates one runtime agent through the unified agent settings API', async () => {
   const originalFetch = globalThis.fetch
   let observed: { input: RequestInfo | URL; init?: RequestInit } | null = null
   globalThis.fetch = (async (input, init) => {
     observed = { input, init }
-    return Response.json({ home: { agentRoleCodingDefaults: {} } })
+    return Response.json({ home: { agentCodingDefaults: {} } })
   }) as typeof fetch
 
   try {
-    await updateAgentRoleSettings('reviewer', {
+    await updateAgentSettings('worker', {
       transport: 'codex',
       model: 'gpt-5.5',
       reasoningEffort: 'high',
@@ -83,7 +84,7 @@ test('updates one workflow role through the unified agent settings API', async (
     globalThis.fetch = originalFetch
   }
 
-  expect(observed?.input).toBe('/api/agent-roles/reviewer/settings')
+  expect(observed?.input).toBe('/api/agents/worker/settings')
   expect(observed?.init?.method).toBe('PATCH')
   expect(JSON.parse(String(observed?.init?.body))).toEqual({
     codingDefaults: {

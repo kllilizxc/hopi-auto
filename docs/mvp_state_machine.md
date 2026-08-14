@@ -1,125 +1,72 @@
-# HOPI MVP State Model
+# HOPI State Model
 
-Status: current derived-state authority
-Last updated: 2026-08-13
-
-Canonical documents and Attempt manifests own facts. Board lanes, readiness, progress, and activity
-are projections.
+Status: deterministic state authority
+Last updated: 2026-08-14
 
 ## Goal
 
 ```text
 active <-> paused
-active  -> done
-active  -> cancelled
-paused  -> cancelled
+active|paused -> done
+active|paused -> cancelled
+done|cancelled -> active only through explicit reopen and contract revision
 ```
 
-A Goal may become Done only through an explicit completion decision when every Work is terminal and
-no Attempt is queued or running. Work count is not completion authority.
+Resume and reopen do not manufacture Planning Work. They wake the Assistant to inspect the current
+route.
 
 ## Work
 
-Planning Work:
-
 ```text
-plan -> done
-plan -> cancelled
+open -> done
+open -> cancelled
 ```
 
-Engineering Work:
+Kind and identity are immutable. Dependencies of open Work may be rewired while preserving the DAG.
+Terminal Work is fully immutable.
 
-```text
-generate <-> review
-generate  -> done
-review    -> done
-generate | review -> cancelled
-```
+## Derived Work state
 
-`generate` renders in Build. `review` renders in Review. Requesting a Generator or Reviewer Run
-may move the Work to that display focus. Moving a Work never requests a Run.
+For presentation and admission, one open Work derives exactly one state in precedence order:
 
-Review is optional. A settled Run never changes Work stage or terminal state.
+1. `needs_user`: unresolved Work-targeted Attention;
+2. `running`: running Attempt;
+3. `queued`: queued Attempt;
+4. `blocked`: Goal inactive, stale contract revision, or missing/cancelled/open dependency;
+5. `scheduled`: no harder blocker exists and `notBefore` is in the future;
+6. `waiting_assistant`: the latest Attempt matches current Work authority and awaits judgment;
+7. `ready`: all admission facts are satisfied and no current Run result awaits judgment.
 
-The Wayfinding map, decision tickets, fog, and frontier are planning meaning, not stored lifecycle
-states. Current Planning Work and its Attempt use only the ordinary states below.
+Done and cancelled are terminal projection states. No derived state is written into Work Markdown.
 
-## Attempt / Run
+## Attempt
 
 ```text
 queued -> running -> settled
-queued -----------> settled
+queued -> settled
 ```
 
-A settled Attempt has exactly one termination:
-
-```text
-normal | cancelled | interrupted | crashed | timed_out
-```
-
-It also has a non-empty Report. There are no semantic result or application substates.
-
-## Explicit readiness
-
-Only an already queued Attempt can become running. Scheduler checks:
-
-- Project available;
-- Goal active;
-- Work nonterminal and authority hash current;
-- `notBefore` reached;
-- all dependencies done;
-- no conflicting active Attempt;
-- requested profile capacity.
-
-Work kind and stage do not select a profile and do not enqueue execution. An unchanged settled
-Attempt is inert until the Assistant explicitly requests another Run or changes the Work.
-
-## Source candidate
-
-An `isolated_write` Run checkpoints every exit path to the stable Work task branch:
-
-```text
-task branch head before Run -> checkpoint commit -> candidate commit in Attempt
-```
-
-The branch, not a disposable worktree or copied patch, is durable source truth.
-
-## Explicit Engineering completion
-
-```text
-completion requested
-  -> validate Work/dependencies/no active Run
-  -> snapshot release refs + task heads
-  -> C1 merge and canonical Done publication
-  -> compare-and-swap release ref
-  -> Done
-```
-
-Any validation, conflict, release movement, or task-head movement leaves the Work nonterminal and
-publishes a failure fact for Assistant judgment. No source change follows the same path with a
-canonical-only C1.
+The separate termination fact records `normal`, `cancelled`, `interrupted`, `crashed`, or
+`timed_out`. An active Attempt claims exactly one Work. Restart settles orphaned active Runs
+deterministically; it never resumes a provider session as hidden authority.
 
 ## Attention
 
 ```text
 open -> resolved
+open -> cancelled
 ```
 
-Attention supplies durable context to the Assistant. It is not an execution queue or an implicit
-retry gate.
+An open Work-targeted Attention claims the Work for HITL activity. A reply creates an Inbox event;
+only a subsequent Assistant judgment resolves the Attention or changes Work.
 
-## Assistant turn
+## Cancellation
 
-```text
-pending -> handled
-```
-
-A handled Assistant turn may explicitly create or update domain facts, request a Run, complete Work,
-or cancel Work. The Assistant is the logical supervisor; there is no separate Supervisor lifecycle.
+Cancelling Work also cancels every open descendant that depends on it, across Decision and
+Engineering kinds, in reverse topological order. Active Runs are interrupted and open Attentions
+are closed through their own deterministic operations.
 
 ## Restart
 
-Restart reconstructs current state from canonical documents, Project release refs, stable task
-branches, and Attempt manifests. A writable manifest left running after process loss checkpoints
-its stable task branch before settling as interrupted with a factual Report. Project Reset creates
-an epoch boundary so earlier C1 records are not replayed into a reset Project.
+After restart, canonical documents, Attempts, Attentions, and Inbox events reconstruct the complete
+route and claims. No model call, saved board state, or provider session is needed.

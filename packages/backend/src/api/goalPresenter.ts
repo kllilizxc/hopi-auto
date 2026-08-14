@@ -1,4 +1,3 @@
-import type { AgentPlanEvent, AgentRuntimeEvent } from '../agent/runtimeEvents'
 import { workspaceAttentionProjectId } from '../domain/assistantWorkspaceDocuments'
 import type { WorkDocument } from '../domain/canonicalDocuments'
 import type { GoalPackage } from '../domain/goalPackage'
@@ -7,6 +6,7 @@ import { deriveGoalWorkProjections } from '../domain/workProjection'
 import { type MvpProjectRuntime, type MvpRuntime, requireProject } from '../runtime/mvpRuntime'
 import type { RunAttemptSummary } from '../runtime/runAttemptStore'
 import { type RunCostEntry, summarizeRunCosts } from '../runtime/runCostProjection'
+import { currentSettledWorkIds } from '../runtime/workAssignment'
 import { presentGoalAttention, presentWorkspaceAttention } from './assistantFeedPresenter'
 import { ApiError } from './http'
 
@@ -27,18 +27,14 @@ export function presentActiveAttempt(
   runningAttempts: readonly RunAttemptSummary[],
   concurrency: MvpRuntime['concurrency'],
 ) {
-  const runningCount = runningAttempts.filter(
-    (running) => running.responsibility === attempt.responsibility,
-  ).length
   return {
     key: `${attempt.projectId}/${attempt.goalId}/${attempt.workId}`,
     runId: attempt.runId,
-    responsibility: attempt.responsibility,
     status: attempt.status === 'queued' ? ('queued' as const) : ('running' as const),
     requestedAt: attempt.requestedAt,
     startedAt: attempt.startedAt,
     waitReason:
-      attempt.status === 'queued' && runningCount >= concurrency[attempt.responsibility]
+      attempt.status === 'queued' && runningAttempts.length >= concurrency
         ? ('capacity' as const)
         : null,
   }
@@ -53,20 +49,17 @@ export function deriveGoalSummaries(
   if (lifecycle === 'cancelled') {
     return { currentSummary: 'Preserved history', nextSummary: 'Cancelled' }
   }
-  const ordered = projections
-    .filter((projection) => {
-      const work = goalPackage.works.get(projection.workId)
-      return work && work.attributes.stage !== 'done' && work.attributes.stage !== 'cancelled'
-    })
-    .toSorted((left, right) => {
-      const columns = ['Plan', 'Build', 'Review', 'Done']
-      return columns.indexOf(left.column ?? 'Done') - columns.indexOf(right.column ?? 'Done')
-    })
+  const open = projections.filter((projection) => {
+    const work = goalPackage.works.get(projection.workId)
+    return work?.attributes.status === 'open'
+  })
   const focus =
-    ordered.find((projection) => projection.primaryBadge === 'Needs you') ??
-    ordered.find((projection) => projection.primaryBadge === 'Waiting for Assistant') ??
-    ordered.find((projection) => projection.primaryBadge === 'working') ??
-    ordered[0]
+    open.find((projection) => projection.state === 'needs_user') ??
+    open.find((projection) => projection.state === 'running') ??
+    open.find((projection) => projection.state === 'queued') ??
+    open.find((projection) => projection.state === 'waiting_assistant') ??
+    open.find((projection) => projection.state === 'ready') ??
+    open[0]
   if (lifecycle === 'paused') {
     return {
       currentSummary: focus
@@ -75,22 +68,19 @@ export function deriveGoalSummaries(
       nextSummary: 'Resume to continue',
     }
   }
-  if (!focus) return { currentSummary: 'Final assessment', nextSummary: 'Planner' }
+  if (!focus) return { currentSummary: 'Assess destination', nextSummary: 'Assistant' }
   const work = goalPackage.works.get(focus.workId)
   return {
-    currentSummary: `${focus.column ?? 'Waiting'}: ${work?.attributes.title ?? focus.workId}`,
-    nextSummary: focus.primaryBadge
-      ? `${focus.primaryBadge}${focus.responsibility ? ` · ${focus.responsibility}` : ''}`
-      : (focus.responsibility ?? 'Waiting for prerequisites'),
+    currentSummary: work?.attributes.title ?? focus.workId,
+    nextSummary: routeStateLabel(focus.state),
   }
 }
 
 export function deriveWorkCompletedAt(
-  work: Pick<WorkDocument['attributes'], 'kind' | 'stage'>,
+  work: Pick<WorkDocument['attributes'], 'status'>,
   attempts: readonly Pick<RunAttemptSummary, 'status' | 'endedAt'>[],
 ): string | null {
-  if (work.stage !== 'done') return null
-
+  if (work.status !== 'done') return null
   return attempts
     .filter((attempt) => attempt.status === 'settled')
     .reduce<string | null>(
@@ -104,32 +94,13 @@ export async function presentGoal(
   runtime: MvpRuntime,
   projectId: string,
   goalId: string,
-  view: 'full' | 'board' | 'docs' = 'full',
+  view: 'full' | 'route' | 'docs' = 'full',
 ) {
   const project = requireProject(runtime.projects, projectId)
   const goalPackage = (await project.store.readReconciliationSnapshot()).get(goalId)
   if (!goalPackage) throw new ApiError(404, `Goal not found: ${goalId}`)
-  if (view === 'docs') {
-    const designSnapshot = await runtime.publisher.snapshotTree(
-      project.store.paths.publicationRoot,
-      project.store.paths.designRoot(goalId),
-    )
-    return {
-      projectId,
-      goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
-      design: designSnapshot.files.map((file) => ({
-        path: file.path,
-        excerpt: presentExcerpt(file.content ? new TextDecoder().decode(file.content) : '', 60),
-      })),
-      evidence: [...goalPackage.evidence.values()].map((evidence) => ({
-        id: evidence.attributes.id,
-        createdAt: evidence.attributes.createdAt,
-        producerRun: evidence.attributes.producerRun,
-        owner: evidence.attributes.owner,
-        excerpt: presentExcerpt(evidence.body, 150),
-      })),
-    }
-  }
+  if (view === 'docs') return presentGoalDocs(runtime, project, projectId, goalId, goalPackage)
+
   const [workspace, designSnapshot, attemptSnapshot] = await Promise.all([
     runtime.workspace.readWorkspace(),
     view === 'full'
@@ -137,82 +108,102 @@ export async function presentGoal(
           project.store.paths.publicationRoot,
           project.store.paths.designRoot(goalId),
         )
-      : null,
+      : view === 'route'
+        ? runtime.publisher.snapshot(project.store.paths.publicationRoot, [
+            project.store.paths.designIndex(goalId),
+          ])
+        : null,
     runtime.attempts.snapshot(),
   ])
   const attemptsByWork = attemptSnapshot.listGoal(projectId, goalId)
   const runningAttempts = attemptSnapshot.running()
+  const queuedAttempts = attemptSnapshot.queued()
   const activeAttemptByWork = new Map(
-    [...runningAttempts, ...attemptSnapshot.queued()]
+    [...runningAttempts, ...queuedAttempts]
       .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
       .map((attempt) => [attempt.workId, attempt] as const),
   )
-  const liveWorkIds = new Set(
-    [...attemptsByWork.entries()].flatMap(([workId, attempts]) =>
-      attempts.some((attempt) => attempt.status === 'running') ? [workId] : [],
-    ),
+  const runningWorkIds = new Set(
+    runningAttempts
+      .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
+      .map((attempt) => attempt.workId),
   )
+  const queuedWorkIds = new Set(
+    queuedAttempts
+      .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
+      .map((attempt) => attempt.workId),
+  )
+  const settledWorkIds = await currentSettledWorkIds(goalPackage.works.values(), attemptsByWork)
+  const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
+    projectEligible: true,
+    runningWorkIds,
+    queuedWorkIds,
+    settledWorkIds,
+  })
+  const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
+  const works = [...goalPackage.works.values()].map((work) => {
+    const workAttempts = attemptsByWork.get(work.attributes.id) ?? []
+    const activeAttempt = activeAttemptByWork.get(work.attributes.id) ?? null
+    return {
+      ...work.attributes,
+      ...(view === 'full' ? { body: work.body } : {}),
+      projection: projectionByWork.get(work.attributes.id),
+      blockedBy: presentWorkBlocker(work, projectionByWork, goalPackage),
+      activeAttempt: activeAttempt
+        ? presentActiveAttempt(activeAttempt, runningAttempts, runtime.concurrency)
+        : null,
+      runAttemptCount: workAttempts.length,
+      completedAt: deriveWorkCompletedAt(work.attributes, workAttempts),
+    }
+  })
   const projectAttention = [...workspace.attentions.values()].find(
     (attention) =>
       workspaceAttentionProjectId(attention) === projectId &&
       attention.attributes.resolvedAt === null,
   )
-  const projections = deriveGoalWorkProjections(projectId, goalId, goalPackage, {
-    projectEligible: true,
-    liveRunWorkIds: liveWorkIds,
-    queuedRunProfiles: new Map(
-      attemptSnapshot
-        .queued()
-        .filter((attempt) => attempt.projectId === projectId && attempt.goalId === goalId)
-        .map((attempt) => [attempt.workId, attempt.responsibility] as const),
-    ),
-    settledRunWorkIds: new Set(
-      [...attemptsByWork]
-        .filter(([, attempts]) => attempts.some((attempt) => attempt.status === 'settled'))
-        .map(([workId]) => workId),
-    ),
-    runCapacity: { planner: true, generator: true, reviewer: true },
-  })
-  const projectionByWork = new Map(projections.map((projection) => [projection.workId, projection]))
-  const agentPlanByWork = await readLiveAgentPlans(
-    runtime,
-    projectId,
-    goalId,
-    liveWorkIds,
-    attemptsByWork,
+  const mapFile = (designSnapshot?.files ?? []).find(
+    (file) => file.path === project.store.paths.designIndex(goalId),
   )
+  const hasMap = Boolean(mapFile?.hash && mapFile.content)
+  const route = {
+    destination: {
+      goalId,
+      title: goalPackage.goal.attributes.title,
+      lifecycle: goalPackage.goal.attributes.lifecycle,
+    },
+    nodes: works,
+    edges: works.flatMap((work) =>
+      work.dependsOn.map((dependencyId) => ({ from: dependencyId, to: work.id })),
+    ),
+    completedDecisionCount: works.filter(
+      (work) => work.kind === 'decision' && work.status === 'done',
+    ).length,
+    completedEngineeringCount: works.filter(
+      (work) => work.kind === 'engineering' && work.status === 'done',
+    ).length,
+    focusWorkId: focusWorkId(projections),
+    mapPath: hasMap ? project.store.paths.designIndex(goalId) : null,
+    fogSummary:
+      hasMap && mapFile?.content
+        ? presentExcerpt(
+            markdownSection(new TextDecoder().decode(mapFile.content), 'Not yet specified'),
+            180,
+          ) || null
+        : null,
+  }
   const projection = {
     projectId,
     goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
-    works: [...goalPackage.works.values()].map((work) => {
-      const workAttempts = attemptsByWork.get(work.attributes.id) ?? []
-      const activeAttempt = activeAttemptByWork.get(work.attributes.id) ?? null
-      return {
-        ...work.attributes,
-        ...(view === 'full' ? { body: work.body } : {}),
-        projection: projectionByWork.get(work.attributes.id),
-        blockedBy: presentWorkBlocker(work, projectionByWork, goalPackage),
-        activeAttempt: activeAttempt
-          ? presentActiveAttempt(activeAttempt, runningAttempts, runtime.concurrency)
-          : null,
-        agentPlan: agentPlanByWork.get(work.attributes.id) ?? null,
-        runAttemptCount: workAttempts.length,
-        completedAt: deriveWorkCompletedAt(work.attributes, workAttempts),
-      }
-    }),
+    works,
+    route,
     attentions: [...goalPackage.attentions.values()]
       .filter((attention) => view === 'full' || attention.attributes.resolvedAt === null)
-      .map((attention) => {
-        const presented = presentGoalAttention(attention, projectId, goalId)
-        if (view === 'full') return presented
-        const { body: _body, ...summary } = presented
-        return summary
-      }),
+      .map((attention) => presentGoalAttention(attention, projectId, goalId)),
     projectAttention: projectAttention
       ? presentWorkspaceAttention(projectAttention, projectId)
       : null,
   }
-  if (view === 'board') return projection
+  if (view === 'route') return projection
   return {
     ...projection,
     design: (designSnapshot?.files ?? []).map((file) => ({
@@ -222,6 +213,34 @@ export async function presentGoal(
     evidence: [...goalPackage.evidence.values()].map((evidence) => ({
       ...evidence.attributes,
       body: evidence.body,
+    })),
+  }
+}
+
+async function presentGoalDocs(
+  runtime: MvpRuntime,
+  project: MvpProjectRuntime,
+  projectId: string,
+  goalId: string,
+  goalPackage: GoalPackage,
+) {
+  const designSnapshot = await runtime.publisher.snapshotTree(
+    project.store.paths.publicationRoot,
+    project.store.paths.designRoot(goalId),
+  )
+  return {
+    projectId,
+    goal: { ...goalPackage.goal.attributes, body: goalPackage.goal.body },
+    design: designSnapshot.files.map((file) => ({
+      path: file.path,
+      excerpt: presentExcerpt(file.content ? new TextDecoder().decode(file.content) : '', 60),
+    })),
+    evidence: [...goalPackage.evidence.values()].map((evidence) => ({
+      id: evidence.attributes.id,
+      createdAt: evidence.attributes.createdAt,
+      producerRun: evidence.attributes.producerRun,
+      owner: evidence.attributes.owner,
+      excerpt: presentExcerpt(evidence.body, 150),
     })),
   }
 }
@@ -248,24 +267,14 @@ export async function presentGoalExecutionCost(
       if (diagnostics) entries.push({ ...attempt, diagnostics })
     }
   }
-  const byWork = [...attemptsByWork.keys()].map((workId) => {
-    const scoped = entries.filter((entry) => entry.workId === workId)
-    return { workId, summary: summarizeRunCosts(scoped) }
-  })
-  const byResponsibility = (['planner', 'generator', 'reviewer'] as const).map(
-    (responsibility) => ({
-      responsibility,
-      summary: summarizeRunCosts(
-        entries.filter((entry) => entry.responsibility === responsibility),
-      ),
-    }),
-  )
   return {
     projectId,
     goalId,
     summary: summarizeRunCosts(entries),
-    byWork,
-    byResponsibility,
+    byWork: [...attemptsByWork.keys()].map((workId) => ({
+      workId,
+      summary: summarizeRunCosts(entries.filter((entry) => entry.workId === workId)),
+    })),
     runs: entries,
   }
 }
@@ -276,78 +285,53 @@ function presentWorkBlocker(
   goalPackage: GoalPackage,
 ) {
   const projection = projections.get(work.attributes.id)
-  if (
-    !projection ||
-    work.attributes.stage === 'done' ||
-    work.attributes.stage === 'cancelled' ||
-    projection.ready ||
-    projection.primaryBadge === 'working'
-  ) {
+  if (!projection || work.attributes.status !== 'open' || projection.state !== 'blocked')
     return null
-  }
-
   const reasons = new Set(projection.failedPredicates)
-  if (reasons.has('project_ineligible')) return 'Project'
-  if (reasons.has('goal_not_active')) return 'Goal'
-  if (reasons.has('stale_contract_revision')) return 'Planner'
+  if (reasons.has('project_ineligible')) return 'Project unavailable'
+  if (reasons.has('goal_not_active')) return 'Goal inactive'
+  if (reasons.has('stale_contract_revision')) return 'Contract changed'
+  if (reasons.has('dependency_cancelled')) return 'Dependency cancelled'
   if (reasons.has('dependency_incomplete')) {
     const dependencies = work.attributes.dependsOn
       .map((dependencyId) => goalPackage.works.get(dependencyId))
-      .filter((dependency): dependency is WorkDocument =>
-        Boolean(dependency && dependency.attributes.stage !== 'done'),
-      )
-    if (dependencies.length === 1) return dependencies[0]?.attributes.title ?? 'dependency'
-    return dependencies.length > 1 ? `${dependencies.length} dependencies` : 'dependency'
+      .filter((dependency): dependency is WorkDocument => dependency?.attributes.status !== 'done')
+    if (dependencies.length === 1) return dependencies[0]?.attributes.title ?? 'Dependency'
+    return dependencies.length > 1 ? `${dependencies.length} dependencies` : 'Dependency'
   }
-  if (reasons.has('not_before')) return 'schedule'
-  if (reasons.has('capacity')) {
-    return projection.responsibility
-      ? `${capitalize(projection.responsibility)} capacity`
-      : 'Agent capacity'
-  }
-  if (reasons.has('no_queued_run')) return null
+  if (reasons.has('not_before')) return 'Scheduled'
   return null
 }
 
-async function readLiveAgentPlans(
-  runtime: MvpRuntime,
-  projectId: string,
-  goalId: string,
-  liveWorkIds: ReadonlySet<string>,
-  attemptsByWork: ReadonlyMap<string, readonly RunAttemptSummary[]>,
-) {
-  const plans = await Promise.all(
-    [...liveWorkIds].map(async (workId) => {
-      const attempt = attemptsByWork
-        .get(workId)
-        ?.find((candidate) => candidate.status === 'running')
-      if (!attempt) return null
-      const events = await runtime.attempts.readEvents(projectId, goalId, workId, attempt.runId)
-      const plan = latestAgentPlan(events ?? [])
-      return plan
-        ? ([
-            workId,
-            {
-              runId: attempt.runId,
-              transport: plan.transport,
-              planId: plan.planId,
-              status: plan.status,
-              items: plan.items,
-              vendorEventType: plan.vendorEventType,
-            },
-          ] as const)
-        : null
-    }),
-  )
-  return new Map(plans.filter((entry): entry is NonNullable<typeof entry> => entry !== null))
-}
-
-export function latestAgentPlan(events: readonly AgentRuntimeEvent[]): AgentPlanEvent | null {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    if (event?.kind === 'plan') return event
+function focusWorkId(projections: readonly WorkProjection[]) {
+  const order = [
+    'running',
+    'queued',
+    'needs_user',
+    'waiting_assistant',
+    'ready',
+    'blocked',
+  ] as const
+  for (const state of order) {
+    const match = projections.find((projection) => projection.state === state)
+    if (match) return match.workId
   }
   return null
+}
+
+function routeStateLabel(state: WorkProjection['state']) {
+  const labels: Record<WorkProjection['state'], string> = {
+    done: 'Done',
+    cancelled: 'Cancelled',
+    needs_user: 'Needs you',
+    running: 'Working',
+    queued: 'Queued',
+    scheduled: 'Scheduled',
+    waiting_assistant: 'Waiting for Assistant',
+    blocked: 'Blocked',
+    ready: 'Ready',
+  }
+  return labels[state]
 }
 
 function presentExcerpt(value: string, maxLength: number) {
@@ -359,6 +343,8 @@ function presentExcerpt(value: string, maxLength: number) {
   return plain.length > maxLength ? `${plain.slice(0, maxLength - 1)}…` : plain
 }
 
-function capitalize(value: string) {
-  return `${value[0]?.toUpperCase() ?? ''}${value.slice(1)}`
+function markdownSection(source: string, heading: string) {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`^## ${escaped}\\s*$\\n([\\s\\S]*?)(?=^## |$)`, 'm').exec(source)
+  return match?.[1]?.trim() ?? ''
 }

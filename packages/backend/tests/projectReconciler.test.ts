@@ -3,13 +3,12 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type {
-  RoleRunInput,
-  RoleRunObserver,
-  RoleRunResult,
-  RoleRunner,
-} from '../src/agent/RoleRunner'
-import { parseWorkDocument, renderWorkDocument } from '../src/domain/canonicalDocuments'
-import { PublicationCoordinator, hashBytes } from '../src/publication/publisher'
+  WorkerRunInput,
+  WorkerRunObserver,
+  WorkerRunResult,
+  WorkerRunner,
+} from '../src/agent/WorkerRunner'
+import { PublicationCoordinator } from '../src/publication/publisher'
 import { createRunAttemptStore } from '../src/runtime/runAttemptStore'
 import type { RunRequest } from '../src/runtime/runRequest'
 import { createStableWorktreeManager } from '../src/runtime/stableWorktreeManager'
@@ -27,82 +26,43 @@ afterEach(async () => {
   )
 })
 
-describe('ProjectReconciler explicit Run loop', () => {
-  test('executes only an explicitly queued Attempt and projects profile to the old lane one-way', async () => {
-    const fixture = await createFixture({ initialStage: 'review' })
+describe('ProjectReconciler explicit Worker loop', () => {
+  test('runs only explicit requests and leaves acceptance to the Assistant', async () => {
+    const fixture = await createFixture()
 
-    expect(await fixture.reconcile()).toMatchObject({
-      kind: 'wait',
-      decision: { kind: 'wait' },
-    })
+    expect(await fixture.reconcile()).toMatchObject({ kind: 'wait' })
     expect(fixture.inputs).toHaveLength(0)
 
-    const build = await fixture.request({
-      profile: 'generator',
-      workspaceMode: 'isolated_write',
-      instructionMarkdown: 'Implement value 2.',
-      refs: [],
-    })
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'generate',
-    )
+    const requested = await fixture.request(writeRequest('Implement value 2.'))
     expect(await fixture.reconcile()).toMatchObject({
       kind: 'run_settled',
-      runId: build.runId,
+      runId: requested.runId,
       termination: 'normal',
     })
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'generate',
-    )
 
-    const buildAttempt = await fixture.attempts.read('project-1', 'goal-1', 'W-1', build.runId)
-    expect(buildAttempt).toMatchObject({
+    const current = await fixture.store.readPackage('goal-1')
+    expect(current.works.get('W-1')?.attributes.status).toBe('open')
+    const attempt = await fixture.attempts.read('project-1', 'goal-1', 'W-1', requested.runId)
+    expect(attempt).toMatchObject({
       status: 'settled',
       termination: 'normal',
       reportMarkdown: 'Run run-1 completed.',
       execution: { transport: 'codex', model: 'gpt-5.4', reasoningEffort: 'high' },
     })
-    expect(buildAttempt?.candidateCommits).toHaveLength(1)
-    expect(buildAttempt?.candidateCommits[0]?.resultCommit).not.toBe(
-      buildAttempt?.candidateCommits[0]?.baseCommit,
+    expect(attempt?.candidateCommits).toHaveLength(1)
+    expect(attempt?.candidateCommits[0]?.resultCommit).not.toBe(
+      attempt?.candidateCommits[0]?.baseCommit,
     )
 
     expect(await fixture.reconcile()).toMatchObject({ kind: 'wait' })
     expect(fixture.inputs).toHaveLength(1)
-
-    const review = await fixture.request({
-      profile: 'reviewer',
-      workspaceMode: 'read_only',
-      instructionMarkdown: 'Review the current candidate.',
-      refs: [build.runId],
-    })
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'review',
-    )
-    expect(await fixture.reconcile()).toMatchObject({
-      kind: 'run_settled',
-      runId: review.runId,
-    })
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'review',
-    )
-
-    await fixture.request({
-      profile: 'generator',
-      workspaceMode: 'isolated_write',
-      instructionMarkdown: 'Address the review Report.',
-      refs: [review.runId],
-    })
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
-      'generate',
-    )
   })
 
-  test('creates a fresh provider Session workspace for every Run', async () => {
+  test('gives every Run a fresh disposable Session workspace', async () => {
     const fixture = await createFixture()
-    const first = await fixture.request(generatorRequest('First pass.'))
+    const first = await fixture.request(writeRequest('First pass.'))
     await fixture.reconcile()
-    const second = await fixture.request(generatorRequest('Second pass.'))
+    const second = await fixture.request(writeRequest('Second pass.'))
     await fixture.reconcile()
 
     expect(first.runId).not.toBe(second.runId)
@@ -115,7 +75,7 @@ describe('ProjectReconciler explicit Run loop', () => {
     expect(fixture.inputs[0]?.context.runRoot).not.toBe(fixture.inputs[1]?.context.runRoot)
   })
 
-  test('settles a crash once, checkpoints partial source, and never retries implicitly', async () => {
+  test('settles a crash once, preserves partial source, and never retries implicitly', async () => {
     const fixture = await createFixture()
     fixture.enqueue(async (input, observer) => {
       await observer?.onExecution?.({
@@ -131,7 +91,7 @@ describe('ProjectReconciler explicit Run loop', () => {
         exitCode: 9,
       }
     })
-    const requested = await fixture.request(generatorRequest('Try the source change.'))
+    const requested = await fixture.request(writeRequest('Try the source change.'))
 
     expect(await fixture.reconcile()).toMatchObject({
       kind: 'run_settled',
@@ -147,7 +107,6 @@ describe('ProjectReconciler explicit Run loop', () => {
     expect(attempt?.candidateCommits[0]?.resultCommit).not.toBe(
       attempt?.candidateCommits[0]?.baseCommit,
     )
-
     expect(await fixture.reconcile()).toMatchObject({ kind: 'wait' })
     expect(fixture.inputs).toHaveLength(1)
 
@@ -160,7 +119,6 @@ describe('ProjectReconciler explicit Run loop', () => {
       exitCode: 0,
     }))
     const followup = await fixture.request({
-      profile: 'reviewer',
       workspaceMode: 'read_only',
       instructionMarkdown: 'Inspect the partial source.',
       refs: [requested.runId],
@@ -171,15 +129,15 @@ describe('ProjectReconciler explicit Run loop', () => {
     ).toContain('sees partial.ts')
   })
 
-  test('checkpoints source when an active Run is explicitly cancelled', async () => {
+  test('checkpoints source when an active Run is cancelled', async () => {
     const fixture = await createFixture()
-    let startedResolve: (() => void) | undefined
+    let markStarted: (() => void) | undefined
     const started = new Promise<void>((resolve) => {
-      startedResolve = resolve
+      markStarted = resolve
     })
     fixture.enqueue(async (input) => {
       await Bun.write(join(input.cwd, 'src', 'cancelled.ts'), 'export const retained = true\n')
-      startedResolve?.()
+      markStarted?.()
       await new Promise<void>((resolve) => {
         input.signal?.addEventListener('abort', () => resolve(), { once: true })
       })
@@ -190,7 +148,7 @@ describe('ProjectReconciler explicit Run loop', () => {
         exitCode: null,
       }
     })
-    const request = await fixture.request(generatorRequest('Start a cancellable Run.'))
+    const requested = await fixture.request(writeRequest('Start a cancellable Run.'))
     const reconciliation = fixture.reconcile()
     await started
     fixture.reconciler.interruptRuns('goal-1', 'W-1', 'cancelled')
@@ -199,7 +157,7 @@ describe('ProjectReconciler explicit Run loop', () => {
       kind: 'run_settled',
       termination: 'cancelled',
     })
-    const attempt = await fixture.attempts.read('project-1', 'goal-1', 'W-1', request.runId)
+    const attempt = await fixture.attempts.read('project-1', 'goal-1', 'W-1', requested.runId)
     expect(attempt?.termination).toBe('cancelled')
     expect(attempt?.candidateCommits[0]?.resultCommit).not.toBe(
       attempt?.candidateCommits[0]?.baseCommit,
@@ -208,14 +166,13 @@ describe('ProjectReconciler explicit Run loop', () => {
 
   test('checkpoints an abandoned writable Run before restart settlement', async () => {
     const fixture = await createFixture()
-    const request = await fixture.request(generatorRequest('Write source before a process crash.'))
+    const requested = await fixture.request(writeRequest('Write source before a process crash.'))
     await fixture.attempts.start({
       projectId: 'project-1',
       goalId: 'goal-1',
       workId: 'W-1',
-      runId: request.runId,
-      responsibility: 'generator',
-      runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', request.runId),
+      runId: requested.runId,
+      runRoot: join(fixture.homeRoot, '.hopi', 'runtime', 'runs', requested.runId),
     })
 
     const worktrees = createStableWorktreeManager()
@@ -235,7 +192,7 @@ describe('ProjectReconciler explicit Run loop', () => {
         fixture.reconciler.checkpointInterruptedRun(attempt),
       ),
     ).toBe(1)
-    const settled = await fixture.attempts.read('project-1', 'goal-1', 'W-1', request.runId)
+    const settled = await fixture.attempts.read('project-1', 'goal-1', 'W-1', requested.runId)
     expect(settled).toMatchObject({
       status: 'settled',
       termination: 'interrupted',
@@ -244,17 +201,11 @@ describe('ProjectReconciler explicit Run loop', () => {
     expect(await git(worktree.path, ['show', 'HEAD:src/recovered.ts'])).toContain(
       'recovered = true',
     )
-
-    await git(fixture.linked.integrationRoot, ['worktree', 'remove', '--force', worktree.path])
-    const rebuilt = await worktrees.prepare(worktreeInput)
-    expect(await Bun.file(join(rebuilt.path, 'src', 'recovered.ts')).text()).toContain(
-      'recovered = true',
-    )
   })
 
-  test('completes Build directly through C1, blocks active Runs, and completes Goal explicitly', async () => {
+  test('publishes Engineering through C1 and completes the Goal only on explicit acceptance', async () => {
     const fixture = await createFixture()
-    const queued = await fixture.request(generatorRequest('Implement before completion.'))
+    const queued = await fixture.request(writeRequest('Implement before completion.'))
 
     await expect(
       fixture.reconciler.completeWork('goal-1', 'W-1', {
@@ -269,7 +220,7 @@ describe('ProjectReconciler explicit Run loop', () => {
       decision: 'The current task source satisfies the acceptance criteria.',
     })
     expect(completed.kind).toBe('integrated')
-    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.stage).toBe(
+    expect((await fixture.store.readPackage('goal-1')).works.get('W-1')?.attributes.status).toBe(
       'done',
     )
     expect(fixture.releaseUpdates).toHaveLength(1)
@@ -283,9 +234,9 @@ describe('ProjectReconciler explicit Run loop', () => {
   })
 })
 
-type RunHandler = (input: RoleRunInput, observer?: RoleRunObserver) => Promise<RoleRunResult>
+type RunHandler = (input: WorkerRunInput, observer?: WorkerRunObserver) => Promise<WorkerRunResult>
 
-async function createFixture(options: { initialStage?: 'generate' | 'review' } = {}) {
+async function createFixture() {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'hopi-project-reconciler-'))
   temporaryRoots.push(temporaryRoot)
   const repoRoot = join(temporaryRoot, 'repo')
@@ -302,15 +253,26 @@ async function createFixture(options: { initialStage?: 'generate' | 'review' } =
   const home = createAssistantHomeStore(homeRoot, publisher)
   const linked = await home.linkProject({ projectId: 'project-1', repoPath: repoRoot })
   const store = createGoalPackageStore(linked.integrationRoot, 'project-1', publisher)
-  await store.createGoal({ goalId: 'goal-1', title: 'Goal', objective: 'Ship value 2.' })
-  await publishEngineeringWork(store, options.initialStage ?? 'generate')
+  await store.createGoal({
+    goalId: 'goal-1',
+    title: 'Goal',
+    objective: 'Ship value 2.',
+    firstWork: {
+      id: 'W-1',
+      title: 'Build value 2',
+      kind: 'engineering',
+      objective: 'Change the exported value.',
+      acceptanceCriteria: ['The exported value is at least 2.'],
+    },
+    createdAt: '2026-08-13T00:00:00.000Z',
+  })
 
   const attempts = createRunAttemptStore(homeRoot, {
     now: () => new Date('2026-08-13T00:00:00Z'),
   })
   const handlers: RunHandler[] = []
-  const inputs: RoleRunInput[] = []
-  const roleRunner: RoleRunner = {
+  const inputs: WorkerRunInput[] = []
+  const workerRunner: WorkerRunner = {
     async run(input, observer) {
       inputs.push(input)
       const handler = handlers.shift()
@@ -349,7 +311,7 @@ async function createFixture(options: { initialStage?: 'generate' | 'review' } =
     projectRepos: linked.repos,
     store,
     publisher,
-    roleRunner,
+    workerRunner,
     attempts,
     now: () => new Date('2026-08-13T00:00:00Z'),
     createRunId: () => `run-${++nextRun}`,
@@ -375,57 +337,18 @@ async function createFixture(options: { initialStage?: 'generate' | 'review' } =
     reconcile() {
       return reconciler.reconcileGoal('goal-1', {
         projectEligible: true,
-        runCapacity: { planner: true, generator: true, reviewer: true },
+        workerCapacity: true,
       })
     },
   }
 }
 
-function generatorRequest(instructionMarkdown: string): RunRequest {
+function writeRequest(instructionMarkdown: string): RunRequest {
   return {
-    profile: 'generator',
     workspaceMode: 'isolated_write',
     instructionMarkdown,
     refs: [],
   }
-}
-
-async function publishEngineeringWork(
-  store: ReturnType<typeof createGoalPackageStore>,
-  stage: 'generate' | 'review',
-) {
-  const planningPath = store.paths.workDocument('goal-1', 'plan-initial')
-  const planningSource = await Bun.file(store.paths.absolute(planningPath)).text()
-  const planning = parseWorkDocument(planningSource)
-  planning.attributes.stage = 'done'
-  await store.publishGoal('goal-1', {
-    supportingWrites: [
-      {
-        path: store.paths.workDocument('goal-1', 'W-1'),
-        expectedHash: null,
-        content: renderWorkDocument({
-          attributes: {
-            id: 'W-1',
-            title: 'Build value 2',
-            kind: 'engineering',
-            stage,
-            notBefore: null,
-            dependsOn: [],
-            contractRevision: 1,
-            evidenceRefs: [],
-            contextRefs: [],
-            ownerMessages: [],
-          },
-          body: '## Acceptance Criteria\n\n- value is at least 2.\n',
-        }),
-      },
-    ],
-    gateWrite: {
-      path: planningPath,
-      expectedHash: await hashBytes(new TextEncoder().encode(planningSource)),
-      content: renderWorkDocument(planning),
-    },
-  })
 }
 
 async function git(cwd: string, args: string[]) {

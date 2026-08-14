@@ -23,7 +23,7 @@ afterEach(async () => {
 })
 
 describe('CoordinatorReconciler explicit scheduling', () => {
-  test('does not dispatch from Work stage and starts only an explicit queued decision', async () => {
+  test('starts only an explicitly queued Run', async () => {
     const fixture = await workspaceFixture()
     const goalPackage = engineeringPackage('G-1')
     let queued = false
@@ -31,7 +31,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
     const reconciler = projectReconciler({
       async decisionWhenEligible(): Promise<ReconcileDecision> {
         return queued
-          ? { kind: 'dispatch', workId: 'W-1', responsibility: 'generator' }
+          ? { kind: 'dispatch', workId: 'W-1' }
           : { kind: 'wait', reasons: ['no_queued_run'] }
       },
       async reconcileGoal() {
@@ -50,7 +50,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
       wake: fixture.wake,
       projects: [{ projectId: 'P-1', store: storeOf(goalPackage), reconciler }],
-      concurrency: { planner: 1, generator: 1, reviewer: 1 },
+      concurrency: 1,
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
@@ -64,7 +64,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
     expect(fixture.wakeObservations.some((observation) => observation.settled)).toBe(true)
   })
 
-  test('enforces profile capacity across Projects without deriving profiles from lanes', async () => {
+  test('enforces one shared Worker capacity across Projects', async () => {
     const fixture = await workspaceFixture()
     const packages = new Map(
       ['G-1', 'G-2', 'G-3'].map((goalId) => [goalId, engineeringPackage(goalId)] as const),
@@ -75,7 +75,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       async decisionWhenEligible(goalId) {
         return started.has(goalId)
           ? { kind: 'wait', reasons: ['run_active'] }
-          : { kind: 'dispatch', workId: 'W-1', responsibility: 'generator' }
+          : { kind: 'dispatch', workId: 'W-1' }
       },
       reconcileGoal(goalId) {
         started.add(goalId)
@@ -96,7 +96,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
       wake: fixture.wake,
       projects: [{ projectId: 'P-1', store: storeOfMap(packages), reconciler }],
-      concurrency: { planner: 1, generator: 2, reviewer: 1 },
+      concurrency: 2,
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'runs_started', count: 2 })
@@ -125,7 +125,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
     const reconciler = projectReconciler({
       async decisionWhenEligible() {
         return assistantFinished
-          ? { kind: 'dispatch', workId: 'W-1', responsibility: 'reviewer' }
+          ? { kind: 'dispatch', workId: 'W-1' }
           : { kind: 'wait', reasons: ['assistant_turn'] }
       },
       async reconcileGoal() {
@@ -143,7 +143,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       assistant: {
         async process(eventId) {
           await fixture.workspace.handleEvent(eventId, {
-            reply: 'Requesting an explicit Reviewer Run.',
+            reply: 'Requesting an explicit read-only review Run.',
             disposition: 'tool:run',
           })
           assistantFinished = true
@@ -152,7 +152,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       },
       wake: fixture.wake,
       projects: [{ projectId: 'P-1', store: storeOf(goalPackage), reconciler }],
-      concurrency: { planner: 1, generator: 1, reviewer: 1 },
+      concurrency: 1,
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
@@ -174,10 +174,10 @@ describe('CoordinatorReconciler explicit scheduling', () => {
     const reconciler = projectReconciler({
       async decisionWhenEligible(goalId) {
         if (goalId === 'G-1' && !firstSettled) {
-          return { kind: 'dispatch', workId: 'W-1', responsibility: 'generator' }
+          return { kind: 'dispatch', workId: 'W-1' }
         }
         if (goalId === 'G-2' && firstSettled) {
-          return { kind: 'dispatch', workId: 'W-1', responsibility: 'reviewer' }
+          return { kind: 'dispatch', workId: 'W-1' }
         }
         return { kind: 'wait', reasons: ['not_explicitly_queued'] }
       },
@@ -201,7 +201,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
       wake: fixture.wake,
       projects: [{ projectId: 'P-1', store: storeOfMap(packages), reconciler }],
-      concurrency: { planner: 1, generator: 1, reviewer: 1 },
+      concurrency: 1,
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'runs_started', count: 1 })
@@ -231,7 +231,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
       wake: fixture.wake,
       projects: [{ projectId: 'P-1', store: storeOf(goalPackage), reconciler }],
-      concurrency: { planner: 0, generator: 0, reviewer: 0 },
+      concurrency: 0,
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'deterministic_action', count: 1 })
@@ -248,7 +248,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
     let interruptions = 0
     const reconciler = projectReconciler({
       async decisionWhenEligible() {
-        return { kind: 'dispatch', workId: 'W-1', responsibility: 'generator' }
+        return { kind: 'dispatch', workId: 'W-1' }
       },
       interruptRuns() {
         interruptions += 1
@@ -269,7 +269,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
       wake: fixture.wake,
       projects: [{ projectId: 'P-1', store: storeOf(goalPackage), reconciler }],
-      concurrency: { planner: 1, generator: 1, reviewer: 1 },
+      concurrency: 1,
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'runs_started', count: 1 })
@@ -283,7 +283,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
     let healthyRuns = 0
     const healthy = projectReconciler({
       async decisionWhenEligible() {
-        return { kind: 'dispatch', workId: 'W-1', responsibility: 'planner' }
+        return { kind: 'dispatch', workId: 'W-1' }
       },
       async reconcileGoal() {
         healthyRuns += 1
@@ -311,11 +311,11 @@ describe('CoordinatorReconciler explicit scheduling', () => {
         },
         {
           projectId: 'P-good',
-          store: storeOf(planningPackage('G-good')),
+          store: storeOf(decisionPackage('G-good')),
           reconciler: healthy,
         },
       ],
-      concurrency: { planner: 1, generator: 1, reviewer: 1 },
+      concurrency: 1,
     })
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'runs_started', count: 1 })
@@ -442,7 +442,8 @@ function engineeringPackage(goalId: string): GoalPackage {
             id: 'W-1',
             title: 'Build',
             kind: 'engineering',
-            stage: 'generate',
+            status: 'open',
+            createdAt: '2026-08-14T00:00:00.000Z',
             notBefore: null,
             dependsOn: [],
             contractRevision: 1,
@@ -460,17 +461,19 @@ function engineeringPackage(goalId: string): GoalPackage {
   }
 }
 
-function planningPackage(goalId: string): GoalPackage {
+function decisionPackage(goalId: string): GoalPackage {
   const goalPackage = engineeringPackage(goalId)
   goalPackage.works = new Map([
     [
-      'plan-initial',
+      'W-decide',
       {
         attributes: {
-          id: 'plan-initial',
-          title: 'Plan',
-          kind: 'planning',
-          stage: 'plan',
+          id: 'W-decide',
+          title: 'Resolve the route',
+          kind: 'decision',
+          decisionType: 'research',
+          status: 'open',
+          createdAt: '2026-08-14T00:00:00.000Z',
           notBefore: null,
           dependsOn: [],
           contractRevision: 1,
@@ -478,7 +481,7 @@ function planningPackage(goalId: string): GoalPackage {
           contextRefs: [],
           ownerMessages: [],
         },
-        body: 'Plan.\n',
+        body: '## Question\n\nWhich route satisfies the Goal?\n',
       },
     ],
   ])

@@ -1,7 +1,1 @@
-import type { Responsibility } from './roleContextStager'
-
-export const SOFTWARE_DELIVERY_CONCURRENCY: Readonly<Record<Responsibility, number>> = {
-  planner: 3,
-  generator: 5,
-  reviewer: 3,
-}
+export const WORKER_CONCURRENCY = 5

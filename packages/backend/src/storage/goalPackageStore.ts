@@ -1,7 +1,8 @@
-import { createAssistantEngineeringWork } from '../domain/assistantEngineeringWork'
 import {
+  type DecisionWorkAttributes,
   type GoalDocument,
   type InputDocument,
+  type WorkContextRef,
   type WorkDocument,
   parseGoalDocument,
   parseWorkDocument,
@@ -14,7 +15,6 @@ import {
   readAndValidateGoalPackage,
   validateGoalPackageTransition,
 } from '../domain/goalPackage'
-import type { InboxEventReference } from '../domain/inboxEventReference'
 import type { PublicationCoordinator } from '../publication/publisher'
 import { publicationCandidateFromSnapshot } from '../publication/snapshotCandidate'
 import type {
@@ -24,6 +24,27 @@ import type {
   PublicationWrite,
 } from '../publication/types'
 import { createGoalPackagePaths } from './goalPackagePaths'
+
+export interface CanonicalReference extends WorkContextRef {}
+
+interface InitialWorkBase {
+  id: string
+  title: string
+  dependsOn?: readonly string[]
+}
+
+export type InitialWorkInput =
+  | (InitialWorkBase & {
+      kind: 'decision'
+      decisionType: DecisionWorkAttributes['decisionType']
+      taskMode?: DecisionWorkAttributes['taskMode']
+      question: string
+    })
+  | (InitialWorkBase & {
+      kind: 'engineering'
+      objective: string
+      acceptanceCriteria: readonly string[]
+    })
 
 export interface CreateCanonicalGoalInput {
   goalId: string
@@ -35,24 +56,10 @@ export interface CreateCanonicalGoalInput {
   priority?: number
   acceptedInput?: InputDocument
   supportingWrites?: PublicationWrite[]
-  planningReferences?: readonly PlanningReference[]
-  firstPlanningWork?: {
-    title: string
-    objective: string
-    acceptanceCriteria: readonly string[]
-  }
-  initialEngineeringWork?: {
-    id: string
-    title: string
-    objective: string
-    acceptanceCriteria: readonly string[]
-    assistantDispatch: InboxEventReference
-  }
-}
-
-export interface PlanningReference {
-  path: string
-  purpose: string
+  references?: readonly CanonicalReference[]
+  mapMarkdown?: string
+  firstWork: InitialWorkInput
+  createdAt?: string
 }
 
 export interface GoalPackageStore {
@@ -107,6 +114,12 @@ export function createGoalPackageStore(
   return {
     paths,
     async createGoal(input) {
+      if (input.firstWork.kind === 'decision' && !input.mapMarkdown?.trim()) {
+        throw new Error('A Goal starting with Decision Work requires mapMarkdown')
+      }
+      if (input.firstWork.kind === 'engineering' && input.mapMarkdown !== undefined) {
+        throw new Error('A clear Goal starting with Engineering Work does not create a Map')
+      }
       const goal = initialGoalDocument(input)
       const goalId = goal.attributes.id
       const acceptedInputPath = input.acceptedInput
@@ -116,22 +129,11 @@ export function createGoalPackageStore(
             input.acceptedInput.attributes.sourceEventId,
           )
         : null
-      if (input.initialEngineeringWork && !acceptedInputPath) {
-        throw new Error('Initial Assistant Engineering Work requires accepted Goal Input')
-      }
-      if (input.firstPlanningWork && input.initialEngineeringWork) {
-        throw new Error('Goal creation requires exactly one first Work contract')
-      }
-      const initialWork = input.initialEngineeringWork
-        ? createAssistantEngineeringWork({
-            ...input.initialEngineeringWork,
-            dependsOn: [],
-            contractRevision: 1,
-            acceptedInputPath: acceptedInputPath ?? '',
-            references: input.planningReferences,
-          })
-        : createInitialPlanningWork(input, acceptedInputPath)
-
+      const initialWork = createInitialWork(
+        input,
+        acceptedInputPath,
+        input.createdAt ?? new Date().toISOString(),
+      )
       await publisher.publish({
         root: paths.publicationRoot,
         supportingWrites: [
@@ -140,11 +142,15 @@ export function createGoalPackageStore(
             expectedHash: null,
             content: renderGoalDocument(goal),
           },
-          {
-            path: paths.designIndex(goalId),
-            expectedHash: null,
-            content: initialDesign(input),
-          },
+          ...(input.mapMarkdown
+            ? [
+                {
+                  path: paths.designIndex(goalId),
+                  expectedHash: null,
+                  content: normalizeMarkdown(input.mapMarkdown),
+                },
+              ]
+            : []),
           ...(input.acceptedInput && acceptedInputPath
             ? [
                 {
@@ -164,7 +170,6 @@ export function createGoalPackageStore(
         validateCandidate: (candidate, current) =>
           validateGoalPackageTransition(current, candidate, paths, goalId).then(() => undefined),
       })
-
       return this.readPackage(goalId)
     },
     async createGoalFromProposal(goalId, files) {
@@ -184,38 +189,33 @@ export function createGoalPackageStore(
           `New Goal proposal contains unsupported files: ${unknown.map((file) => file.path).join(', ')}`,
         )
       }
-      const planningFiles = allowed.filter((file) =>
+      const workFiles = allowed.filter((file) =>
         isDirectMarkdownPath(paths.workRoot(goalId), file.path),
       )
-      if (
-        planningFiles.length !== 1 ||
-        allowed.some(
-          (file) =>
-            file.path.startsWith(`${paths.inputsRoot(goalId)}/`) ||
-            file.path.startsWith(`${paths.attentionRoot(goalId)}/`) ||
-            file.path.startsWith(`${paths.evidenceRoot(goalId)}/`),
-        )
-      ) {
-        throw new Error('New Goal proposal requires exactly one Planning Work and no history')
+      if (workFiles.length !== 1) {
+        throw new Error('New Goal proposal requires exactly one first Work')
       }
-      const planningFile = planningFiles[0]
-      if (!planningFile) throw new Error('New Goal proposal has no Planning Work')
-      const planning = parseWorkDocument(new TextDecoder().decode(planningFile.content))
-      if (planning.attributes.kind !== 'planning' || planning.attributes.stage !== 'plan') {
-        throw new Error('New Goal proposal Work must be Planning at plan')
+      const workFile = workFiles[0]
+      if (!workFile) throw new Error('New Goal proposal has no Work')
+      const work = parseWorkDocument(new TextDecoder().decode(workFile.content))
+      if (work.attributes.status !== 'open') {
+        throw new Error('New Goal proposal Work must be open')
+      }
+      if (!allowed.some((file) => file.path === paths.goalDocument(goalId))) {
+        throw new Error('New Goal proposal requires goal.md')
       }
       if (
-        !allowed.some((file) => file.path === paths.goalDocument(goalId)) ||
+        work.attributes.kind === 'decision' &&
         !allowed.some((file) => file.path === paths.designIndex(goalId))
       ) {
-        throw new Error('New Goal proposal requires goal.md and design/index.md')
+        throw new Error('New Goal proposal with Decision Work requires design/index.md')
       }
       await publisher.publish({
         root: paths.publicationRoot,
         supportingWrites: allowed
-          .filter((file) => file.path !== planningFile.path)
+          .filter((file) => file.path !== workFile.path)
           .map((file) => ({ ...file, expectedHash: null })),
-        gateWrite: { ...planningFile, expectedHash: null },
+        gateWrite: { ...workFile, expectedHash: null },
         validateCandidate: (candidate, current) =>
           validateGoalPackageTransition(current, candidate, paths, goalId).then(() => undefined),
       })
@@ -239,7 +239,6 @@ export function createGoalPackageStore(
       alignCache(generation)
       if (cachedReconciliation) return cachedReconciliation
       if (reconciliationRead?.generation === generation) return reconciliationRead.promise
-
       const promise = (async () => {
         const snapshot = await publisher.snapshotTreeAtGeneration(
           paths.publicationRoot,
@@ -284,12 +283,12 @@ export function createGoalPackageStore(
           publication.bootstrapAgentsWrite.expectedHash !== null)
       ) {
         throw new Error(
-          `Planner bootstrap may only create the missing Project AGENTS.md at ${paths.agentsPath}`,
+          `Bootstrap may only create the missing Project AGENTS.md at ${paths.agentsPath}`,
         )
       }
       for (const write of publication.projectContextWrites ?? []) {
         if (write.path !== '.hopi/docs/repos.md') {
-          throw new Error(`Planner Project context write is unsupported: ${write.path}`)
+          throw new Error(`Project context write is unsupported: ${write.path}`)
         }
       }
       return publisher.publish({
@@ -346,55 +345,58 @@ function initialGoalDocument(input: CreateCanonicalGoalInput): GoalDocument {
   }
 }
 
-function createInitialPlanningWork(
+function createInitialWork(
   input: CreateCanonicalGoalInput,
   acceptedInputPath: string | null,
+  createdAt: string,
 ): WorkDocument {
-  const contract = input.firstPlanningWork
+  const contextRefs = mergeContextRefs([
+    ...(acceptedInputPath ? [{ path: acceptedInputPath, purpose: 'Accepted Inbox input' }] : []),
+    ...(input.references ?? []),
+  ])
+  const common = {
+    id: input.firstWork.id,
+    title: input.firstWork.title.trim(),
+    status: 'open' as const,
+    createdAt,
+    notBefore: null,
+    dependsOn: [...(input.firstWork.dependsOn ?? [])],
+    contractRevision: 1,
+    evidenceRefs: [],
+    contextRefs,
+    ownerMessages: [],
+  }
+  if (input.firstWork.kind === 'decision') {
+    return {
+      attributes: {
+        ...common,
+        kind: 'decision',
+        decisionType: input.firstWork.decisionType,
+        ...(input.firstWork.taskMode ? { taskMode: input.firstWork.taskMode } : {}),
+      },
+      body: `## Question\n\n${input.firstWork.question.trim()}\n`,
+    }
+  }
   return {
     attributes: {
-      id: 'plan-initial',
-      title: contract?.title.trim() ?? 'Plan current Goal',
-      kind: 'planning',
-      stage: 'plan',
-      notBefore: null,
-      dependsOn: [],
-      contractRevision: 1,
-      evidenceRefs: [],
-      contextRefs: [
-        ...(acceptedInputPath
-          ? [{ path: acceptedInputPath, purpose: 'Accepted Inbox input' }]
-          : []),
-        ...(input.planningReferences ?? []),
-      ],
-      ownerMessages: [],
+      ...common,
+      kind: 'engineering',
     },
-    body: contract
-      ? [
-          '## Objective',
-          '',
-          contract.objective.trim(),
-          '',
-          '## Acceptance Criteria',
-          '',
-          ...contract.acceptanceCriteria.map((criterion) => `- ${criterion.trim()}`),
-          '',
-        ].join('\n')
-      : '',
+    body: [
+      '## Objective',
+      '',
+      input.firstWork.objective.trim(),
+      '',
+      '## Acceptance Criteria',
+      '',
+      ...input.firstWork.acceptanceCriteria.map((criterion) => `- ${criterion.trim()}`),
+      '',
+    ].join('\n'),
   }
 }
 
-function initialDesign(input: CreateCanonicalGoalInput) {
-  return [
-    `# ${input.title.trim()} Design`,
-    '',
-    '## Problem',
-    '',
-    input.objective.trim(),
-    '',
-    '## Current Design',
-    '',
-  ].join('\n')
+function mergeContextRefs(references: readonly WorkContextRef[]) {
+  return [...new Map(references.map((reference) => [reference.path, reference])).values()]
 }
 
 function optionalMarkdownList(title: string, values: string[] | undefined) {
@@ -402,6 +404,10 @@ function optionalMarkdownList(title: string, values: string[] | undefined) {
   return normalized.length > 0
     ? [`## ${title}`, '', ...normalized.map((value) => `- ${value}`), '']
     : []
+}
+
+function normalizeMarkdown(value: string) {
+  return `${value.trimEnd()}\n`
 }
 
 function isDirectMarkdownPath(root: string, path: string) {

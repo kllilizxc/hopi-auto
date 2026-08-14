@@ -147,7 +147,7 @@ export function GoalDocsPage() {
             <Bot />
             <p>
               Tell Assistant what to change. It decides whether the instruction updates design only
-              or also requires Planning and code.
+              or also requires a Decision or Engineering Work.
             </p>
           </div>
         </AppScrollShadow>

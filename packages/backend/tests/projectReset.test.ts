@@ -104,12 +104,8 @@ describe('Project reset maintenance', () => {
     expect(await exists(fixture.sharedAttachment)).toBe(true)
     expect(await exists(join(fixture.homeRoot, '.hopi/runtime/runs/R-P1'))).toBe(false)
     expect(await exists(join(fixture.homeRoot, '.hopi/runtime/runs/R-P2'))).toBe(true)
-    expect(await exists(join(fixture.homeRoot, '.hopi/runtime/responsibility-sessions/P-1'))).toBe(
-      false,
-    )
-    expect(await exists(join(fixture.homeRoot, '.hopi/runtime/responsibility-sessions/P-2'))).toBe(
-      true,
-    )
+    expect(await exists(join(fixture.homeRoot, '.hopi/runtime/worker-sessions/P-1'))).toBe(false)
+    expect(await exists(join(fixture.homeRoot, '.hopi/runtime/worker-sessions/P-2'))).toBe(true)
     expect(await exists(result.manifestPath)).toBe(true)
     expect(
       await readAssistantConversationEpoch(fixture.homeRoot, {
@@ -345,8 +341,8 @@ async function createFixture() {
   await writeFile(join(homeRoot, '.hopi/runtime/assistant/sessions/projects/P-1.json'), '{}\n')
   await writeFile(join(homeRoot, '.hopi/runtime/assistant/workspace/projects/P-1/file'), '')
   await writeFile(join(homeRoot, '.hopi/runtime/assistant/wakes/cursors/project-P-1.json'), '{}\n')
-  await writeFile(join(homeRoot, '.hopi/runtime/responsibility-sessions/P-1/file'), '')
-  await writeFile(join(homeRoot, '.hopi/runtime/responsibility-sessions/P-2/file'), '')
+  await writeFile(join(homeRoot, '.hopi/runtime/worker-sessions/P-1/file'), '')
+  await writeFile(join(homeRoot, '.hopi/runtime/worker-sessions/P-2/file'), '')
   await writeFile(join(homeRoot, '.hopi/runtime/preview/P-1/session/file'), '')
 
   return {

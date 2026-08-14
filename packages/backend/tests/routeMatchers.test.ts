@@ -86,10 +86,11 @@ describe('API route matching', () => {
     ).toBeNull()
   })
 
-  test('normalizes unsupported Goal views to the complete representation', () => {
-    expect(readGoalView('board')).toBe('board')
+  test('accepts only the explicit Goal representations', () => {
+    expect(readGoalView('route')).toBe('route')
     expect(readGoalView('docs')).toBe('docs')
-    expect(readGoalView('unknown')).toBe('full')
+    expect(readGoalView('full')).toBe('full')
+    expect(readGoalView('unknown')).toBeNull()
     expect(readGoalView(null)).toBe('full')
   })
 })

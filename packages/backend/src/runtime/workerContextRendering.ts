@@ -2,28 +2,26 @@ import { createHash } from 'node:crypto'
 import { EXECUTION_ENVELOPE_MARKER } from '../agent/executionEnvelope'
 import type { PublicationSnapshot } from '../publication/types'
 import type {
-  PrepareRoleContextInput,
-  Responsibility,
-  RoleRepoRoot,
+  PrepareWorkerContextInput,
   RunAssignment,
-} from './roleContextStager'
+  WorkerRepoRoot,
+} from './workerContextStager'
 
-const RESPONSIBILITY_RUNTIME_BOUNDARY_REVISION = 2
+const WORKER_RUNTIME_BOUNDARY_REVISION = 1
 
-export function responsibilityRuntimeDigest(responsibility: Responsibility) {
+export function workerRuntimeDigest() {
   return createHash('sha256')
     .update(
       JSON.stringify({
-        boundaryRevision: RESPONSIBILITY_RUNTIME_BOUNDARY_REVISION,
-        responsibility,
-        contract: profileContract(responsibility),
+        boundaryRevision: WORKER_RUNTIME_BOUNDARY_REVISION,
+        contract: workerContract(),
       }),
     )
     .digest('hex')
 }
 
 export function renderContextManifest(
-  input: PrepareRoleContextInput,
+  input: PrepareWorkerContextInput,
   context: {
     authorityRoot: string
     artifactOutputDir: string
@@ -40,7 +38,7 @@ export function renderContextManifest(
     bootstrapSourceRoot?: string
     imagePaths: readonly string[]
     primaryRepoId: string
-    repoRoots: readonly RoleRepoRoot[]
+    repoRoots: readonly WorkerRepoRoot[]
     repoGuidance: readonly { repoId: string; path: string }[]
     reposFile: string
     projectPath: string
@@ -55,7 +53,7 @@ export function renderContextManifest(
     `- Goal: ${input.goalId}`,
     `- Work: ${input.workId}`,
     `- Run: ${input.runId}`,
-    `- Profile: ${input.responsibility}`,
+    `- Workspace mode: ${input.workspaceMode}`,
     `- Authority release snapshot: ${context.releaseHead}`,
     '- Immutable authority root: $HOPI_AUTHORITY_ROOT',
     '- Run artifact output: $HOPI_ARTIFACT_DIR',
@@ -108,8 +106,8 @@ export function renderContextManifest(
   ].join('\n')
 }
 
-export function renderResponsibilityPrompt(
-  input: PrepareRoleContextInput,
+export function renderWorkerPrompt(
+  input: PrepareWorkerContextInput,
   paths: {
     contextFile: string
     artifactManifestFile?: string
@@ -122,9 +120,8 @@ export function renderResponsibilityPrompt(
   },
   assignment: RunAssignment,
 ) {
-  const assignmentFacts = renderAssignment(assignment)
   return [
-    '# HOPI Run',
+    '# HOPI Worker Run',
     '',
     '## Explicit instruction',
     '',
@@ -134,7 +131,7 @@ export function renderResponsibilityPrompt(
     '',
     EXECUTION_ENVELOPE_MARKER,
     '',
-    `Profile: ${input.responsibility}`,
+    `Workspace mode: ${input.workspaceMode}`,
     `Context manifest: ${paths.contextFile}`,
     'Authority root: $HOPI_AUTHORITY_ROOT',
     'Run artifact output: $HOPI_ARTIFACT_DIR',
@@ -155,13 +152,9 @@ export function renderResponsibilityPrompt(
       : []),
     ...(paths.apiOrigin ? ['HOPI API: $HOPI_API_ORIGIN'] : []),
     '',
-    'Never modify canonical .hopi documents or HOPI-managed Git refs.',
-    'Read only the Repo roots listed in $HOPI_REPOS_FILE; do not scan their parents or siblings.',
-    'A settled Run is never resumed. Do not assume that your Report changes Work state.',
+    ...workerContract(),
     '',
-    ...profileContract(input.responsibility),
-    '',
-    ...assignmentFacts,
+    ...renderAssignment(assignment),
     '',
     '## Required Report',
     '',
@@ -172,25 +165,15 @@ export function renderResponsibilityPrompt(
   ].join('\n')
 }
 
-function profileContract(responsibility: Responsibility) {
-  if (responsibility === 'planner') {
-    return [
-      '## Planner profile',
-      '',
-      'Work only the requested decision ticket—the current frontier. Wayfinding finds the route rather than charging at the destination: resolve one decision with evidence, record remaining fog and newly visible tickets, then stop at the Engineering handoff. Produce decisions, not deliverables. Research is AFK; prototype and grilling are HITL; a task only unblocks a decision. HITL stays open until the operator speaks, and product source remains unchanged.',
-    ]
-  }
-  if (responsibility === 'generator') {
-    return [
-      '## Generator profile',
-      '',
-      'Implement the explicit instruction in the provided writable source workspace. Keep changes scoped and leave the workspace checkpoint-ready.',
-    ]
-  }
+function workerContract() {
   return [
-    '## Reviewer profile',
+    '## Worker contract',
     '',
-    'Inspect the explicit instruction, authority, candidate source, and relevant checks independently. Do not modify product source; report findings and uncertainty.',
+    'Follow the explicit instruction and the declared workspace boundary. Never modify canonical .hopi documents or HOPI-managed Git refs.',
+    'Read only the Repo roots listed in $HOPI_REPOS_FILE; do not scan their parents or siblings.',
+    'A settled Run is evidence for the Project Assistant. It never changes Work state by itself.',
+    'For Decision Work, answer only the named question and preserve uncertainty; do not execute the destination unless the instruction and Map Notes explicitly permit it.',
+    'For Engineering Work, keep changes scoped and leave writable workspaces checkpoint-ready.',
   ]
 }
 
@@ -212,7 +195,7 @@ function renderAssignment(assignment: RunAssignment) {
     '',
     `Work: ${assignment.work.title}`,
     `Work source: $HOPI_AUTHORITY_ROOT/${assignment.work.path}`,
-    `Kind and stage: ${assignment.work.kind} / ${assignment.work.stage}`,
+    `Kind and status: ${assignment.work.kind} / ${assignment.work.status}`,
     '',
     '<work>',
     assignment.work.body.trim(),
@@ -234,7 +217,6 @@ function renderAssignment(assignment: RunAssignment) {
           '### Previous Run',
           '',
           `- Run: ${assignment.previousAttempt.runId}`,
-          `- Profile: ${assignment.previousAttempt.responsibility}`,
           `- Termination: ${assignment.previousAttempt.termination}`,
           '',
           assignment.previousAttempt.reportMarkdown,

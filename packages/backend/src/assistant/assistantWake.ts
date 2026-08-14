@@ -401,17 +401,11 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
   const projectIds = new Set(projects.keys())
   const attentionProjectId = (projectId: string | null) =>
     projectId && projectIds.has(projectId) ? projectId : null
-  const delegatedRuns = (projectId: string | null) =>
-    snapshot.delegations
-      .filter((delegation) => delegation.sourceProjectId === projectId)
-      .flatMap((delegation) => (delegation.activeRun ? [delegation.activeRun] : []))
   const scopedRuns = (projectId: string | null) => {
     const owned = snapshot.activeRuns.filter((run) =>
       projectId ? run.projectId === projectId : !projectIds.has(run.projectId),
     )
-    return [
-      ...new Map([...owned, ...delegatedRuns(projectId)].map((run) => [run.runId, run])).values(),
-    ]
+    return owned
   }
 
   return [
@@ -422,7 +416,6 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
         ...snapshot,
         stateDigest: snapshot.conversationDigests.home,
         activeRuns: scopedRuns(null),
-        delegations: [],
         workspaceAttentions: snapshot.workspaceAttentions.filter(
           (attention) => attentionProjectId(attention.projectId) === null,
         ),
@@ -436,9 +429,6 @@ function wakeScopeSnapshots(snapshot: AssistantStateSnapshot) {
         ...snapshot,
         stateDigest: requiredProjectDigest(snapshot, projectId),
         activeRuns: scopedRuns(projectId),
-        delegations: snapshot.delegations.filter(
-          (delegation) => delegation.sourceProjectId === projectId,
-        ),
         workspaceAttentions: snapshot.workspaceAttentions.filter(
           (attention) => attentionProjectId(attention.projectId) === projectId,
         ),
@@ -588,14 +578,10 @@ function hasImmediateWakeSignal(snapshot: AssistantStateSnapshot) {
 }
 
 function projectHasSettledRun(project: AssistantStateSnapshot['projects'][number]) {
-  return project.goals.some(
-    (goal) =>
-      goal.latestPlanningOutcome?.runtime.recentAttempts.some(
-        (attempt) => attempt.status === 'settled',
-      ) === true ||
-      goal.works.some((work) =>
-        work.runtime.recentAttempts.some((attempt) => attempt.status === 'settled'),
-      ),
+  return project.goals.some((goal) =>
+    goal.works.some((work) =>
+      work.runtime.recentAttempts.some((attempt) => attempt.status === 'settled'),
+    ),
   )
 }
 

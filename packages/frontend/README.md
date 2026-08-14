@@ -1,239 +1,68 @@
 # HOPI Frontend
 
-`packages/frontend` is the product frontend package. It preserves the original React product shell
-and visual language while presenting only the current MVP model.
+`packages/frontend` is the only product UI. React renders backend projections; it does not own Goal,
+Work, Attention, Run, Preview, or completion truth.
 
-## Boundary
+## Surfaces
 
-- React, React Router, and React Query live in this package.
-- Bun serves `index.html` through `packages/backend/src/mvpServer.ts`; there is no second frontend
-  server in production.
-- The backend remains the only API and workflow authority.
-- The frontend owns no Goal, Work, Attention, Preview, or lifecycle truth. It polls canonical read
-  projections and submits user intent through the MVP API.
-- This is the only product UI tree. The backend contains API and runtime code only.
+- Project Home binds Repos, configures the Assistant and Worker transports, and opens Goals.
+- Assistant is the Project conversation and the only user-facing author of Goal/Work changes.
+- Route is the default Goal view. It shows one directed Work route from known decisions and work to
+  the Goal destination.
+- Goal Docs shows the Goal contract, Map, design documents, and Evidence.
+- Work detail loads the canonical Work body and Attempt history on demand.
 
-## Product Surfaces
+The Route answers five questions at a glance:
 
-- `ProjectHomePage`: bind or rebind Repos, configure Project responsibility models, and enter a
-  Project.
-- Project Assistant workspace: the canonical empty-Project surface and the conversational Goal
-  creation entry. It reuses the same Project conversation later docked beside Goal surfaces.
-- `BoardView`: read-only four-column Work projection, Goal controls, Attention, per-Work Attempt
-  message streams, and Preview.
-- `GoalDocsPage`: Goal contract, design documents, and Evidence.
-- `AssistantPanel`: one workspace conversation with optional Goal context and Attention replies.
+1. What is the destination?
+2. Which Work is in focus now?
+3. What has already been decided or completed?
+4. What blocks the next step?
+5. What remains fog rather than a precise Decision?
 
-Project and Goal switchers are local navigation state. The browser remembers the last valid Goal
-visited in each Project and restores it when that Project is selected; if no valid Goal exists, the
-centered Project Assistant is the fallback. Linking a Project navigates there immediately. The first
-Goal created through that conversation moves the same Assistant to the left and opens the Goal on
-the right; no Goal creation form or draft state exists.
+The frontend never invents lanes, stages, ownership, progress percentages, or implicit task plans.
+Node placement is a deterministic layout of the canonical dependency graph. Completed nodes remain
+visible as the route history; the Goal itself is a virtual destination node.
 
-Kanban cards are compact navigation and status surfaces, not abbreviated documents. They show the
-Work title, the real Attempt count, and a single `Blocked by …` reference only when a blocking Work
-exists, without clipping body or dependency prose. A segmented task-progress track appears only
-after a non-terminal Work has started; never-started and Done/cancelled Work omit it entirely. Agent
-plan items are collapsed into that track by default and expand in place to the complete current list;
-started Work without plan items receives one fallback segment. Stable Work identity, repository scope, the
-complete canonical body, dependencies, predicates, Evidence, Recovery, and Run prompt stay readable
-in the Work detail modal. Responsibility is already defined by the containing lane and is not
-repeated on each card; the detail modal likewise does not repeat the card's task list. The title owns
-the full card width. Ordinary Working, Done, queued, waiting, and Needs-you labels are not repeated
-on cards. Cards use background, spacing, and shadow rather than a persistent border or side marker.
-Running state gives only the current progress segment a softly pulsing full fill and quiet same-color
-glow, never animating the whole card surface. Completed progress segments and expanded task markers
-use the containing Lane's phase color—Plan yellow, Build purple, Review blue, and Done green—instead
-of sharing one global success green.
+## Data and context
 
-Assistant, Attempt, and Wake message streams share one initial loading skeleton shaped like
-their eventual conversation rows. Loading older history remains a small incremental status and does
-not replace already visible messages. Each stream also keeps one browser-session snapshot of its
-last successfully displayed history and its Attempt index, isolated by stable stream identity and
-bounded by a shared LRU budget. Refreshing or re-entering the same stream restores that snapshot
-synchronously, then applies cursor-based changes in the background. The snapshot is an observational
-UI cache, never workflow or message authority, and is not reused across Goals, Works, Attempts, or
-Wakes.
+Route reads use `?view=route`, Goal Docs uses `?view=docs`, and full Work or design bodies load only
+when opened. React Query and bounded `sessionStorage` snapshots are observational caches. They may be
+discarded at any time and never authorize a mutation.
 
-Assistant conversation activity is one tail-only breathing status. Public speaking work is
-`Working`; while no public turn is running, active Wake or its hidden internal speaking handoff
-is `Thinking`; a queued public turn with no active model work is `Waiting to start`. The internal
-prompt, diagnostics, and tool stream remain hidden, and terminal activity leaves no historical row.
+Project and Goal selectors are navigation state. The Assistant composer may include the current page
+as a mechanical hint, but the Assistant decides semantic effects through HOPI tools.
 
-Needs-you presentation belongs to the exact Assistant reply that exposed the canonical Attention.
-While any linked reference remains unresolved, that message receives one restrained warning surface,
-a compact label, and a Reply action carrying all of its open references. A validated structured
-decision prompt on that same immutable reply renders mutually exclusive options, optional Other
-inputs, option-specific required details, and one submit action through the existing referenced
-Inbox reply path; malformed or absent prompt data falls back to ordinary Markdown and Reply.
-Resolution restores the ordinary message without adding a status row. Assistant has no title
-header; the global open count remains as a quiet floating badge only when non-zero. Its Wake
-entry is hidden in a masked top-right hover/focus region, and the Wake list adds no title or
-refresh toolbar. Goal and Kanban surfaces retain their derived Work state without a duplicate banner.
-Completed presentation follows the same human-summary boundary without becoming Attention: the
-final Planner Evidence stays the technical completion record, while its short operator-facing result
-summary is the Markdown shown verbatim in the deterministic Completed update. Headings, lists, and
-links are not rewritten by the Feed adapter; the shared Markdown renderer alone decides which link
-targets are safe to activate.
-The Assistant feed carries completion Markdown in one required `body` field.
-The shared Project switcher projects the same unresolved NeedsYou Attention count onto each direct
-shortcut and overflow option; it does not reuse the broader open-Attention count. It also shows one
-success marker when that browser observes a new Goal completion after establishing its initial
-Project baseline. Activating the Project tab records the currently projected completion identities
-as read and removes only that marker, even when NeedsYou remains. This browser-local read preference
-does not acknowledge Assistant delivery or mutate canonical Goal state.
+## UI implementation
 
-The UI deliberately has no task drag-and-drop, direct Work mutation, manual reconcile, Assistant
-Action editor, decision graph, planning-request graph, or session-authority screen.
+Generic controls come from the adapters in `src/components/ui`; pages do not import HeroUI directly.
+Theme tokens live in `src/styles/theme.css`, component overrides in `src/styles/ui.css`, Route styling
+in `src/styles/route.css`, and shared product layout in `src/index.css`.
 
-Responsive behavior is part of the product contract, not a reduced mobile variant. Desktop Goal
-workspaces dock Assistant beside the active surface; compact workspaces keep the Goal surface at
-full height and open Assistant as a dismissible overlay. Navigation remains available at every
-width, Kanban lanes become horizontally snapping workspaces, and Documents, Evidence, Attempts,
-forms, and dialogs reflow or scroll instead of hiding product information.
-
-Goal-local presentation state survives compact re-entry without becoming product authority. The
-browser stores the expanded Work progress rows and the currently snapped mobile Lane under the
-stable Project/Goal scope. Returning to that Goal restores only those view preferences; canonical
-Work, Agent plans, and Lane placement still come exclusively from the backend projection.
-
-The Kanban workspace owns one continuous background from its top edge through the board. Its Project,
-Goal, and view navigation bar is transparent and adds no separate backdrop or shadow layer, so the
-same restrained gradient remains visible behind the controls and board content.
-
-Startup is progressive. `index.html` owns the canonical tiny pre-React boot surface, mirrored by the
-backend HTML adapter, so a cold or remote load is never an unexplained black canvas. Product routes
-and Assistant sit behind lazy execution boundaries; `build.ts` emits separate chunks, while Bun's
-HTML server may coalesce them into one optimized bundle. Compact workspaces do not render Assistant
-until it is opened. Navigation hover, focus, or pointer-down prefetches only that intended lazy
-surface; mobile startup never downloads every hidden route opportunistically. React replaces the
-boot surface with the persistent shell first, then uses an
-in-shell loading state while the active route arrives. On phones, cold boot, route loading, and the
-first Goal read use one small non-modal status anchored above the bottom safe area. It never covers
-or captures input from the shell, so navigation that has already mounted remains usable while the
-surface catches up. The HMR server remains intentionally unminified, so remote devices use the
-production surface or the explicit remote frontend mode.
-
-Project, Goal, and task navigation is route-first and cache-first. An explicit selection updates the
-URL and selected control immediately. Returning to an exact cached target renders that projection
-and refreshes it in the background; a first visit renders the target's local non-blocking loading
-notice while its route and canonical query load. The previous Project or Goal is never shown under
-the new selection. Pointer, focus, and pointer-down still warm an intended route, but warming never
-gates navigation. Slower reads can populate only their exact query keys, so rapid switching cannot
-restore an earlier route. Target failures remain target-scoped. Opening a Work or switching its
-Attempt follows the same exact-scope rule for Attempt summaries and message history.
-
-The shell, Goal board, Goal docs, Attempt indexes, and message streams may restore bounded,
-expiring `sessionStorage` snapshots on same-tab re-entry or reload. Each snapshot retains its
-canonical update time so React Query treats stale data as stale and revalidates it normally. This is
-an observational cache, not another data source: it is isolated by exact Project/Goal/query identity,
-cannot authorize mutations, and may be discarded at any time.
-
-Smoothness is a product contract. Polling views subscribe to the smallest projection they render and
-avoid notifying React for invisible fetch-status churn; live streams poll only while the related
-surface is open and active. Long lists use virtualization or skip offscreen rendering with stable
-intrinsic sizes, and scroll containers keep stable gutters so content does not shift under the
-pointer. Motion is short, tokenized, and restricted to opacity, transform, and other compositor-safe
-properties; box-shadow, layout, and broad `transition: ... ease` rules are not used for repeated
-status or hover animation. Reduced-motion preferences must collapse animation without changing the
-information architecture. The reproducible device profile, baseline, payload/timing ceilings, and
-motion rules live in [`PERFORMANCE.md`](./PERFORMANCE.md). Board reads
-only its compact card projection; Goal docs polls only a path/excerpt catalog and reads the selected
-design body on demand, while canonical Work bodies load only when the Work contract pane is opened.
-Board Attention records contain routing status but no message body. The always-mounted shell likewise
-excludes Attention bodies, which Assistant reads only while its surface is visible. On compact
-Kanban, only the selected Lane and its immediate neighbors mount card lists; the next neighbor is
-mounted as selection advances, preserving continuous horizontal navigation without rendering
-distant cards into the first frame.
-
-Workspace selectors are recency-aware. Every visited Project keeps its own last-visit timestamp;
-visited Projects are ordered newest first, while never-visited Projects remain in stable server order
-behind them. Each Project keeps the visit history of its Goals, so the current Goal is immediately
-first and the remaining Goal tabs follow from most to least recently visited. A Goal's durable
-creation receipt is its initial recency evidence until it is visited, preserving discovery of a newly
-Assistant-created Goal without a second ordering model. Background Goal creation never marks an
-untouched Project as visited. Project switching opens the same first Goal shown by the selector;
-filesystem or identifier order is never treated as recency. Older single-Goal browser preferences
-are migrated into the same visit history.
-
-Frequent Project switching uses that same ordering without introducing a second favorites model.
-The most recent Projects are exposed through the shared HeroUI-backed `AppTabs` rail. Its shortcut
-count is derived from the rail's measured width, so every Project that fits at the readable compact
-tab width remains directly visible and only the remainder moves into overflow. The current Project
-always remains directly visible. The same rail, tab, and sliding
-SelectionIndicator implementation owns every peer-view switch, including Kanban/Goal docs and
-Activity/Work contract; each surface may change only sizing and placement, not selection styling or
-interaction. Attempt history and the Goal document index remain lists rather than pretending every
-selection surface is a tab. Reduced-motion preferences remove the indicator transition. Shortcut
-order is stable for the current workspace session so a clicked target never moves under the pointer;
-visit timestamps continue to persist and determine the order on the next workspace entry. Remaining
-Projects stay available from one icon-only Select at the right of the shortcuts; its accessible name
-and popover carry the meaning instead of repeating a visible “More” label. Goal navigation remains a
-Select because its labels are longer and its scope changes with the Project.
-
-Project identity and Project presentation are deliberately separate. The stable `projectId` remains
-the machine key used by routes, canonical documents, runtime records, and audit references; the UI
-does not rename it or use an opaque legacy ID as the primary label. Every user-facing Project label
-is derived from the selected primary folder instead: the Repo folder for a root-scoped Project, or
-the selected subfolder for a scoped Project. Moving or rebinding a checkout may therefore update its
-display name without rewriting historical identity.
-
-## Visual Continuity
-
-The restored frontend keeps the original design vocabulary:
-
-- dark graphite shell with a docked Assistant and compact Goal workspace navigation
-- purple primary actions with amber Project and Attention accents
-- compact Kanban cards and drawer-style Assistant conversation
-- dense operational information without exposing runtime internals as product state
-
-Generic interactive atoms come from HeroUI v3 through `src/components/ui`; application pages must
-not import HeroUI directly. HOPI's semantic theme mapping lives in `src/styles/theme.css`, adapter
-overrides live in `src/styles/ui.css`, and business layout/message-stream styling remains in
-`src/index.css`. The hidden image file picker is the only intentional native input exception.
-
-Tailwind CSS v4 is used to compile HeroUI's selected component styles. Bun's Tailwind plugin powers
-both HMR and `build.ts`; the frontend does not use Vite or a separate CSS watcher.
+Startup is progressive: `index.html` renders the boot surface, the shell mounts first, and route
+modules load lazily. Motion is short and compositor-safe, with a reduced-motion equivalent. The
+current delivery budgets are documented in [`PERFORMANCE.md`](./PERFORMANCE.md).
 
 ## Commands
 
 From the repository root:
 
 ```sh
-bun install
 bun run dev
 bun run check
 ```
 
-`bun run dev` is the production-shaped path: the backend serves API and frontend together at
-`http://localhost:3000`.
-
-For an independent frontend development process with HMR, run these in separate terminals:
+For independent frontend HMR:
 
 ```sh
 bun run dev:backend
 bun run dev:frontend
 ```
 
-The default backend command is intentionally stable: hot reload would terminate active Planner,
-Generator, or Reviewer processes. `bun run dev:backend:watch` is available for isolated backend
-development when no Goal is running.
-
-Open `http://localhost:5173`. The frontend development server proxies `/api/*` to
-`http://127.0.0.1:3000`. Override these defaults with `HOPI_FRONTEND_PORT` and
-`HOPI_BACKEND_URL`.
-
-For a phone or another remote device, prefer the backend's `http://<host-ip>:3000` product surface.
-If the frontend must run independently, use `bun run remote:frontend` from the repository root. It
-keeps the API proxy but disables the multi-megabyte HMR client and minifies the browser bundle;
-source edits require restarting that frontend process.
-
-Frontend-only verification:
+The HMR surface is `http://localhost:5173` and proxies `/api/*` to
+`http://127.0.0.1:3000`. Frontend-only verification is:
 
 ```sh
 cd packages/frontend
-bun dev
-bun run typecheck
-bun test
-bun run build
+bun run check
 ```

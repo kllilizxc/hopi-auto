@@ -52,7 +52,7 @@ server.registerTool(
   'hopi_create_goal',
   {
     description:
-      'Create one Goal from the current Inbox turn and atomically create its first Work. Creation does not execute the Work; request each Planner, Generator, or Reviewer Run explicitly with hopi_control_work.',
+      'Create one Goal from the current Inbox turn and atomically create its first Work. Use a Map plus first Decision only when the route contains fog; otherwise start with Engineering Work. Creation never executes Work.',
     inputSchema: assistantMcpToolSchemas.hopi_create_goal,
   },
   (args) => callTool('hopi_create_goal', args),
@@ -62,7 +62,7 @@ server.registerTool(
   'hopi_create_work',
   {
     description:
-      'Create one Work in an active Goal. Planning records an explicit normalized contract change; Engineering records a complete Work contract and dependencies. Creation does not queue a Run.',
+      'Create one named Decision or Engineering Work in an active Goal. Create all currently precise Wayfinder Decisions before wiring dependencies. Creation does not queue a Run.',
     inputSchema: assistantMcpToolSchemas.hopi_create_work,
   },
   (args) => callTool('hopi_create_work', args),
@@ -72,7 +72,7 @@ server.registerTool(
   'hopi_write_design',
   {
     description:
-      'Write or replace Goal-local design Markdown, or adopt current Inbox attachments into Goal-local assets. The resulting design is supplied as authority to later responsibilities and future Assistant state; this does not start Planning.',
+      'Write or replace Goal-local design Markdown, including the optional Wayfinder Map, or adopt current Inbox attachments into Goal-local assets. Design is authority for later Runs but never starts execution.',
     inputSchema: assistantMcpToolSchemas.hopi_write_design,
   },
   (args) => callTool('hopi_write_design', args),
@@ -92,7 +92,7 @@ server.registerTool(
   'hopi_control_work',
   {
     description:
-      'Explicitly queue one fresh Run with a profile, workspace mode, instruction, and optional references; complete one Work with a decision; change dependencies; or cancel. Run settlement only records termination and Report and never changes Work automatically.',
+      'Explicitly queue one fresh generic Worker Run with a workspace mode, complete one Work with a decision and optional atomic Map update, change dependencies or schedule, or cancel. Settlement records only facts and never changes Work automatically.',
     inputSchema: assistantMcpToolSchemas.hopi_control_work,
   },
   (args) => callTool('hopi_control_work', args),

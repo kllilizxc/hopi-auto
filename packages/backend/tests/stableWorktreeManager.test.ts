@@ -70,14 +70,12 @@ describe('createStableWorktreeManager', () => {
     }
 
     const first = await manager.prepare(input)
-    await Bun.write(join(first.path, 'work.txt'), 'uncommitted Generator work\n')
+    await Bun.write(join(first.path, 'work.txt'), 'uncommitted Worker work\n')
     const second = await manager.prepare(input)
 
     expect(second).toEqual(first)
     expect(first.branch).toBe('hopi/work/P-1/G-1/W-1')
-    expect(await Bun.file(join(second.path, 'work.txt')).text()).toBe(
-      'uncommitted Generator work\n',
-    )
+    expect(await Bun.file(join(second.path, 'work.txt')).text()).toBe('uncommitted Worker work\n')
     expect(await git(first.path, ['branch', '--show-current'])).toBe(first.branch)
   })
 
@@ -254,7 +252,7 @@ describe('createStableWorktreeManager', () => {
     ).toBe('preserved on the task branch\n')
   })
 
-  test('rebuilds a dirty Reviewer checkout from the stable task checkpoint', async () => {
+  test('rebuilds a dirty read-only checkout from the stable task checkpoint', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo'))
     const project = await createAssistantHomeStore(homeRoot).linkProject({
@@ -284,7 +282,7 @@ describe('createStableWorktreeManager', () => {
     expect(await Bun.file(join(clean.path, 'test-results', 'output.txt')).exists()).toBe(false)
   })
 
-  test('rematerializes a Git-clean Reviewer checkout with checkpoint line endings', async () => {
+  test('rematerializes a Git-clean read-only checkout with checkpoint line endings', async () => {
     const homeRoot = join(temporaryRoot, 'home')
     const repoPath = await createRepo(join(temporaryRoot, 'repo-clean-conversion'))
     await Bun.write(join(repoPath, 'artifact.txt'), 'first\nsecond\n')

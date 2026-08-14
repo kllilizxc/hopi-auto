@@ -1,7 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
-import type { RoleExecutionIdentity } from '../agent/RoleRunner'
+import type { WorkerExecutionIdentity } from '../agent/WorkerRunner'
 import {
   AGENT_TRANSCRIPT_ENTRY_KINDS,
   AGENT_TRANSCRIPT_TRANSPORTS,
@@ -15,7 +15,6 @@ import {
   repairDurableJsonLineTail,
   reportInvalidRuntimeRecord,
 } from '../storage/jsonLines'
-import { RESPONSIBILITIES, type Responsibility } from './roleContextStager'
 import { cleanupRunScratch } from './runArtifacts'
 import { type RunAttemptDiagnostics, readRunAttemptDiagnostics } from './runAttemptDiagnostics'
 import { runStoragePath, runStorageRoot } from './runPaths'
@@ -30,7 +29,7 @@ import {
 export const RUN_ATTEMPT_STATUSES = ['queued', 'running', 'settled'] as const
 export type RunAttemptStatus = (typeof RUN_ATTEMPT_STATUSES)[number]
 
-const roleExecutionIdentitySchema = z
+const workerExecutionIdentitySchema = z
   .object({
     transport: z.enum(AGENT_TRANSCRIPT_TRANSPORTS),
     model: z.string().min(1).nullable(),
@@ -50,12 +49,11 @@ const attemptManifestSchema = z
     goalId: stableIdSchema,
     workId: stableIdSchema,
     runId: stableIdSchema,
-    responsibility: z.enum(RESPONSIBILITIES),
     workspaceMode: z.enum(RUN_WORKSPACE_MODES),
     instructionMarkdown: z.string().trim().min(1).max(64_000),
     refs: z.array(z.string().trim().min(1).max(1_000)).max(128),
     workHash: z.string().regex(/^[a-f0-9]{64}$/),
-    execution: roleExecutionIdentitySchema.nullable(),
+    execution: workerExecutionIdentitySchema.nullable(),
     requestedAt: z.string().datetime(),
     startedAt: z.string().datetime().nullable(),
     endedAt: z.string().datetime().nullable(),
@@ -150,7 +148,6 @@ export interface StartRunAttemptInput {
   goalId: string
   workId: string
   runId: string
-  responsibility: Responsibility
   runRoot: string
   workHash?: string
 }
@@ -174,7 +171,7 @@ export interface SettleRunAttemptInput {
 
 export interface RunAttemptRecorder {
   record(event: AgentRuntimeEvent): Promise<void>
-  setExecution(execution: RoleExecutionIdentity): Promise<void>
+  setExecution(execution: WorkerExecutionIdentity): Promise<void>
   settle(input: SettleRunAttemptInput): Promise<void>
 }
 
@@ -321,7 +318,6 @@ export function createRunAttemptStore(
           goalId: input.goalId,
           workId: input.workId,
           runId: input.runId,
-          responsibility: request.profile,
           workspaceMode: request.workspaceMode,
           instructionMarkdown: request.instructionMarkdown,
           refs: request.refs,
@@ -347,7 +343,7 @@ export function createRunAttemptStore(
                 kind: 'message',
                 level: 'info',
                 role: 'coordinator',
-                content: `${request.profile} Attempt queued.`,
+                content: 'Worker Attempt queued.',
               },
               requestedAt,
             ),
@@ -375,7 +371,6 @@ export function createRunAttemptStore(
           existing.goalId !== input.goalId ||
           existing.workId !== input.workId ||
           existing.runId !== input.runId ||
-          existing.responsibility !== input.responsibility ||
           existing.status !== 'queued'
         ) {
           throw new Error(`Attempt cannot start from ${existing.status}: ${input.runId}`)
@@ -418,7 +413,7 @@ export function createRunAttemptStore(
         kind: 'message',
         level: 'info',
         role: 'coordinator',
-        content: `${input.responsibility} Attempt started.`,
+        content: 'Worker Attempt started.',
       })
 
       return {
@@ -448,7 +443,7 @@ export function createRunAttemptStore(
               kind: 'message',
               level: termination === 'normal' ? 'info' : 'error',
               role: 'coordinator',
-              content: `${input.responsibility} Attempt settled with ${termination}.`,
+              content: `Worker Attempt settled with ${termination}.`,
             },
           )
         },
@@ -837,7 +832,6 @@ async function interruptQueuedManifest(
 
 function sameRunRequest(attempt: RunAttemptSummary, request: RunRequest) {
   return (
-    attempt.responsibility === request.profile &&
     attempt.workspaceMode === request.workspaceMode &&
     attempt.instructionMarkdown === request.instructionMarkdown &&
     JSON.stringify(attempt.refs) === JSON.stringify(request.refs)

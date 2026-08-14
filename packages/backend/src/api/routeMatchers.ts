@@ -1,7 +1,7 @@
 const GOAL_ROUTE_ACTIONS = ['pause', 'resume', 'cancel', 'reopen', 'execution-cost'] as const
 
 export type GoalRouteAction = (typeof GOAL_ROUTE_ACTIONS)[number]
-export type GoalView = 'full' | 'board' | 'docs'
+export type GoalView = 'full' | 'route' | 'docs'
 
 export function matchGoalRoute(parts: readonly string[]) {
   if (
@@ -60,9 +60,10 @@ export function isDesignDocumentPath(designRoot: string, path: string) {
   )
 }
 
-export function readGoalView(view: string | null): GoalView {
-  if (view === 'board' || view === 'docs') return view
-  return 'full'
+export function readGoalView(view: string | null): GoalView | null {
+  if (view === null || view === 'full') return 'full'
+  if (view === 'route' || view === 'docs') return view
+  return null
 }
 
 export function matchPreviewRoute(parts: readonly string[]) {

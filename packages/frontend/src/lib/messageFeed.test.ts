@@ -63,7 +63,7 @@ describe('unified message feed adapters', () => {
     expect(items.some((item) => item.id.startsWith('optimistic:'))).toBe(false)
   })
 
-  test('renders final Planning Evidence as the same Completed system update', () => {
+  test('renders final Goal Evidence as the same Completed system update', () => {
     const completionMarkdown =
       '## Ship the Goal\n\nThe reviewed outcome is available in [the release](https://example.test/release).\n\n- Checks passed\n'
     const items = assistantFeedEntriesToMessageFeed([

@@ -87,10 +87,10 @@ describe('HOPI MCP server', () => {
       'sleeping or polling',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'Creation does not execute the Work',
+      'Creation never executes Work',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).toContain(
-      'request each Planner, Generator, or Reviewer Run explicitly',
+      'Map plus first Decision only when the route contains fog',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_goal')?.description).not.toContain(
       'Choose planning',
@@ -107,7 +107,7 @@ describe('HOPI MCP server', () => {
       'Creation does not queue a Run',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'normalized contract change',
+      'precise Wayfinder Decisions',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_read_state')?.description).toContain(
       'current C1 candidate-integration preflight',
@@ -122,7 +122,7 @@ describe('HOPI MCP server', () => {
       'Goal-local design Markdown',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).toContain(
-      'complete Work contract',
+      'one named Decision or Engineering Work',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_create_work')?.description).not.toContain(
       'Use ',
@@ -216,10 +216,10 @@ describe('HOPI MCP server', () => {
       properties: { action: expect.any(Object) },
     })
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
-      'Explicitly queue one fresh Run',
+      'Explicitly queue one fresh generic Worker Run',
     )
     expect(tools.tools.find((tool) => tool.name === 'hopi_control_work')?.description).toContain(
-      'termination and Report',
+      'Settlement records only facts',
     )
     expect(tools.tools.every((tool) => (tool.description?.length ?? 0) < 650)).toBe(true)
     expect(result.isError).not.toBe(true)

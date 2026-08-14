@@ -17,7 +17,6 @@ export function createDefaultAgentAdapterConfig(
 ): AgentAdapterConfig {
   return {
     defaults: normalizeProjectCodingDefaults(codingDefaults),
-    roles: {},
   }
 }
 

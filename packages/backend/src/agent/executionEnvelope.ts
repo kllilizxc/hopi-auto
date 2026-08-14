@@ -8,7 +8,7 @@ export interface ExecutionEnvelope {
   transport: AssistantTransport | 'process'
   mode: 'unrestricted' | 'bounded' | 'read-only' | 'provider-managed'
   runtimeWorkspace: string
-  runtimeWorkspaceRole: 'provider scratch space' | 'responsibility workspace'
+  runtimeWorkspaceRole: 'provider scratch space' | 'worker workspace'
   runtimeWorkspaceProductEffect: 'non-canonical and not operator-addressable'
   readableRoots: string[] | null
   writableRoots: string[] | null

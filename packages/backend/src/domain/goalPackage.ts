@@ -7,8 +7,6 @@ import {
   type GoalDocument,
   type InputDocument,
   type WorkDocument,
-  isEngineeringWork,
-  isPlanningWork,
   isWorkTerminal,
   parseAttentionDocument,
   parseEvidenceDocument,
@@ -16,6 +14,7 @@ import {
   parseInputDocument,
   parseWorkDocument,
 } from './canonicalDocuments'
+import { assertWayfinderMap } from './wayfinderMap'
 
 export interface GoalPackage {
   goal: GoalDocument
@@ -49,14 +48,15 @@ export async function readAndValidateGoalPackage(
   if (goal.attributes.id !== goalId) {
     throw invalid(goalId, `goal.md owns ID ${goal.attributes.id}`)
   }
-  if (!(await candidate.exists(paths.designIndex(goalId)))) {
-    throw invalid(goalId, 'design/index.md is missing')
-  }
-
   const works = new Map<string, WorkDocument>()
   const attentions = new Map<string, AttentionDocument>()
   const evidence = new Map<string, EvidenceDocument>()
   const inputs: InputDocument[] = []
+  const mapSource = await candidate.readText(paths.designIndex(goalId))
+
+  if (mapSource !== null) {
+    parseWithContext(goalId, paths.designIndex(goalId), () => assertWayfinderMap(mapSource))
+  }
 
   for (const path of filePaths) {
     const source = await candidate.readText(path)
@@ -123,18 +123,6 @@ function validateWorkContextReferences(
         )
       }
     }
-    const revisionInput = isPlanningWork(work.attributes)
-      ? work.attributes.revisionInput
-      : undefined
-    if (
-      revisionInput &&
-      !work.attributes.contextRefs.some((reference) => reference.path === revisionInput)
-    ) {
-      throw invalid(
-        goalId,
-        `Planning Work ${work.attributes.id} revision Input is not selected as context: ${revisionInput}`,
-      )
-    }
   }
 }
 
@@ -146,7 +134,7 @@ export async function validateGoalPackageTransition(
 ) {
   const next = await readAndValidateGoalPackage(candidate, paths, goalId)
   if (!(await current.exists(paths.goalDocument(goalId)))) {
-    validateNewGoal(goalId, next)
+    validateNewGoal(goalId, next, await candidate.exists(paths.designIndex(goalId)))
     return next
   }
 
@@ -156,29 +144,20 @@ export async function validateGoalPackageTransition(
   return next
 }
 
-function validateNewGoal(goalId: string, goalPackage: GoalPackage) {
+function validateNewGoal(goalId: string, goalPackage: GoalPackage, hasMap: boolean) {
   const goal = goalPackage.goal.attributes
-  const planning = [...goalPackage.works.values()].filter(
-    (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-  )
-  const engineering = [...goalPackage.works.values()].filter((work) =>
-    isEngineeringWork(work.attributes),
-  )
-  const planningAdmission = planning.length === 1 && engineering.length === 0
-  const directAdmission =
-    planning.length === 0 &&
-    engineering.length === 1 &&
-    engineering[0]?.attributes.stage === 'generate' &&
-    engineering[0].attributes.assistantDispatch !== undefined
-  if (
-    goal.lifecycle !== 'active' ||
-    goal.contractRevision !== 1 ||
-    (!planningAdmission && !directAdmission)
-  ) {
-    throw invalid(
-      goalId,
-      'new Goal must start active at revision 1 with one Planning Work or one Assistant-dispatched Engineering Work',
-    )
+  if (goal.lifecycle !== 'active' || goal.contractRevision !== 1) {
+    throw invalid(goalId, 'new Goal must start active at revision 1')
+  }
+  if (goalPackage.works.size !== 1) {
+    throw invalid(goalId, 'new Goal must start with exactly one Decision or Engineering Work')
+  }
+  const [firstWork] = goalPackage.works.values()
+  if (firstWork?.attributes.kind === 'decision' && !hasMap) {
+    throw invalid(goalId, 'new Goal starting with Decision Work requires design/index.md')
+  }
+  if (firstWork?.attributes.kind === 'engineering' && hasMap) {
+    throw invalid(goalId, 'new Goal starting with Engineering Work cannot publish design/index.md')
   }
 }
 
@@ -187,16 +166,21 @@ function validateGoalTransition(goalId: string, previous: GoalPackage, next: Goa
   const after = next.goal
   if (
     after.attributes.id !== before.attributes.id ||
-    after.attributes.title !== before.attributes.title ||
-    after.body !== before.body
+    after.attributes.title !== before.attributes.title
   ) {
-    throw invalid(goalId, 'Goal identity, title, and original statement are immutable')
+    throw invalid(goalId, 'Goal identity and title are immutable')
   }
   if (
     after.attributes.contractRevision < before.attributes.contractRevision ||
     after.attributes.contractRevision > before.attributes.contractRevision + 1
   ) {
     throw invalid(goalId, 'contractRevision may only stay current or increment once')
+  }
+  if (
+    after.body !== before.body &&
+    after.attributes.contractRevision !== before.attributes.contractRevision + 1
+  ) {
+    throw invalid(goalId, 'Goal contract body may change only with a material revision')
   }
   if (!legalGoalLifecycleTransition(before.attributes.lifecycle, after.attributes.lifecycle)) {
     throw invalid(
@@ -228,18 +212,23 @@ function validateWorkTransition(goalId: string, previous: WorkDocument, next: Wo
   if (before.id !== after.id || before.kind !== after.kind) {
     throw invalid(goalId, `Work identity or kind changed: ${before.id}`)
   }
-  if (
-    isEngineeringWork(before) &&
-    isEngineeringWork(after) &&
-    before.assistantDispatch !== after.assistantDispatch
-  ) {
-    throw invalid(goalId, `Work Assistant dispatch provenance changed: ${before.id}`)
-  }
   if (isWorkTerminal(before)) {
     if (JSON.stringify(before) !== JSON.stringify(after) || previous.body !== next.body) {
       throw invalid(goalId, `terminal Work is immutable: ${before.id}`)
     }
     return
+  }
+  if (
+    before.title !== after.title ||
+    before.createdAt !== after.createdAt ||
+    (before.kind === 'decision' &&
+      after.kind === 'decision' &&
+      (before.decisionType !== after.decisionType || before.taskMode !== after.taskMode))
+  ) {
+    throw invalid(goalId, `Work identity fields changed: ${before.id}`)
+  }
+  if (before.status !== after.status && after.status === 'open') {
+    throw invalid(goalId, `Work cannot return to open: ${before.id}`)
   }
   if (after.contractRevision < before.contractRevision) {
     throw invalid(goalId, `Work contractRevision moved backwards: ${before.id}`)
@@ -321,7 +310,7 @@ function legalGoalLifecycleTransition(
 ) {
   const legal = {
     active: new Set(['active', 'paused', 'done', 'cancelled']),
-    paused: new Set(['paused', 'active', 'cancelled']),
+    paused: new Set(['paused', 'active', 'done', 'cancelled']),
     done: new Set(['done', 'active']),
     cancelled: new Set(['cancelled', 'active']),
   } as const
@@ -335,13 +324,6 @@ function validateWorkGraph(
   works: Map<string, WorkDocument>,
   evidence: Map<string, EvidenceDocument>,
 ) {
-  const openPlanning = [...works.values()].filter(
-    (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-  )
-  if (openPlanning.length > 1) {
-    throw invalid(goalId, 'more than one nonterminal Planning Work exists')
-  }
-
   const consumedRuns = new Map<string, string>()
   for (const [workId, work] of works) {
     const attributes = work.attributes
@@ -349,25 +331,17 @@ function validateWorkGraph(
       !isWorkTerminal(attributes) &&
       attributes.contractRevision !== goal.attributes.contractRevision
     ) {
-      const isStaleEngineeringWork =
-        isEngineeringWork(attributes) &&
-        attributes.contractRevision < goal.attributes.contractRevision
-      const isStagedPlanningWork =
-        isPlanningWork(attributes) &&
-        openPlanning.length === 1 &&
-        (goal.attributes.lifecycle === 'active' || goal.attributes.lifecycle === 'paused') &&
-        attributes.contractRevision === goal.attributes.contractRevision + 1
-      if (!isStaleEngineeringWork && !isStagedPlanningWork) {
+      if (attributes.contractRevision > goal.attributes.contractRevision) {
         throw invalid(goalId, `nonterminal Work ${workId} uses an invalid contractRevision`)
       }
     }
 
     for (const dependencyId of attributes.dependsOn) {
       const dependency = works.get(dependencyId)
-      if (!dependency || !isEngineeringWork(dependency.attributes)) {
-        throw invalid(goalId, `Work ${workId} depends on missing Engineering Work ${dependencyId}`)
+      if (!dependency) {
+        throw invalid(goalId, `Work ${workId} depends on missing Work ${dependencyId}`)
       }
-      if (!isWorkTerminal(attributes) && dependency.attributes.stage === 'cancelled') {
+      if (!isWorkTerminal(attributes) && dependency.attributes.status === 'cancelled') {
         throw invalid(
           goalId,
           `nonterminal Work ${workId} depends on cancelled Work ${dependencyId}`,
@@ -395,7 +369,7 @@ function validateWorkGraph(
     }
   }
 
-  assertAcyclicEngineeringGraph(goalId, works)
+  assertAcyclicWorkGraph(goalId, works)
 
   if (
     goal.attributes.lifecycle === 'done' &&
@@ -440,28 +414,26 @@ function validateEvidenceOwnership(
   }
 }
 
-function assertAcyclicEngineeringGraph(goalId: string, works: Map<string, WorkDocument>) {
+function assertAcyclicWorkGraph(goalId: string, works: Map<string, WorkDocument>) {
   const visited = new Set<string>()
   const visiting = new Set<string>()
 
   const visit = (workId: string) => {
     if (visiting.has(workId)) {
-      throw invalid(goalId, `Engineering Work dependency cycle includes ${workId}`)
+      throw invalid(goalId, `Work dependency cycle includes ${workId}`)
     }
     if (visited.has(workId)) return
 
     visiting.add(workId)
     const work = works.get(workId)
-    if (work && isEngineeringWork(work.attributes)) {
+    if (work) {
       for (const dependencyId of work.attributes.dependsOn) visit(dependencyId)
     }
     visiting.delete(workId)
     visited.add(workId)
   }
 
-  for (const [workId, work] of works) {
-    if (isEngineeringWork(work.attributes)) visit(workId)
-  }
+  for (const workId of works.keys()) visit(workId)
 }
 
 function matchLocalDocumentId(path: string, root: string) {

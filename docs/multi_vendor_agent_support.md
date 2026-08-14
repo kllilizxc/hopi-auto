@@ -1,95 +1,56 @@
-# Multi-Vendor Agent Adapter Contract
+# HOPI Multi-Vendor Agent Support
 
-Status: implementation reference
-Last updated: 2026-07-22
+Status: adapter contract authority
+Last updated: 2026-08-14
 
-This document records only the vendor boundary. It does not define another workflow, Assistant
-type, or session authority. Product behavior remains owned by
-[the Assistant design](./mvp_assistant.md) and responsibility behavior by
-[the execution design](./mvp_execution.md).
+Vendor support is an adapter concern. HOPI has two configurable agents—`assistant` and `worker`—and
+one semantic model regardless of provider.
 
-## One Contract
+## Configuration
 
-Codex, Claude, and OpenCode adapters must provide the same HOPI behavior:
+Home configuration contains shared coding defaults plus optional Assistant and Worker transport
+overrides. Assistant must use a built-in Codex, Claude, or OpenCode transport at the Home/Project
+root. Worker may also use a process adapter and always runs at its declared worktree boundary.
 
-- one prompt plus optional local image paths
-- one injected `hopi` MCP server with the current turn capability
-- normalized message, plan-snapshot, tool-call, tool-result, status, and error events; Codex todo
-  snapshots and Claude task operations project to the same plan contract instead of provider-shaped
-  conversation rows
-- provider-native thinking summaries normalized as internal status; count-only thinking progress
-  and provider task-progress heartbeats are protocol noise and never substitute for a summary,
-  plan snapshot, or tool event
-- lossless raw stdout and stderr
-- process-group cancellation and bounded termination
-- writable Assistant-owned runtime and scratch, read-only linked and canonical roots, and network
-  access under the same boundary for every provider
-- speaking Assistant skills remain execution aids under a provider-level HOPI ownership contract;
-  deterministic Wake has no provider surface, and provider apps/plugins/workflows never gain HOPI authority
-- an optional vendor session ID for the speaking Assistant
-- a vendor-session identity derived from the transport, execution boundary, stable Assistant
-  contract, and current preference digest; a nonmatching identity is not resumed
-- vendor-native automatic context compaction for every built-in Agent invocation, including the
-  speaking Assistant, its supervision forks, Planner, Generator, and Reviewer
-- no vendor-owned interactive approval channel: Codex always uses `never`, Claude bypasses its
-  prompt layer, and OpenCode receives only deterministic `allow` or `deny` rules. HOPI's resolved
-  sandbox and capability envelope remain the authorization boundary; a denied operation fails
-  immediately instead of waiting for an operator who cannot answer in that process
-- narrowly normalized tool execution failures that distinguish unavailable infrastructure from an
-  ordinary command, test, or implementation failure, allowing a later successful use of the same
-  capability in the invocation to clear the diagnostic
-- a final plain-text reply with provider thought envelopes removed, or an explicit transport failure
-  when an envelope is malformed and cannot be separated without guessing
+Provider names, models, reasoning effort, permission modes, binary paths, and native session ids
+never enter Goal or Work authority.
 
-Vendor commands, event shapes, session flags, permission flags, compaction, and configuration files
-stay inside the adapter. Canonical documents, Inbox ordering, Attention delivery, Wake publication,
-Work results, and UI state never branch by vendor.
+## Common invocation
 
-## Supported Transports
+Every invocation receives the same logical inputs:
 
-| Transport | Speaking resume | Native compaction | Images | HOPI MCP | Model setting |
-| --- | --- | --- | --- | --- | --- |
-| Codex | native thread resume | model-native auto compact | native image arguments | injected CLI config | optional model plus reasoning effort |
-| Claude | native session resume | CLI auto compact | local image references in the turn | injected MCP config | optional model |
-| OpenCode | native session resume | `compaction.auto` | local file arguments | injected MCP and permission config | optional model and variant |
+- natural-language assignment and bounded context files;
+- explicit execution envelope and readable/writable roots;
+- canonical mutation through HOPI tools only for Assistant;
+- declared `workspaceMode` for Worker;
+- optional images and managed-browser facts;
+- complete local transcript and normalized public events.
 
-Supervision uses a provider-native fork of the configured speaking Assistant session.
-Responsibility Runs may use any supported transport independently through Home-wide role settings.
-`process` remains a responsibility-only escape hatch and cannot run Assistant because
-it has no guaranteed conversation, MCP, or session contract.
+The adapter translates this contract into provider CLI arguments, stdin, environment, permissions,
+MCP configuration, and final-output capture.
 
-Compaction is invisible transport maintenance. The adapter keeps native automatic compaction
-enabled and lets the vendor choose its threshold and summary representation. A successful compact
-continues the same vendor Session and responsibility workspace. It does not create a HOPI tool,
-prompt instruction, Inbox event, Work transition, or canonical summary; any provider event remains
-available only in the raw runtime transcript. This MVP adds no second degradation detector or
-post-compaction recovery policy.
+## Sessions and compaction
 
-For the speaking Assistant, the compatible vendor Session owns the stable contract, current durable
-preferences, and recent conversation. Ordinary turns therefore send only the current Inbox event
-envelope. HOPI does not repeatedly inject a state snapshot or execution-envelope description;
-current product facts are read through the injected tools when needed. A missing or incompatible
-Session is rebuilt from the same initial context and bounded public Inbox history before the current
-turn.
+Assistant provider sessions are disposable context caches for one visible Project conversation.
+They may resume, compact, hand off, fork for supervision, or rebuild from bounded public history and
+canonical state.
 
-## Configuration Rules
+A Worker Run has a fresh session namespace. Native compaction may continue inside that Run, but no
+later Run shares its session. If the execution boundary changes or a provider rejects resume, HOPI
+invalidates the cache and restarts from the same immutable Run assignment.
 
-Home `assistant` configuration owns the speaking Assistant and its supervision forks. Home `roles` owns Planner,
-Generator, and Reviewer overrides; missing entries use Home `defaults`. Projects own no model
-configuration.
+## Normalized facts
 
-The UI accepts free-form model identifiers because valid catalogs are vendor- and account-specific.
-It preserves transport-supported advanced fields when changing a model. Switching transport drops
-unsupported fields, installs current defaults for the new adapter, and invalidates only the disposable
-runtime session cache. Durable Inbox history remains the recovery source.
+Adapters normalize provider output into message, transcript, and optional provider-plan events;
+execution identity; final natural-language Report; usage diagnostics; termination; and native
+session id. Provider plans are observational progress only, never HOPI planning authority.
 
-Codex approval-policy and Claude permission-mode fields are transport configuration only and cannot
-re-enable vendor prompts. They are not product authorization controls.
-Bounded versus unrestricted access is selected only by HOPI's resolved execution envelope.
+Secrets are redacted before public or persistent diagnostics. A transport error settles the
+Assistant turn or Worker Run factually; adapters do not map errors into Work transitions, retries,
+or Attention.
 
-## Verification Bar
+## Process adapter
 
-Each adapter needs a fake-CLI contract test covering a new turn, resume, tool activity, final reply,
-image input, cancellation, malformed output, and raw transcript preservation. Shared end-to-end tests
-must then prove that changing transport does not change Inbox handling, exact Attention
-acknowledgement, Wake delivery, or canonical HOPI tool effects.
+The process transport is a Worker-only escape hatch. It receives the same environment and bounded
+paths, but has no assumed native session or multimodal support. It must emit a final response or
+write Markdown to `HOPI_REPORT_FILE`.

@@ -1,6 +1,5 @@
 import {
   type WorkDocument,
-  isPlanningWork,
   isWorkTerminal,
   parseAttentionDocument,
   parseInputDocument,
@@ -11,7 +10,6 @@ import { findNonPortableGoalImageReference } from '../domain/goalImageReference'
 import { workCancellationClosure } from '../domain/workCancellation'
 import { hashBytes } from '../publication/publisher'
 import type { PublicationWrite } from '../publication/types'
-import type { PlanningContext, PlanningInputAdmission } from '../runtime/goalController'
 import type { AssistantWorkspaceStore } from '../storage/assistantWorkspaceStore'
 import type { GoalPackageStore } from '../storage/goalPackageStore'
 import { AssistantToolRequestError } from './assistantToolRequestError'
@@ -19,36 +17,8 @@ import type { AssistantToolProject } from './assistantToolTypes'
 
 type InboxEvent = NonNullable<Awaited<ReturnType<AssistantWorkspaceStore['readEvent']>>>
 
-export function standardPlanningObjective(eventId: string) {
-  return `Interpret accepted Inbox turn ${eventId} against the current Goal and design.`
-}
-
 export function initialGoalBody(objective: string) {
   return ['## Objective', '', objective.trim(), ''].join('\n')
-}
-
-export async function ensurePlanningWithRunInvalidation(
-  project: AssistantToolProject,
-  goalId: string,
-  reason: string,
-  acceptedInput?: PlanningInputAdmission,
-  context: PlanningContext = {},
-) {
-  const before = await project.store.readPackage(goalId)
-  const existing = [...before.works.values()].find(
-    (work) => isPlanningWork(work.attributes) && work.attributes.stage === 'plan',
-  )
-  const planning = await project.controller.ensurePlanning(goalId, reason, acceptedInput, context)
-  const selectedAuthorityChanged =
-    Boolean(acceptedInput?.write) || Boolean(context.supportingWrites?.length)
-
-  if (
-    existing?.attributes.id === planning.attributes.id &&
-    (existing.body !== planning.body || selectedAuthorityChanged)
-  ) {
-    project.reconciler.interruptRuns(goalId, planning.attributes.id)
-  }
-  return planning
 }
 
 export async function prepareGoalReferences(
@@ -58,7 +28,7 @@ export async function prepareGoalReferences(
   requested: readonly { attachmentRef: string; purpose: string }[],
 ) {
   const writes: PublicationWrite[] = []
-  const planning: Array<{ path: string; purpose: string }> = []
+  const references: Array<{ path: string; purpose: string }> = []
   const seen = new Set<string>()
   const workspaceState = requested.length > 0 ? await workspace.readWorkspace() : null
 
@@ -103,9 +73,9 @@ export async function prepareGoalReferences(
     }
     const purpose = reference.purpose.trim().replace(/\s+/g, ' ')
     assertPortableGoalText('Goal reference purpose', purpose)
-    planning.push({ path: assetPath, purpose })
+    references.push({ path: assetPath, purpose })
   }
-  return { writes, planning }
+  return { writes, references }
 }
 
 export async function publishInput(
@@ -259,7 +229,7 @@ export function assertPortableGoalText(label: string, content: string) {
   const reference = findNonPortableGoalImageReference(content)
   if (reference) {
     throw new AssistantToolRequestError(
-      `${label} cannot cite non-portable image path ${reference}; adopt the image through references and let Planning cite the returned Goal-local asset path`,
+      `${label} cannot cite non-portable image path ${reference}; adopt the image through references and cite the returned Goal-local asset path`,
     )
   }
 }

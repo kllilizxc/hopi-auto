@@ -36,10 +36,10 @@ import {
   StatusChip,
 } from '../components/ui'
 import {
-  type AgentRoleCodingSettings,
+  type AgentCodingSettings,
   type CodingAgentTransport,
   type CodingReasoningEffort,
-  type ConfigurableAgentRole,
+  type ConfigurableAgent,
   type ProjectCodingDefaults,
   type ProjectDirectorySelection,
   type ProjectSummary,
@@ -52,7 +52,7 @@ import {
   selectProjectDirectory,
   startPreview,
   stopPreview,
-  updateAgentRoleSettings,
+  updateAgentSettings,
   updateProjectAgentAccess,
   updateProjectLabel,
 } from '../lib/api'
@@ -60,7 +60,7 @@ import { buildGoalRoute, buildProjectRoute } from '../lib/goalScope'
 import { readProjectAgentFullAccess, writeProjectAgentFullAccess } from '../lib/projectAgentAccess'
 import { STABLE_QUERY_NOTIFY_PROPS, shellPollInterval } from '../lib/queryPerformance'
 import { excerpt, projectDisplayName } from '../lib/utils'
-import { preloadAssistantPanel, preloadBoardView } from '../routeModules'
+import { preloadAssistantPanel, preloadRouteView } from '../routeModules'
 
 export function ProjectHomePage() {
   const navigate = useNavigate()
@@ -192,7 +192,7 @@ export function ProjectHomePage() {
 
             <div className="projects-side-column">
               {snapshotQuery.data && (
-                <AgentSettingsPanel settings={snapshotQuery.data.home.agentRoleCodingDefaults} />
+                <AgentSettingsPanel settings={snapshotQuery.data.home.agentCodingDefaults} />
               )}
 
               <AppForm
@@ -362,33 +362,31 @@ function removeRepoDraft(current: ProjectRepoDraft[], key: string) {
   return remaining.map((repo, index) => ({ ...repo, primary: index === 0 }))
 }
 
-const AGENT_ROLE_OPTIONS: Array<{ label: string; value: ConfigurableAgentRole }> = [
+const AGENT_OPTIONS: Array<{ label: string; value: ConfigurableAgent }> = [
   { label: 'Assistant', value: 'assistant' },
-  { label: 'Planner', value: 'planner' },
-  { label: 'Generator', value: 'generator' },
-  { label: 'Reviewer', value: 'reviewer' },
+  { label: 'Worker', value: 'worker' },
 ]
 
 function AgentSettingsPanel({
   settings,
 }: {
-  settings: Record<ConfigurableAgentRole, AgentRoleCodingSettings>
+  settings: Record<ConfigurableAgent, AgentCodingSettings>
 }) {
   const queryClient = useQueryClient()
-  const [role, setRole] = useState<ConfigurableAgentRole>('assistant')
-  const selected = settings[role]
+  const [agent, setAgent] = useState<ConfigurableAgent>('assistant')
+  const selected = settings[agent]
   const [draft, setDraft] = useState(() => codingDefaultsToDraft(settings.assistant.codingDefaults))
   const settingsMutation = useMutation({
     mutationFn: ({
-      role,
+      agent,
       codingDefaults,
     }: {
-      role: ConfigurableAgentRole
+      agent: ConfigurableAgent
       codingDefaults: ProjectCodingDefaults | null
-    }) => updateAgentRoleSettings(role, codingDefaults),
+    }) => updateAgentSettings(agent, codingDefaults),
     onSuccess: async (snapshot, variables) => {
       setDraft(
-        codingDefaultsToDraft(snapshot.home.agentRoleCodingDefaults[variables.role].codingDefaults),
+        codingDefaultsToDraft(snapshot.home.agentCodingDefaults[variables.agent].codingDefaults),
       )
       await queryClient.invalidateQueries({ queryKey: ['mvp-state'] })
     },
@@ -403,11 +401,11 @@ function AgentSettingsPanel({
         <StatusChip size="sm">{selected.inherited ? 'Default' : 'Custom'}</StatusChip>
       </div>
       <p className="panel-intro">
-        Configure the Home-wide model used by each role. Projects share these settings.
+        Configure the Home-wide models used for conversation and bounded execution.
       </p>
       <div className="assistant-settings-current">
         <small>
-          {selected.inherited && role !== 'assistant' ? 'Home fallback' : 'Current model'}
+          {selected.inherited && agent !== 'assistant' ? 'Home fallback' : 'Current model'}
         </small>
         <strong>{formatCodingDefaults(selected.codingDefaults)}</strong>
       </div>
@@ -415,20 +413,20 @@ function AgentSettingsPanel({
         className="assistant-settings-form"
         onSubmit={(event) => {
           event.preventDefault()
-          settingsMutation.mutate({ role, codingDefaults: modelDraftToCodingDefaults(draft) })
+          settingsMutation.mutate({ agent, codingDefaults: modelDraftToCodingDefaults(draft) })
         }}
       >
         <SelectField
           disabled={settingsMutation.isPending}
-          label="Role"
+          label="Agent"
           onValueChange={(value) => {
-            const nextRole = value as ConfigurableAgentRole
-            setRole(nextRole)
-            setDraft(codingDefaultsToDraft(settings[nextRole].codingDefaults))
+            const nextAgent = value as ConfigurableAgent
+            setAgent(nextAgent)
+            setDraft(codingDefaultsToDraft(settings[nextAgent].codingDefaults))
             settingsMutation.reset()
           }}
-          options={AGENT_ROLE_OPTIONS}
-          value={role}
+          options={AGENT_OPTIONS}
+          value={agent}
         />
         <SelectField
           disabled={!selected.configurable}
@@ -465,6 +463,7 @@ function AgentSettingsPanel({
               { label: 'Medium', value: 'medium' },
               { label: 'High', value: 'high' },
               { label: 'xHigh', value: 'xhigh' },
+              { label: 'Max', value: 'max' },
             ]}
             value={draft.reasoningEffort}
           />
@@ -474,7 +473,7 @@ function AgentSettingsPanel({
             variant="ghost"
             type="button"
             disabled={settingsMutation.isPending || selected.inherited || !selected.configurable}
-            onClick={() => settingsMutation.mutate({ role, codingDefaults: null })}
+            onClick={() => settingsMutation.mutate({ agent, codingDefaults: null })}
           >
             Use default
           </AppButton>
@@ -515,7 +514,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   )
   const [agentAccessError, setAgentAccessError] = useState<string | null>(null)
   const [agentAccessPending, setAgentAccessPending] = useState(false)
-  const preloadWorkspace = project.goals.length ? preloadBoardView : preloadAssistantPanel
+  const preloadWorkspace = project.goals.length ? preloadRouteView : preloadAssistantPanel
   const labelMutation = useMutation({
     mutationFn: () => updateProjectLabel(project.projectId, labelDraft.trim() || null),
     onMutate: () => queryClient.cancelQueries({ queryKey: ['mvp-state'] }),
@@ -711,7 +710,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 
       <p className="project-guidance">
         {excerpt(
-          project.guidance ?? 'Planner will create AGENTS.md guidance on its first pass.',
+          project.guidance ?? 'The Assistant can create AGENTS.md guidance when the Project needs it.',
           170,
         )}
       </p>
@@ -824,10 +823,10 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           project.goals.map((goal) => (
             <AppRouterLink
               key={goal.id}
-              to={buildGoalRoute({ projectId: project.projectId, goalId: goal.id }, 'board')}
-              onFocus={preloadBoardView}
-              onPointerDown={preloadBoardView}
-              onPointerEnter={preloadBoardView}
+              to={buildGoalRoute({ projectId: project.projectId, goalId: goal.id }, 'route')}
+              onFocus={preloadRouteView}
+              onPointerDown={preloadRouteView}
+              onPointerEnter={preloadRouteView}
             >
               <span className={`goal-state-dot ${goal.lifecycle}`} />
               <span>

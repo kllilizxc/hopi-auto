@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { assistantDecisionPromptSchema } from './assistantDecisionPrompt'
-import { inboxEventReferenceSchema } from './inboxEventReference'
 import {
   type MarkdownDocument,
   parseMarkdownDocument,
@@ -9,9 +8,10 @@ import {
 import { stableIdSchema } from './stableId'
 
 export const GOAL_LIFECYCLES = ['active', 'paused', 'done', 'cancelled'] as const
-export const WORK_KINDS = ['planning', 'engineering'] as const
-export const PLANNING_STAGES = ['plan', 'done', 'cancelled'] as const
-export const ENGINEERING_STAGES = ['generate', 'review', 'done', 'cancelled'] as const
+export const WORK_KINDS = ['decision', 'engineering'] as const
+export const WORK_STATUSES = ['open', 'done', 'cancelled'] as const
+export const DECISION_TYPES = ['research', 'prototype', 'grilling', 'task'] as const
+export const TASK_MODES = ['afk', 'hitl'] as const
 
 const timestampSchema = z.string().datetime({ offset: true })
 const canonicalRefSchema = z.string().min(1)
@@ -57,6 +57,8 @@ export const goalAttributesSchema = z
 const workBaseSchema = z.object({
   id: stableIdSchema,
   title: z.string().trim().min(1),
+  status: z.enum(WORK_STATUSES),
+  createdAt: timestampSchema,
   notBefore: timestampSchema.nullable(),
   dependsOn: uniqueStableIdsSchema,
   contractRevision: z.number().int().positive(),
@@ -65,30 +67,27 @@ const workBaseSchema = z.object({
   ownerMessages: uniqueWorkOwnerMessagesSchema,
 })
 
-const planningWorkAttributesObjectSchema = workBaseSchema
+const decisionWorkAttributesObjectSchema = workBaseSchema
   .extend({
-    kind: z.literal('planning'),
-    stage: z.enum(PLANNING_STAGES),
-    revisionInput: z.string().min(1).optional(),
+    kind: z.literal('decision'),
+    decisionType: z.enum(DECISION_TYPES),
+    taskMode: z.enum(TASK_MODES).optional(),
   })
   .strict()
 
-export const planningWorkAttributesSchema = planningWorkAttributesObjectSchema.superRefine(
-  validatePlanningWorkDependencies,
-)
+export const decisionWorkAttributesSchema =
+  decisionWorkAttributesObjectSchema.superRefine(validateDecisionMode)
 
 export const engineeringWorkAttributesSchema = workBaseSchema
   .extend({
     kind: z.literal('engineering'),
-    stage: z.enum(ENGINEERING_STAGES),
-    assistantDispatch: inboxEventReferenceSchema.optional(),
   })
   .strict()
 
 const workAttributesByKindSchema = z
-  .discriminatedUnion('kind', [planningWorkAttributesObjectSchema, engineeringWorkAttributesSchema])
+  .discriminatedUnion('kind', [decisionWorkAttributesObjectSchema, engineeringWorkAttributesSchema])
   .superRefine((work, context) => {
-    if (work.kind === 'planning') validatePlanningWorkDependencies(work, context)
+    if (work.kind === 'decision') validateDecisionMode(work, context)
   })
 
 export const workAttributesSchema = workAttributesByKindSchema
@@ -134,7 +133,7 @@ export const evidenceAttributesSchema = z
   })
 
 export type GoalAttributes = z.infer<typeof goalAttributesSchema>
-export type PlanningWorkAttributes = z.infer<typeof planningWorkAttributesSchema>
+export type DecisionWorkAttributes = z.infer<typeof decisionWorkAttributesSchema>
 export type EngineeringWorkAttributes = z.infer<typeof engineeringWorkAttributesSchema>
 export type WorkAttributes = z.infer<typeof workAttributesSchema>
 export type AttentionAttributes = z.infer<typeof attentionAttributesSchema>
@@ -176,29 +175,37 @@ export const renderInputDocument = renderMarkdownDocument<InputAttributes>
 export const renderEvidenceDocument = renderMarkdownDocument<EvidenceAttributes>
 
 export function isWorkTerminal(work: WorkAttributes) {
-  return work.stage === 'done' || work.stage === 'cancelled'
+  return work.status === 'done' || work.status === 'cancelled'
 }
 
 export function isAttentionBlocking(attention: AttentionAttributes) {
   return attention.resolvedAt === null
 }
 
-export function isPlanningWork(work: WorkAttributes): work is PlanningWorkAttributes {
-  return work.kind === 'planning'
+export function isDecisionWork(work: WorkAttributes): work is DecisionWorkAttributes {
+  return work.kind === 'decision'
 }
 
 export function isEngineeringWork(work: WorkAttributes): work is EngineeringWorkAttributes {
   return work.kind === 'engineering'
 }
 
-function validatePlanningWorkDependencies(
-  work: { dependsOn: readonly string[] },
+function validateDecisionMode(
+  work: { decisionType: (typeof DECISION_TYPES)[number]; taskMode?: (typeof TASK_MODES)[number] },
   context: z.RefinementCtx,
 ) {
-  if (work.dependsOn.length === 0) return
-  context.addIssue({
-    code: z.ZodIssueCode.custom,
-    path: ['dependsOn'],
-    message: 'Planning Work never participates in dependsOn',
-  })
+  if (work.decisionType === 'task' && work.taskMode === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['taskMode'],
+      message: 'Task Decision requires taskMode',
+    })
+  }
+  if (work.decisionType !== 'task' && work.taskMode !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['taskMode'],
+      message: 'Only Task Decision may define taskMode',
+    })
+  }
 }
