@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test'
 const scrollSurfaceChecks = [
   {
     file: '../../pages/route/WorkDetailModal.tsx',
-    patterns: [/<AppScrollShadow className="route-work-contract"/],
+    patterns: [/<AppScrollShadow className="route-work-sidebar__scroll"/],
   },
   {
     file: '../AssistantPanel.tsx',

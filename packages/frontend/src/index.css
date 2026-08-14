@@ -2786,6 +2786,11 @@ button:disabled,
   flex: 1;
 }
 
+.attempt-message-feed {
+  padding-right: 12px;
+  padding-left: 12px;
+}
+
 .wake-message-feed {
   height: min(360px, 42vh);
   min-height: 180px;

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { FileText, MessageSquareText, X } from 'lucide-react'
+import { Activity, BookOpen, Clock, AlertTriangle, X } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { MessageFeedSkeleton } from '../../components/MessageFeedSkeleton'
 import {
@@ -9,7 +9,6 @@ import {
   AppDisclosure,
   AppModal,
   AppScrollShadow,
-  AppTabs,
   CountBadge,
   StatusChip,
 } from '../../components/ui'
@@ -26,7 +25,7 @@ import { runEventsToMessageFeed } from '../../lib/messageFeed'
 import { ACTIVE_STREAM_POLL_INTERVAL_MS, STABLE_QUERY_NOTIFY_PROPS } from '../../lib/queryPerformance'
 import { workAttemptEventsQueryKey, workAttemptsQueryKey } from '../../lib/queryKeys'
 import { useInfiniteMessageStream } from '../../lib/useInfiniteMessageStream'
-import { formatTime } from '../../lib/utils'
+import { formatTime, cn } from '../../lib/utils'
 
 const UnifiedMessageFeed = lazy(() =>
   import('../../components/UnifiedMessageFeed').then((module) => ({
@@ -45,7 +44,6 @@ export function WorkDetailModal({
   work: WorkRouteView
   onClose: () => void
 }) {
-  const [pane, setPane] = useState<'activity' | 'contract'>('activity')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const attemptsQuery = useQuery({
     queryKey: workAttemptsQueryKey(projectId, goalId, work.id),
@@ -73,9 +71,9 @@ export function WorkDetailModal({
       readWorkAttemptEvents(projectId, goalId, work.id, selected?.runId ?? '', input),
     getItemId: runEventId,
     compareItems: compareRunEvents,
-    enabled: Boolean(selected) && pane === 'activity',
+    enabled: Boolean(selected),
     refetchInterval:
-      pane === 'activity' && selected?.status === 'running'
+      selected?.status === 'running'
         ? ACTIVE_STREAM_POLL_INTERVAL_MS
         : false,
     tailPageSize: 200,
@@ -83,7 +81,6 @@ export function WorkDetailModal({
   const documentQuery = useQuery({
     queryKey: ['work-document', projectId, goalId, work.id, work.contractRevision],
     queryFn: () => readWorkDocument(projectId, goalId, work.id),
-    enabled: pane === 'contract',
     staleTime: Number.POSITIVE_INFINITY,
     notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
   })
@@ -104,104 +101,125 @@ export function WorkDetailModal({
         <AppModal.Container className="route-work-modal-container" placement="center" scroll="inside" size="cover">
           <AppModal.Dialog className="route-work-modal" aria-label={work.title}>
             <header className="route-work-modal__header">
-              <div>
-                <span className="eyebrow">{workKindLabel(work)} · {work.id}</span>
-                <AppModal.Heading>{work.title}</AppModal.Heading>
-              </div>
-              <AppModal.CloseTrigger className="icon-button" aria-label="Close Work detail">
+              <span className="eyebrow">
+                {workKindLabel(work)} · <span className="eyebrow-id">{work.id}</span>
+              </span>
+              <h2>{work.title}</h2>
+              <AppModal.CloseTrigger className="icon-button route-work-main__close" aria-label="Close Work detail">
                 <X />
               </AppModal.CloseTrigger>
             </header>
 
-            <div className="route-work-facts">
-              <span><small>Status</small><strong>{workStateLabel(work.projection.state)}</strong></span>
-              <span><small>Revision</small><strong>{work.contractRevision}</strong></span>
-              <span><small>Runs</small><strong>{work.runAttemptCount}</strong></span>
-              <span><small>Dependencies</small><strong>{work.dependsOn.length}</strong></span>
-            </div>
-
-            <AppTabs
-              className="route-work-tabs"
-              selectedKey={pane}
-              onSelectionChange={(key) => setPane(String(key) as 'activity' | 'contract')}
-            >
-              <AppTabs.List aria-label="Work detail view">
-                <AppTabs.Tab id="activity"><MessageSquareText /> Activity</AppTabs.Tab>
-                <AppTabs.Tab id="contract"><FileText /> Contract</AppTabs.Tab>
-              </AppTabs.List>
-              <AppTabs.Panel id="activity">
-                {pane === 'activity' ? (
-                  <div className="route-work-activity">
-                    <aside>
-                      <header><strong>Runs</strong><CountBadge>{attempts.length}</CountBadge></header>
-                      {attempts.length ? attempts.map((attempt, index) => (
-                        <AppButton
-                          className={attempt.runId === selected?.runId ? 'active' : undefined}
-                          key={attempt.runId}
-                          onClick={() => setSelectedRunId(attempt.runId)}
-                          type="button"
-                          variant="ghost"
-                        >
-                          <span><strong>Run {attempts.length - index}</strong><small>{formatTime(attempt.requestedAt)}</small></span>
-                          <StatusChip size="sm">{attemptLabel(attempt)}</StatusChip>
-                        </AppButton>
-                      )) : <p>No Worker Run has been requested.</p>}
-                    </aside>
-                    <div className="route-work-stream">
-                      {activityError ? (
-                        <AppAlert>{activityError.message}</AppAlert>
-                      ) : !selected ? (
-                        <div className="route-work-empty">This Work has no Run evidence yet.</div>
-                      ) : (
-                        <>
-                          <header className="route-run-heading">
-                            <div><StatusChip size="sm">{attemptLabel(selected)}</StatusChip><code>{selected.runId}</code></div>
-                            <small>{selected.execution ? `${selected.execution.transport}${selected.execution.model ? ` · ${selected.execution.model}` : ''}` : 'Worker'}</small>
-                          </header>
-                          {selected.reportMarkdown ? (
-                            <section className="route-run-report"><small>Report</small><p>{selected.reportMarkdown}</p></section>
-                          ) : null}
-                          <Suspense fallback={<MessageFeedSkeleton density="compact" />}>
-                            <UnifiedMessageFeed
-                              feedKey={`attempt:${selected.runId}`}
-                              items={messages}
-                              tailActivity={selected.status === 'running' ? 'working' : null}
-                              density="compact"
-                              className="attempt-message-feed"
-                              ariaLabel={`Run ${selected.runId} message stream`}
-                              isLoading={eventStream.isLoading}
-                              hasMoreBefore={eventStream.hasMoreBefore}
-                              isLoadingOlder={eventStream.isLoadingOlder}
-                              onLoadOlder={eventStream.loadOlder}
-                              emptyState={<div className="route-work-empty">This Run predates live event capture.</div>}
-                            />
-                          </Suspense>
-                        </>
-                      )}
+            <div className="route-work-modal__body">
+              <aside className="route-work-sidebar">
+                <AppScrollShadow className="route-work-sidebar__scroll">
+                  <section className="route-work-section">
+                    <header className="route-work-section-header">
+                      <h3>STATUS</h3>
+                    </header>
+                    <div className="route-work-facts-grid">
+                      <div className="route-work-fact"><small>Current State</small><strong>{workStateLabel(work.projection.state)}</strong></div>
+                      <div className="route-work-fact"><small>Revision</small><strong>{work.contractRevision}</strong></div>
                     </div>
-                  </div>
-                ) : null}
-              </AppTabs.Panel>
-              <AppTabs.Panel id="contract">
-                {pane === 'contract' ? (
-                  <AppScrollShadow className="route-work-contract">
-                    {work.dependsOn.length > 0 ? <section><h3>Depends on</h3><p>{work.dependsOn.join(', ')}</p></section> : null}
-                    {work.blockedBy ? <section><h3>Why it is waiting</h3><p>{work.blockedBy}</p></section> : null}
-                    <section>
-                      <h3>Canonical Work</h3>
-                      {documentQuery.error ? <AppAlert>{documentQuery.error.message}</AppAlert> : documentQuery.isLoading ? <div className="route-work-empty"><AppBreathingIndicator /> Loading contract</div> : <pre>{documentQuery.data?.body ?? ''}</pre>}
+                    {work.blockedBy && <AppAlert className="compact-alert">Blocked: {work.blockedBy}</AppAlert>}
+                  </section>
+
+                  {attempts.length > 0 && (
+                    <section className="route-work-section">
+                      <header className="route-work-section-header">
+                        <h3>Runs</h3>
+                        <CountBadge>{attempts.length}</CountBadge>
+                      </header>
+                      <div className="route-work-run-list">
+                        {attempts.map((attempt, index) => (
+                          <AppButton
+                            className={cn('route-work-run-item', attempt.runId === selected?.runId && 'active')}
+                            key={attempt.runId}
+                            onClick={() => setSelectedRunId(attempt.runId)}
+                            type="button"
+                            variant="ghost"
+                          >
+                            <div className="route-work-run-item-info">
+                              <strong>Run {attempts.length - index}</strong>
+                              <small>{formatTime(attempt.requestedAt)}</small>
+                            </div>
+                            <StatusChip size="sm">{attemptLabel(attempt)}</StatusChip>
+                          </AppButton>
+                        ))}
+                      </div>
                     </section>
-                    {selected ? (
-                      <section>
-                        <h3>Selected Run instruction</h3>
-                        <p>{selected.instructionMarkdown}</p>
-                        {detailQuery.data?.runPrompt ? <AppDisclosure summary="Full staged prompt"><pre>{detailQuery.data.runPrompt}</pre></AppDisclosure> : null}
-                      </section>
-                    ) : null}
-                  </AppScrollShadow>
-                ) : null}
-              </AppTabs.Panel>
-            </AppTabs>
+                  )}
+
+                  <section className="route-work-section">
+                    <header className="route-work-section-header">
+                      <h3><BookOpen /> Contract</h3>
+                    </header>
+                    <AppDisclosure summary="View Canonical Work">
+                      {documentQuery.isLoading ? <AppBreathingIndicator /> : <pre className="route-work-code">{documentQuery.data?.body ?? ''}</pre>}
+                    </AppDisclosure>
+                    {work.dependsOn.length > 0 && (
+                      <AppDisclosure summary="Dependencies">
+                        <p className="route-work-text">{work.dependsOn.join(', ')}</p>
+                      </AppDisclosure>
+                    )}
+                  </section>
+
+                  {selected && (
+                    <section className="route-work-section route-work-section--highlight">
+                      <header className="route-work-section-header">
+                        <h3>Run Details</h3>
+                      </header>
+                      <div className="route-work-run-meta">
+                        <code>{selected.runId}</code>
+                        <small>{selected.execution ? `${selected.execution.transport}${selected.execution.model ? ` · ${selected.execution.model}` : ''}` : 'Worker'}</small>
+                      </div>
+                      {selected.reportMarkdown && (
+                        <div className="route-work-report">
+                          <small>Report</small>
+                          <p>{selected.reportMarkdown}</p>
+                        </div>
+                      )}
+                      {selected.instructionMarkdown && (
+                        <AppDisclosure summary="Run Instruction">
+                          <p className="route-work-text">{selected.instructionMarkdown}</p>
+                        </AppDisclosure>
+                      )}
+                      {detailQuery.data?.runPrompt && (
+                        <AppDisclosure summary="Full Staged Prompt">
+                          <pre className="route-work-code">{detailQuery.data.runPrompt}</pre>
+                        </AppDisclosure>
+                      )}
+                    </section>
+                  )}
+                </AppScrollShadow>
+              </aside>
+
+              <main className="route-work-main">
+                <div className="route-work-stream">
+                  {activityError ? (
+                    <div className="route-work-stream-center"><AppAlert>{activityError.message}</AppAlert></div>
+                  ) : !selected ? (
+                    <div className="route-work-stream-center"><AlertTriangle /> This Work has no Run evidence yet.</div>
+                  ) : (
+                    <Suspense fallback={<MessageFeedSkeleton density="compact" />}>
+                      <UnifiedMessageFeed
+                        feedKey={`attempt:${selected.runId}`}
+                        items={messages}
+                        tailActivity={selected.status === 'running' ? 'working' : null}
+                        density="compact"
+                        className="attempt-message-feed"
+                        ariaLabel={`Run ${selected.runId} message stream`}
+                        isLoading={eventStream.isLoading}
+                        hasMoreBefore={eventStream.hasMoreBefore}
+                        isLoadingOlder={eventStream.isLoadingOlder}
+                        onLoadOlder={eventStream.loadOlder}
+                        emptyState={<div className="route-work-stream-center">This Run predates live event capture.</div>}
+                      />
+                    </Suspense>
+                  )}
+                </div>
+              </main>
+            </div>
           </AppModal.Dialog>
         </AppModal.Container>
       </AppModal.Backdrop>
