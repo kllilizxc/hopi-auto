@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { AssistantWake, WakeObservation } from '../src/assistant/assistantWake'
+import type {
+  AssistantWake,
+  WakeObservation,
+  WakeObserveResult,
+} from '../src/assistant/assistantWake'
 import type { GoalPackage } from '../src/domain/goalPackage'
 import { PublicationCoordinator } from '../src/publication/publisher'
 import { createCoordinatorReconciler } from '../src/scheduler/coordinatorReconciler'
@@ -61,7 +65,11 @@ describe('CoordinatorReconciler explicit scheduling', () => {
     await coordinator.waitForIdle()
     expect(runs).toBe(1)
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'idle' })
-    expect(fixture.wakeObservations.some((observation) => observation.settled)).toBe(true)
+    expect(
+      fixture.wakeObservations.some((observation) =>
+        observation.settledScopeKeys.includes('project:P-1'),
+      ),
+    ).toBe(true)
   })
 
   test('enforces one shared Worker capacity across Projects', async () => {
@@ -193,7 +201,7 @@ describe('CoordinatorReconciler explicit scheduling', () => {
       },
     })
     fixture.setWakeObserve(async (observation) => {
-      order.push(`wake:${observation.settled}`)
+      order.push(`wake:${observation.settledScopeKeys.includes('project:P-1')}`)
       return 'unchanged'
     })
     const coordinator = createCoordinatorReconciler({
@@ -236,6 +244,147 @@ describe('CoordinatorReconciler explicit scheduling', () => {
 
     expect(await coordinator.reconcileOnce()).toEqual({ kind: 'deterministic_action', count: 1 })
     expect(cancellations).toBe(1)
+  })
+
+  test('keeps settlement observation local while sharing Worker capacity', async () => {
+    const fixture = await workspaceFixture()
+    let projectARuns = 0
+    let projectBStarted = false
+    let releaseProjectB: (() => void) | undefined
+    const projectBGate = new Promise<void>((resolve) => {
+      releaseProjectB = resolve
+    })
+    const projectA = projectReconciler({
+      async decisionWhenEligible() {
+        return projectARuns < 2
+          ? { kind: 'dispatch', workId: `W-${projectARuns + 1}` }
+          : { kind: 'wait', reasons: ['complete'] }
+      },
+      async reconcileGoal() {
+        projectARuns += 1
+        return {
+          kind: 'run_settled',
+          workId: `W-${projectARuns}`,
+          runId: `R-A-${projectARuns}`,
+          termination: 'normal',
+        }
+      },
+    })
+    const projectB = projectReconciler({
+      async decisionWhenEligible() {
+        return projectBStarted
+          ? { kind: 'wait', reasons: ['run_active'] }
+          : { kind: 'dispatch', workId: 'W-1' }
+      },
+      async reconcileGoal() {
+        projectBStarted = true
+        await projectBGate
+        return {
+          kind: 'run_settled',
+          workId: 'W-1',
+          runId: 'R-B-1',
+          termination: 'normal',
+        }
+      },
+    })
+    fixture.setWakeObserve(async (observation) => {
+      const scopeKey = observation.scopeKeys?.[0]
+      if (!scopeKey) return 'unchanged'
+      return observation.settledScopeKeys.includes(scopeKey) ? 'unchanged' : 'deferred'
+    })
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: { process: async (eventId) => ({ kind: 'answered', eventId }) },
+      wake: fixture.wake,
+      projects: [
+        {
+          projectId: 'P-A',
+          store: storeOf(engineeringPackage('G-A')),
+          reconciler: projectA,
+        },
+        {
+          projectId: 'P-B',
+          store: storeOf(engineeringPackage('G-B')),
+          reconciler: projectB,
+        },
+      ],
+      concurrency: 2,
+    })
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'runs_started', count: 2 })
+    await Bun.sleep(0)
+    expect(projectBStarted).toBe(true)
+    expect(projectARuns).toBe(1)
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'runs_started', count: 1 })
+    await Bun.sleep(0)
+    expect(projectARuns).toBe(2)
+    expect(
+      fixture.wakeObservations.some(
+        (observation) =>
+          observation.scopeKeys?.[0] === 'project:P-A' &&
+          observation.settledScopeKeys.includes('project:P-A'),
+      ),
+    ).toBe(true)
+
+    releaseProjectB?.()
+    await coordinator.waitForIdle()
+  })
+
+  test('keeps a direct command barrier local to its Project', async () => {
+    const fixture = await workspaceFixture()
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-A',
+      content: 'Project A command follow-up.',
+      context: { projectId: 'P-A', goalId: 'G-A' },
+    })
+    await fixture.workspace.receiveEvent({
+      eventId: 'EV-B',
+      content: 'Project B remains independently runnable.',
+      context: { projectId: 'P-B', goalId: 'G-B' },
+    })
+    let releaseDirectCommand: (() => void) | undefined
+    const directCommandGate = new Promise<void>((resolve) => {
+      releaseDirectCommand = resolve
+    })
+    const processed: string[] = []
+    const coordinator = createCoordinatorReconciler({
+      workspace: fixture.workspace,
+      assistant: {
+        async process(eventId) {
+          processed.push(eventId)
+          await fixture.workspace.handleEvent(eventId, {
+            reply: 'Handled independently.',
+            disposition: 'test',
+          })
+          return { kind: 'answered', eventId }
+        },
+      },
+      wake: fixture.wake,
+      projects: [
+        {
+          projectId: 'P-A',
+          store: storeOf(engineeringPackage('G-A')),
+          reconciler: projectReconciler({}),
+        },
+        {
+          projectId: 'P-B',
+          store: storeOf(engineeringPackage('G-B')),
+          reconciler: projectReconciler({}),
+        },
+      ],
+      concurrency: 1,
+    })
+    const directCommand = coordinator.runDirectAssistantCommand('P-A', () => directCommandGate)
+
+    expect(await coordinator.reconcileOnce()).toEqual({ kind: 'assistant_started', count: 1 })
+    await Bun.sleep(0)
+    expect(processed).toEqual(['EV-B'])
+    expect((await fixture.workspace.readEvent('EV-A'))?.attributes.status).toBe('pending')
+
+    releaseDirectCommand?.()
+    await directCommand
+    await coordinator.waitForIdle()
   })
 
   test('quiesces a Project by interrupting and draining its active Run', async () => {
@@ -336,7 +485,7 @@ async function workspaceFixture() {
     home.paths.projectLinksPath,
     `${JSON.stringify(
       {
-        projects: ['P-1', 'P-bad', 'P-good'].map((projectId) => ({
+        projects: ['P-1', 'P-A', 'P-B', 'P-bad', 'P-good'].map((projectId) => ({
           projectId,
           primaryRepoId: 'primary',
           repos: [{ repoId: 'primary', repoPath: `/tmp/${projectId}` }],
@@ -348,8 +497,7 @@ async function workspaceFixture() {
   )
   const workspace = createAssistantWorkspaceStore(temporaryRoot, new PublicationCoordinator())
   const wakeObservations: WakeObservation[] = []
-  let observeImpl: (input: WakeObservation) => Promise<'unchanged' | 'baseline'> = async () =>
-    'unchanged'
+  let observeImpl: (input: WakeObservation) => Promise<WakeObserveResult> = async () => 'unchanged'
   const wake: AssistantWake = {
     async observe(input) {
       wakeObservations.push(input)

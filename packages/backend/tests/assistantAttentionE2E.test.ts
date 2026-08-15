@@ -104,7 +104,7 @@ describe('Project Assistant wake and Attention E2E', () => {
       await runtime.assistant.process('EV-user')
       await runtime.workspace.createAttention(attention('A-choice', 'Choose the release window.'))
 
-      expect(await runtime.wake.observe({ settled: false })).toBe('started')
+      expect(await runtime.wake.observe({ settledScopeKeys: [] })).toBe('started')
       await runtime.wake.waitForIdle()
       const wakeEvent = [...(await runtime.workspace.readWorkspace()).events.values()].find(
         (event) => event.attributes.source === 'system',

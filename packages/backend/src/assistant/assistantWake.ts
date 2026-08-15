@@ -24,7 +24,8 @@ import { assistantMaterialWakeKeys } from './assistantSupervisionContext'
 export type WakeObserveResult = 'baseline' | 'deferred' | 'unchanged' | 'running' | 'started'
 
 export interface WakeObservation {
-  settled: boolean
+  settledScopeKeys: readonly string[]
+  scopeKeys?: readonly string[]
   busyScopeKeys?: readonly string[]
 }
 
@@ -105,9 +106,13 @@ export function createAssistantWake(options: {
       if (active) return 'running'
 
       const snapshot = await options.state.readForWake()
+      const requestedScopeKeys = input.scopeKeys ? new Set(input.scopeKeys) : null
+      const settledScopeKeys = new Set(input.settledScopeKeys)
       const busyScopeKeys = new Set(input.busyScopeKeys ?? [])
       const scopes = wakeScopeSnapshots(snapshot).filter(
-        (candidate) => !busyScopeKeys.has(candidate.scopeKey),
+        (candidate) =>
+          (!requestedScopeKeys || requestedScopeKeys.has(candidate.scopeKey)) &&
+          !busyScopeKeys.has(candidate.scopeKey),
       )
       const workspace = await options.workspace.readWorkspaceForControl()
       const allPendingScopeKeys = new Set(
@@ -136,7 +141,7 @@ export function createAssistantWake(options: {
         )
         const cursor = await readCursor(cursorPath(cursorsRoot, candidate.scopeKey))
         if (
-          input.settled &&
+          settledScopeKeys.has(candidate.scopeKey) &&
           !allPendingScopeKeys.has(candidate.scopeKey) &&
           cursor?.attentionRevisionDigest !== attentionRevisionDigest &&
           candidate.snapshot.activeRuns.length === 0
@@ -194,7 +199,7 @@ export function createAssistantWake(options: {
           deferred = true
           continue
         }
-        if (!input.settled && !immediate) {
+        if (!settledScopeKeys.has(candidate.scopeKey) && !immediate) {
           deferred = true
           continue
         }

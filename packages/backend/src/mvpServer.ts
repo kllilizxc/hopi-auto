@@ -808,26 +808,29 @@ async function executeDirectUserCommand(
     disposition: string
   },
 ) {
-  return runtime.coordinator.runDirectAssistantCommand(async () => {
-    const event = await receiveUserEvent(runtime, {
-      content: command.content,
-      ...(command.context ? { context: command.context } : {}),
-    })
-    try {
-      const result = await runtime.assistantTools.executeForEvent(
-        event.attributes.id,
-        command.tool,
-        command.input,
-      )
-      await runtime.workspace.handleEvent(event.attributes.id, {
-        reply: command.reply,
-        disposition: command.disposition,
+  return runtime.coordinator.runDirectAssistantCommand(
+    command.context?.projectId ?? null,
+    async () => {
+      const event = await receiveUserEvent(runtime, {
+        content: command.content,
+        ...(command.context ? { context: command.context } : {}),
       })
-      return result
-    } finally {
-      await runtime.coordinator.settleAssistantTurn(event.attributes.id)
-    }
-  })
+      try {
+        const result = await runtime.assistantTools.executeForEvent(
+          event.attributes.id,
+          command.tool,
+          command.input,
+        )
+        await runtime.workspace.handleEvent(event.attributes.id, {
+          reply: command.reply,
+          disposition: command.disposition,
+        })
+        return result
+      } finally {
+        await runtime.coordinator.settleAssistantTurn(event.attributes.id)
+      }
+    },
+  )
 }
 
 function readAssistantConversationScope(runtime: MvpRuntime, url: URL): AssistantConversationScope {

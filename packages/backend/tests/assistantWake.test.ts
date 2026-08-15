@@ -13,6 +13,8 @@ import { createAssistantHomeStore } from '../src/storage/assistantHomeStore'
 import { createAssistantWorkspaceStore } from '../src/storage/assistantWorkspaceStore'
 
 const temporaryRoot = join(process.cwd(), 'tests', 'tmp', 'assistant-wake')
+const settledWake = { settledScopeKeys: ['home', 'project:P-1', 'project:P-2'] }
+const unsettledWake = { settledScopeKeys: [] }
 
 beforeEach(async () => {
   await rm(temporaryRoot, { recursive: true, force: true })
@@ -27,9 +29,9 @@ describe('Assistant wake trigger', () => {
   test('records a state edge for the same Project Assistant without running another model', async () => {
     const fixture = await setup(['P-1'])
 
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
     fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '2'.repeat(64) } }))
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    expect(await fixture.wake.observe(settledWake)).toBe('started')
     await fixture.wake.waitForIdle()
 
     const events = [...(await fixture.workspace.readWorkspace()).events.values()]
@@ -57,33 +59,67 @@ describe('Assistant wake trigger', () => {
 
   test('reports Wake publication failure instead of returning a false started handoff', async () => {
     const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
     const runsRoot = join(fixture.homeRoot, '.hopi', 'runtime', 'assistant', 'wakes', 'runs')
     await Bun.write(runsRoot, 'not a directory')
     fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '2'.repeat(64) } }))
 
-    await expect(fixture.wake.observe({ settled: true })).rejects.toThrow()
+    await expect(fixture.wake.observe(settledWake)).rejects.toThrow()
     expect(fixture.wake.isActive()).toBe(false)
   })
 
   test('routes simultaneous changes independently by Project', async () => {
     const fixture = await setup(['P-1', 'P-2'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
     fixture.setSnapshot(
       snapshot(['P-1', 'P-2'], {
         projectDigests: { 'P-1': '3'.repeat(64), 'P-2': '4'.repeat(64) },
       }),
     )
 
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    expect(await fixture.wake.observe(settledWake)).toBe('started')
     await fixture.wake.waitForIdle()
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    expect(await fixture.wake.observe(settledWake)).toBe('started')
     await fixture.wake.waitForIdle()
 
     const projectIds = [...(await fixture.workspace.readWorkspace()).events.values()]
       .map((event) => event.attributes.context?.projectId)
       .sort()
     expect(projectIds).toEqual(['P-1', 'P-2'])
+  })
+
+  test('does not defer a settled Project behind an active Project', async () => {
+    const fixture = await setup(['P-1', 'P-2'])
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
+    const current = snapshot(['P-1', 'P-2'], {
+      projectDigests: { 'P-1': '3'.repeat(64), 'P-2': '4'.repeat(64) },
+    })
+    fixture.setSnapshot({
+      ...current,
+      activeRuns: [
+        {
+          projectId: 'P-1',
+          goalId: 'G-1',
+          workId: 'W-1',
+          runId: 'R-1',
+          status: 'running',
+          requestedAt: '2026-07-25T00:00:00.000Z',
+          startedAt: '2026-07-25T00:00:00.000Z',
+          waitReason: null,
+        },
+      ],
+    })
+
+    expect(
+      await fixture.wake.observe({
+        settledScopeKeys: ['home', 'project:P-2'],
+      }),
+    ).toBe('started')
+    await fixture.wake.waitForIdle()
+
+    const events = [...(await fixture.workspace.readWorkspace()).events.values()]
+    expect(events).toHaveLength(1)
+    expect(events[0]?.attributes.context?.projectId).toBe('P-2')
   })
 
   test('continues each unresolved Project Attention revision at most once', async () => {
@@ -95,9 +131,9 @@ describe('Assistant wake trigger', () => {
       }),
     )
 
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('started')
     await fixture.wake.waitForIdle()
-    expect(await fixture.wake.observe({ settled: false })).toBe('unchanged')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('unchanged')
 
     const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
     if (!event) throw new Error('Expected wake event')
@@ -106,8 +142,8 @@ describe('Assistant wake trigger', () => {
       disposition: 'silent',
     })
     const recoveredWake = fixture.recreateWake()
-    expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
-    expect(await recoveredWake.observe({ settled: true })).toBe('started')
+    expect(await recoveredWake.observe(unsettledWake)).toBe('unchanged')
+    expect(await recoveredWake.observe(settledWake)).toBe('started')
     await recoveredWake.waitForIdle()
 
     const continuation = [...(await fixture.workspace.readWorkspace()).events.values()].find(
@@ -123,13 +159,13 @@ describe('Assistant wake trigger', () => {
         attentionRefs: [`home:${homeId}/attention:A-1`],
       },
     })
-    expect(await recoveredWake.observe({ settled: false })).toBe('unchanged')
+    expect(await recoveredWake.observe(unsettledWake)).toBe('unchanged')
     await fixture.workspace.handleEvent(continuation.attributes.id, {
       reply: 'The todo remains open.',
       disposition: 'silent',
       expose: true,
     })
-    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
+    expect(await recoveredWake.observe(settledWake)).toBe('unchanged')
     expect((await recoveredWake.listRuns()).length).toBe(2)
 
     const unchangedTimestamp = new Date('2026-07-25T00:00:00.000Z')
@@ -148,10 +184,10 @@ describe('Assistant wake trigger', () => {
       }),
     )
 
-    expect(await recoveredWake.observe({ settled: true })).toBe('started')
+    expect(await recoveredWake.observe(settledWake)).toBe('started')
     await recoveredWake.waitForIdle()
     expect((await recoveredWake.listRuns()).length).toBe(3)
-    expect(await recoveredWake.observe({ settled: true })).toBe('unchanged')
+    expect(await recoveredWake.observe(settledWake)).toBe('unchanged')
   })
 
   test('lets an active Work Attempt provide the next Attention wake edge', async () => {
@@ -161,7 +197,7 @@ describe('Assistant wake trigger', () => {
       workspaceAttentions: [snapshotAttention('A-1', 'P-1')],
     })
     fixture.setSnapshot(current)
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('started')
     await fixture.wake.waitForIdle()
 
     const event = [...(await fixture.workspace.readWorkspace()).events.values()][0]
@@ -190,7 +226,7 @@ describe('Assistant wake trigger', () => {
       ],
     })
 
-    expect(await fixture.wake.observe({ settled: false })).toBe('deferred')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('deferred')
     expect((await fixture.wake.listRuns()).length).toBe(1)
 
     fixture.setSnapshot({
@@ -200,42 +236,42 @@ describe('Assistant wake trigger', () => {
         projects: { 'P-1': '9'.repeat(64) },
       },
     })
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    expect(await fixture.wake.observe(settledWake)).toBe('started')
     await fixture.wake.waitForIdle()
     expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
   test('defers an ordinary unsettled change but preserves it for the settled edge', async () => {
     const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
     fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '5'.repeat(64) } }))
 
-    expect(await fixture.wake.observe({ settled: false })).toBe('deferred')
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('deferred')
+    expect(await fixture.wake.observe(settledWake)).toBe('started')
     await fixture.wake.waitForIdle()
     expect((await fixture.wake.listRuns()).length).toBe(1)
   })
 
   test('publishes a state edge without requiring a cached speaking Session', async () => {
     const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
     fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '8'.repeat(64) } }))
 
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    expect(await fixture.wake.observe(settledWake)).toBe('started')
     await fixture.wake.waitForIdle()
     expect((await fixture.workspace.readWorkspace()).events.size).toBe(1)
   })
 
   test('wakes for a settled Work while another Work is active', async () => {
     const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
 
     fixture.setSnapshot(settlementSnapshot('R-settled-1', 'R-active-1', '6'))
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('started')
     await fixture.wake.waitForIdle()
 
     fixture.setSnapshot(settlementSnapshot('R-settled-2', 'R-active-2', '7'))
-    expect(await fixture.wake.observe({ settled: false })).toBe('deferred')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('deferred')
     expect((await fixture.wake.listRuns()).length).toBe(1)
 
     const firstEvent = [...(await fixture.workspace.readWorkspace()).events.values()][0]
@@ -245,17 +281,17 @@ describe('Assistant wake trigger', () => {
       disposition: 'silent',
     })
 
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('started')
     await fixture.wake.waitForIdle()
     expect((await fixture.wake.listRuns()).length).toBe(2)
   })
 
   test('wakes again for a later settled Run identity', async () => {
     const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
 
     fixture.setSnapshot(settlementSnapshot('R-settled-1', 'R-active-1', '6'))
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('started')
     await fixture.wake.waitForIdle()
     const firstEvent = [...(await fixture.workspace.readWorkspace()).events.values()][0]
     if (!firstEvent) throw new Error('Expected settlement wake')
@@ -265,7 +301,7 @@ describe('Assistant wake trigger', () => {
     })
 
     fixture.setSnapshot(settlementSnapshot('R-settled-2', 'R-active-2', '7'))
-    expect(await fixture.wake.observe({ settled: false })).toBe('started')
+    expect(await fixture.wake.observe(unsettledWake)).toBe('started')
     await fixture.wake.waitForIdle()
 
     expect((await fixture.workspace.readWorkspace()).events.size).toBe(2)
@@ -274,22 +310,22 @@ describe('Assistant wake trigger', () => {
 
   test('acknowledges the current Assistant effect without consuming a later state edge', async () => {
     const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
 
     fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '6'.repeat(64) } }))
     await fixture.wake.acknowledgeProjects(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('unchanged')
+    expect(await fixture.wake.observe(settledWake)).toBe('unchanged')
     expect(await fixture.wake.listRuns()).toEqual([])
 
     fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '7'.repeat(64) } }))
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    expect(await fixture.wake.observe(settledWake)).toBe('started')
     await fixture.wake.waitForIdle()
     expect(await fixture.wake.listRuns()).toHaveLength(1)
   })
 
   test('acknowledges an Assistant-created Attention revision without a redundant continuation', async () => {
     const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
     await fixture.workspace.createAttention(attention('A-1', 'P-1'))
     fixture.setSnapshot(
       snapshot(['P-1'], {
@@ -300,15 +336,15 @@ describe('Assistant wake trigger', () => {
 
     await fixture.wake.acknowledgeProjects(['P-1'])
 
-    expect(await fixture.wake.observe({ settled: true })).toBe('unchanged')
+    expect(await fixture.wake.observe(settledWake)).toBe('unchanged')
     expect(await fixture.wake.listRuns()).toEqual([])
   })
 
   test('isolates a corrupt Wake run from healthy diagnostics', async () => {
     const fixture = await setup(['P-1'])
-    expect(await fixture.wake.observe({ settled: true })).toBe('baseline')
+    expect(await fixture.wake.observe(settledWake)).toBe('baseline')
     fixture.setSnapshot(snapshot(['P-1'], { projectDigests: { 'P-1': '2'.repeat(64) } }))
-    expect(await fixture.wake.observe({ settled: true })).toBe('started')
+    expect(await fixture.wake.observe(settledWake)).toBe('started')
     await fixture.wake.waitForIdle()
 
     const corruptPath = join(

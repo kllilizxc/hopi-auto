@@ -1,7 +1,7 @@
 # HOPI Execution Model
 
 Status: runtime authority
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 ## One explicit Worker path
 
@@ -27,6 +27,17 @@ A Run may be queued only when:
 - declared workspace mode is valid for the Work kind.
 
 The request is immutable after admission.
+
+## Project isolation and shared capacity
+
+Every execution blocker is Project-scoped: Assistant turns, direct commands, settlement
+observation, wake cursors, eligibility, Goal barriers, and queued/running claims in one Project
+must not delay another Project. A Project may advance whenever its own state permits it.
+
+Only the finite Worker concurrency budget is shared across Projects. Cross-Project contention may
+delay a queued Run only when all shared Worker slots are reserved; that delay is presented as a
+capacity wait. Internal coordinator serialization may protect a bounded read or publication, but it
+must not become durable cross-Project scheduling authority.
 
 ## Workspace modes
 

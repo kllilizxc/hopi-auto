@@ -1,4 +1,4 @@
-import type { AssistantWake } from '../assistant/assistantWake'
+import type { AssistantWake, WakeObserveResult } from '../assistant/assistantWake'
 import type { WorkspaceAssistant } from '../assistant/workspaceAssistant'
 import type { AssistantWorkspace } from '../domain/assistantWorkspace'
 import {
@@ -52,7 +52,7 @@ export interface CoordinatorReconciler {
   stop(): Promise<void>
   wake(): void
   waitForIdle(): Promise<void>
-  runDirectAssistantCommand<T>(operation: () => Promise<T>): Promise<T>
+  runDirectAssistantCommand<T>(projectId: string | null, operation: () => Promise<T>): Promise<T>
   quiesceProject(projectId: string): Promise<void>
   protectAssistantGoal(eventId: string, projectId: string, goalId: string): void
   protectAssistantProject(eventId: string, projectId: string): void
@@ -102,7 +102,7 @@ export function createCoordinatorReconciler(
   let stopped = true
   let reconcileEpoch = 0
   let reconciling: Promise<CoordinatorReconcileTick> | null = null
-  let directAssistantCommands = 0
+  const directAssistantCommands = new Map<string, number>()
   let startedAt: string | null = null
   let lastTickStartedAt: string | null = null
   let lastTickSucceededAt: string | null = null
@@ -183,12 +183,15 @@ export function createCoordinatorReconciler(
         }
       }
     },
-    async runDirectAssistantCommand(operation) {
-      directAssistantCommands += 1
+    async runDirectAssistantCommand(projectId, operation) {
+      const scopeKey = projectId ? projectScopeKey(projectId) : 'home'
+      directAssistantCommands.set(scopeKey, (directAssistantCommands.get(scopeKey) ?? 0) + 1)
       try {
         return await operation()
       } finally {
-        directAssistantCommands -= 1
+        const remaining = (directAssistantCommands.get(scopeKey) ?? 1) - 1
+        if (remaining > 0) directAssistantCommands.set(scopeKey, remaining)
+        else directAssistantCommands.delete(scopeKey)
         this.wake()
       }
     },
@@ -245,18 +248,25 @@ export function createCoordinatorReconciler(
     async reconcileOnce() {
       if (reconciling) return reconciling
       const epoch = reconcileEpoch
-      const startedWithReservation = reservations.size > 0
+      const activityVersionsAtStart = new Map(
+        options.projects.map((project) => [
+          project.projectId,
+          projectActivityVersion(project.projectId),
+        ]),
+      )
       lastTickStartedAt = now().toISOString()
       const run = reconcileTick(epoch)
         .then(async (result) => {
           if (result.kind !== 'assistant_started') armDeadline(result.nextWakeAt ?? null)
           if (epoch === reconcileEpoch) {
             const workspace = await options.workspace.readWorkspaceForControl()
-            if (eligiblePendingEvents(workspace, assistantActive).length === 0) {
+            if (
+              eligiblePendingEvents(workspace, assistantActive, directAssistantCommands.keys())
+                .length === 0
+            ) {
               await options.wake.observe({
-                settled:
-                  result.kind === 'idle' && !startedWithReservation && reservations.size === 0,
-                busyScopeKeys: [...assistantActive.values()].map((entry) => entry.scopeKey),
+                settledScopeKeys: settledWakeScopeKeys(activityVersionsAtStart),
+                busyScopeKeys: busyAssistantScopeKeys(),
               })
             }
           }
@@ -327,8 +337,7 @@ export function createCoordinatorReconciler(
   async function reconcileTick(epoch: number): Promise<CoordinatorReconcileTick> {
     const workspace = await options.workspace.readWorkspaceForControl()
     if (epoch !== reconcileEpoch) return { kind: 'idle' }
-    const event =
-      directAssistantCommands === 0 ? eligiblePendingEvent(workspace, assistantActive) : undefined
+    const event = eligiblePendingEvent(workspace, assistantActive, directAssistantCommands.keys())
     if (event) {
       const controller = new AbortController()
       const context = event.attributes.context
@@ -547,19 +556,54 @@ export function createCoordinatorReconciler(
 
   async function observePendingWorkerSettlements() {
     if (projectsAwaitingSettlementObservation.size === 0) return null
-    const observedProjects = [...projectsAwaitingSettlementObservation]
-    const result = await options.wake.observe({
-      settled: reservations.size === 0,
-      busyScopeKeys: [...assistantActive.values()].map((entry) => entry.scopeKey),
-    })
-    if (result === 'baseline' || result === 'unchanged') {
-      for (const [projectId, generation] of observedProjects) {
-        if (projectsAwaitingSettlementObservation.get(projectId) === generation) {
-          projectsAwaitingSettlementObservation.delete(projectId)
-        }
+    const busyScopeKeys = new Set(busyAssistantScopeKeys())
+    let aggregate: WakeObserveResult | null = null
+    for (const [projectId, generation] of [...projectsAwaitingSettlementObservation].toSorted(
+      ([left], [right]) => left.localeCompare(right),
+    )) {
+      const scopeKey = projectScopeKey(projectId)
+      if (busyScopeKeys.has(scopeKey)) {
+        aggregate = 'deferred'
+        continue
       }
+      const result = await options.wake.observe({
+        settledScopeKeys: projectHasLiveActivity(projectId) ? [] : [scopeKey],
+        scopeKeys: [scopeKey],
+        busyScopeKeys: [...busyScopeKeys],
+      })
+      if (
+        (result === 'baseline' || result === 'unchanged') &&
+        projectsAwaitingSettlementObservation.get(projectId) === generation
+      ) {
+        projectsAwaitingSettlementObservation.delete(projectId)
+      }
+      if (result === 'started' || result === 'running') return result
+      if (result === 'deferred' || aggregate === null) aggregate = result
     }
-    return result
+    return aggregate
+  }
+
+  function busyAssistantScopeKeys() {
+    return [
+      ...new Set([
+        ...[...assistantActive.values()].map((entry) => entry.scopeKey),
+        ...directAssistantCommands.keys(),
+      ]),
+    ]
+  }
+
+  function settledWakeScopeKeys(activityVersionsAtStart: ReadonlyMap<string, number>) {
+    return [
+      'home',
+      ...options.projects
+        .filter(
+          (project) =>
+            activityVersionsAtStart.get(project.projectId) ===
+              projectActivityVersion(project.projectId) &&
+            !projectHasLiveActivity(project.projectId),
+        )
+        .map((project) => projectScopeKey(project.projectId)),
+    ]
   }
 
   function protectBarrierProject(barrier: AssistantTurnBarrier, projectId: string) {
@@ -630,15 +674,20 @@ async function readReconciliationPackages(store: GoalPackageStore) {
 function eligiblePendingEvent(
   workspace: AssistantWorkspace,
   active: ReadonlyMap<string, Pick<ActiveAssistantTurn, 'scopeKey'>>,
+  additionalBusyScopeKeys: Iterable<string> = [],
 ) {
-  return eligiblePendingEvents(workspace, active)[0]
+  return eligiblePendingEvents(workspace, active, additionalBusyScopeKeys)[0]
 }
 
 function eligiblePendingEvents(
   workspace: AssistantWorkspace,
   active: ReadonlyMap<string, Pick<ActiveAssistantTurn, 'scopeKey'>>,
+  additionalBusyScopeKeys: Iterable<string> = [],
 ) {
-  const activeScopeKeys = new Set([...active.values()].map((entry) => entry.scopeKey))
+  const activeScopeKeys = new Set([
+    ...[...active.values()].map((entry) => entry.scopeKey),
+    ...additionalBusyScopeKeys,
+  ])
   return [...workspace.events.values()]
     .filter(
       (event) =>
@@ -656,8 +705,12 @@ function eligiblePendingEvents(
 
 function assistantEventScopeKey(event: { attributes: Pick<InboxEventAttributes, 'context'> }) {
   return event.attributes.context?.projectId
-    ? `project:${event.attributes.context.projectId}`
+    ? projectScopeKey(event.attributes.context.projectId)
     : 'home'
+}
+
+function projectScopeKey(projectId: string) {
+  return `project:${projectId}`
 }
 
 function inboxSourceRank(source: InboxEventAttributes['source']) {

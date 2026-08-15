@@ -1,7 +1,7 @@
 # Project Assistant And Wayfinder
 
 Status: semantic behavior authority
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 The Project Assistant is the only semantic supervisor. It speaks with the operator, reads canonical
 state, uses Wayfinder when the route is unclear, explicitly requests Workers, judges Reports, and
@@ -87,6 +87,10 @@ Advance the Map one dependency-consistent frontier round at a time:
 Research Runs and Grilling questions are the two frontier-wide concurrency cases. Each still owns a
 separate Attempt or Attention and a separate Resolution; batching Grilling changes interaction
 latency, not Work identity or dependency semantics.
+
+Project supervision is isolated across Projects. A turn, wake, settlement observation, Attention,
+or other scheduling barrier in one Project cannot hold another Project; only the shared Worker
+capacity budget is global.
 
 ## Handoff to Engineering
 
