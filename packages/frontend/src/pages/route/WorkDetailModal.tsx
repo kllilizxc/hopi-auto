@@ -102,7 +102,7 @@ export function WorkDetailModal({
           <AppModal.Dialog className="route-work-modal" aria-label={work.title}>
             <header className="route-work-modal__header">
               <span className="eyebrow">
-                {workKindLabel(work)} · <span className="eyebrow-id">{work.id}</span>
+                {workKindLabel(work)} <span className="eyebrow-id">{work.id}</span>
               </span>
               <h2>{work.title}</h2>
               <AppModal.CloseTrigger className="icon-button route-work-main__close" aria-label="Close Work detail">
@@ -111,91 +111,74 @@ export function WorkDetailModal({
             </header>
 
             <div className="route-work-modal__body">
-              <aside className="route-work-sidebar">
-                <AppScrollShadow className="route-work-sidebar__scroll">
-                  <section className="route-work-section">
-                    <header className="route-work-section-header">
-                      <h3>STATUS</h3>
-                    </header>
-                    <div className="route-work-facts-grid">
-                      <div className="route-work-fact"><small>Current State</small><strong>{workStateLabel(work.projection.state)}</strong></div>
-                      <div className="route-work-fact"><small>Revision</small><strong>{work.contractRevision}</strong></div>
-                    </div>
-                    {work.blockedBy && <AppAlert className="compact-alert">Blocked: {work.blockedBy}</AppAlert>}
-                  </section>
+              <div className="route-work-meta-bar">
+                <div className="route-work-meta-item">
+                  <Activity /> <span>State:</span> <strong>{workStateLabel(work.projection.state)}</strong>
+                </div>
+                <div className="route-work-meta-item">
+                  <BookOpen /> <span>Rev:</span> <strong>{work.contractRevision}</strong>
+                </div>
+                <div className="route-work-meta-item">
+                  <Clock /> <span>Runs:</span> <strong>{attempts.length}</strong>
+                </div>
+                {work.blockedBy && (
+                  <div className="route-work-meta-item">
+                    <AlertTriangle className="text-warning-400" /> <span>Blocked by:</span> <strong>{work.blockedBy}</strong>
+                  </div>
+                )}
+              </div>
 
-                  {attempts.length > 0 && (
-                    <section className="route-work-section">
-                      <header className="route-work-section-header">
-                        <h3>Runs</h3>
-                        <CountBadge>{attempts.length}</CountBadge>
-                      </header>
-                      <div className="route-work-run-list">
-                        {attempts.map((attempt, index) => (
-                          <AppButton
-                            className={cn('route-work-run-item', attempt.runId === selected?.runId && 'active')}
-                            key={attempt.runId}
-                            onClick={() => setSelectedRunId(attempt.runId)}
-                            type="button"
-                            variant="ghost"
-                          >
-                            <div className="route-work-run-item-info">
-                              <strong>Run {attempts.length - index}</strong>
-                              <small>{formatTime(attempt.requestedAt)}</small>
-                            </div>
-                            <StatusChip size="sm">{attemptLabel(attempt)}</StatusChip>
-                          </AppButton>
-                        ))}
-                      </div>
-                    </section>
-                  )}
-
-                  <section className="route-work-section">
-                    <header className="route-work-section-header">
-                      <h3><BookOpen /> Contract</h3>
-                    </header>
-                    <AppDisclosure summary="View Canonical Work">
+              <div className="route-work-main-scroll">
+                <div className="route-work-details-accordion">
+                  <AppDisclosure summary="View Contract & Dependencies">
+                    <div className="route-work-section" style={{ marginTop: 16 }}>
                       {documentQuery.isLoading ? <AppBreathingIndicator /> : <pre className="route-work-code">{documentQuery.data?.body ?? ''}</pre>}
-                    </AppDisclosure>
-                    {work.dependsOn.length > 0 && (
-                      <AppDisclosure summary="Dependencies">
-                        <p className="route-work-text">{work.dependsOn.join(', ')}</p>
-                      </AppDisclosure>
-                    )}
-                  </section>
+                      {work.dependsOn.length > 0 && (
+                        <div style={{ marginTop: 12 }}>
+                          <h3 style={{ fontSize: 11, color: 'var(--color-neutral-400)' }}>Dependencies</h3>
+                          <p className="route-work-text">{work.dependsOn.join(', ')}</p>
+                        </div>
+                      )}
+                    </div>
+                  </AppDisclosure>
+                </div>
 
+                {attempts.length > 0 && (
+                  <div className="route-work-run-selector">
+                    <h3>Run History</h3>
+                    <div className="route-work-run-list-compact">
+                      {attempts.map((attempt, index) => (
+                        <AppButton
+                          key={attempt.runId}
+                          className={cn('route-work-run-pill', attempt.runId === selected?.runId && 'active')}
+                          onClick={() => setSelectedRunId(attempt.runId)}
+                          type="button"
+                          variant="ghost"
+                        >
+                          Run {attempts.length - index}
+                          <StatusChip size="sm">{attemptLabel(attempt)}</StatusChip>
+                        </AppButton>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="route-work-stream">
                   {selected && (
-                    <section className="route-work-section route-work-section--highlight">
-                      <header className="route-work-section-header">
-                        <h3>Run Details</h3>
-                      </header>
-                      <div className="route-work-run-meta">
+                    <div style={{ marginBottom: 24 }}>
+                       <div className="route-work-run-meta" style={{ paddingBottom: 0, border: 'none', marginBottom: 12 }}>
                         <code>{selected.runId}</code>
                         <small>{selected.execution ? `${selected.execution.transport}${selected.execution.model ? ` · ${selected.execution.model}` : ''}` : 'Worker'}</small>
                       </div>
                       {selected.reportMarkdown && (
                         <div className="route-work-report">
-                          <small>Report</small>
+                          <small>Final Report</small>
                           <p>{selected.reportMarkdown}</p>
                         </div>
                       )}
-                      {selected.instructionMarkdown && (
-                        <AppDisclosure summary="Run Instruction">
-                          <p className="route-work-text">{selected.instructionMarkdown}</p>
-                        </AppDisclosure>
-                      )}
-                      {detailQuery.data?.runPrompt && (
-                        <AppDisclosure summary="Full Staged Prompt">
-                          <pre className="route-work-code">{detailQuery.data.runPrompt}</pre>
-                        </AppDisclosure>
-                      )}
-                    </section>
+                    </div>
                   )}
-                </AppScrollShadow>
-              </aside>
 
-              <main className="route-work-main">
-                <div className="route-work-stream">
                   {activityError ? (
                     <div className="route-work-stream-center"><AppAlert>{activityError.message}</AppAlert></div>
                   ) : !selected ? (
@@ -218,7 +201,7 @@ export function WorkDetailModal({
                     </Suspense>
                   )}
                 </div>
-              </main>
+              </div>
             </div>
           </AppModal.Dialog>
         </AppModal.Container>
