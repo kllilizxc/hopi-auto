@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Activity, BookOpen, Clock, AlertTriangle, X } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { MessageFeedSkeleton } from '../../components/MessageFeedSkeleton'
+import { AssistantMarkdown } from '../../components/AssistantMarkdown'
 import {
   AppAlert,
   AppBreathingIndicator,
@@ -173,7 +174,11 @@ export function WorkDetailModal({
                       {selected.reportMarkdown && (
                         <div className="route-work-report">
                           <small>Final Report</small>
-                          <p>{selected.reportMarkdown}</p>
+                          <div className="text-[13px] text-neutral-200 leading-relaxed">
+                            <Suspense fallback={selected.reportMarkdown}>
+                              <AssistantMarkdown text={selected.reportMarkdown} />
+                            </Suspense>
+                          </div>
                         </div>
                       )}
                     </div>
