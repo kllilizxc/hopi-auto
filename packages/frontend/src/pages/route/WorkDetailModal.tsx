@@ -9,15 +9,12 @@ import {
   AppButton,
   AppDisclosure,
   AppModal,
-  AppScrollShadow,
-  CountBadge,
   StatusChip,
 } from '../../components/ui'
 import {
   type RunAttemptEvent,
   type RunAttemptSummary,
   type WorkRouteView,
-  readWorkAttempt,
   readWorkAttemptEvents,
   readWorkAttempts,
   readWorkDocument,
@@ -26,7 +23,7 @@ import { runEventsToMessageFeed } from '../../lib/messageFeed'
 import { ACTIVE_STREAM_POLL_INTERVAL_MS, STABLE_QUERY_NOTIFY_PROPS } from '../../lib/queryPerformance'
 import { workAttemptEventsQueryKey, workAttemptsQueryKey } from '../../lib/queryKeys'
 import { useInfiniteMessageStream } from '../../lib/useInfiniteMessageStream'
-import { formatTime, cn } from '../../lib/utils'
+import { cn } from '../../lib/utils'
 
 const UnifiedMessageFeed = lazy(() =>
   import('../../components/UnifiedMessageFeed').then((module) => ({
@@ -58,13 +55,6 @@ export function WorkDetailModal({
     if (!selectedRunId && attempts[0]) setSelectedRunId(attempts[0].runId)
   }, [attempts, selectedRunId])
 
-  const detailQuery = useQuery({
-    queryKey: ['work-attempt', projectId, goalId, work.id, selected?.runId],
-    queryFn: () => readWorkAttempt(projectId, goalId, work.id, selected?.runId ?? ''),
-    enabled: Boolean(selected),
-    refetchInterval: selected?.status === 'running' ? ACTIVE_STREAM_POLL_INTERVAL_MS : false,
-    notifyOnChangeProps: STABLE_QUERY_NOTIFY_PROPS,
-  })
   const eventStream = useInfiniteMessageStream<RunAttemptEvent>({
     streamKey: selected?.runId ?? 'no-run',
     queryKey: workAttemptEventsQueryKey(projectId, goalId, work.id, selected?.runId ?? null),
