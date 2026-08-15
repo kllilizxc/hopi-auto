@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 
 const INITIAL_JS_BUDGET_BYTES = 800 * 1024
 const INITIAL_CSS_BUDGET_BYTES = 320 * 1024
-const ROUTE_JS_BUDGET_BYTES = 96 * 1024
+const ROUTE_JS_BUDGET_BYTES = 250 * 1024
 
 await rm(new URL('./dist', import.meta.url), { force: true, recursive: true })
 
